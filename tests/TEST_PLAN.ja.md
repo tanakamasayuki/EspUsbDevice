@@ -32,9 +32,9 @@ tests/
 | device descriptor config | ✅ `descriptor` | | | 予定 | |
 | FS/HS endpoint MPS | ✅ `descriptor` | 予定 | 予定 | 予定 | |
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | build済み `hid_keyboard` | | |
-| HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard` | MVP | | 任意 |
-| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | 予定 | | |
-| keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | 予定 | | |
+| HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard` | build済み `hid_keyboard` | | 任意 |
+| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | build済み `hid_mouse` | | |
+| keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | build済み `hid_keyboard_mouse` | | |
 | custom HID report descriptor | 予定 | 予定 | | | |
 | HID vendor IN/OUT/Feature | 予定 | 予定 | | | |
 | consumer/system/gamepad HID | 予定 | 予定 | | | |

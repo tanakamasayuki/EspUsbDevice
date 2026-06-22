@@ -35,9 +35,9 @@ tests/
 | Device descriptor config | ✅ `descriptor` | | | planned | |
 | FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | planned | |
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | builds `hid_keyboard` | | |
-| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | MVP | | optional |
-| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | planned | | |
-| Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | planned | | |
+| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | builds `hid_keyboard` | | optional |
+| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | | |
+| Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
 | Custom HID report descriptor | planned | planned | | | |
 | HID vendor IN/OUT/Feature | planned | planned | | | |
 | Consumer/system/gamepad HID | planned | planned | | | |

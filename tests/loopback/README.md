@@ -11,8 +11,14 @@ port/speed behavior can be verified before broader class coverage is added.
 ## Tests
 
 - `hid_keyboard`: starts `EspUsbHost` and `EspUsbDeviceHidKeyboard` on one P4,
-  sends `k` from the device side, and verifies `KEY k` through Host
-  `onKeyboard()` as a smoke test.
+  sends `hello, keyboard` from the device side, and verifies it through Host
+  `onKeyboard()`. It also sends NumLock / CapsLock / ScrollLock / clear LED
+  output reports from the host side and verifies Device `onOutputReport()`.
+- `hid_mouse`: starts `EspUsbHost` and `EspUsbDeviceHidMouse` on one P4 and
+  verifies move / wheel / left / right / middle / back / forward through Host
+  `onMouse()`.
+- `hid_keyboard_mouse`: starts a keyboard + mouse composite device on one P4
+  and verifies that both reports reach Host callbacks.
 
 ## Matrix
 

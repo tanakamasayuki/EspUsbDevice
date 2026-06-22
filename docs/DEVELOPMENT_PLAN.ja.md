@@ -176,9 +176,14 @@ CLICK 1
 確認結果:
 
 - 2026-06-22: `tests/loopback/hid_keyboard` smoke を追加。P4 1台で `EspUsbHost` と
-  `EspUsbDeviceHidKeyboard` を同時起動し、Device 側 `keyboard.tapKey('k')` を Host 側
+  `EspUsbDeviceHidKeyboard` を同時起動し、Device 側の keyboard report を Host 側
   `onKeyboard()` で検出する構成。
-- `arduino-cli compile --profile p4_loopback tests/loopback/hid_keyboard` は通過。
+- 2026-06-22: `tests/loopback/hid_keyboard` を peer 同等の text + LED output report
+  coverage に拡張。
+- 2026-06-22: `tests/loopback/hid_mouse` と `tests/loopback/hid_keyboard_mouse` を追加し、
+  peer と同じ mouse move/buttons と keyboard+mouse composite を P4 1台構成で確認する構成にした。
+- `arduino-cli compile --profile p4_loopback` は `hid_keyboard` / `hid_mouse` /
+  `hid_keyboard_mouse` すべて通過。
 - 現 sandbox では pytest-embedded の multiprocessing socket 作成が権限で失敗するため、実機 pytest はユーザー環境で確認する。
 
 probe で必ず出すログ:

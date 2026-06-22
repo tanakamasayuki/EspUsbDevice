@@ -11,7 +11,13 @@ descriptor ログで P4 の port / speed 挙動を確認します。
 ## テスト
 
 - `hid_keyboard`: P4 1台上で `EspUsbHost` と `EspUsbDeviceHidKeyboard` を同時に起動し、
-  Device 側から `k` を送信して Host 側 `onKeyboard()` で `KEY k` を確認する smoke test。
+  Device 側から `hello, keyboard` を送信して Host 側 `onKeyboard()` で確認する。
+  Host 側から NumLock / CapsLock / ScrollLock / clear の LED output report も送信し、
+  Device 側 `onOutputReport()` で確認する。
+- `hid_mouse`: P4 1台上で `EspUsbHost` と `EspUsbDeviceHidMouse` を同時に起動し、
+  move / wheel / left / right / middle / back / forward を Host 側 `onMouse()` で確認する。
+- `hid_keyboard_mouse`: P4 1台上で keyboard + mouse composite device を起動し、
+  keyboard report と mouse report が同時に Host 側 callback へ届くことを確認する。
 
 ## Matrix
 
