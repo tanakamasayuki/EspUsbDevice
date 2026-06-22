@@ -26,7 +26,9 @@ PC.
 ## Initial Tests
 
 - `hid_keyboard`: raw boot keyboard report and LED output report. Passing on the two-board S3 setup.
-- `hid_mouse`: raw boot mouse report.
+- `hid_mouse`: raw boot mouse report. Move, wheel, left, and right pass through
+  the mouse callback; middle, back, and forward pass as raw reports on the
+  two-board S3 setup.
 - `hid_keyboard_mouse`: composite keyboard + mouse device.
 - `custom_hid`: fixed custom report descriptor and raw input.
 - `hid_vendor`: interrupt IN/OUT and feature report.

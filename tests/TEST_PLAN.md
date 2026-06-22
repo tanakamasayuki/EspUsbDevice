@@ -36,7 +36,7 @@ tests/
 | FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | planned | |
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | MVP | | |
 | HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | MVP | | optional |
-| HID mouse raw report | ✅ descriptor only | MVP | planned | | |
+| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | planned | | |
 | Keyboard + mouse composite | ✅ descriptor only | MVP | planned | | |
 | Custom HID report descriptor | planned | planned | | | |
 | HID vendor IN/OUT/Feature | planned | planned | | | |
@@ -51,7 +51,7 @@ tests/
 1. `unit/compile_smoke`
 2. `unit/descriptor`
 3. ✅ `peer/hid_keyboard`
-4. `peer/hid_mouse`
+4. ✅ `peer/hid_mouse`
 5. `peer/hid_keyboard_mouse`
 6. `probe/p4_device_fs_probe`
 7. `probe/p4_device_hs_probe`
