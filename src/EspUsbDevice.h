@@ -29,6 +29,29 @@ enum EspUsbDeviceSpeed
   ESP_USB_DEVICE_SPEED_HIGH,
 };
 
+enum EspUsbDeviceKeyboardLayout : uint16_t
+{
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_ZH_TW = 0x0404,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_DA_DK = 0x0406,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_DE_DE = 0x0407,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US = 0x0409,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_FI_FI = 0x040B,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_FR_FR = 0x040C,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_HU_HU = 0x040E,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_IT_IT = 0x0410,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP = 0x0411,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_KO_KR = 0x0412,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_NL_NL = 0x0413,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_NB_NO = 0x0414,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_PT_BR = 0x0416,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_SV_SE = 0x041D,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_ZH_CN = 0x0804,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_GB = 0x0809,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_PT_PT = 0x0816,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_ES_ES = 0x0C0A,
+  ESP_USB_DEVICE_KEYBOARD_LAYOUT_FR_CH = 0x100C,
+};
+
 struct EspUsbDeviceConfig
 {
   EspUsbDevicePort port = ESP_USB_DEVICE_PORT_DEFAULT;
@@ -75,6 +98,32 @@ static constexpr uint8_t ESP_USB_HID_KEY_W = 0x1a;
 static constexpr uint8_t ESP_USB_HID_KEY_X = 0x1b;
 static constexpr uint8_t ESP_USB_HID_KEY_Y = 0x1c;
 static constexpr uint8_t ESP_USB_HID_KEY_Z = 0x1d;
+static constexpr uint8_t ESP_USB_HID_KEY_1 = 0x1e;
+static constexpr uint8_t ESP_USB_HID_KEY_2 = 0x1f;
+static constexpr uint8_t ESP_USB_HID_KEY_3 = 0x20;
+static constexpr uint8_t ESP_USB_HID_KEY_4 = 0x21;
+static constexpr uint8_t ESP_USB_HID_KEY_5 = 0x22;
+static constexpr uint8_t ESP_USB_HID_KEY_6 = 0x23;
+static constexpr uint8_t ESP_USB_HID_KEY_7 = 0x24;
+static constexpr uint8_t ESP_USB_HID_KEY_8 = 0x25;
+static constexpr uint8_t ESP_USB_HID_KEY_9 = 0x26;
+static constexpr uint8_t ESP_USB_HID_KEY_0 = 0x27;
+static constexpr uint8_t ESP_USB_HID_KEY_ENTER = 0x28;
+static constexpr uint8_t ESP_USB_HID_KEY_ESCAPE = 0x29;
+static constexpr uint8_t ESP_USB_HID_KEY_BACKSPACE = 0x2a;
+static constexpr uint8_t ESP_USB_HID_KEY_TAB = 0x2b;
+static constexpr uint8_t ESP_USB_HID_KEY_SPACE = 0x2c;
+static constexpr uint8_t ESP_USB_HID_KEY_MINUS = 0x2d;
+static constexpr uint8_t ESP_USB_HID_KEY_EQUAL = 0x2e;
+static constexpr uint8_t ESP_USB_HID_KEY_LEFT_BRACKET = 0x2f;
+static constexpr uint8_t ESP_USB_HID_KEY_RIGHT_BRACKET = 0x30;
+static constexpr uint8_t ESP_USB_HID_KEY_BACKSLASH = 0x31;
+static constexpr uint8_t ESP_USB_HID_KEY_SEMICOLON = 0x33;
+static constexpr uint8_t ESP_USB_HID_KEY_APOSTROPHE = 0x34;
+static constexpr uint8_t ESP_USB_HID_KEY_GRAVE = 0x35;
+static constexpr uint8_t ESP_USB_HID_KEY_COMMA = 0x36;
+static constexpr uint8_t ESP_USB_HID_KEY_DOT = 0x37;
+static constexpr uint8_t ESP_USB_HID_KEY_SLASH = 0x38;
 static constexpr uint8_t ESP_USB_HID_KEY_LANG1 = 0x90;
 static constexpr uint8_t ESP_USB_HID_KEY_LANG2 = 0x91;
 static constexpr uint8_t ESP_USB_HID_KEY_INTERNATIONAL1 = 0x87;
@@ -210,8 +259,13 @@ public:
   bool begin() override;
   bool sendReport(const EspUsbDeviceBootKeyboardReport &report, uint32_t timeoutMs = 100);
   bool pressUsage(uint8_t usage, uint8_t modifiers = 0, uint32_t holdMs = 10);
+  bool tapUsage(uint8_t usage, uint8_t modifiers = 0, uint32_t holdMs = 10);
+  bool tapKey(char key, uint32_t holdMs = 10);
+  bool write(const char *text, uint32_t interKeyDelayMs = 5);
   bool releaseUsage(uint8_t usage, uint32_t timeoutMs = 100);
   bool releaseAll(uint32_t timeoutMs = 100);
+  void setLayout(EspUsbDeviceKeyboardLayout layout);
+  EspUsbDeviceKeyboardLayout layout() const;
   void onOutputReport(OutputReportCallback callback);
 
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
@@ -222,7 +276,12 @@ public:
   void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) override;
 
 private:
+  bool asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const;
+  static bool asciiToUsageEnUs(char key, uint8_t &usage, uint8_t &modifiers);
+  static bool asciiToUsageJaJp(char key, uint8_t &usage, uint8_t &modifiers);
+
   EspUsbDeviceBootKeyboardReport report_;
+  EspUsbDeviceKeyboardLayout layout_ = ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US;
   OutputReportCallback outputCallback_;
 };
 

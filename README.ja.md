@@ -37,7 +37,7 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 
 ユーザー向けの基本 sketch は [examples/README.ja.md](examples/README.ja.md) にまとめています。
 
-- `Keyboard`: HID usage ID を送信する boot keyboard。
+- `Keyboard`: layout 付き ASCII 文字列と HID usage ID を送信する boot keyboard。
 - `Mouse`: 移動、wheel、button を送信する boot mouse。
 - `KeyboardMouse`: keyboard + mouse の composite HID。
 

@@ -5,20 +5,12 @@ EspUsbDeviceHidKeyboard keyboard(device);
 
 static uint8_t ledState = 0;
 
-static void sendUsage(uint8_t usage, uint8_t modifiers = 0)
-{
-  if (!keyboard.pressUsage(usage, modifiers))
-  {
-    Serial.printf("KEY_FAILED usage=0x%02x error=%s\n", usage, device.lastErrorName());
-    return;
-  }
-  keyboard.releaseAll();
-}
-
 void setup()
 {
   Serial.begin(115200);
   delay(1500);
+
+  keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);
 
   keyboard.onOutputReport([](const EspUsbDeviceHidKeyboardOutputReport &report)
                           {
@@ -59,7 +51,17 @@ void loop()
   }
   lastSendMs = now;
 
-  sendUsage(ESP_USB_HID_KEY_H, ESP_USB_DEVICE_MOD_LEFT_SHIFT);
-  sendUsage(ESP_USB_HID_KEY_I);
+  if (!keyboard.write("Hi from EspUsbDevice\n"))
+  {
+    Serial.printf("WRITE_FAILED error=%s\n", device.lastErrorName());
+  }
+
+  keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP);
+  keyboard.write("@[]:\"");
+  keyboard.tapKey('\n');
+  keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);
+
+  // Raw HID usage remains available for keys that are not part of the ASCII wrapper.
+  keyboard.tapUsage(ESP_USB_HID_KEY_LANG1);
   Serial.printf("last_leds=0x%02x\n", ledState);
 }

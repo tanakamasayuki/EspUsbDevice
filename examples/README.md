@@ -10,9 +10,17 @@ HID boot keyboard device example.
 
 - Configure port, speed, VID/PID, and string descriptors with
   `EspUsbDeviceConfig`.
-- Send HID usage IDs with `EspUsbDeviceHidKeyboard::pressUsage()`.
+- Send US ASCII strings with `EspUsbDeviceHidKeyboard::write()`.
+- Use `tapKey()` for one character and `tapUsage()` / `pressUsage()` for raw HID
+  usage IDs.
+- Select the same layout IDs as EspUsbHost with `setLayout()` to change
+  character-to-usage mapping.
 - Receive NumLock, CapsLock, ScrollLock, and other LED state with
   `onOutputReport()`.
+
+The string wrapper currently implements `EN_US` and `JA_JP`. Other layout IDs
+are reserved with the same values as EspUsbHost and can be filled in
+incrementally.
 
 ## Mouse
 

@@ -9,8 +9,13 @@
 HID boot keyboard device の例です。
 
 - `EspUsbDeviceConfig` で port、speed、VID/PID、string descriptor を設定します。
-- `EspUsbDeviceHidKeyboard::pressUsage()` で HID usage ID を送信します。
+- `EspUsbDeviceHidKeyboard::write()` で US ASCII 文字列を送信します。
+- `tapKey()` で 1 文字、`tapUsage()` / `pressUsage()` で raw HID usage ID を送信します。
+- `setLayout()` で Host 側と同じ layout ID を選び、文字から usage への変換を切り替えます。
 - `onOutputReport()` で NumLock / CapsLock / ScrollLock などの LED 状態を受け取ります。
+
+現在の文字列 wrapper は `EN_US` と `JA_JP` を実装しています。他の layout ID は Host 側と
+同じ値を予約し、変換表を順次追加する方針です。
 
 ## Mouse
 
