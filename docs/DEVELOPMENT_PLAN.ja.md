@@ -87,6 +87,13 @@ uv run --env-file .env pytest peer/hid_logic --run-mode=build -vv
 - descriptor の期待値を README ではなくテストに置く。
 - 実装が TinyUSB runtime に依存しない形で descriptor builder を単体実行できる。
 
+確認結果:
+
+- 2026-06-22: `unit/descriptor` を S3 実機で実行し、device / configuration / HID report descriptor の byte assertion が通過。
+- HID keyboard interrupt IN/OUT と HID mouse interrupt IN の MPS は 8 bytes として固定。
+- keyboard + mouse composite は別 interface 構成で固定。
+- この時点の `sendHidReport()` は TinyUSB runtime 未接続のため `ESP_ERR_NOT_SUPPORTED` を返す。peer 実装時に runtime 送信へ接続する。
+
 ### Phase 2: HID Keyboard Peer
 
 目的:
@@ -168,8 +175,8 @@ probe で必ず出すログ:
 ## 当面の優先順位
 
 1. `unit/compile_smoke` を維持する。
-2. `unit/descriptor` の仕様とテストを追加する。
-3. descriptor builder を実装する。
-4. HID keyboard の device sketch と peer test を作る。
+2. `unit/descriptor` の仕様とテストを維持する。
+3. HID keyboard の device sketch と peer test を作る。
+4. TinyUSB runtime 初期化と `sendHidReport()` を接続する。
 5. HID mouse と composite に広げる。
 6. P4 probe で FS / HS device 初期化方式を確定する。
