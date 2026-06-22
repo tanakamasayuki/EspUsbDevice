@@ -105,12 +105,26 @@ static void testCompositeDescriptor()
   check(device.begin(config), "composite_begin");
 
   const uint8_t *cfg = device.configurationDescriptor(0);
-  check(le16(&cfg[2]) == 66, "composite_config_total_len");
-  check(cfg[4] == 2, "composite_interface_count");
-  check(cfg[9 + 2] == 0, "composite_keyboard_interface_number");
-  check(cfg[41 + 2] == 1, "composite_mouse_interface_number");
-  check(cfg[27 + 2] == 0x01 && cfg[34 + 2] == 0x82, "composite_keyboard_eps");
-  check(cfg[59 + 2] == 0x83, "composite_mouse_ep");
+  check(le16(&cfg[2]) == 41, "composite_config_total_len");
+  check(cfg[4] == 1, "composite_interface_count");
+  check(cfg[9 + 2] == 0, "composite_interface_number");
+  check(cfg[9 + 5] == 0x03 && cfg[9 + 6] == 0x00 && cfg[9 + 7] == 0x00, "composite_hid_no_boot_protocol");
+  check(cfg[27 + 2] == 0x01 && cfg[34 + 2] == 0x82, "composite_eps");
+  check(le16(&cfg[27 + 4]) == 16 && le16(&cfg[34 + 4]) == 16, "composite_ep_mps");
+
+  const uint8_t *report = device.hidReportDescriptor(0);
+  check(report != nullptr, "composite_report_descriptor_ptr");
+  check(report[6] == 0x85 && report[7] == 0x01, "composite_keyboard_report_id");
+  bool foundMouseReportId = false;
+  for (uint16_t i = 0; i + 1 < le16(&cfg[18 + 7]); i++)
+  {
+    if (report[i] == 0x85 && report[i + 1] == 0x02)
+    {
+      foundMouseReportId = true;
+    }
+  }
+  check(foundMouseReportId, "composite_mouse_report_id");
+  check(device.hidReportDescriptor(1) == nullptr, "composite_single_runtime_hid_instance");
 }
 
 static void testStringDescriptors()

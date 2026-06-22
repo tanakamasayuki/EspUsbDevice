@@ -25,8 +25,8 @@ assertion を安定させるためです。
 ## 初期テスト
 
 - `hid_keyboard`: raw boot keyboard report と LED output report。S3 2台構成で通過済み。
-- `hid_mouse`: raw boot mouse report。move / wheel / left / right は mouse callback、middle / back / forward は raw report として S3 2台構成で通過済み。
-- `hid_keyboard_mouse`: keyboard + mouse composite device。
+- `hid_mouse`: raw boot mouse report。move / wheel / left / right / middle / back / forward が mouse callback として S3 2台構成で通過済み。
+- `hid_keyboard_mouse`: keyboard + mouse composite device。S3 2台構成で通過済み。
 - `custom_hid`: 固定 custom report descriptor と raw input。
 - `hid_vendor`: interrupt IN/OUT と feature report。
 

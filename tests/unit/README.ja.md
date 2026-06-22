@@ -20,4 +20,5 @@ USB device stack の実行確認ではありません。
 
 USB device / configuration / HID report descriptor の byte 列を検証します。
 初期仕様として、HID keyboard と HID mouse の interrupt endpoint MPS は FS / HS とも
-8 bytes に固定します。keyboard + mouse composite は別 interface 構成です。
+8 bytes に固定します。keyboard + mouse composite は単一 HID interface + report ID 構成で、
+report ID 付き keyboard report に合わせて endpoint MPS を 16 bytes にします。

@@ -3,6 +3,7 @@
 void setup()
 {
   Serial.begin(115200);
+  delay(1500);
 
   EspUsbDeviceConfig config;
   config.port = ESP_USB_DEVICE_PORT_FULL_SPEED;

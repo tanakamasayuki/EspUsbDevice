@@ -91,7 +91,7 @@ uv run --env-file .env pytest peer/hid_logic --run-mode=build -vv
 
 - 2026-06-22: `unit/descriptor` を S3 実機で実行し、device / configuration / HID report descriptor の byte assertion が通過。
 - HID keyboard interrupt IN/OUT と HID mouse interrupt IN の MPS は 8 bytes として固定。
-- keyboard + mouse composite は別 interface 構成で固定。
+- keyboard + mouse composite は、実機 runtime では単一 HID interface + report ID 構成に寄せる。
 - この時点の `sendHidReport()` は TinyUSB runtime 未接続のため `ESP_ERR_NOT_SUPPORTED` を返す。peer 実装時に runtime 送信へ接続する。
 
 ### Phase 2: HID Keyboard Peer
@@ -145,21 +145,26 @@ CLICK 1
 
 確認結果:
 
-- 2026-06-22: `peer/hid_mouse` を S3 2台構成で実行し、move / wheel / left / right は Host mouse callback で通過。
-- middle / back / forward は USB raw report として `04` / `08` / `10` を受信できることを確認。
-- 現時点では Host mouse callback 側で middle / back / forward のイベント化が出ていないため、EspUsbDevice 側では raw report 検証を合格条件にしている。
+- 2026-06-22: `peer/hid_mouse` を S3 2台構成で実行し、move / wheel / left / right / middle / back / forward が Host mouse callback で通過。
 
 ### Phase 4: Keyboard + Mouse Composite
 
 目的:
 
 - class 合成 API を固める。
-- 初期実装では keyboard と mouse を別 interface にする。
+- Arduino TinyUSB runtime で安定して列挙できるよう、初期実装では単一 HID interface + report ID にする。
 
 合格条件:
 
 - host 側で keyboard と mouse が同時に認識される。
 - それぞれの callback / report が混線しない。
+
+確認結果:
+
+- 2026-06-22: `peer/hid_keyboard_mouse` を追加し、host / device sketch の build が通過。
+- 2026-06-22: 複数 HID interface 構成では peer 実機で `CHECK_CONFIG` 中に EP0 STALL したため、keyboard report ID 1、mouse report ID 2 の単一 HID interface 構成へ変更。
+- composite keyboard report は report ID を含めると 9 bytes になるため、composite HID endpoint MPS は 16 bytes とする。
+- 2026-06-22: `unit/compile_smoke`、`peer/hid_keyboard_mouse` を含む実機テスト 7 件が通過。
 
 ### Phase 5: P4 Probe / Loopback
 
