@@ -41,6 +41,23 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 - `Mouse`: 移動、wheel、button を送信する boot mouse。
 - `KeyboardMouse`: keyboard + mouse の composite HID。
 
+## HID Keyboard / Mouse APIs
+
+Keyboard:
+
+- `keyboard.setLayout(layout)` は EspUsbHost と同じ layout ID と keymap table を使い、
+  Device 側では ASCII から usage への逆変換に使います。
+- `keyboard.write(text)`、`tapKey(key)`、`pressKey(key)` は文字向けの上位 helper です。
+- `keyboard.tapUsage()`、`pressUsage()`、`releaseUsage()`、`releaseAll()`、
+  `sendReport()` で raw HID usage / report 制御もできます。
+- `keyboard.onOutputReport(callback)` は Host からの LED output report を受け取ります。
+
+Mouse:
+
+- `mouse.move(x, y)`、`wheel(delta)`、`sendReport(report)` は移動と raw report を送信します。
+- `mouse.press(buttons)`、`release(buttons)`、`releaseAll()`、`click(button)`、
+  `buttons()` は Device 側 button 状態を保持して扱います。
+
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。
 設計背景と `EspUsbHost` 既存テストからの移行メモは [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md)

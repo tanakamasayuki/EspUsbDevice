@@ -3,39 +3,16 @@
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 
-static bool sendUsage(uint8_t usage, uint8_t modifiers = 0)
+static bool sendAscii(char c)
 {
   const uint32_t start = millis();
   while (millis() - start < 1000)
   {
-    if (keyboard.pressUsage(usage, modifiers))
+    if (keyboard.tapKey(c))
     {
-      delay(10);
-      keyboard.releaseAll();
       return true;
     }
     delay(5);
-  }
-  return false;
-}
-
-static bool sendAscii(char c)
-{
-  if (c >= 'a' && c <= 'z')
-  {
-    return sendUsage(static_cast<uint8_t>(ESP_USB_HID_KEY_A + (c - 'a')));
-  }
-  if (c >= 'A' && c <= 'Z')
-  {
-    return sendUsage(static_cast<uint8_t>(ESP_USB_HID_KEY_A + (c - 'A')), ESP_USB_DEVICE_MOD_LEFT_SHIFT);
-  }
-  if (c == ' ')
-  {
-    return sendUsage(0x2c);
-  }
-  if (c == ',')
-  {
-    return sendUsage(0x36);
   }
   return false;
 }

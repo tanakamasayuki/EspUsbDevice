@@ -7,6 +7,7 @@ library should not call Arduino-ESP32's `USB.begin()`, `USBHIDKeyboard`, or
 ## Keyboard
 
 HID boot keyboard device example.
+See [Keyboard/README.md](Keyboard/README.md) for details.
 
 - Configure port, speed, VID/PID, and string descriptors with
   `EspUsbDeviceConfig`.
@@ -18,13 +19,13 @@ HID boot keyboard device example.
 - Receive NumLock, CapsLock, ScrollLock, and other LED state with
   `onOutputReport()`.
 
-The string wrapper currently implements `EN_US` and `JA_JP`. Other layout IDs
-are reserved with the same values as EspUsbHost and can be filled in
-incrementally.
+The string wrapper uses the same keymap tables as EspUsbHost in reverse and uses
+the same layout IDs.
 
 ## Mouse
 
 HID boot mouse device example.
+See [Mouse/README.md](Mouse/README.md) for details.
 
 - Send movement, wheel, and button state with `EspUsbDeviceHidMouse::move()`.
 - Use `click()` for a press/release pair.
@@ -34,6 +35,7 @@ HID boot mouse device example.
 
 Composite keyboard + mouse HID device example. The current composite HID
 implementation uses one HID interface with report IDs.
+See [KeyboardMouse/README.md](KeyboardMouse/README.md) for details.
 
 - Keyboard report ID: `1`
 - Mouse report ID: `2`
