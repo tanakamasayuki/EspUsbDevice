@@ -43,6 +43,25 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
 - `Mouse`: boot mouse that sends movement, wheel, and buttons.
 - `KeyboardMouse`: composite keyboard + mouse HID.
 
+## HID Keyboard / Mouse APIs
+
+Keyboard:
+
+- `keyboard.setLayout(layout)` uses the same layout IDs and keymap tables as
+  EspUsbHost, reversed for device-side ASCII-to-usage conversion.
+- `keyboard.write(text)`, `tapKey(key)`, and `pressKey(key)` are the high-level
+  text helpers.
+- `keyboard.tapUsage()`, `pressUsage()`, `releaseUsage()`, `releaseAll()`, and
+  `sendReport()` keep raw HID usage/report control available.
+- `keyboard.onOutputReport(callback)` receives host LED output reports.
+
+Mouse:
+
+- `mouse.move(x, y)`, `wheel(delta)`, and `sendReport(report)` send movement and
+  raw reports.
+- `mouse.press(buttons)`, `release(buttons)`, `releaseAll()`, `click(button)`,
+  and `buttons()` maintain device-side button state.
+
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
 Design background and migration notes from existing EspUsbHost tests are in

@@ -259,6 +259,7 @@ public:
   bool begin() override;
   bool sendReport(const EspUsbDeviceBootKeyboardReport &report, uint32_t timeoutMs = 100);
   bool pressUsage(uint8_t usage, uint8_t modifiers = 0, uint32_t holdMs = 10);
+  bool pressKey(char key, uint32_t timeoutMs = 100);
   bool tapUsage(uint8_t usage, uint8_t modifiers = 0, uint32_t holdMs = 10);
   bool tapKey(char key, uint32_t holdMs = 10);
   bool write(const char *text, uint32_t interKeyDelayMs = 5);
@@ -277,8 +278,6 @@ public:
 
 private:
   bool asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const;
-  static bool asciiToUsageEnUs(char key, uint8_t &usage, uint8_t &modifiers);
-  static bool asciiToUsageJaJp(char key, uint8_t &usage, uint8_t &modifiers);
 
   EspUsbDeviceBootKeyboardReport report_;
   EspUsbDeviceKeyboardLayout layout_ = ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US;
@@ -292,14 +291,23 @@ public:
 
   bool begin() override;
   bool sendReport(const EspUsbDeviceBootMouseReport &report, uint32_t timeoutMs = 100);
+  bool sendState(uint32_t timeoutMs = 100);
   bool move(int8_t x, int8_t y, int8_t wheel = 0, uint8_t buttons = 0, uint32_t timeoutMs = 100);
+  bool wheel(int8_t wheel, uint32_t timeoutMs = 100);
+  bool press(uint8_t buttons, uint32_t timeoutMs = 100);
+  bool release(uint8_t buttons, uint32_t timeoutMs = 100);
+  bool releaseAll(uint32_t timeoutMs = 100);
   bool click(uint8_t button, uint32_t holdMs = 10);
+  uint8_t buttons() const;
 
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 1; }
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;
+
+private:
+  uint8_t buttons_ = 0;
 };
 
 #endif

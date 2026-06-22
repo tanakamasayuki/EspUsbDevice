@@ -1,6 +1,22 @@
 #include "EspUsbDevice.h"
 
 #include <string.h>
+#include "keymap/keymap_da_dk.h"
+#include "keymap/keymap_de_de.h"
+#include "keymap/keymap_en_gb.h"
+#include "keymap/keymap_en_us.h"
+#include "keymap/keymap_es_es.h"
+#include "keymap/keymap_fi_fi.h"
+#include "keymap/keymap_fr_ch.h"
+#include "keymap/keymap_fr_fr.h"
+#include "keymap/keymap_hu_hu.h"
+#include "keymap/keymap_it_it.h"
+#include "keymap/keymap_ja_jp.h"
+#include "keymap/keymap_nb_no.h"
+#include "keymap/keymap_nl_nl.h"
+#include "keymap/keymap_pt_br.h"
+#include "keymap/keymap_pt_pt.h"
+#include "keymap/keymap_sv_se.h"
 
 #if __has_include("soc/soc_caps.h")
 #include "soc/soc_caps.h"
@@ -597,6 +613,19 @@ bool EspUsbDeviceHidKeyboard::pressUsage(uint8_t usage, uint8_t modifiers, uint3
   return sendReport(report_);
 }
 
+bool EspUsbDeviceHidKeyboard::pressKey(char key, uint32_t timeoutMs)
+{
+  uint8_t usage = 0;
+  uint8_t modifiers = 0;
+  if (!asciiToUsage(key, usage, modifiers))
+  {
+    return false;
+  }
+  report_.modifiers = modifiers;
+  report_.keys[0] = usage;
+  return sendReport(report_, timeoutMs);
+}
+
 bool EspUsbDeviceHidKeyboard::tapUsage(uint8_t usage, uint8_t modifiers, uint32_t holdMs)
 {
   if (!pressUsage(usage, modifiers))
@@ -715,325 +744,81 @@ void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportTyp
 
 bool EspUsbDeviceHidKeyboard::asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const
 {
+  const uint8_t(*table)[2] = KEYCODE_TO_ASCII_EN_US;
+  size_t tableSize = 128;
   switch (layout_)
   {
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_DA_DK:
+    table = KEYCODE_TO_ASCII_DA_DK;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_DE_DE:
+    table = KEYCODE_TO_ASCII_DE_DE;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_GB:
+    table = KEYCODE_TO_ASCII_EN_GB;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_ES_ES:
+    table = KEYCODE_TO_ASCII_ES_ES;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_FI_FI:
+    table = KEYCODE_TO_ASCII_FI_FI;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_FR_CH:
+    table = KEYCODE_TO_ASCII_FR_CH;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_FR_FR:
+    table = KEYCODE_TO_ASCII_FR_FR;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_HU_HU:
+    table = KEYCODE_TO_ASCII_HU_HU;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_IT_IT:
+    table = KEYCODE_TO_ASCII_IT_IT;
+    break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP:
-    return asciiToUsageJaJp(key, usage, modifiers);
+    table = KEYCODE_TO_ASCII_JA_JP;
+    tableSize = 0x90;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_NB_NO:
+    table = KEYCODE_TO_ASCII_NB_NO;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_NL_NL:
+    table = KEYCODE_TO_ASCII_NL_NL;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_PT_BR:
+    table = KEYCODE_TO_ASCII_PT_BR;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_PT_PT:
+    table = KEYCODE_TO_ASCII_PT_PT;
+    break;
+  case ESP_USB_DEVICE_KEYBOARD_LAYOUT_SV_SE:
+    table = KEYCODE_TO_ASCII_SV_SE;
+    break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_KO_KR:
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_ZH_CN:
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_ZH_TW:
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US:
   default:
-    return asciiToUsageEnUs(key, usage, modifiers);
+    break;
   }
-}
 
-bool EspUsbDeviceHidKeyboard::asciiToUsageEnUs(char key, uint8_t &usage, uint8_t &modifiers)
-{
   usage = 0;
   modifiers = 0;
-
-  if (key >= 'a' && key <= 'z')
+  for (size_t keycode = 0; keycode < tableSize; keycode++)
   {
-    usage = static_cast<uint8_t>(ESP_USB_HID_KEY_A + (key - 'a'));
-    return true;
+    if (table[keycode][0] == static_cast<uint8_t>(key))
+    {
+      usage = static_cast<uint8_t>(keycode);
+      return true;
+    }
+    if (table[keycode][1] == static_cast<uint8_t>(key))
+    {
+      usage = static_cast<uint8_t>(keycode);
+      modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
+      return true;
+    }
   }
-  if (key >= 'A' && key <= 'Z')
-  {
-    usage = static_cast<uint8_t>(ESP_USB_HID_KEY_A + (key - 'A'));
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  }
-  if (key >= '1' && key <= '9')
-  {
-    usage = static_cast<uint8_t>(ESP_USB_HID_KEY_1 + (key - '1'));
-    return true;
-  }
-
-  switch (key)
-  {
-  case '0':
-    usage = ESP_USB_HID_KEY_0;
-    return true;
-  case '\n':
-  case '\r':
-    usage = ESP_USB_HID_KEY_ENTER;
-    return true;
-  case '\b':
-    usage = ESP_USB_HID_KEY_BACKSPACE;
-    return true;
-  case '\t':
-    usage = ESP_USB_HID_KEY_TAB;
-    return true;
-  case ' ':
-    usage = ESP_USB_HID_KEY_SPACE;
-    return true;
-  case '-':
-    usage = ESP_USB_HID_KEY_MINUS;
-    return true;
-  case '_':
-    usage = ESP_USB_HID_KEY_MINUS;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '=':
-    usage = ESP_USB_HID_KEY_EQUAL;
-    return true;
-  case '+':
-    usage = ESP_USB_HID_KEY_EQUAL;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '[':
-    usage = ESP_USB_HID_KEY_LEFT_BRACKET;
-    return true;
-  case '{':
-    usage = ESP_USB_HID_KEY_LEFT_BRACKET;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case ']':
-    usage = ESP_USB_HID_KEY_RIGHT_BRACKET;
-    return true;
-  case '}':
-    usage = ESP_USB_HID_KEY_RIGHT_BRACKET;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '\\':
-    usage = ESP_USB_HID_KEY_BACKSLASH;
-    return true;
-  case '|':
-    usage = ESP_USB_HID_KEY_BACKSLASH;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case ';':
-    usage = ESP_USB_HID_KEY_SEMICOLON;
-    return true;
-  case ':':
-    usage = ESP_USB_HID_KEY_SEMICOLON;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '\'':
-    usage = ESP_USB_HID_KEY_APOSTROPHE;
-    return true;
-  case '"':
-    usage = ESP_USB_HID_KEY_APOSTROPHE;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '`':
-    usage = ESP_USB_HID_KEY_GRAVE;
-    return true;
-  case '~':
-    usage = ESP_USB_HID_KEY_GRAVE;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case ',':
-    usage = ESP_USB_HID_KEY_COMMA;
-    return true;
-  case '<':
-    usage = ESP_USB_HID_KEY_COMMA;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '.':
-    usage = ESP_USB_HID_KEY_DOT;
-    return true;
-  case '>':
-    usage = ESP_USB_HID_KEY_DOT;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '/':
-    usage = ESP_USB_HID_KEY_SLASH;
-    return true;
-  case '?':
-    usage = ESP_USB_HID_KEY_SLASH;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '!':
-    usage = ESP_USB_HID_KEY_1;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '@':
-    usage = ESP_USB_HID_KEY_2;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '#':
-    usage = ESP_USB_HID_KEY_3;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '$':
-    usage = ESP_USB_HID_KEY_4;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '%':
-    usage = ESP_USB_HID_KEY_5;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '^':
-    usage = ESP_USB_HID_KEY_6;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '&':
-    usage = ESP_USB_HID_KEY_7;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '*':
-    usage = ESP_USB_HID_KEY_8;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '(':
-    usage = ESP_USB_HID_KEY_9;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case ')':
-    usage = ESP_USB_HID_KEY_0;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  default:
-    return false;
-  }
-}
-
-bool EspUsbDeviceHidKeyboard::asciiToUsageJaJp(char key, uint8_t &usage, uint8_t &modifiers)
-{
-  usage = 0;
-  modifiers = 0;
-
-  if ((key >= 'a' && key <= 'z') ||
-      (key >= 'A' && key <= 'Z') ||
-      key == '\n' ||
-      key == '\r' ||
-      key == '\b' ||
-      key == '\t' ||
-      key == ' ' ||
-      key == '-' ||
-      key == ',' ||
-      key == '.' ||
-      key == '/')
-  {
-    return asciiToUsageEnUs(key, usage, modifiers);
-  }
-
-  if (key >= '1' && key <= '6')
-  {
-    usage = static_cast<uint8_t>(ESP_USB_HID_KEY_1 + (key - '1'));
-    return true;
-  }
-  if (key >= '7' && key <= '9')
-  {
-    usage = static_cast<uint8_t>(ESP_USB_HID_KEY_7 + (key - '7'));
-    return true;
-  }
-
-  switch (key)
-  {
-  case '0':
-    usage = ESP_USB_HID_KEY_0;
-    return true;
-  case '!':
-    usage = ESP_USB_HID_KEY_1;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '"':
-    usage = ESP_USB_HID_KEY_2;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '#':
-    usage = ESP_USB_HID_KEY_3;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '$':
-    usage = ESP_USB_HID_KEY_4;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '%':
-    usage = ESP_USB_HID_KEY_5;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '&':
-    usage = ESP_USB_HID_KEY_6;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '\'':
-    usage = ESP_USB_HID_KEY_7;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '(':
-    usage = ESP_USB_HID_KEY_8;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case ')':
-    usage = ESP_USB_HID_KEY_9;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '=':
-    usage = ESP_USB_HID_KEY_MINUS;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '^':
-    usage = ESP_USB_HID_KEY_EQUAL;
-    return true;
-  case '~':
-    usage = ESP_USB_HID_KEY_EQUAL;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '@':
-    usage = ESP_USB_HID_KEY_LEFT_BRACKET;
-    return true;
-  case '`':
-    usage = ESP_USB_HID_KEY_LEFT_BRACKET;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '[':
-    usage = ESP_USB_HID_KEY_RIGHT_BRACKET;
-    return true;
-  case '{':
-    usage = ESP_USB_HID_KEY_RIGHT_BRACKET;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case ']':
-    usage = ESP_USB_HID_KEY_BACKSLASH;
-    return true;
-  case '}':
-    usage = ESP_USB_HID_KEY_BACKSLASH;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case ';':
-    usage = ESP_USB_HID_KEY_SEMICOLON;
-    return true;
-  case '+':
-    usage = ESP_USB_HID_KEY_SEMICOLON;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case ':':
-    usage = ESP_USB_HID_KEY_APOSTROPHE;
-    return true;
-  case '*':
-    usage = ESP_USB_HID_KEY_APOSTROPHE;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '<':
-    usage = ESP_USB_HID_KEY_COMMA;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '>':
-    usage = ESP_USB_HID_KEY_DOT;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '?':
-    usage = ESP_USB_HID_KEY_SLASH;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '\\':
-    usage = ESP_USB_HID_KEY_INTERNATIONAL1;
-    return true;
-  case '_':
-    usage = ESP_USB_HID_KEY_INTERNATIONAL1;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  case '|':
-    usage = ESP_USB_HID_KEY_INTERNATIONAL3;
-    modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
-    return true;
-  default:
-    return false;
-  }
+  return false;
 }
 
 EspUsbDeviceHidMouse::EspUsbDeviceHidMouse(EspUsbDevice &device) : EspUsbDeviceClass(device)
@@ -1050,27 +835,60 @@ bool EspUsbDeviceHidMouse::sendReport(const EspUsbDeviceBootMouseReport &report,
   return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.classReportId(hidInstance_), &report, sizeof(report), timeoutMs);
 }
 
-bool EspUsbDeviceHidMouse::move(int8_t x, int8_t y, int8_t wheel, uint8_t buttons, uint32_t timeoutMs)
+bool EspUsbDeviceHidMouse::sendState(uint32_t timeoutMs)
 {
   EspUsbDeviceBootMouseReport report;
-  report.buttons = buttons;
+  report.buttons = buttons_;
+  return sendReport(report, timeoutMs);
+}
+
+bool EspUsbDeviceHidMouse::move(int8_t x, int8_t y, int8_t wheel, uint8_t buttons, uint32_t timeoutMs)
+{
+  buttons_ = buttons;
+  EspUsbDeviceBootMouseReport report;
+  report.buttons = buttons_;
   report.x = x;
   report.y = y;
   report.wheel = wheel;
   return sendReport(report, timeoutMs);
 }
 
+bool EspUsbDeviceHidMouse::wheel(int8_t wheel, uint32_t timeoutMs)
+{
+  return move(0, 0, wheel, buttons_, timeoutMs);
+}
+
+bool EspUsbDeviceHidMouse::press(uint8_t buttons, uint32_t timeoutMs)
+{
+  buttons_ |= buttons;
+  return sendState(timeoutMs);
+}
+
+bool EspUsbDeviceHidMouse::release(uint8_t buttons, uint32_t timeoutMs)
+{
+  buttons_ &= static_cast<uint8_t>(~buttons);
+  return sendState(timeoutMs);
+}
+
+bool EspUsbDeviceHidMouse::releaseAll(uint32_t timeoutMs)
+{
+  buttons_ = 0;
+  return sendState(timeoutMs);
+}
+
 bool EspUsbDeviceHidMouse::click(uint8_t button, uint32_t holdMs)
 {
-  (void)holdMs;
-  EspUsbDeviceBootMouseReport press;
-  press.buttons = button;
-  if (!sendReport(press))
+  if (!press(button))
   {
     return false;
   }
-  EspUsbDeviceBootMouseReport release;
-  return sendReport(release);
+  delay(holdMs);
+  return release(button);
+}
+
+uint8_t EspUsbDeviceHidMouse::buttons() const
+{
+  return buttons_;
 }
 
 uint16_t EspUsbDeviceHidMouse::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)

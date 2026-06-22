@@ -54,10 +54,12 @@ void loop()
     ok = mouse.move(0, -30);
     break;
   case 4:
-    ok = mouse.move(0, 0, 1);
+    ok = mouse.wheel(1);
     break;
   default:
-    ok = mouse.click(ESP_USB_DEVICE_MOUSE_LEFT);
+    ok = mouse.press(ESP_USB_DEVICE_MOUSE_LEFT);
+    delay(50);
+    ok = ok && mouse.release(ESP_USB_DEVICE_MOUSE_LEFT);
     break;
   }
 
