@@ -20,4 +20,6 @@ public header compilation. It does not validate the USB device stack at runtime.
 
 This verifies USB device, configuration, and HID report descriptor bytes. The
 initial spec fixes HID keyboard and HID mouse interrupt endpoint MPS to 8 bytes
-for both FS and HS. Keyboard + mouse composite uses separate interfaces.
+for both FS and HS. Keyboard + mouse composite uses one HID interface with
+report IDs and 16-byte endpoint MPS so the report-ID-prefixed keyboard report
+fits in one interrupt packet.

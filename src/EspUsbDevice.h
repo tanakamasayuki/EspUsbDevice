@@ -153,11 +153,17 @@ public:
 
 private:
   friend class EspUsbDeviceClass;
+  friend class EspUsbDeviceHidKeyboard;
+  friend class EspUsbDeviceHidMouse;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
+  static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
   static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
 
   bool buildDescriptors();
+  bool compositeHid() const;
+  uint8_t classReportId(uint8_t classInstance) const;
+  uint8_t classRuntimeInstance(uint8_t classInstance) const;
   void setLastError(esp_err_t error);
 
   EspUsbDeviceConfig config_;
@@ -169,7 +175,9 @@ private:
   esp_err_t lastError_ = ESP_OK;
   uint8_t deviceDescriptor_[18] = {};
   uint8_t configDescriptor_[MAX_CONFIG_DESCRIPTOR] = {};
+  uint8_t hidReportDescriptor_[MAX_HID_REPORT_DESCRIPTOR] = {};
   uint16_t configDescriptorLength_ = 0;
+  uint16_t hidReportDescriptorLength_ = 0;
   uint16_t stringDescriptor_[MAX_STRING_DESCRIPTOR] = {};
 };
 

@@ -37,7 +37,7 @@ tests/
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | MVP | | |
 | HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | MVP | | optional |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | planned | | |
-| Keyboard + mouse composite | ✅ descriptor only | MVP | planned | | |
+| Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | planned | | |
 | Custom HID report descriptor | planned | planned | | | |
 | HID vendor IN/OUT/Feature | planned | planned | | | |
 | Consumer/system/gamepad HID | planned | planned | | | |

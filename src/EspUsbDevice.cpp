@@ -27,6 +27,8 @@ static constexpr uint8_t USB_PROTOCOL_MOUSE = 0x02;
 
 static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
 static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT = 0x02;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD = 0x01;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_MOUSE = 0x02;
 
 static EspUsbDevice *g_activeDevice = nullptr;
 
@@ -411,6 +413,10 @@ const uint16_t *EspUsbDevice::stringDescriptor(uint8_t index, uint16_t langid)
 
 const uint8_t *EspUsbDevice::hidReportDescriptor(uint8_t instance)
 {
+  if (compositeHid())
+  {
+    return instance == 0 ? hidReportDescriptor_ : nullptr;
+  }
   if (instance >= classCount_ || !classes_[instance])
   {
     return nullptr;
@@ -420,6 +426,18 @@ const uint8_t *EspUsbDevice::hidReportDescriptor(uint8_t instance)
 
 void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
 {
+  if (compositeHid())
+  {
+    for (size_t i = 0; i < classCount_; i++)
+    {
+      if (classReportId(static_cast<uint8_t>(i)) == reportId && classes_[i])
+      {
+        classes_[i]->onHidSetReport(reportId, reportType, data, length);
+        return;
+      }
+    }
+    return;
+  }
   if (instance < classCount_ && classes_[instance])
   {
     classes_[instance]->onHidSetReport(reportId, reportType, data, length);
@@ -428,12 +446,14 @@ void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_
 
 bool EspUsbDevice::buildDescriptors()
 {
-  uint8_t interfaceCount = 0;
-  uint8_t endpointCount = 0;
-  for (size_t i = 0; i < classCount_; i++)
+  const bool composite = compositeHid();
+  uint8_t interfaceCount = composite ? 1 : 0;
+  if (!composite)
   {
-    interfaceCount += classes_[i]->interfaceCount();
-    endpointCount += classes_[i]->endpointCount();
+    for (size_t i = 0; i < classCount_; i++)
+    {
+      interfaceCount += classes_[i]->interfaceCount();
+    }
   }
 
   memset(deviceDescriptor_, 0, sizeof(deviceDescriptor_));
@@ -453,6 +473,8 @@ bool EspUsbDevice::buildDescriptors()
   deviceDescriptor_[17] = 1;
 
   memset(configDescriptor_, 0, sizeof(configDescriptor_));
+  memset(hidReportDescriptor_, 0, sizeof(hidReportDescriptor_));
+  hidReportDescriptorLength_ = 0;
   configDescriptor_[0] = 9;
   configDescriptor_[1] = USB_DESC_CONFIGURATION;
   configDescriptor_[4] = interfaceCount;
@@ -464,23 +486,82 @@ bool EspUsbDevice::buildDescriptors()
   uint16_t offset = 9;
   uint8_t interfaceNumber = 0;
   uint8_t endpointNumber = 1;
-  const uint16_t endpointSize = hidEndpointSize();
-  for (size_t i = 0; i < classCount_; i++)
+  const uint16_t endpointSize = composite ? 16 : hidEndpointSize();
+  if (composite)
   {
-    uint16_t written = classes_[i]->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, endpointSize);
-    offset += written;
-    interfaceNumber += classes_[i]->interfaceCount();
-    endpointNumber += classes_[i]->endpointCount();
-    if (offset > MAX_CONFIG_DESCRIPTOR)
+    for (size_t i = 0; i < classCount_; i++)
     {
-      setLastError(ESP_FAIL);
-      return false;
+      const uint8_t *src = classes_[i]->hidReportDescriptor();
+      const uint16_t srcLen = classes_[i]->hidReportDescriptorLength();
+      if (!src || srcLen < 6 || hidReportDescriptorLength_ + srcLen + 2 > MAX_HID_REPORT_DESCRIPTOR)
+      {
+        setLastError(ESP_FAIL);
+        return false;
+      }
+      memcpy(&hidReportDescriptor_[hidReportDescriptorLength_], src, 6);
+      hidReportDescriptorLength_ += 6;
+      hidReportDescriptor_[hidReportDescriptorLength_++] = 0x85;
+      hidReportDescriptor_[hidReportDescriptorLength_++] = classReportId(static_cast<uint8_t>(i));
+      memcpy(&hidReportDescriptor_[hidReportDescriptorLength_], src + 6, srcLen - 6);
+      hidReportDescriptorLength_ += srcLen - 6;
+    }
+
+    const uint8_t epOut = endpointNumber;
+    const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
+    uint8_t descriptor[] = {
+        9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_HID, 0x00, 0x00, 0,
+        9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(hidReportDescriptorLength_ & 0xff), static_cast<uint8_t>((hidReportDescriptorLength_ >> 8) & 0xff),
+        7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
+        7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
+    };
+    memcpy(&configDescriptor_[offset], descriptor, sizeof(descriptor));
+    offset += sizeof(descriptor);
+  }
+  else
+  {
+    for (size_t i = 0; i < classCount_; i++)
+    {
+      uint16_t written = classes_[i]->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, endpointSize);
+      offset += written;
+      interfaceNumber += classes_[i]->interfaceCount();
+      endpointNumber += classes_[i]->endpointCount();
+      if (offset > MAX_CONFIG_DESCRIPTOR)
+      {
+        setLastError(ESP_FAIL);
+        return false;
+      }
     }
   }
   configDescriptorLength_ = offset;
   put16(&configDescriptor_[2], configDescriptorLength_);
   setLastError(ESP_OK);
   return true;
+}
+
+bool EspUsbDevice::compositeHid() const
+{
+  return classCount_ > 1;
+}
+
+uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
+{
+  if (!compositeHid())
+  {
+    return 0;
+  }
+  if (classInstance < classCount_ && classes_[classInstance])
+  {
+    if (classes_[classInstance]->interfaceCount() == 1 && classes_[classInstance]->endpointCount() == 1)
+    {
+      return ESP_USB_DEVICE_HID_REPORT_ID_MOUSE;
+    }
+  }
+  return ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD;
+}
+
+uint8_t EspUsbDevice::classRuntimeInstance(uint8_t classInstance) const
+{
+  return compositeHid() ? 0 : classInstance;
 }
 
 void EspUsbDevice::setLastError(esp_err_t error)
@@ -505,7 +586,7 @@ bool EspUsbDeviceHidKeyboard::begin()
 bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceBootKeyboardReport &report, uint32_t timeoutMs)
 {
   report_ = report;
-  return device_.sendHidReport(hidInstance_, 0, &report_, sizeof(report_), timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.classReportId(hidInstance_), &report_, sizeof(report_), timeoutMs);
 }
 
 bool EspUsbDeviceHidKeyboard::pressUsage(uint8_t usage, uint8_t modifiers, uint32_t holdMs)
@@ -592,7 +673,7 @@ bool EspUsbDeviceHidMouse::begin()
 
 bool EspUsbDeviceHidMouse::sendReport(const EspUsbDeviceBootMouseReport &report, uint32_t timeoutMs)
 {
-  return device_.sendHidReport(hidInstance_, 0, &report, sizeof(report), timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.classReportId(hidInstance_), &report, sizeof(report), timeoutMs);
 }
 
 bool EspUsbDeviceHidMouse::move(int8_t x, int8_t y, int8_t wheel, uint8_t buttons, uint32_t timeoutMs)
