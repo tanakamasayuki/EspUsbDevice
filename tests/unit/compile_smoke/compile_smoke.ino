@@ -1,10 +1,7 @@
 #include "EspUsbDevice.h"
 
-void setup()
+static void compileApiSmoke()
 {
-  Serial.begin(115200);
-  delay(1500);
-
   EspUsbDevice device;
   EspUsbDeviceHidKeyboard keyboard(device);
   EspUsbDeviceHidMouse mouse(device);
@@ -23,6 +20,9 @@ void setup()
   mouseReport.buttons = ESP_USB_DEVICE_MOUSE_LEFT;
   mouseReport.x = 1;
 
+  (void)config;
+  (void)keyboardReport;
+  (void)mouseReport;
   (void)keyboard.tapKey('A');
   (void)keyboard.write("hello");
   const EspUsbDeviceKeyboardLayout layouts[] = {
@@ -58,6 +58,12 @@ void setup()
   (void)mouse.press(ESP_USB_DEVICE_MOUSE_RIGHT);
   (void)mouse.wheel(1);
   (void)mouse.releaseAll();
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  delay(1500);
 
   Serial.println("TEST_BEGIN compile_smoke");
   Serial.println("TEST_END");
