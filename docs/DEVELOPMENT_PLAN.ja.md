@@ -143,6 +143,12 @@ CLICK 1
 - host 側で移動、wheel、button press / release を検出できる。
 - endpoint MPS が descriptor unit test と一致する。
 
+確認結果:
+
+- 2026-06-22: `peer/hid_mouse` を S3 2台構成で実行し、move / wheel / left / right は Host mouse callback で通過。
+- middle / back / forward は USB raw report として `04` / `08` / `10` を受信できることを確認。
+- 現時点では Host mouse callback 側で middle / back / forward のイベント化が出ていないため、EspUsbDevice 側では raw report 検証を合格条件にしている。
+
 ### Phase 4: Keyboard + Mouse Composite
 
 目的:
@@ -183,5 +189,6 @@ probe で必ず出すログ:
 1. `unit/compile_smoke` を維持する。
 2. `unit/descriptor` の仕様とテストを維持する。
 3. HID keyboard peer を維持する。
-4. HID mouse と composite に広げる。
-5. P4 probe で FS / HS device 初期化方式を確定する。
+4. HID mouse peer を維持する。
+5. keyboard + mouse composite に広げる。
+6. P4 probe で FS / HS device 初期化方式を確定する。
