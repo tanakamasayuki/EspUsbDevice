@@ -1,0 +1,35 @@
+#######################################
+# Syntax Coloring Map For EspUsbDevice
+#######################################
+
+EspUsbDevice	KEYWORD3
+EspUsbDeviceHidKeyboard	KEYWORD3
+EspUsbDeviceHidMouse	KEYWORD3
+
+EspUsbDeviceConfig	KEYWORD1
+EspUsbDevicePort	KEYWORD1
+EspUsbDeviceSpeed	KEYWORD1
+EspUsbDeviceBootKeyboardReport	KEYWORD1
+EspUsbDeviceBootMouseReport	KEYWORD1
+EspUsbDeviceHidKeyboardOutputReport	KEYWORD1
+
+begin	KEYWORD2
+end	KEYWORD2
+ready	KEYWORD2
+task	KEYWORD2
+lastError	KEYWORD2
+lastErrorName	KEYWORD2
+onOutputReport	KEYWORD2
+sendReport	KEYWORD2
+pressUsage	KEYWORD2
+releaseUsage	KEYWORD2
+releaseAll	KEYWORD2
+move	KEYWORD2
+click	KEYWORD2
+
+ESP_USB_DEVICE_PORT_DEFAULT	LITERAL1
+ESP_USB_DEVICE_PORT_HIGH_SPEED	LITERAL1
+ESP_USB_DEVICE_PORT_FULL_SPEED	LITERAL1
+ESP_USB_DEVICE_SPEED_DEFAULT	LITERAL1
+ESP_USB_DEVICE_SPEED_FULL	LITERAL1
+ESP_USB_DEVICE_SPEED_HIGH	LITERAL1
