@@ -29,12 +29,12 @@ tests/
 
 | 機能 | unit | peer | loopback | probe | manual |
 |------|------|------|----------|-------|--------|
-| device descriptor config | 予定 | | | 予定 | |
-| FS/HS endpoint MPS | 予定 | 予定 | 予定 | 予定 | |
+| device descriptor config | ✅ `descriptor` | | | 予定 | |
+| FS/HS endpoint MPS | ✅ `descriptor` | 予定 | 予定 | 予定 | |
 | HID keyboard raw report | 予定 | MVP | MVP | | |
 | HID keyboard LED output report | 予定 | MVP | MVP | | 任意 |
-| HID mouse raw report | 予定 | MVP | 予定 | | |
-| keyboard + mouse composite | 予定 | MVP | 予定 | | |
+| HID mouse raw report | ✅ descriptorのみ | MVP | 予定 | | |
+| keyboard + mouse composite | ✅ descriptorのみ | MVP | 予定 | | |
 | custom HID report descriptor | 予定 | 予定 | | | |
 | HID vendor IN/OUT/Feature | 予定 | 予定 | | | |
 | consumer/system/gamepad HID | 予定 | 予定 | | | |

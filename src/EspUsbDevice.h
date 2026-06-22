@@ -184,6 +184,7 @@ public:
   virtual void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) {}
 
 protected:
+  friend class EspUsbDevice;
   explicit EspUsbDeviceClass(EspUsbDevice &device);
   EspUsbDevice &device_;
   uint8_t hidInstance_ = 0;

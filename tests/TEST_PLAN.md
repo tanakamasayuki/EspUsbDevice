@@ -32,12 +32,12 @@ tests/
 
 | Feature | Unit | Peer | Loopback | Probe | Manual |
 |---------|------|------|----------|-------|--------|
-| Device descriptor config | planned | | | planned | |
-| FS/HS endpoint MPS | planned | planned | planned | planned | |
+| Device descriptor config | ✅ `descriptor` | | | planned | |
+| FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | planned | |
 | HID keyboard raw report | planned | MVP | MVP | | |
 | HID keyboard LED output report | planned | MVP | MVP | | optional |
-| HID mouse raw report | planned | MVP | planned | | |
-| Keyboard + mouse composite | planned | MVP | planned | | |
+| HID mouse raw report | ✅ descriptor only | MVP | planned | | |
+| Keyboard + mouse composite | ✅ descriptor only | MVP | planned | | |
 | Custom HID report descriptor | planned | planned | | | |
 | HID vendor IN/OUT/Feature | planned | planned | | | |
 | Consumer/system/gamepad HID | planned | planned | | | |
