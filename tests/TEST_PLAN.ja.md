@@ -45,26 +45,28 @@ tests/
 
 ## 初期移行順
 
-1. `unit/descriptor`
-2. `peer/hid_keyboard`
-3. `peer/hid_mouse`
-4. `peer/hid_keyboard_mouse`
-5. `probe/p4_device_fs_probe`
-6. `probe/p4_device_hs_probe`
-7. `loopback/hid_keyboard`
-8. `peer/custom_hid`
-9. `peer/hid_vendor`
-10. `peer/hid_consumer_control`
-11. `peer/hid_system_control`
-12. `peer/hid_gamepad`
-13. `peer/usb_serial`
-14. `peer/usb_midi`
-15. `peer/usb_msc`
-16. `peer/usb_audio`
+1. `unit/compile_smoke`
+2. `unit/descriptor`
+3. `peer/hid_keyboard`
+4. `peer/hid_mouse`
+5. `peer/hid_keyboard_mouse`
+6. `probe/p4_device_fs_probe`
+7. `probe/p4_device_hs_probe`
+8. `loopback/hid_keyboard`
+9. `peer/custom_hid`
+10. `peer/hid_vendor`
+11. `peer/hid_consumer_control`
+12. `peer/hid_system_control`
+13. `peer/hid_gamepad`
+14. `peer/usb_serial`
+15. `peer/usb_midi`
+16. `peer/usb_msc`
+17. `peer/usb_audio`
 
 ## 合格条件
 
 - descriptor テストはログ確認ではなく byte 列を assert する。
+- `unit/compile_smoke` は build-only で Arduino CLI、sketch.yaml、ESP32 board package、ライブラリ解決を確認する。
 - peer テストは serial command で device board の挙動を制御する。
 - device sketch は Arduino-ESP32 標準の `USB.begin()` を呼ばない。
 - P4 テストは selected port、requested speed、TinyUSB rhport、取得できる場合は

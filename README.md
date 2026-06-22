@@ -39,3 +39,5 @@ See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
 Design background and migration notes from existing EspUsbHost tests are in
 [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md).
+The development order based on the currently verified hardware and tool
+environment is in [docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md).

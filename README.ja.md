@@ -37,3 +37,5 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 を参照してください。
 設計背景と `EspUsbHost` 既存テストからの移行メモは [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md)
 にまとめています。
+現在の実機・ツール環境に基づく開発順序は [docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md)
+にまとめています。
