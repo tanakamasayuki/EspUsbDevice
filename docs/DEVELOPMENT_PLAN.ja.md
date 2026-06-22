@@ -117,6 +117,12 @@ PRINT_LED
 - NumLock / CapsLock / ScrollLock output report を device 側 callback で受けられる。
 - device sketch は `USB.begin()` を呼ばない。
 
+確認結果:
+
+- 2026-06-22: `peer/hid_keyboard` を S3 2台構成で実行し、text input と LED output report が通過。
+- device 側は Arduino-ESP32 標準 `USB.begin()` / `USBHIDKeyboard` を使わず、`EspUsbDevice` から TinyUSB runtime を起動。
+- host 側で `HOST_CONNECTED vid=303a pid=4001` を確認。
+
 ### Phase 3: HID Mouse Peer
 
 目的:
@@ -176,7 +182,6 @@ probe で必ず出すログ:
 
 1. `unit/compile_smoke` を維持する。
 2. `unit/descriptor` の仕様とテストを維持する。
-3. HID keyboard の device sketch と peer test を作る。
-4. TinyUSB runtime 初期化と `sendHidReport()` を接続する。
-5. HID mouse と composite に広げる。
-6. P4 probe で FS / HS device 初期化方式を確定する。
+3. HID keyboard peer を維持する。
+4. HID mouse と composite に広げる。
+5. P4 probe で FS / HS device 初期化方式を確定する。

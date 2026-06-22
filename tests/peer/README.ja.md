@@ -24,7 +24,7 @@ assertion を安定させるためです。
 
 ## 初期テスト
 
-- `hid_keyboard`: raw boot keyboard report と LED output report。
+- `hid_keyboard`: raw boot keyboard report と LED output report。S3 2台構成で通過済み。
 - `hid_mouse`: raw boot mouse report。
 - `hid_keyboard_mouse`: keyboard + mouse composite device。
 - `custom_hid`: 固定 custom report descriptor と raw input。

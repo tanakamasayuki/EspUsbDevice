@@ -40,6 +40,7 @@ struct EspUsbDeviceConfig
   uint16_t pid = 0x4000;
   bool selfPowered = false;
   uint16_t maxPowerMilliamps = 100;
+  bool startTinyUsb = true;
 };
 
 static constexpr uint8_t ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK = 0x01;
@@ -164,6 +165,7 @@ private:
   size_t classCount_ = 0;
   bool running_ = false;
   bool ready_ = false;
+  bool tinyusbStarted_ = false;
   esp_err_t lastError_ = ESP_OK;
   uint8_t deviceDescriptor_[18] = {};
   uint8_t configDescriptor_[MAX_CONFIG_DESCRIPTOR] = {};

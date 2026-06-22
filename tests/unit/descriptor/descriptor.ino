@@ -35,6 +35,7 @@ static void testKeyboardDescriptor()
   config.product = "Keyboard";
   config.serialNumber = "kbd-1";
   config.maxPowerMilliamps = 100;
+  config.startTinyUsb = false;
 
   check(device.begin(config), "keyboard_begin");
 
@@ -76,6 +77,7 @@ static void testMouseDescriptor()
   config.pid = 0x4002;
   config.selfPowered = true;
   config.maxPowerMilliamps = 2;
+  config.startTinyUsb = false;
 
   check(device.begin(config), "mouse_begin");
 
@@ -98,6 +100,7 @@ static void testCompositeDescriptor()
   EspUsbDeviceHidMouse mouse(device);
   EspUsbDeviceConfig config;
   config.pid = 0x4003;
+  config.startTinyUsb = false;
 
   check(device.begin(config), "composite_begin");
 
@@ -117,6 +120,7 @@ static void testStringDescriptors()
   config.manufacturer = "EspUsb";
   config.product = "Device";
   config.serialNumber = nullptr;
+  config.startTinyUsb = false;
   check(device.begin(config), "string_begin");
 
   const uint16_t *lang = device.stringDescriptor(0, 0);
