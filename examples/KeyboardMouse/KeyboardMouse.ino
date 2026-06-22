@@ -4,16 +4,6 @@ EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 EspUsbDeviceHidMouse mouse(device);
 
-static void tapKey(uint8_t usage, uint8_t modifiers = 0)
-{
-  if (!keyboard.pressUsage(usage, modifiers))
-  {
-    Serial.printf("KEY_FAILED usage=0x%02x error=%s\n", usage, device.lastErrorName());
-    return;
-  }
-  keyboard.releaseAll();
-}
-
 void setup()
 {
   Serial.begin(115200);
@@ -48,7 +38,10 @@ void loop()
   }
   lastSendMs = now;
 
-  tapKey(ESP_USB_HID_KEY_K);
+  if (!keyboard.write("K"))
+  {
+    Serial.printf("KEY_FAILED error=%s\n", device.lastErrorName());
+  }
   if (!mouse.move(40, 0))
   {
     Serial.printf("MOVE_FAILED error=%s\n", device.lastErrorName());

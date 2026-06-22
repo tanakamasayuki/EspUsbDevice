@@ -229,9 +229,16 @@ keyboard.releaseAll();
 文字入力は別レイヤです。
 
 ```cpp
-keyboard.writeText("abc", ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);
-keyboard.writeText("かな", ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP);
+keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);
+keyboard.write("abc");
+keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP);
+keyboard.write("@[]:\"");
 ```
+
+layout ID は Host 側の `EspUsbHostKeyboardLayout` と同じ値にします。
+Device 側は `ascii -> usage/modifier`、Host 側は `usage/modifier -> ascii` の
+逆方向変換として対応させます。初期実装では `EN_US` と `JA_JP` の ASCII wrapper を
+提供し、他の layout は Host 側 keymap と同じ粒度で順次追加します。
 
 JIS キーは ASCII ではなく usage として明示します。
 

@@ -39,7 +39,7 @@ peer devices and validate the core API on real hardware:
 
 User-facing sketches are documented in [examples/README.md](examples/README.md).
 
-- `Keyboard`: boot keyboard that sends HID usage IDs.
+- `Keyboard`: boot keyboard that sends layout-aware ASCII strings and HID usage IDs.
 - `Mouse`: boot mouse that sends movement, wheel, and buttons.
 - `KeyboardMouse`: composite keyboard + mouse HID.
 
