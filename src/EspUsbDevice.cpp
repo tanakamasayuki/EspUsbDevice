@@ -2,6 +2,17 @@
 
 #include <string.h>
 
+#if __has_include("soc/soc_caps.h")
+#include "soc/soc_caps.h"
+#endif
+
+#if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED && __has_include("esp32-hal-tinyusb.h")
+#include "esp32-hal-tinyusb.h"
+#define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 1
+#else
+#define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
+#endif
+
 static constexpr uint8_t USB_DESC_DEVICE = 0x01;
 static constexpr uint8_t USB_DESC_CONFIGURATION = 0x02;
 static constexpr uint8_t USB_DESC_STRING = 0x03;
@@ -15,7 +26,9 @@ static constexpr uint8_t USB_PROTOCOL_KEYBOARD = 0x01;
 static constexpr uint8_t USB_PROTOCOL_MOUSE = 0x02;
 
 static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
-static constexpr uint8_t HID_REPORT_TYPE_OUTPUT = 0x02;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT = 0x02;
+
+static EspUsbDevice *g_activeDevice = nullptr;
 
 static void put16(uint8_t *dst, uint16_t value)
 {
@@ -98,6 +111,53 @@ static constexpr uint8_t MOUSE_REPORT_DESCRIPTOR[] = {
     0xc0,             // End Collection
 };
 
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+static uint16_t espUsbDeviceLoadHidDescriptor(uint8_t *dst, uint8_t *itf)
+{
+  if (!g_activeDevice)
+  {
+    return 0;
+  }
+  const uint8_t *config = g_activeDevice->configurationDescriptor(0);
+  if (!config)
+  {
+    return 0;
+  }
+  const uint16_t totalLength = static_cast<uint16_t>(config[2]) | (static_cast<uint16_t>(config[3]) << 8);
+  if (totalLength < 9)
+  {
+    return 0;
+  }
+  const uint16_t interfaceLength = totalLength - 9;
+  memcpy(dst, config + 9, interfaceLength);
+  *itf = static_cast<uint8_t>(*itf + config[4]);
+  return interfaceLength;
+}
+
+uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
+{
+  return g_activeDevice ? g_activeDevice->hidReportDescriptor(instance) : nullptr;
+}
+
+uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t reportId, hid_report_type_t reportType, uint8_t *buffer, uint16_t reqlen)
+{
+  (void)instance;
+  (void)reportId;
+  (void)reportType;
+  (void)buffer;
+  (void)reqlen;
+  return 0;
+}
+
+void tud_hid_set_report_cb(uint8_t instance, uint8_t reportId, hid_report_type_t reportType, const uint8_t *buffer, uint16_t bufsize)
+{
+  if (g_activeDevice)
+  {
+    g_activeDevice->handleHidSetReport(instance, reportId, static_cast<uint8_t>(reportType), buffer, bufsize);
+  }
+}
+#endif
+
 EspUsbDevice::EspUsbDevice()
 {
 }
@@ -131,8 +191,58 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
       return false;
     }
   }
+  if (config_.startTinyUsb && classCount_ > 0)
+  {
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+    if (g_activeDevice && g_activeDevice != this)
+    {
+      setLastError(ESP_ERR_INVALID_STATE);
+      return false;
+    }
+    g_activeDevice = this;
+
+    const uint8_t *configDescriptor = configurationDescriptor(0);
+    const uint16_t totalLength = static_cast<uint16_t>(configDescriptor[2]) | (static_cast<uint16_t>(configDescriptor[3]) << 8);
+    const uint16_t interfaceLength = totalLength >= 9 ? totalLength - 9 : 0;
+    esp_err_t err = tinyusb_enable_interface2(USB_INTERFACE_HID, interfaceLength, espUsbDeviceLoadHidDescriptor, false);
+    if (err != ESP_OK)
+    {
+      setLastError(err);
+      return false;
+    }
+
+    tinyusb_device_config_t tinyusbConfig = {
+        .vid = config_.vid,
+        .pid = config_.pid,
+        .product_name = config_.product,
+        .manufacturer_name = config_.manufacturer,
+        .serial_number = config_.serialNumber,
+        .fw_version = 0x0100,
+        .usb_version = 0x0200,
+        .usb_class = 0x00,
+        .usb_subclass = 0x00,
+        .usb_protocol = 0x00,
+        .usb_attributes = static_cast<uint8_t>(0x80 | (config_.selfPowered ? 0x40 : 0x00)),
+        .usb_power_ma = config_.maxPowerMilliamps,
+        .webusb_enabled = false,
+        .webusb_url = nullptr,
+    };
+
+    err = tinyusb_init(&tinyusbConfig);
+    if (err != ESP_OK)
+    {
+      setLastError(err);
+      return false;
+    }
+    tinyusbStarted_ = true;
+#else
+    setLastError(ESP_ERR_NOT_SUPPORTED);
+    return false;
+#endif
+  }
+
   running_ = true;
-  ready_ = false;
+  ready_ = tinyusbStarted_;
   setLastError(ESP_OK);
   return true;
 }
@@ -149,6 +259,12 @@ void EspUsbDevice::task()
 
 bool EspUsbDevice::ready() const
 {
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  if (tinyusbStarted_)
+  {
+    return tud_mounted();
+  }
+#endif
   return ready_;
 }
 
@@ -205,13 +321,34 @@ bool EspUsbDevice::addClass(EspUsbDeviceClass *deviceClass)
 
 bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs)
 {
+  (void)timeoutMs;
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  if (!tinyusbStarted_)
+  {
+    setLastError(ESP_ERR_INVALID_STATE);
+    return false;
+  }
+  if (!data || length == 0)
+  {
+    setLastError(ESP_FAIL);
+    return false;
+  }
+  if (!tud_hid_n_ready(instance))
+  {
+    setLastError(ESP_ERR_INVALID_STATE);
+    return false;
+  }
+  const bool ok = tud_hid_n_report(instance, reportId, data, length);
+  setLastError(ok ? ESP_OK : ESP_FAIL);
+  return ok;
+#else
   (void)instance;
   (void)reportId;
   (void)data;
   (void)length;
-  (void)timeoutMs;
   setLastError(ESP_ERR_NOT_SUPPORTED);
   return false;
+#endif
 }
 
 const uint8_t *EspUsbDevice::deviceDescriptor()
@@ -430,7 +567,7 @@ uint16_t EspUsbDeviceHidKeyboard::hidReportDescriptorLength() const
 void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
 {
   (void)reportId;
-  if (reportType != HID_REPORT_TYPE_OUTPUT || !data || length < 1 || !outputCallback_)
+  if (reportType != ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT || !data || length < 1 || !outputCallback_)
   {
     return;
   }
