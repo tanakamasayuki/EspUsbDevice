@@ -24,16 +24,6 @@ void setup()
                               event.buttonsChanged ? 1 : 0);
               });
 
-  usb.onHIDInput([](const EspUsbHostHIDInput &input)
-                 {
-                   Serial.printf("RAW len=%u", static_cast<unsigned>(input.length));
-                   for (size_t i = 0; i < input.length; i++)
-                   {
-                     Serial.printf(" %02x", input.data[i]);
-                   }
-                   Serial.println();
-                 });
-
   if (!usb.begin())
   {
     Serial.printf("HOST_BEGIN_FAILED %s\n", usb.lastErrorName());

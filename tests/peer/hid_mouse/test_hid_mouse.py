@@ -32,8 +32,8 @@ def test_hid_mouse_buttons(dut, peers):
 
     device.write("M")
     device.expect_exact("CMD M 1")
-    dut.expect_exact("RAW len=4 04 00 00 00")
-    dut.expect_exact("RAW len=4 00 00 00 00")
+    dut.expect_exact("buttons=4 previous=0 moved=0 changed=1")
+    dut.expect_exact("buttons=0 previous=4 moved=0 changed=1")
     time.sleep(0.1)
 
     device.write("m")
@@ -50,11 +50,11 @@ def test_hid_mouse_buttons(dut, peers):
 
     device.write("b")
     device.expect_exact("CMD b 1")
-    dut.expect_exact("RAW len=4 08 00 00 00")
-    dut.expect_exact("RAW len=4 00 00 00 00")
+    dut.expect_exact("buttons=8 previous=0 moved=0 changed=1")
+    dut.expect_exact("buttons=0 previous=8 moved=0 changed=1")
     time.sleep(0.1)
 
     device.write("f")
     device.expect_exact("CMD f 1")
-    dut.expect_exact("RAW len=4 10 00 00 00")
-    dut.expect_exact("RAW len=4 00 00 00 00")
+    dut.expect_exact("buttons=16 previous=0 moved=0 changed=1")
+    dut.expect_exact("buttons=0 previous=16 moved=0 changed=1")
