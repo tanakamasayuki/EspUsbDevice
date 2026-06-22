@@ -26,7 +26,7 @@
 `EspUsbDevice` 側:
 
 ```sh
-cd /home/mt/dev/EspUsbDevice/tests
+cd tests
 uv run --env-file .env pytest unit/compile_smoke --run-mode=build -vv
 ```
 
@@ -39,7 +39,7 @@ uv run --env-file .env pytest unit/compile_smoke --run-mode=build -vv
 `EspUsbHost` 側:
 
 ```sh
-cd /home/mt/dev/EspUsbHost/tests
+cd tests
 uv run --env-file .env pytest peer/hid_logic --run-mode=build -vv
 ```
 
