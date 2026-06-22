@@ -8,6 +8,12 @@ EspUsbDevice run on the same chip.
 The first target is HID keyboard loopback with descriptor logging so P4
 port/speed behavior can be verified before broader class coverage is added.
 
+## Tests
+
+- `hid_keyboard`: starts `EspUsbHost` and `EspUsbDeviceHidKeyboard` on one P4,
+  sends `k` from the device side, and verifies `KEY k` through Host
+  `onKeyboard()` as a smoke test.
+
 ## Matrix
 
 | Device | Host | Expected |

@@ -173,6 +173,14 @@ CLICK 1
 - P4 device port / speed / rhport / PHY の実際の制約を確認する。
 - FS device + FS host loopback が可能かを判断する。
 
+確認結果:
+
+- 2026-06-22: `tests/loopback/hid_keyboard` smoke を追加。P4 1台で `EspUsbHost` と
+  `EspUsbDeviceHidKeyboard` を同時起動し、Device 側 `keyboard.tapKey('k')` を Host 側
+  `onKeyboard()` で検出する構成。
+- `arduino-cli compile --profile p4_loopback tests/loopback/hid_keyboard` は通過。
+- 現 sandbox では pytest-embedded の multiprocessing socket 作成が権限で失敗するため、実機 pytest はユーザー環境で確認する。
+
 probe で必ず出すログ:
 
 - selected device port

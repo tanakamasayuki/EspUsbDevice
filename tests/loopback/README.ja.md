@@ -8,6 +8,11 @@
 最初の対象は HID keyboard loopback です。より広い class coverage に進む前に、
 descriptor ログで P4 の port / speed 挙動を確認します。
 
+## テスト
+
+- `hid_keyboard`: P4 1台上で `EspUsbHost` と `EspUsbDeviceHidKeyboard` を同時に起動し、
+  Device 側から `k` を送信して Host 側 `onKeyboard()` で `KEY k` を確認する smoke test。
+
 ## Matrix
 
 | Device | Host | 期待 |
