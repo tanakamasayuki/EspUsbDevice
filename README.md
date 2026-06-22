@@ -35,6 +35,14 @@ peer devices and validate the core API on real hardware:
 - HID boot mouse raw report sending.
 - Serial command sketches for pytest-embedded peer tests.
 
+## Examples
+
+User-facing sketches are documented in [examples/README.md](examples/README.md).
+
+- `Keyboard`: boot keyboard that sends HID usage IDs.
+- `Mouse`: boot mouse that sends movement, wheel, and buttons.
+- `KeyboardMouse`: composite keyboard + mouse HID.
+
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
 Design background and migration notes from existing EspUsbHost tests are in

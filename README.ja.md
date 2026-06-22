@@ -33,6 +33,14 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 - HID boot mouse の raw report 送信。
 - pytest-embedded peer テスト用の serial command sketch。
 
+## Examples
+
+ユーザー向けの基本 sketch は [examples/README.ja.md](examples/README.ja.md) にまとめています。
+
+- `Keyboard`: HID usage ID を送信する boot keyboard。
+- `Mouse`: 移動、wheel、button を送信する boot mouse。
+- `KeyboardMouse`: keyboard + mouse の composite HID。
+
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。
 設計背景と `EspUsbHost` 既存テストからの移行メモは [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md)
