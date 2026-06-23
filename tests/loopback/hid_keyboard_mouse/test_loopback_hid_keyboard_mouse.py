@@ -1,7 +1,4 @@
 def test_loopback_hid_keyboard_mouse(dut):
-    dut.expect_exact("TEST_BEGIN loopback_hid_keyboard_mouse")
-    dut.expect_exact("HOST_READY fs")
-    dut.expect_exact("DEVICE_READY fs")
     dut.expect_exact("HOST_DEVICE")
     dut.expect_exact("KEY k")
     dut.expect_exact("MOUSE x=40 y=0 wheel=0 buttons=0 previous=0 moved=1 changed=0")

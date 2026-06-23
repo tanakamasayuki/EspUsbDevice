@@ -39,7 +39,6 @@ static bool sendText(const char *text)
 
 static bool waitLed(uint8_t expected)
 {
-  ledReceived = false;
   const uint32_t start = millis();
   while (millis() - start < 3000)
   {
@@ -50,6 +49,14 @@ static bool waitLed(uint8_t expected)
     delay(10);
   }
   return false;
+}
+
+static bool sendKeyboardLeds(bool numLock, bool capsLock, bool scrollLock, uint8_t expected)
+{
+  ledReceived = false;
+  const bool sent = usb.setKeyboardLeds(numLock, capsLock, scrollLock);
+  Serial.printf("LED_TX %u\n", sent ? 1 : 0);
+  return sent && waitLed(expected);
 }
 
 void setup()
@@ -144,14 +151,10 @@ void setup()
   }
 
   bool ok = true;
-  Serial.printf("LED_TX %u\n", usb.setKeyboardLeds(true, false, false) ? 1 : 0);
-  ok = ok && waitLed(ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK);
-  Serial.printf("LED_TX %u\n", usb.setKeyboardLeds(false, true, false) ? 1 : 0);
-  ok = ok && waitLed(ESP_USB_DEVICE_KEYBOARD_LED_CAPS_LOCK);
-  Serial.printf("LED_TX %u\n", usb.setKeyboardLeds(false, false, true) ? 1 : 0);
-  ok = ok && waitLed(ESP_USB_DEVICE_KEYBOARD_LED_SCROLL_LOCK);
-  Serial.printf("LED_TX %u\n", usb.setKeyboardLeds(false, false, false) ? 1 : 0);
-  ok = ok && waitLed(0);
+  ok = ok && sendKeyboardLeds(true, false, false, ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK);
+  ok = ok && sendKeyboardLeds(false, true, false, ESP_USB_DEVICE_KEYBOARD_LED_CAPS_LOCK);
+  ok = ok && sendKeyboardLeds(false, false, true, ESP_USB_DEVICE_KEYBOARD_LED_SCROLL_LOCK);
+  ok = ok && sendKeyboardLeds(false, false, false, 0);
 
   if (!ok)
   {

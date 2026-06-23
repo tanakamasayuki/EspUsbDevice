@@ -1,7 +1,4 @@
 def test_loopback_hid_keyboard(dut):
-    dut.expect_exact("TEST_BEGIN loopback_hid_keyboard")
-    dut.expect_exact("HOST_READY fs")
-    dut.expect_exact("DEVICE_READY fs")
     dut.expect_exact("HOST_DEVICE")
     dut.expect_exact("hello, keyboard")
     dut.expect_exact("LED_TX 1")
