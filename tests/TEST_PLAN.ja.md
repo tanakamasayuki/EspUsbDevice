@@ -16,6 +16,21 @@ assertion で検証します。
 **手動テスト**は、物理ハードウェア、ホスト OS 側の認識、配線、目視確認が検証の
 本質に含まれる場合だけに使います。
 
+### EspUsbHost とのテスト分担
+
+`EspUsbHost` 側の peer テストは、原則として Arduino Core 標準 USB Device 実装を使った
+現状の構成を維持します。これは Host 側が `EspUsbDevice` だけに過適応することを避け、
+複数の USB Device 実装に対して動作を確認するためです。
+
+`EspUsbDevice` 側では、released `EspUsbHost` を使って Host / Device 間の詳細テストを行います。
+report descriptor、report ID、output / feature report、複合 HID、raw input callback など、
+Arduino Core 標準 USB Device では制御しづらい項目をこのリポジトリの peer / loopback で検証します。
+
+`EspUsbHost` の未リリース修正が必要な場合は、切り分け目的でローカルの Host checkout を
+差し替えて任意確認してよいです。ただし通常の合格条件は released `EspUsbHost` を対象にします。
+`EspUsbHost` がリリースされたら、このリポジトリ側の対応 Host バージョンを上げて詳細テストを
+再実行し、互換性を確認します。
+
 ```text
 tests/
   unit/       自動 - descriptor builder と report helper。

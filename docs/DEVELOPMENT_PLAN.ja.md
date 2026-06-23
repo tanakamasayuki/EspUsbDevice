@@ -53,6 +53,12 @@ uv run --env-file .env pytest peer/hid_logic --run-mode=build -vv
 仕様は実機確認の結果に基づいて段階的に固定します。
 先に大きな API を宣言しすぎず、各段階で unit / peer / loopback のどれで合格とするかを決めてから実装します。
 
+`EspUsbHost` 側の peer テストは Arduino Core 標準 USB Device 実装を使う構成を維持し、
+Host が `EspUsbDevice` に過適応しないようにします。このリポジトリでは released `EspUsbHost`
+を使って詳細な Host / Device 相互テストを行い、Host 側の未リリース修正は必要時だけ
+ローカル差し替えで任意確認します。`EspUsbHost` リリース後は対応バージョンを上げて
+詳細テストを再実行します。
+
 ### Phase 0: 環境とリポジトリ基盤
 
 目的:
