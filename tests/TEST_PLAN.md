@@ -19,6 +19,24 @@ test code and expected outputs are asserted.
 enumeration, cabling, or visual inspection is part of the behavior being
 verified.
 
+### Test Split With EspUsbHost
+
+EspUsbHost peer tests should generally keep their current setup based on the
+Arduino Core standard USB Device implementation. This avoids overfitting Host
+behavior to EspUsbDevice and keeps Host behavior checked against multiple USB
+Device implementations.
+
+EspUsbDevice tests use a released EspUsbHost version for detailed Host/Device
+tests. This repository owns detailed coverage for behavior that the Arduino Core
+standard USB Device cannot control well, such as report descriptors, report IDs,
+output/feature reports, composite HID, and raw input callbacks.
+
+When an unreleased EspUsbHost fix needs validation, local Host checkouts may be
+substituted for investigation. However, the normal acceptance target is the
+released EspUsbHost version. After an EspUsbHost release, this repository should
+raise its supported Host version and rerun the detailed tests to confirm
+compatibility.
+
 ```text
 tests/
   unit/       Automated - descriptor builders and report helpers.
