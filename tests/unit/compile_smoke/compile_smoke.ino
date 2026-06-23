@@ -5,6 +5,13 @@ static void compileApiSmoke()
   EspUsbDevice device;
   EspUsbDeviceHidKeyboard keyboard(device);
   EspUsbDeviceHidMouse mouse(device);
+  const uint8_t customDescriptor[] = {
+      0x05, 0x01,
+      0x09, 0x04,
+      0xa1, 0x01,
+      0xc0,
+  };
+  EspUsbDeviceHidCustom customHid(device, customDescriptor, sizeof(customDescriptor), 8);
 
   EspUsbDeviceConfig config;
   config.port = ESP_USB_DEVICE_PORT_FULL_SPEED;
@@ -58,6 +65,8 @@ static void compileApiSmoke()
   (void)mouse.press(ESP_USB_DEVICE_MOUSE_RIGHT);
   (void)mouse.wheel(1);
   (void)mouse.releaseAll();
+  const uint8_t customReport[8] = {};
+  (void)customHid.sendReport(customReport, sizeof(customReport));
 }
 
 void setup()

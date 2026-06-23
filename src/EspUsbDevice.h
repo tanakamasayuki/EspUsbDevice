@@ -204,6 +204,7 @@ private:
   friend class EspUsbDeviceClass;
   friend class EspUsbDeviceHidKeyboard;
   friend class EspUsbDeviceHidMouse;
+  friend class EspUsbDeviceHidCustom;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
@@ -308,6 +309,26 @@ public:
 
 private:
   uint8_t buttons_ = 0;
+};
+
+class EspUsbDeviceHidCustom : public EspUsbDeviceClass
+{
+public:
+  EspUsbDeviceHidCustom(EspUsbDevice &device, const uint8_t *reportDescriptor, uint16_t reportDescriptorLength, uint16_t inputReportSize = 64);
+
+  bool begin() override;
+  bool sendReport(const void *data, size_t length, uint8_t reportId = 0, uint32_t timeoutMs = 100);
+
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 1; }
+  const uint8_t *hidReportDescriptor() const override;
+  uint16_t hidReportDescriptorLength() const override;
+
+private:
+  const uint8_t *reportDescriptor_ = nullptr;
+  uint16_t reportDescriptorLength_ = 0;
+  uint16_t inputReportSize_ = 64;
 };
 
 #endif

@@ -38,7 +38,7 @@ tests/
 | HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | builds `hid_keyboard` | | optional |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | | |
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
-| Custom HID report descriptor | planned | planned | | | |
+| Custom HID report descriptor | planned | ✅ `custom_hid` | | | |
 | HID vendor IN/OUT/Feature | planned | planned | | | |
 | Consumer/system/gamepad HID | planned | planned | | | |
 | CDC ACM | | planned | planned | | |
@@ -91,7 +91,7 @@ First additions:
 | `sendHIDReport(... OUTPUT)` | custom/vendor HID output callback | report ID / payload / length match |
 | `sendHIDReport(... FEATURE)` | custom/vendor HID feature callback | feature reports are observed |
 | `onVendorInput()` | vendor HID IN report class | report ID 6 vendor input reaches callback |
-| HID parser fields | custom HID descriptor class | usage page / usage / bit offset / bit size / logical min/max match |
+| HID parser fields | Starts with ✅ `custom_hid` descriptor/input | usage page / usage / bit offset / bit size / logical min/max match |
 
 ### Tests Requiring More HID Classes
 
