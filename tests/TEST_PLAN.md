@@ -40,7 +40,9 @@ tests/
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
 | Custom HID report descriptor | planned | ✅ `custom_hid` | | | |
 | HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | | | |
-| Consumer/system/gamepad HID | planned | planned | | | |
+| Consumer control HID | planned | ✅ `hid_consumer_control` | | | |
+| System control HID | planned | ✅ `hid_system_control` | | | |
+| Gamepad HID | planned | planned | | | |
 | CDC ACM | | planned | planned | | |
 | USB MIDI | | planned | | | |
 | USB MSC | | planned | | | |
@@ -97,8 +99,8 @@ First additions:
 
 | Host feature | Needed Device class | Expected |
 |--------------|---------------------|----------|
-| `onConsumerControl()` | consumer control HID | play/pause, mute, volume, next/previous press/release events |
-| `onSystemControl()` | system control HID | power / sleep / wake press/release events |
+| `onConsumerControl()` | ✅ `hid_consumer_control` | play/pause, mute, volume, next/previous press/release events |
+| `onSystemControl()` | ✅ `hid_system_control` | power / sleep press/release events |
 | `onGamepad()` | gamepad HID | fields / fieldCount / changed / rawData / reportData match |
 
 ### Non-HID Host Details
@@ -113,14 +115,14 @@ tests are stable, replace Host-side `peer/usb_serial`, `peer/usb_midi`,
 2. `unit/descriptor`
 3. ✅ `peer/hid_keyboard`
 4. ✅ `peer/hid_mouse`
-5. `peer/hid_keyboard_mouse`
+5. ✅ `peer/hid_keyboard_mouse`
 6. `probe/p4_device_fs_probe`
 7. `probe/p4_device_hs_probe`
-8. `loopback/hid_keyboard`
-9. `peer/custom_hid`
-10. `peer/hid_vendor`
-11. `peer/hid_consumer_control`
-12. `peer/hid_system_control`
+8. ✅ `loopback/hid_keyboard`
+9. ✅ `peer/custom_hid`
+10. ✅ `peer/hid_vendor`
+11. ✅ `peer/hid_consumer_control`
+12. ✅ `peer/hid_system_control`
 13. `peer/hid_gamepad`
 14. `peer/usb_serial`
 15. `peer/usb_midi`

@@ -196,6 +196,10 @@ CLICK 1
 - 2026-06-23: `EspUsbDeviceHidVendor` を追加し、`peer/hid_vendor` で Host の
   `onVendorInput()`、`sendVendorFeature()`、`sendVendorOutput()` を検証。vendor HID endpoint
   MPS は report ID + 63 byte payload のため 64 bytes に設定。1 test passed。
+- 2026-06-23: `EspUsbDeviceHidConsumerControl` と `EspUsbDeviceHidSystemControl` を追加し、
+  `peer/hid_consumer_control` / `peer/hid_system_control` で Host の `onConsumerControl()` と
+  `onSystemControl()` を検証。report ID 4 + 16bit usage、report ID 5 + 8bit usage の
+  press/release が通過。2 tests passed。
 
 probe で必ず出すログ:
 
@@ -223,9 +227,10 @@ probe で必ず出すログ:
 6. P4 loopback を peer と同等の keyboard / mouse / composite coverage に保つ。
 7. Host 詳細挙動テストとして、追加 Device class なしで可能な `onHIDInput()` と
    `onHIDReportDescriptor()` の assert を loopback / peer に追加する。
-8. custom/vendor HID Device class を追加し、Host の `sendHIDReport()`、
+8. ✅ custom/vendor HID Device class を追加し、Host の `sendHIDReport()`、
    `onVendorInput()`、HID parser field decode を検証する。
 9. consumer control / system control / gamepad HID Device class を追加し、Host 側 callback を検証する。
+   consumer control / system control は peer 通過済み。次は gamepad。
 10. P4 probe で FS / HS device 初期化方式を確定する。
 
 Host 側で怪しい挙動が見つかった場合:

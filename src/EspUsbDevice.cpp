@@ -42,9 +42,6 @@ static constexpr uint8_t USB_PROTOCOL_KEYBOARD = 0x01;
 static constexpr uint8_t USB_PROTOCOL_MOUSE = 0x02;
 
 static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
-static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD = 0x01;
-static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_MOUSE = 0x02;
-static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_VENDOR = 0x06;
 
 static EspUsbDevice *g_activeDevice = nullptr;
 
@@ -144,6 +141,36 @@ static constexpr uint8_t VENDOR_REPORT_DESCRIPTOR[] = {
     0x91, 0x02,       //   Output (Data,Var,Abs)
     0x09, 0x01,       //   Usage (1)
     0xb1, 0x02,       //   Feature (Data,Var,Abs)
+    0xc0,             // End Collection
+};
+
+static constexpr uint8_t CONSUMER_CONTROL_REPORT_DESCRIPTOR[] = {
+    0x05, 0x0c,       // Usage Page (Consumer)
+    0x09, 0x01,       // Usage (Consumer Control)
+    0xa1, 0x01,       // Collection (Application)
+    0x85, 0x04,       //   Report ID (4)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x26, 0xff, 0x03, //   Logical Maximum (1023)
+    0x19, 0x00,       //   Usage Minimum (Unassigned)
+    0x2a, 0xff, 0x03, //   Usage Maximum (1023)
+    0x75, 0x10,       //   Report Size (16)
+    0x95, 0x01,       //   Report Count (1)
+    0x81, 0x00,       //   Input (Data,Array,Abs)
+    0xc0,             // End Collection
+};
+
+static constexpr uint8_t SYSTEM_CONTROL_REPORT_DESCRIPTOR[] = {
+    0x05, 0x01,       // Usage Page (Generic Desktop)
+    0x09, 0x80,       // Usage (System Control)
+    0xa1, 0x01,       // Collection (Application)
+    0x85, 0x05,       //   Report ID (5)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x03,       //   Logical Maximum (3)
+    0x19, 0x00,       //   Usage Minimum (Unassigned)
+    0x29, 0x03,       //   Usage Maximum (3)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x01,       //   Report Count (1)
+    0x81, 0x00,       //   Input (Data,Array,Abs)
     0xc0,             // End Collection
 };
 
@@ -585,9 +612,10 @@ uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
   }
   if (classInstance < classCount_ && classes_[classInstance])
   {
-    if (classes_[classInstance]->interfaceCount() == 1 && classes_[classInstance]->endpointCount() == 1)
+    const uint8_t reportId = classes_[classInstance]->hidReportId();
+    if (reportId)
     {
-      return ESP_USB_DEVICE_HID_REPORT_ID_MOUSE;
+      return reportId;
     }
   }
   return ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD;
@@ -1056,4 +1084,134 @@ void EspUsbDeviceHidVendor::onHidSetReport(uint8_t reportId, uint8_t reportType,
   {
     featureCallback_(report);
   }
+}
+
+EspUsbDeviceHidConsumerControl::EspUsbDeviceHidConsumerControl(EspUsbDevice &device) : EspUsbDeviceClass(device)
+{
+}
+
+bool EspUsbDeviceHidConsumerControl::begin()
+{
+  return true;
+}
+
+bool EspUsbDeviceHidConsumerControl::sendUsage(uint16_t usage, uint32_t timeoutMs)
+{
+  usage_ = usage;
+  uint8_t report[2] = {
+      static_cast<uint8_t>(usage & 0xff),
+      static_cast<uint8_t>((usage >> 8) & 0xff),
+  };
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), hidReportId(), report, sizeof(report), timeoutMs);
+}
+
+bool EspUsbDeviceHidConsumerControl::press(uint16_t usage, uint32_t timeoutMs)
+{
+  return sendUsage(usage, timeoutMs);
+}
+
+bool EspUsbDeviceHidConsumerControl::release(uint32_t timeoutMs)
+{
+  return sendUsage(0, timeoutMs);
+}
+
+bool EspUsbDeviceHidConsumerControl::click(uint16_t usage, uint32_t holdMs)
+{
+  if (!press(usage))
+  {
+    return false;
+  }
+  delay(holdMs);
+  return release();
+}
+
+uint16_t EspUsbDeviceHidConsumerControl::usage() const
+{
+  return usage_;
+}
+
+uint16_t EspUsbDeviceHidConsumerControl::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
+  const uint16_t reportLen = hidReportDescriptorLength();
+  uint8_t descriptor[] = {
+      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, 0x00, 0x00, 0,
+      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
+      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
+}
+
+const uint8_t *EspUsbDeviceHidConsumerControl::hidReportDescriptor() const
+{
+  return CONSUMER_CONTROL_REPORT_DESCRIPTOR;
+}
+
+uint16_t EspUsbDeviceHidConsumerControl::hidReportDescriptorLength() const
+{
+  return sizeof(CONSUMER_CONTROL_REPORT_DESCRIPTOR);
+}
+
+EspUsbDeviceHidSystemControl::EspUsbDeviceHidSystemControl(EspUsbDevice &device) : EspUsbDeviceClass(device)
+{
+}
+
+bool EspUsbDeviceHidSystemControl::begin()
+{
+  return true;
+}
+
+bool EspUsbDeviceHidSystemControl::sendUsage(uint8_t usage, uint32_t timeoutMs)
+{
+  usage_ = usage;
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), hidReportId(), &usage_, sizeof(usage_), timeoutMs);
+}
+
+bool EspUsbDeviceHidSystemControl::press(uint8_t usage, uint32_t timeoutMs)
+{
+  return sendUsage(usage, timeoutMs);
+}
+
+bool EspUsbDeviceHidSystemControl::release(uint32_t timeoutMs)
+{
+  return sendUsage(0, timeoutMs);
+}
+
+bool EspUsbDeviceHidSystemControl::click(uint8_t usage, uint32_t holdMs)
+{
+  if (!press(usage))
+  {
+    return false;
+  }
+  delay(holdMs);
+  return release();
+}
+
+uint8_t EspUsbDeviceHidSystemControl::usage() const
+{
+  return usage_;
+}
+
+uint16_t EspUsbDeviceHidSystemControl::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
+  const uint16_t reportLen = hidReportDescriptorLength();
+  uint8_t descriptor[] = {
+      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, 0x00, 0x00, 0,
+      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
+      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
+}
+
+const uint8_t *EspUsbDeviceHidSystemControl::hidReportDescriptor() const
+{
+  return SYSTEM_CONTROL_REPORT_DESCRIPTOR;
+}
+
+uint16_t EspUsbDeviceHidSystemControl::hidReportDescriptorLength() const
+{
+  return sizeof(SYSTEM_CONTROL_REPORT_DESCRIPTOR);
 }
