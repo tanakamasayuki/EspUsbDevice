@@ -146,6 +146,23 @@ static constexpr uint8_t ESP_USB_DEVICE_MOUSE_MIDDLE = 0x04;
 static constexpr uint8_t ESP_USB_DEVICE_MOUSE_BACK = 0x08;
 static constexpr uint8_t ESP_USB_DEVICE_MOUSE_FORWARD = 0x10;
 
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD = 0x01;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_MOUSE = 0x02;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_CONSUMER_CONTROL = 0x04;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_SYSTEM_CONTROL = 0x05;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_VENDOR = 0x06;
+
+static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_NEXT_TRACK = 0x00b5;
+static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_PREVIOUS_TRACK = 0x00b6;
+static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_PLAY_PAUSE = 0x00cd;
+static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_MUTE = 0x00e2;
+static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_UP = 0x00e9;
+static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_DOWN = 0x00ea;
+
+static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF = 0x01;
+static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY = 0x02;
+static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_WAKE_HOST = 0x03;
+
 struct EspUsbDeviceBootKeyboardReport
 {
   uint8_t modifiers = 0;
@@ -221,6 +238,8 @@ private:
   friend class EspUsbDeviceHidMouse;
   friend class EspUsbDeviceHidCustom;
   friend class EspUsbDeviceHidVendor;
+  friend class EspUsbDeviceHidConsumerControl;
+  friend class EspUsbDeviceHidSystemControl;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
@@ -255,6 +274,7 @@ public:
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
+  virtual uint8_t hidReportId() const { return 0; }
   virtual const uint8_t *hidReportDescriptor() const { return nullptr; }
   virtual uint16_t hidReportDescriptorLength() const { return 0; }
   virtual void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) {}
@@ -289,6 +309,7 @@ public:
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 2; }
+  uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD; }
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;
   void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) override;
@@ -320,6 +341,7 @@ public:
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 1; }
+  uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_MOUSE; }
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;
 
@@ -362,6 +384,7 @@ public:
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 2; }
+  uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_VENDOR; }
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;
   void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) override;
@@ -370,6 +393,52 @@ private:
   uint16_t reportSize_ = 63;
   ReportCallback outputCallback_;
   ReportCallback featureCallback_;
+};
+
+class EspUsbDeviceHidConsumerControl : public EspUsbDeviceClass
+{
+public:
+  explicit EspUsbDeviceHidConsumerControl(EspUsbDevice &device);
+
+  bool begin() override;
+  bool press(uint16_t usage, uint32_t timeoutMs = 100);
+  bool release(uint32_t timeoutMs = 100);
+  bool click(uint16_t usage, uint32_t holdMs = 10);
+  bool sendUsage(uint16_t usage, uint32_t timeoutMs = 100);
+  uint16_t usage() const;
+
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 1; }
+  uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_CONSUMER_CONTROL; }
+  const uint8_t *hidReportDescriptor() const override;
+  uint16_t hidReportDescriptorLength() const override;
+
+private:
+  uint16_t usage_ = 0;
+};
+
+class EspUsbDeviceHidSystemControl : public EspUsbDeviceClass
+{
+public:
+  explicit EspUsbDeviceHidSystemControl(EspUsbDevice &device);
+
+  bool begin() override;
+  bool press(uint8_t usage, uint32_t timeoutMs = 100);
+  bool release(uint32_t timeoutMs = 100);
+  bool click(uint8_t usage, uint32_t holdMs = 10);
+  bool sendUsage(uint8_t usage, uint32_t timeoutMs = 100);
+  uint8_t usage() const;
+
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 1; }
+  uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_SYSTEM_CONTROL; }
+  const uint8_t *hidReportDescriptor() const override;
+  uint16_t hidReportDescriptorLength() const override;
+
+private:
+  uint8_t usage_ = 0;
 };
 
 #endif
