@@ -913,3 +913,45 @@ uint16_t EspUsbDeviceHidMouse::hidReportDescriptorLength() const
 {
   return sizeof(MOUSE_REPORT_DESCRIPTOR);
 }
+
+EspUsbDeviceHidCustom::EspUsbDeviceHidCustom(EspUsbDevice &device, const uint8_t *reportDescriptor, uint16_t reportDescriptorLength, uint16_t inputReportSize)
+    : EspUsbDeviceClass(device), reportDescriptor_(reportDescriptor), reportDescriptorLength_(reportDescriptorLength), inputReportSize_(inputReportSize)
+{
+}
+
+bool EspUsbDeviceHidCustom::begin()
+{
+  return reportDescriptor_ && reportDescriptorLength_ > 0 && inputReportSize_ > 0;
+}
+
+bool EspUsbDeviceHidCustom::sendReport(const void *data, size_t length, uint8_t reportId, uint32_t timeoutMs)
+{
+  if (!data || length == 0)
+  {
+    return false;
+  }
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), reportId, data, length, timeoutMs);
+}
+
+uint16_t EspUsbDeviceHidCustom::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
+  const uint16_t mps = inputReportSize_ < endpointSize ? inputReportSize_ : endpointSize;
+  uint8_t descriptor[] = {
+      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, 0x00, 0x00, 0,
+      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportDescriptorLength_ & 0xff), static_cast<uint8_t>((reportDescriptorLength_ >> 8) & 0xff),
+      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(mps & 0xff), static_cast<uint8_t>((mps >> 8) & 0xff), 1,
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
+}
+
+const uint8_t *EspUsbDeviceHidCustom::hidReportDescriptor() const
+{
+  return reportDescriptor_;
+}
+
+uint16_t EspUsbDeviceHidCustom::hidReportDescriptorLength() const
+{
+  return reportDescriptorLength_;
+}

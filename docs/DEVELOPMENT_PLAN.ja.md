@@ -190,6 +190,9 @@ CLICK 1
 - 2026-06-23: `peer/hid_keyboard` / `hid_mouse` / `hid_keyboard_mouse` にも同じ Host 詳細
   assert を追加。`peer/hid_mouse` / `peer/hid_keyboard_mouse` は通過、`peer/hid_keyboard`
   は HID input ログが文字列出力に割り込まないよう Host sketch を buffer 出力に変更して通過。
+- 2026-06-23: `EspUsbDeviceHidCustom` を追加し、`peer/custom_hid` で Host の
+  `onHIDReportDescriptor()` と `onHIDInput()` を custom report descriptor / 8 byte input report
+  で検証。1 test passed。
 
 probe で必ず出すログ:
 
