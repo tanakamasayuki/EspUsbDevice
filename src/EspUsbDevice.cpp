@@ -42,9 +42,9 @@ static constexpr uint8_t USB_PROTOCOL_KEYBOARD = 0x01;
 static constexpr uint8_t USB_PROTOCOL_MOUSE = 0x02;
 
 static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
-static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT = 0x02;
 static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD = 0x01;
 static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_MOUSE = 0x02;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_VENDOR = 0x06;
 
 static EspUsbDevice *g_activeDevice = nullptr;
 
@@ -126,6 +126,24 @@ static constexpr uint8_t MOUSE_REPORT_DESCRIPTOR[] = {
     0x95, 0x03,       //     Report Count (3)
     0x81, 0x06,       //     Input (Data,Var,Rel)
     0xc0,             //   End Collection
+    0xc0,             // End Collection
+};
+
+static constexpr uint8_t VENDOR_REPORT_DESCRIPTOR[] = {
+    0x06, 0x00, 0xff, // Usage Page (Vendor Defined 0xff00)
+    0x09, 0x01,       // Usage (1)
+    0xa1, 0x01,       // Collection (Application)
+    0x85, 0x06,       //   Report ID (6)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x26, 0xff, 0x00, //   Logical Maximum (255)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x3f,       //   Report Count (63)
+    0x09, 0x01,       //   Usage (1)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0x09, 0x01,       //   Usage (1)
+    0x91, 0x02,       //   Output (Data,Var,Abs)
+    0x09, 0x01,       //   Usage (1)
+    0xb1, 0x02,       //   Feature (Data,Var,Abs)
     0xc0,             // End Collection
 };
 
@@ -954,4 +972,88 @@ const uint8_t *EspUsbDeviceHidCustom::hidReportDescriptor() const
 uint16_t EspUsbDeviceHidCustom::hidReportDescriptorLength() const
 {
   return reportDescriptorLength_;
+}
+
+EspUsbDeviceHidVendor::EspUsbDeviceHidVendor(EspUsbDevice &device, uint16_t reportSize)
+    : EspUsbDeviceClass(device), reportSize_(reportSize)
+{
+}
+
+bool EspUsbDeviceHidVendor::begin()
+{
+  return reportSize_ > 0 && reportSize_ <= 63;
+}
+
+bool EspUsbDeviceHidVendor::sendInput(const void *data, size_t length, uint32_t timeoutMs)
+{
+  if (!data || length == 0)
+  {
+    return false;
+  }
+  if (length > reportSize_)
+  {
+    length = reportSize_;
+  }
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), ESP_USB_DEVICE_HID_REPORT_ID_VENDOR, data, length, timeoutMs);
+}
+
+void EspUsbDeviceHidVendor::onOutputReport(ReportCallback callback)
+{
+  outputCallback_ = callback;
+}
+
+void EspUsbDeviceHidVendor::onFeatureReport(ReportCallback callback)
+{
+  featureCallback_ = callback;
+}
+
+uint16_t EspUsbDeviceHidVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  const uint8_t epOut = endpointNumber;
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
+  uint16_t mps = static_cast<uint16_t>(reportSize_ + 1);
+  if (mps < endpointSize)
+  {
+    mps = endpointSize;
+  }
+  if (mps > 64)
+  {
+    mps = 64;
+  }
+  const uint16_t reportLen = hidReportDescriptorLength();
+  uint8_t descriptor[] = {
+      9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_HID, 0x00, 0x00, 0,
+      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
+      7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(mps & 0xff), static_cast<uint8_t>((mps >> 8) & 0xff), 1,
+      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(mps & 0xff), static_cast<uint8_t>((mps >> 8) & 0xff), 1,
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
+}
+
+const uint8_t *EspUsbDeviceHidVendor::hidReportDescriptor() const
+{
+  return VENDOR_REPORT_DESCRIPTOR;
+}
+
+uint16_t EspUsbDeviceHidVendor::hidReportDescriptorLength() const
+{
+  return sizeof(VENDOR_REPORT_DESCRIPTOR);
+}
+
+void EspUsbDeviceHidVendor::onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
+{
+  EspUsbDeviceHidReport report;
+  report.reportId = reportId;
+  report.reportType = reportType;
+  report.data = data;
+  report.length = length;
+  if (reportType == ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT && outputCallback_)
+  {
+    outputCallback_(report);
+  }
+  else if (reportType == ESP_USB_DEVICE_HID_REPORT_TYPE_FEATURE && featureCallback_)
+  {
+    featureCallback_(report);
+  }
 }

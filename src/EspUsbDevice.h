@@ -171,6 +171,21 @@ struct EspUsbDeviceBootMouseReport
   int8_t wheel = 0;
 };
 
+enum EspUsbDeviceHidReportType : uint8_t
+{
+  ESP_USB_DEVICE_HID_REPORT_TYPE_INPUT = 0x01,
+  ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT = 0x02,
+  ESP_USB_DEVICE_HID_REPORT_TYPE_FEATURE = 0x03,
+};
+
+struct EspUsbDeviceHidReport
+{
+  uint8_t reportId = 0;
+  uint8_t reportType = 0;
+  const uint8_t *data = nullptr;
+  uint16_t length = 0;
+};
+
 class EspUsbDeviceClass;
 
 class EspUsbDevice
@@ -205,6 +220,7 @@ private:
   friend class EspUsbDeviceHidKeyboard;
   friend class EspUsbDeviceHidMouse;
   friend class EspUsbDeviceHidCustom;
+  friend class EspUsbDeviceHidVendor;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
@@ -329,6 +345,31 @@ private:
   const uint8_t *reportDescriptor_ = nullptr;
   uint16_t reportDescriptorLength_ = 0;
   uint16_t inputReportSize_ = 64;
+};
+
+class EspUsbDeviceHidVendor : public EspUsbDeviceClass
+{
+public:
+  using ReportCallback = std::function<void(const EspUsbDeviceHidReport &)>;
+
+  explicit EspUsbDeviceHidVendor(EspUsbDevice &device, uint16_t reportSize = 63);
+
+  bool begin() override;
+  bool sendInput(const void *data, size_t length, uint32_t timeoutMs = 100);
+  void onOutputReport(ReportCallback callback);
+  void onFeatureReport(ReportCallback callback);
+
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 2; }
+  const uint8_t *hidReportDescriptor() const override;
+  uint16_t hidReportDescriptorLength() const override;
+  void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) override;
+
+private:
+  uint16_t reportSize_ = 63;
+  ReportCallback outputCallback_;
+  ReportCallback featureCallback_;
 };
 
 #endif

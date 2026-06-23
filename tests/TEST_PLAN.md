@@ -39,7 +39,7 @@ tests/
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | | |
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
 | Custom HID report descriptor | planned | ✅ `custom_hid` | | | |
-| HID vendor IN/OUT/Feature | planned | planned | | | |
+| HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | | | |
 | Consumer/system/gamepad HID | planned | planned | | | |
 | CDC ACM | | planned | planned | | |
 | USB MIDI | | planned | | | |
@@ -88,9 +88,9 @@ First additions:
 | Host feature | Needed Device support | Expected |
 |--------------|-----------------------|----------|
 | `sendSetProtocol()` | HID Set_Protocol callback/state | boot/report protocol requests are observed |
-| `sendHIDReport(... OUTPUT)` | custom/vendor HID output callback | report ID / payload / length match |
-| `sendHIDReport(... FEATURE)` | custom/vendor HID feature callback | feature reports are observed |
-| `onVendorInput()` | vendor HID IN report class | report ID 6 vendor input reaches callback |
+| `sendHIDReport(... OUTPUT)` | ✅ `hid_vendor` | report ID / payload / length match |
+| `sendHIDReport(... FEATURE)` | ✅ `hid_vendor` | feature reports are observed |
+| `onVendorInput()` | ✅ `hid_vendor` | report ID 6 vendor input reaches callback |
 | HID parser fields | Starts with ✅ `custom_hid` descriptor/input | usage page / usage / bit offset / bit size / logical min/max match |
 
 ### Tests Requiring More HID Classes
