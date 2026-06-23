@@ -187,6 +187,9 @@ CLICK 1
 - 2026-06-23: `loopback/hid_keyboard` / `hid_mouse` / `hid_keyboard_mouse` に
   `onHIDInput()` と `onHIDReportDescriptor()` の assert を追加し、Host 側 raw input /
   descriptor callback を検証。3 tests passed。
+- 2026-06-23: `peer/hid_keyboard` / `hid_mouse` / `hid_keyboard_mouse` にも同じ Host 詳細
+  assert を追加。`peer/hid_mouse` / `peer/hid_keyboard_mouse` は通過、`peer/hid_keyboard`
+  は HID input ログが文字列出力に割り込まないよう Host sketch を buffer 出力に変更して通過。
 
 probe で必ず出すログ:
 
