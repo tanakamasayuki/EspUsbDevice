@@ -46,6 +46,67 @@ tests/
 | USB MSC | | planned | | | |
 | USB Audio | | planned | | | |
 
+## Detailed EspUsbHost Behavior Tests
+
+One reason for this library is that existing USB device implementations do not
+give enough control over report descriptors, report IDs, output/feature reports,
+and composite HID behavior. That also leaves corresponding EspUsbHost behavior
+under-tested.
+
+EspUsbDevice should provide device sketches that intentionally exercise Host
+callbacks, parsers, and control transfers in both peer and loopback setups.
+
+If suspicious Host-side behavior, missing coverage, parser gaps, or callback
+inconsistencies are found, do not hide them with Device-side workarounds. The
+Device side should emit valid USB descriptors, reports, and control responses,
+then preserve a reproducible peer/loopback sketch, expected behavior, and logs.
+The issue should be fixed in EspUsbHost. Device-side workarounds are only
+acceptable when the behavior is a documented USB, Arduino-ESP32, or TinyUSB
+runtime constraint.
+
+### Tests Possible Without More Device Classes
+
+| Host feature | Device stimulus | Expected |
+|--------------|-----------------|----------|
+| `onKeyboard()` | `keyboard.write()` / `tapKey()` / `pressUsage()` | `pressed` / `released` / `keycode` / `ascii` / `modifiers` match |
+| Keyboard layout | Pair Device and Host layouts | Symbols match for `EN_US`, `JA_JP`, and other layouts |
+| Keyboard lock state | Host `setKeyboardLeds()`, Device `onOutputReport()` | NumLock / CapsLock / ScrollLock output reports are received |
+| `onMouse()` | `mouse.move()` / `wheel()` / `press()` / `release()` | `x` / `y` / `wheel` / `buttons` / `previousButtons` / `moved` / `buttonsChanged` match |
+| `onHIDInput()` | Keyboard/mouse input reports | raw input address / interface / subclass / protocol / length / bytes match |
+| `onHIDReportDescriptor()` | Keyboard/mouse/composite descriptors | interface, reported length, actual length, and descriptor bytes match |
+| Report ID routing | Keyboard + mouse composite | Report ID 1 keyboard and report ID 2 mouse do not mix |
+
+First additions:
+
+1. Add `onHIDInput()` and `onHIDReportDescriptor()` assertions to `loopback/hid_keyboard`.
+2. Add raw input bytes alongside parsed mouse events to `loopback/hid_mouse`.
+3. Add report ID 1 / 2 raw input assertions to `loopback/hid_keyboard_mouse`.
+4. Mirror the same checks in `peer/*` and record S3 peer vs P4 loopback differences.
+
+### Tests Requiring Small Device-Class Additions
+
+| Host feature | Needed Device support | Expected |
+|--------------|-----------------------|----------|
+| `sendSetProtocol()` | HID Set_Protocol callback/state | boot/report protocol requests are observed |
+| `sendHIDReport(... OUTPUT)` | custom/vendor HID output callback | report ID / payload / length match |
+| `sendHIDReport(... FEATURE)` | custom/vendor HID feature callback | feature reports are observed |
+| `onVendorInput()` | vendor HID IN report class | report ID 6 vendor input reaches callback |
+| HID parser fields | custom HID descriptor class | usage page / usage / bit offset / bit size / logical min/max match |
+
+### Tests Requiring More HID Classes
+
+| Host feature | Needed Device class | Expected |
+|--------------|---------------------|----------|
+| `onConsumerControl()` | consumer control HID | play/pause, mute, volume, next/previous press/release events |
+| `onSystemControl()` | system control HID | power / sleep / wake press/release events |
+| `onGamepad()` | gamepad HID | fields / fieldCount / changed / rawData / reportData match |
+
+### Non-HID Host Details
+
+CDC ACM, MIDI, MSC, and Audio require matching Device classes. After HID detail
+tests are stable, replace Host-side `peer/usb_serial`, `peer/usb_midi`,
+`peer/usb_msc`, and `peer/usb_audio` devices with EspUsbDevice implementations.
+
 ## Initial Migration Order
 
 1. `unit/compile_smoke`
