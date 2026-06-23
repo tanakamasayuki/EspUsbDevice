@@ -81,7 +81,7 @@ First additions:
 1. ✅ Add `onHIDInput()` and `onHIDReportDescriptor()` assertions to `loopback/hid_keyboard`.
 2. ✅ Add raw input bytes alongside parsed mouse events to `loopback/hid_mouse`.
 3. ✅ Add report ID 1 / 2 raw input assertions to `loopback/hid_keyboard_mouse`.
-4. Mirror the same checks in `peer/*` and record S3 peer vs P4 loopback differences.
+4. ✅ Mirror the same checks in `peer/*` and record S3 peer vs P4 loopback differences.
 
 ### Tests Requiring Small Device-Class Additions
 

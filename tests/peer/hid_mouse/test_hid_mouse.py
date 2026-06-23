@@ -5,9 +5,11 @@ def test_hid_mouse_move(dut, peers):
     device = peers["device"]
     device.expect_exact("DEVICE_BEGIN 1")
     dut.expect_exact("HOST_CONNECTED")
+    dut.expect_exact("HID_DESC iface=0")
 
     device.write("r")
     device.expect_exact("CMD r 1")
+    dut.expect_exact("HID_INPUT iface=0 subclass=1 protocol=2 len=4 data=00 28 00 00")
     dut.expect_exact("MOUSE x=40 y=0 wheel=0 buttons=0 previous=0 moved=1 changed=0")
 
     device.write("l")

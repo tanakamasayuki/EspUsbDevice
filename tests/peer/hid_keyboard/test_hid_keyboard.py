@@ -2,9 +2,11 @@ def test_hid_keyboard_text(dut, peers):
     device = peers["device"]
     device.expect_exact("DEVICE_BEGIN 1")
     dut.expect_exact("HOST_CONNECTED")
+    dut.expect_exact("HID_DESC iface=0")
 
     text = "hello, keyboard"
     device.write(text)
+    dut.expect_exact("HID_INPUT iface=0 subclass=1 protocol=1 len=8 data=00 00 0b")
     dut.expect_exact(text)
 
 
