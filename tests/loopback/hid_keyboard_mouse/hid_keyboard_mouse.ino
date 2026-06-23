@@ -30,6 +30,36 @@ static bool waitMouseStep(uint8_t expected, uint32_t timeoutMs = 3000)
   return mouseStep >= expected;
 }
 
+static bool sendMouseMove(int8_t x, int8_t y, int8_t wheel = 0, uint8_t buttons = 0)
+{
+  const uint32_t start = millis();
+  while (millis() - start < 3000)
+  {
+    if (mouse.move(x, y, wheel, buttons))
+    {
+      return true;
+    }
+    delay(5);
+  }
+  Serial.printf("MOUSE_MOVE_FAILED %s\n", device.lastErrorName());
+  return false;
+}
+
+static bool sendMouseClick(uint8_t button)
+{
+  const uint32_t start = millis();
+  while (millis() - start < 3000)
+  {
+    if (mouse.click(button, 50))
+    {
+      return true;
+    }
+    delay(5);
+  }
+  Serial.printf("MOUSE_CLICK_FAILED %s\n", device.lastErrorName());
+  return false;
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -113,8 +143,10 @@ void setup()
   delay(500);
 
   bool ok = keyboard.tapKey('k') && waitFor(keyReceived, 3000);
-  ok = ok && mouse.move(40, 0) && waitMouseStep(1);
-  ok = ok && mouse.click(ESP_USB_DEVICE_MOUSE_LEFT, 50) && waitMouseStep(3);
+  delay(500);
+  ok = ok && sendMouseMove(40, 0) && waitMouseStep(1);
+  delay(100);
+  ok = ok && sendMouseClick(ESP_USB_DEVICE_MOUSE_LEFT) && waitMouseStep(3);
 
   Serial.println(ok ? "TEST_END ok" : "TEST_END fail");
   Serial.println(ok ? "OK" : "NG");
