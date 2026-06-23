@@ -193,6 +193,9 @@ CLICK 1
 - 2026-06-23: `EspUsbDeviceHidCustom` を追加し、`peer/custom_hid` で Host の
   `onHIDReportDescriptor()` と `onHIDInput()` を custom report descriptor / 8 byte input report
   で検証。1 test passed。
+- 2026-06-23: `EspUsbDeviceHidVendor` を追加し、`peer/hid_vendor` で Host の
+  `onVendorInput()`、`sendVendorFeature()`、`sendVendorOutput()` を検証。vendor HID endpoint
+  MPS は report ID + 63 byte payload のため 64 bytes に設定。1 test passed。
 
 probe で必ず出すログ:
 
