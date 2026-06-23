@@ -209,4 +209,18 @@ probe で必ず出すログ:
 3. HID keyboard peer を維持する。
 4. HID mouse peer を維持する。
 5. keyboard + mouse composite に広げる。
-6. P4 probe で FS / HS device 初期化方式を確定する。
+6. P4 loopback を peer と同等の keyboard / mouse / composite coverage に保つ。
+7. Host 詳細挙動テストとして、追加 Device class なしで可能な `onHIDInput()` と
+   `onHIDReportDescriptor()` の assert を loopback / peer に追加する。
+8. custom/vendor HID Device class を追加し、Host の `sendHIDReport()`、
+   `onVendorInput()`、HID parser field decode を検証する。
+9. consumer control / system control / gamepad HID Device class を追加し、Host 側 callback を検証する。
+10. P4 probe で FS / HS device 初期化方式を確定する。
+
+Host 側で怪しい挙動が見つかった場合:
+
+- Device 側 workaround で隠さない。
+- Device 側は妥当な descriptor / report / control 応答を維持する。
+- 再現用 peer / loopback sketch、期待値、実ログを残す。
+- `EspUsbHost` 側の修正対象として切り出す。
+- Device 側の回避は USB 仕様、Arduino-ESP32、TinyUSB runtime の制約として説明できる場合に限る。

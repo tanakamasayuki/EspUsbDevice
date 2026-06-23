@@ -43,6 +43,66 @@ tests/
 | USB MSC | | 予定 | | | |
 | USB Audio | | 予定 | | | |
 
+## EspUsbHost 詳細挙動テスト計画
+
+このライブラリを作る理由の1つは、既存 USB device 実装では report descriptor、
+report ID、output / feature report、複合 HID などの細かい挙動を十分に制御できず、
+対応する `EspUsbHost` 側も細かい自動テストを作りづらかったことです。
+
+`EspUsbDevice` では、Host 側の callback / parser / control transfer を意図的に刺激できる
+device sketch を作り、Host 側の細かい挙動を peer / loopback の両方で検証します。
+
+Host 側で怪しい挙動、仕様漏れ、parser の取りこぼし、callback 不整合が見つかった場合は、
+Device 側の workaround で隠さない方針です。Device 側は USB device として妥当な descriptor /
+report / control 応答を出し、再現できる peer / loopback sketch、期待値、実ログを残します。
+そのうえで `EspUsbHost` 側の修正対象として切り出します。Device 側で回避を入れるのは、
+USB 仕様上または Arduino-ESP32 / TinyUSB runtime 上の制約として説明できる場合に限ります。
+
+### 追加実装なしで先に確認する項目
+
+現在の keyboard / mouse / composite 実装だけで確認できる Host 側 API です。
+
+| Host 側機能 | Device 側刺激 | 期待 |
+|-------------|---------------|------|
+| `onKeyboard()` | `keyboard.write()` / `tapKey()` / `pressUsage()` | `pressed` / `released` / `keycode` / `ascii` / `modifiers` が期待通り |
+| keyboard layout | Device layout と Host layout を組み合わせる | `EN_US` / `JA_JP` などで記号キーが期待通り |
+| keyboard lock state | Host `setKeyboardLeds()`、Device `onOutputReport()` | NumLock / CapsLock / ScrollLock の output report を受けられる |
+| `onMouse()` | `mouse.move()` / `wheel()` / `press()` / `release()` | `x` / `y` / `wheel` / `buttons` / `previousButtons` / `moved` / `buttonsChanged` が期待通り |
+| `onHIDInput()` | keyboard / mouse input report | raw input report の address / interface / subclass / protocol / length / bytes が期待通り |
+| `onHIDReportDescriptor()` | keyboard / mouse / composite descriptor | report descriptor の interface、reported length、実 length、先頭/末尾 byte が期待通り |
+| report ID 分岐 | keyboard + mouse composite | report ID 1 keyboard、report ID 2 mouse が混線しない |
+
+最初に追加する具体テスト:
+
+1. `loopback/hid_keyboard` に `onHIDInput()` と `onHIDReportDescriptor()` の assert を追加する。
+2. `loopback/hid_mouse` に raw input report byte と parsed mouse event の対応 assert を追加する。
+3. `loopback/hid_keyboard_mouse` に report ID 1 / 2 の raw input assert を追加する。
+4. 同じ観点を `peer/*` にも戻し、S3 2台構成と P4 1台構成の差を記録する。
+
+### Device 側に小さな class 追加で確認する項目
+
+| Host 側機能 | 必要な Device 側追加 | 期待 |
+|-------------|----------------------|------|
+| `sendSetProtocol()` | HID Set_Protocol を受ける callback / state | boot/report protocol 切替 request を観測できる |
+| `sendHIDReport(... OUTPUT)` | custom/vendor HID output report callback | Host からの Output report の report ID / payload / length を検証 |
+| `sendHIDReport(... FEATURE)` | custom/vendor HID feature report callback | Host からの Feature report を検証 |
+| `onVendorInput()` | vendor HID IN report class | report ID 6 の vendor input が callback へ届く |
+| HID parser fields | custom HID descriptor class | usage page / usage / bit offset / bit size / logical min/max を検証 |
+
+### HID class 追加で確認する項目
+
+| Host 側機能 | 必要な Device 側 class | 期待 |
+|-------------|------------------------|------|
+| `onConsumerControl()` | consumer control HID | play/pause、mute、volume、next/previous が press/release で届く |
+| `onSystemControl()` | system control HID | power / sleep / wake が press/release で届く |
+| `onGamepad()` | gamepad HID | fields / fieldCount / changed / rawData / reportData が期待通り |
+
+### HID 以外の Host 詳細テスト
+
+CDC ACM、MIDI、MSC、Audio は Device 側 class 実装が必要です。HID の詳細テストが安定してから、
+Host 側既存 `peer/usb_serial`、`peer/usb_midi`、`peer/usb_msc`、`peer/usb_audio` を
+EspUsbDevice 実装へ置き換えます。
+
 ## 初期移行順
 
 1. `unit/compile_smoke`
