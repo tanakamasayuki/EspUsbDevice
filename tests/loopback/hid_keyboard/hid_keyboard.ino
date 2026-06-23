@@ -13,6 +13,15 @@ static char textBuffer[32] = {};
 static size_t textLength = 0;
 static uint8_t lastLeds = 0;
 
+static void printBytes(const uint8_t *data, size_t length, size_t maxLength)
+{
+  const size_t count = length < maxLength ? length : maxLength;
+  for (size_t i = 0; i < count; i++)
+  {
+    Serial.printf("%s%02x", i == 0 ? "" : " ", data[i]);
+  }
+}
+
 static bool waitFor(volatile bool &flag, uint32_t timeoutMs)
 {
   const uint32_t start = millis();
@@ -87,6 +96,27 @@ void setup()
                        textReceived = true;
                      }
                    }
+                 });
+
+  usb.onHIDReportDescriptor([](const EspUsbHostHIDReportDescriptor &descriptor)
+                            {
+                              Serial.printf("HID_DESC iface=%u reported=%u len=%u first=%02x last=%02x\n",
+                                            descriptor.interfaceNumber,
+                                            descriptor.reportedLength,
+                                            descriptor.length,
+                                            descriptor.length > 0 ? descriptor.data[0] : 0,
+                                            descriptor.length > 0 ? descriptor.data[descriptor.length - 1] : 0);
+                            });
+
+  usb.onHIDInput([](const EspUsbHostHIDInput &input)
+                 {
+                   Serial.printf("HID_INPUT iface=%u subclass=%u protocol=%u len=%u data=",
+                                 input.interfaceNumber,
+                                 input.subclass,
+                                 input.protocol,
+                                 static_cast<unsigned>(input.length));
+                   printBytes(input.data, input.length, 9);
+                   Serial.println();
                  });
 
   EspUsbHostConfig hostConfig;

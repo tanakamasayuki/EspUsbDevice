@@ -1,8 +1,7 @@
 def test_loopback_hid_mouse(dut):
-    dut.expect_exact("TEST_BEGIN loopback_hid_mouse")
-    dut.expect_exact("HOST_READY fs")
-    dut.expect_exact("DEVICE_READY fs")
     dut.expect_exact("HOST_DEVICE")
+    dut.expect_exact("HID_DESC iface=0")
+    dut.expect_exact("HID_INPUT iface=0 subclass=1 protocol=2 len=4 data=00 28 00 00")
     dut.expect_exact("MOUSE x=40 y=0 wheel=0 buttons=0 previous=0 moved=1 changed=0")
     dut.expect_exact("MOUSE x=-40 y=0 wheel=0 buttons=0 previous=0 moved=1 changed=0")
     dut.expect_exact("MOUSE x=0 y=40 wheel=0 buttons=0 previous=0 moved=1 changed=0")

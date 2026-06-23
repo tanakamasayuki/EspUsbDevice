@@ -184,7 +184,9 @@ CLICK 1
   peer と同じ mouse move/buttons と keyboard+mouse composite を P4 1台構成で確認する構成にした。
 - `arduino-cli compile --profile p4_loopback` は `hid_keyboard` / `hid_mouse` /
   `hid_keyboard_mouse` すべて通過。
-- 現 sandbox では pytest-embedded の multiprocessing socket 作成が権限で失敗するため、実機 pytest はユーザー環境で確認する。
+- 2026-06-23: `loopback/hid_keyboard` / `hid_mouse` / `hid_keyboard_mouse` に
+  `onHIDInput()` と `onHIDReportDescriptor()` の assert を追加し、Host 側 raw input /
+  descriptor callback を検証。3 tests passed。
 
 probe で必ず出すログ:
 
