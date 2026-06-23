@@ -37,6 +37,12 @@ released EspUsbHost version. After an EspUsbHost release, this repository should
 raise its supported Host version and rerun the detailed tests to confirm
 compatibility.
 
+For this reason, peer and loopback default profiles use the released EspUsbHost
+version. Local-validation profiles `s3_peer_local` and `p4_loopback_local` use a
+local checkout instead, for example
+`uv run --env-file .env pytest peer/ --profile=s3_peer_local` or
+`uv run --env-file .env pytest loopback/ --profile=p4_loopback_local`.
+
 ```text
 tests/
   unit/       Automated - descriptor builders and report helpers.
