@@ -46,6 +46,7 @@ loopback テストで確認できる範囲を広げています。
 - `Mouse`: 移動、wheel、button を送信する boot mouse。
 - `KeyboardMouse`: keyboard + mouse の composite HID。
 - `MSC`: RAM buffer を block device として公開する Mass Storage Class。
+- `MSCFatRamDisk`: RAM 上の FAT12 disk で Host とファイルを受け渡す Mass Storage Class。
 
 ## HID Keyboard / Mouse APIs
 
@@ -81,6 +82,8 @@ MSC:
 
 - `EspUsbDeviceMsc` は inquiry、media 状態、capacity、read/write callback を扱います。
 - `EspUsbDeviceMscRamDisk` は外部 RAM buffer を block device として公開する helper です。
+- `EspUsbDeviceMscFatRamDisk` は RAM 上に小さい FAT12 image を作り、Host との一時ファイル
+  受け渡しに使う helper です。
 - MSC は block device と filesystem が別です。OS からドライブとしてマウントするには、
   有効な FAT image か SD card などの実 storage を read/write callback に接続してください。
 - flash / SPIFFS / LittleFS の直接公開は標準方針にしません。永続ストレージは SD card、

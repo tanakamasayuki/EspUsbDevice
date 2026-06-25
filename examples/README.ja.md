@@ -51,6 +51,16 @@ flash / SPIFFS / LittleFS の直接公開は標準 example では扱わず、実
 SD card を優先します。RAM disk は、FAT helper を追加すると firmware、設定ファイル、
 Wi-Fi 転送用の一時ファイル受け渡しにも使えます。
 
+## MSCFatRamDisk
+
+RAM 上に小さい FAT12 image を作る MSC device の例です。
+詳しくは [MSCFatRamDisk/README.ja.md](MSCFatRamDisk/README.ja.md) を参照してください。
+
+- `EspUsbDeviceMscFatRamDisk` で Host から mount できる RAM disk を作ります。
+- `README.TXT` を初期ファイルとして配置します。
+- Host が `CONFIG.TXT` をコピーして eject した後、Device 側で file scan / read します。
+- firmware update、設定ファイル投入、Wi-Fi 転送などの一時ファイル受け渡しの基本形です。
+
 ## 注意
 
 - USB device として使う側の ESP32-S3 などを USB host に接続してください。

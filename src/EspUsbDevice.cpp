@@ -1,5 +1,6 @@
 #include "EspUsbDevice.h"
 
+#include <ctype.h>
 #include <string.h>
 #include "keymap/keymap_da_dk.h"
 #include "keymap/keymap_de_de.h"
@@ -1466,6 +1467,366 @@ int32_t EspUsbDeviceMscRamDisk::write(uint32_t lba, uint32_t offset, uint8_t *bu
   }
   memcpy(storage_ + start, buffer, size);
   return static_cast<int32_t>(size);
+}
+
+static void put16le(uint8_t *dst, uint16_t value)
+{
+  dst[0] = static_cast<uint8_t>(value & 0xff);
+  dst[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+}
+
+static void put32le(uint8_t *dst, uint32_t value)
+{
+  dst[0] = static_cast<uint8_t>(value & 0xff);
+  dst[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+  dst[2] = static_cast<uint8_t>((value >> 16) & 0xff);
+  dst[3] = static_cast<uint8_t>((value >> 24) & 0xff);
+}
+
+EspUsbDeviceMscFatRamDisk::EspUsbDeviceMscFatRamDisk(uint8_t *storage, size_t size)
+    : storage_(storage),
+      size_(size),
+      blockCount_(static_cast<uint32_t>(size / 512)),
+      blocks_(storage, static_cast<uint32_t>(size / 512), 512)
+{
+}
+
+bool EspUsbDeviceMscFatRamDisk::format(const char *volumeLabel)
+{
+  if (!storage_ || blockCount_ < 16)
+  {
+    return false;
+  }
+
+  memset(storage_, 0, blockCount_ * 512);
+  rootDirSectors_ = static_cast<uint16_t>(((rootEntryCount_ * 32) + 511) / 512);
+
+  uint16_t sectorsPerFat = 1;
+  uint16_t clusters = 0;
+  for (uint8_t i = 0; i < 8; ++i)
+  {
+    const uint32_t dataSectors = blockCount_ - 1 - rootDirSectors_ - (2 * sectorsPerFat);
+    clusters = static_cast<uint16_t>(dataSectors);
+    const uint32_t fatBytes = ((static_cast<uint32_t>(clusters) + 2) * 3 + 1) / 2;
+    const uint16_t requiredSectorsPerFat = static_cast<uint16_t>((fatBytes + 511) / 512);
+    if (requiredSectorsPerFat == sectorsPerFat)
+    {
+      break;
+    }
+    sectorsPerFat = requiredSectorsPerFat;
+  }
+
+  sectorsPerFat_ = sectorsPerFat;
+  dataStartSector_ = static_cast<uint16_t>(1 + (2 * sectorsPerFat_) + rootDirSectors_);
+  if (dataStartSector_ >= blockCount_)
+  {
+    return false;
+  }
+  clusterCount_ = static_cast<uint16_t>(blockCount_ - dataStartSector_);
+  nextFreeCluster_ = 2;
+  nextRootEntry_ = 0;
+
+  uint8_t *boot = storage_;
+  boot[0] = 0xeb;
+  boot[1] = 0x3c;
+  boot[2] = 0x90;
+  memcpy(boot + 3, "MSDOS5.0", 8);
+  put16le(boot + 11, 512);
+  boot[13] = 1;
+  put16le(boot + 14, 1);
+  boot[16] = 2;
+  put16le(boot + 17, rootEntryCount_);
+  put16le(boot + 19, static_cast<uint16_t>(blockCount_));
+  boot[21] = 0xf8;
+  put16le(boot + 22, sectorsPerFat_);
+  put16le(boot + 24, 1);
+  put16le(boot + 26, 1);
+  put32le(boot + 28, 0);
+  put32le(boot + 32, 0);
+  boot[36] = 0x80;
+  boot[38] = 0x29;
+  put32le(boot + 39, 0x45535055);
+  memset(boot + 43, ' ', 11);
+  if (volumeLabel)
+  {
+    for (uint8_t i = 0; i < 11 && volumeLabel[i]; ++i)
+    {
+      boot[43 + i] = static_cast<uint8_t>(toupper(static_cast<unsigned char>(volumeLabel[i])));
+    }
+  }
+  memcpy(boot + 54, "FAT12   ", 8);
+  boot[510] = 0x55;
+  boot[511] = 0xaa;
+
+  storage_[512] = 0xf8;
+  storage_[513] = 0xff;
+  storage_[514] = 0xff;
+  memcpy(storage_ + (1 + sectorsPerFat_) * 512, storage_ + 512, sectorsPerFat_ * 512);
+  return true;
+}
+
+bool EspUsbDeviceMscFatRamDisk::attach(EspUsbDeviceMsc &msc)
+{
+  if (!blocks_.valid())
+  {
+    return false;
+  }
+  msc.onStartStop([this](uint8_t powerCondition, bool start, bool loadEject)
+                  { return handleStartStop(powerCondition, start, loadEject); });
+  return blocks_.attach(msc);
+}
+
+void EspUsbDeviceMscFatRamDisk::onEject(EjectCallback callback)
+{
+  ejectCallback_ = callback;
+}
+
+bool EspUsbDeviceMscFatRamDisk::addFile(const char *name, const uint8_t *data, size_t size)
+{
+  char fatName[11];
+  if (!normalizeName(name, fatName) || !data)
+  {
+    return false;
+  }
+  if (exists(name) || nextRootEntry_ >= rootEntryCount_)
+  {
+    return false;
+  }
+
+  uint16_t firstCluster = 0;
+  size_t clusterTotal = 0;
+  if (!allocateClusters(size, &firstCluster, &clusterTotal))
+  {
+    return false;
+  }
+
+  size_t remaining = size;
+  const uint8_t *src = data;
+  uint16_t cluster = firstCluster;
+  for (size_t i = 0; i < clusterTotal; ++i)
+  {
+    uint8_t *dst = clusterPtr(cluster);
+    const size_t chunk = remaining > 512 ? 512 : remaining;
+    if (chunk > 0)
+    {
+      memcpy(dst, src, chunk);
+      src += chunk;
+      remaining -= chunk;
+    }
+    cluster = fatEntry(cluster);
+  }
+
+  uint8_t *entry = rootEntry(nextRootEntry_++);
+  memcpy(entry, fatName, 11);
+  entry[11] = 0x20;
+  put16le(entry + 26, firstCluster);
+  put32le(entry + 28, static_cast<uint32_t>(size));
+  return true;
+}
+
+bool EspUsbDeviceMscFatRamDisk::addTextFile(const char *name, const char *text)
+{
+  if (!text)
+  {
+    return false;
+  }
+  return addFile(name, reinterpret_cast<const uint8_t *>(text), strlen(text));
+}
+
+bool EspUsbDeviceMscFatRamDisk::exists(const char *name) const
+{
+  char fatName[11];
+  return normalizeName(name, fatName) && findFile(fatName, nullptr, nullptr);
+}
+
+size_t EspUsbDeviceMscFatRamDisk::fileSize(const char *name) const
+{
+  char fatName[11];
+  uint32_t size = 0;
+  if (!normalizeName(name, fatName) || !findFile(fatName, nullptr, &size))
+  {
+    return 0;
+  }
+  return size;
+}
+
+size_t EspUsbDeviceMscFatRamDisk::readFile(const char *name, uint8_t *buffer, size_t size) const
+{
+  char fatName[11];
+  uint32_t firstCluster = 0;
+  uint32_t storedSize = 0;
+  if (!normalizeName(name, fatName) || !findFile(fatName, &firstCluster, &storedSize) || !buffer)
+  {
+    return 0;
+  }
+  size_t copied = 0;
+  size_t remaining = storedSize < size ? storedSize : size;
+  uint16_t cluster = static_cast<uint16_t>(firstCluster);
+  while (remaining > 0 && cluster >= 2 && cluster < 0xff8)
+  {
+    const size_t chunk = remaining > 512 ? 512 : remaining;
+    memcpy(buffer + copied, clusterPtr(cluster), chunk);
+    copied += chunk;
+    remaining -= chunk;
+    cluster = fatEntry(cluster);
+  }
+  return copied;
+}
+
+uint32_t EspUsbDeviceMscFatRamDisk::blockCount() const
+{
+  return blockCount_;
+}
+
+uint16_t EspUsbDeviceMscFatRamDisk::blockSize() const
+{
+  return 512;
+}
+
+size_t EspUsbDeviceMscFatRamDisk::byteSize() const
+{
+  return blockCount_ * 512;
+}
+
+bool EspUsbDeviceMscFatRamDisk::normalizeName(const char *name, char out[11]) const
+{
+  if (!name || !name[0])
+  {
+    return false;
+  }
+  memset(out, ' ', 11);
+  uint8_t index = 0;
+  uint8_t extIndex = 8;
+  bool extension = false;
+  for (const char *p = name; *p; ++p)
+  {
+    if (*p == '.')
+    {
+      extension = true;
+      continue;
+    }
+    const uint8_t outIndex = extension ? extIndex++ : index++;
+    if ((!extension && outIndex >= 8) || (extension && outIndex >= 11))
+    {
+      return false;
+    }
+    const unsigned char c = static_cast<unsigned char>(*p);
+    if (!(isalnum(c) || c == '_' || c == '-' || c == '~'))
+    {
+      return false;
+    }
+    out[outIndex] = static_cast<char>(toupper(c));
+  }
+  return index > 0;
+}
+
+bool EspUsbDeviceMscFatRamDisk::findFile(const char name[11], uint32_t *firstCluster, uint32_t *size) const
+{
+  for (uint16_t i = 0; i < rootEntryCount_; ++i)
+  {
+    const uint8_t *entry = rootEntry(i);
+    if (entry[0] == 0x00)
+    {
+      return false;
+    }
+    if (entry[0] == 0xe5 || (entry[11] & 0x08))
+    {
+      continue;
+    }
+    if (memcmp(entry, name, 11) == 0)
+    {
+      if (firstCluster)
+      {
+        *firstCluster = entry[26] | (static_cast<uint32_t>(entry[27]) << 8);
+      }
+      if (size)
+      {
+        *size = entry[28] | (static_cast<uint32_t>(entry[29]) << 8) | (static_cast<uint32_t>(entry[30]) << 16) | (static_cast<uint32_t>(entry[31]) << 24);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+bool EspUsbDeviceMscFatRamDisk::allocateClusters(size_t size, uint16_t *firstCluster, size_t *clusterTotal)
+{
+  const size_t needed = size == 0 ? 1 : ((size + 511) / 512);
+  if (nextFreeCluster_ + needed > static_cast<uint16_t>(clusterCount_ + 2))
+  {
+    return false;
+  }
+  *firstCluster = nextFreeCluster_;
+  *clusterTotal = needed;
+  for (size_t i = 0; i < needed; ++i)
+  {
+    const uint16_t cluster = static_cast<uint16_t>(nextFreeCluster_ + i);
+    const uint16_t value = (i + 1 == needed) ? 0xfff : static_cast<uint16_t>(cluster + 1);
+    setFatEntry(cluster, value);
+  }
+  nextFreeCluster_ = static_cast<uint16_t>(nextFreeCluster_ + needed);
+  return true;
+}
+
+void EspUsbDeviceMscFatRamDisk::setFatEntry(uint16_t cluster, uint16_t value)
+{
+  value &= 0x0fff;
+  for (uint8_t fat = 0; fat < 2; ++fat)
+  {
+    uint8_t *base = storage_ + (1 + fat * sectorsPerFat_) * 512;
+    const uint32_t offset = cluster + (cluster / 2);
+    if (cluster & 1)
+    {
+      base[offset] = static_cast<uint8_t>((base[offset] & 0x0f) | ((value << 4) & 0xf0));
+      base[offset + 1] = static_cast<uint8_t>((value >> 4) & 0xff);
+    }
+    else
+    {
+      base[offset] = static_cast<uint8_t>(value & 0xff);
+      base[offset + 1] = static_cast<uint8_t>((base[offset + 1] & 0xf0) | ((value >> 8) & 0x0f));
+    }
+  }
+}
+
+uint16_t EspUsbDeviceMscFatRamDisk::fatEntry(uint16_t cluster) const
+{
+  const uint8_t *base = storage_ + 512;
+  const uint32_t offset = cluster + (cluster / 2);
+  if (cluster & 1)
+  {
+    return static_cast<uint16_t>(((base[offset] >> 4) | (base[offset + 1] << 4)) & 0x0fff);
+  }
+  return static_cast<uint16_t>((base[offset] | ((base[offset + 1] & 0x0f) << 8)) & 0x0fff);
+}
+
+uint8_t *EspUsbDeviceMscFatRamDisk::clusterPtr(uint16_t cluster)
+{
+  return storage_ + static_cast<size_t>(dataStartSector_ + cluster - 2) * 512;
+}
+
+const uint8_t *EspUsbDeviceMscFatRamDisk::clusterPtr(uint16_t cluster) const
+{
+  return storage_ + static_cast<size_t>(dataStartSector_ + cluster - 2) * 512;
+}
+
+uint8_t *EspUsbDeviceMscFatRamDisk::rootEntry(uint16_t index)
+{
+  return storage_ + static_cast<size_t>(1 + 2 * sectorsPerFat_) * 512 + static_cast<size_t>(index) * 32;
+}
+
+const uint8_t *EspUsbDeviceMscFatRamDisk::rootEntry(uint16_t index) const
+{
+  return storage_ + static_cast<size_t>(1 + 2 * sectorsPerFat_) * 512 + static_cast<size_t>(index) * 32;
+}
+
+bool EspUsbDeviceMscFatRamDisk::handleStartStop(uint8_t powerCondition, bool start, bool loadEject)
+{
+  (void)powerCondition;
+  if ((!start || loadEject) && ejectCallback_)
+  {
+    ejectCallback_();
+  }
+  return true;
 }
 
 EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbDeviceClass(device)

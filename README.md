@@ -49,6 +49,8 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
 - `Mouse`: boot mouse that sends movement, wheel, and buttons.
 - `KeyboardMouse`: composite keyboard + mouse HID.
 - `MSC`: Mass Storage Class device that exposes a RAM buffer as a block device.
+- `MSCFatRamDisk`: Mass Storage Class device that exchanges files through a RAM
+  FAT12 disk.
 
 ## HID Keyboard / Mouse APIs
 
@@ -88,6 +90,8 @@ MSC:
 - `EspUsbDeviceMsc` handles inquiry strings, media state, capacity, and
   read/write callbacks.
 - `EspUsbDeviceMscRamDisk` wraps an external RAM buffer as a block device.
+- `EspUsbDeviceMscFatRamDisk` creates a small FAT12 image in RAM for temporary
+  host/device file handoff.
 - MSC separates the block device from the filesystem. To make a drive mountable
   by an OS, provide a valid FAT image or connect the read/write callbacks to
   real storage such as an SD card.
