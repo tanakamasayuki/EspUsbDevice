@@ -221,6 +221,9 @@ CLICK 1
 - 2026-06-25: `peer/hid_keyboard_layout` を追加し、Host / Device の layout を `EN_US` /
   `JA_JP` に揃えた状態で記号キーの round-trip を検証。default `s3_peer_host` で
   2 tests passed。
+- 2026-06-25: `EspUsbDeviceCdcSerial` を追加し、`peer/usb_serial` を作成。
+  Device -> Host、Host -> Device、line coding callback を検証する構成にした。
+  host / device sketch は build 通過。default `s3_peer_host` で 3 tests passed。
 
 probe で必ず出すログ:
 
@@ -251,7 +254,8 @@ probe で必ず出すログ:
 8. ✅ custom/vendor HID Device class を追加し、Host の `sendHIDReport()`、
    `onVendorInput()`、HID parser field decode を検証する。
 9. ✅ consumer control / system control / gamepad HID Device class を追加し、Host 側 callback を検証する。
-10. P4 probe で FS / HS device 初期化方式を確定する。
+10. CDC ACM の `peer/usb_serial` 実機確認を行い、必要なら line state / flush / buffering を調整する。
+11. P4 probe で FS / HS device 初期化方式を確定する。
 
 Host 側で怪しい挙動が見つかった場合:
 

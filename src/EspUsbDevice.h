@@ -2,6 +2,7 @@
 #define ESP_USB_DEVICE_H
 
 #include <Arduino.h>
+#include <Print.h>
 #include <functional>
 #include "espusbdevice_version.h"
 
@@ -232,6 +233,20 @@ struct EspUsbDeviceHidProtocolEvent
   uint8_t protocol = 0;
 };
 
+struct EspUsbDeviceCdcLineCoding
+{
+  uint32_t baud = 0;
+  uint8_t stopBits = 0;
+  uint8_t parity = 0;
+  uint8_t dataBits = 0;
+};
+
+struct EspUsbDeviceCdcLineState
+{
+  bool dtr = false;
+  bool rts = false;
+};
+
 class EspUsbDeviceClass;
 
 class EspUsbDevice
@@ -264,6 +279,7 @@ public:
 
 private:
   friend class EspUsbDeviceClass;
+  friend class EspUsbDeviceCdcSerial;
   friend class EspUsbDeviceHidKeyboard;
   friend class EspUsbDeviceHidMouse;
   friend class EspUsbDeviceHidCustom;
@@ -278,6 +294,8 @@ private:
 
   bool buildDescriptors();
   bool compositeHid() const;
+  bool hasHidClass() const;
+  bool hasCdcClass() const;
   uint8_t classReportId(uint8_t classInstance) const;
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
   void setLastError(esp_err_t error);
@@ -302,6 +320,8 @@ class EspUsbDeviceClass
 public:
   virtual ~EspUsbDeviceClass() = default;
   virtual bool begin() { return true; }
+  virtual bool isHid() const { return true; }
+  virtual bool isCdc() const { return false; }
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
@@ -316,6 +336,49 @@ protected:
   explicit EspUsbDeviceClass(EspUsbDevice &device);
   EspUsbDevice &device_;
   uint8_t hidInstance_ = 0;
+};
+
+class EspUsbDeviceCdcSerial : public EspUsbDeviceClass, public Print
+{
+public:
+  using LineCodingCallback = std::function<void(const EspUsbDeviceCdcLineCoding &)>;
+  using LineStateCallback = std::function<void(const EspUsbDeviceCdcLineState &)>;
+  using RxCallback = std::function<void(size_t)>;
+
+  explicit EspUsbDeviceCdcSerial(EspUsbDevice &device);
+
+  bool begin() override;
+  bool isHid() const override { return false; }
+  bool isCdc() const override { return true; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 2; }
+  uint8_t endpointCount() const override { return 3; }
+
+  int available();
+  int read();
+  size_t read(uint8_t *buffer, size_t size);
+  size_t write(uint8_t data) override;
+  size_t write(const uint8_t *buffer, size_t size) override;
+  void flush();
+  bool connected() const;
+  const EspUsbDeviceCdcLineCoding &lineCoding() const;
+  const EspUsbDeviceCdcLineState &lineState() const;
+  void onLineCoding(LineCodingCallback callback);
+  void onLineState(LineStateCallback callback);
+  void onRx(RxCallback callback);
+
+  void handleLineCoding(uint32_t baud, uint8_t stopBits, uint8_t parity, uint8_t dataBits);
+  void handleLineState(bool dtr, bool rts);
+  void handleRx();
+
+private:
+  friend class EspUsbDevice;
+
+  EspUsbDeviceCdcLineCoding lineCoding_;
+  EspUsbDeviceCdcLineState lineState_;
+  LineCodingCallback lineCodingCallback_;
+  LineStateCallback lineStateCallback_;
+  RxCallback rxCallback_;
 };
 
 class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass
