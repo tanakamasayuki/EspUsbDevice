@@ -97,7 +97,7 @@ runtime constraint.
 | Host feature | Device stimulus | Expected |
 |--------------|-----------------|----------|
 | `onKeyboard()` | `keyboard.write()` / `tapKey()` / `pressUsage()` | `pressed` / `released` / `keycode` / `ascii` / `modifiers` match |
-| Keyboard layout | Pair Device and Host layouts | Symbols match for `EN_US`, `JA_JP`, and other layouts |
+| Keyboard layout | ✅ `hid_keyboard_layout` | Symbols match for `EN_US` and `JA_JP` |
 | Keyboard lock state | Host `setKeyboardLeds()`, Device `onOutputReport()` | NumLock / CapsLock / ScrollLock output reports are received |
 | `onMouse()` | `mouse.move()` / `wheel()` / `press()` / `release()` | `x` / `y` / `wheel` / `buttons` / `previousButtons` / `moved` / `buttonsChanged` match |
 | `onHIDInput()` | Keyboard/mouse input reports | raw input address / interface / subclass / protocol / length / bytes match |
@@ -147,16 +147,17 @@ tests are stable, replace Host-side `peer/usb_serial`, `peer/usb_midi`,
 8. ✅ `loopback/hid_keyboard`
 9. ✅ `loopback/hid_mouse`
 10. ✅ `loopback/hid_keyboard_mouse`
-11. ✅ `peer/custom_hid`
-12. ✅ `peer/hid_vendor`
-13. ✅ `peer/hid_consumer_control`
-14. ✅ `peer/hid_system_control`
-15. ✅ `peer/hid_gamepad`
-16. ✅ `loopback/hid_gamepad`
-17. `peer/usb_serial`
-18. `peer/usb_midi`
-19. `peer/usb_msc`
-20. `peer/usb_audio`
+11. ✅ `peer/hid_keyboard_layout`
+12. ✅ `peer/custom_hid`
+13. ✅ `peer/hid_vendor`
+14. ✅ `peer/hid_consumer_control`
+15. ✅ `peer/hid_system_control`
+16. ✅ `peer/hid_gamepad`
+17. ✅ `loopback/hid_gamepad`
+18. `peer/usb_serial`
+19. `peer/usb_midi`
+20. `peer/usb_msc`
+21. `peer/usb_audio`
 
 ## Acceptance Rules
 
