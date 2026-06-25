@@ -34,5 +34,7 @@ PC.
 - `hid_vendor`: interrupt IN/OUT and feature report.
 - `usb_serial`: CDC ACM serial. Device -> Host, Host -> Device, and line
   coding callbacks pass on the two-board S3 setup.
+- `usb_midi`: USB MIDI. Channel voice messages and short Host -> Device SysEx
+  packet splitting pass on the two-board S3 setup.
 
-Later phases add MIDI, MSC, and Audio.
+Later phases add MSC and Audio.

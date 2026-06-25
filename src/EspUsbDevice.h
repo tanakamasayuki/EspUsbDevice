@@ -175,6 +175,14 @@ static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF = 0x01;
 static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY = 0x02;
 static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_WAKE_HOST = 0x03;
 
+static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF = 0x08;
+static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_NOTE_ON = 0x09;
+static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS = 0x0a;
+static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE = 0x0b;
+static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE = 0x0c;
+static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE = 0x0d;
+static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_PITCH_BEND_CHANGE = 0x0e;
+
 struct EspUsbDeviceBootKeyboardReport
 {
   uint8_t modifiers = 0;
@@ -247,6 +255,14 @@ struct EspUsbDeviceCdcLineState
   bool rts = false;
 };
 
+struct EspUsbDeviceMidiPacket
+{
+  uint8_t header = 0;
+  uint8_t byte1 = 0;
+  uint8_t byte2 = 0;
+  uint8_t byte3 = 0;
+};
+
 class EspUsbDeviceClass;
 
 class EspUsbDevice
@@ -296,6 +312,7 @@ private:
   bool compositeHid() const;
   bool hasHidClass() const;
   bool hasCdcClass() const;
+  bool hasMidiClass() const;
   uint8_t classReportId(uint8_t classInstance) const;
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
   void setLastError(esp_err_t error);
@@ -322,6 +339,7 @@ public:
   virtual bool begin() { return true; }
   virtual bool isHid() const { return true; }
   virtual bool isCdc() const { return false; }
+  virtual bool isMidi() const { return false; }
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
@@ -379,6 +397,33 @@ private:
   LineCodingCallback lineCodingCallback_;
   LineStateCallback lineStateCallback_;
   RxCallback rxCallback_;
+};
+
+class EspUsbDeviceMidi : public EspUsbDeviceClass
+{
+public:
+  explicit EspUsbDeviceMidi(EspUsbDevice &device);
+
+  bool begin() override;
+  bool isHid() const override { return false; }
+  bool isMidi() const override { return true; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 2; }
+  uint8_t endpointCount() const override { return 2; }
+
+  bool readPacket(EspUsbDeviceMidiPacket &packet);
+  bool writePacket(const EspUsbDeviceMidiPacket &packet);
+  bool noteOn(uint8_t channel, uint8_t note, uint8_t velocity);
+  bool noteOff(uint8_t channel, uint8_t note, uint8_t velocity);
+  bool controlChange(uint8_t channel, uint8_t control, uint8_t value);
+  bool programChange(uint8_t channel, uint8_t program);
+  bool polyPressure(uint8_t channel, uint8_t note, uint8_t pressure);
+  bool channelPressure(uint8_t channel, uint8_t pressure);
+  bool pitchBend(uint8_t channel, uint16_t value);
+
+private:
+  static uint8_t status(uint8_t codeIndex, uint8_t channel);
+  static uint8_t clamp7(uint8_t value);
 };
 
 class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass

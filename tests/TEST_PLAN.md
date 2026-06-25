@@ -70,7 +70,7 @@ tests/
 | System control HID | planned | ✅ `hid_system_control` | | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | | planned | | | |
+| USB MIDI | | ✅ `usb_midi` | planned | | |
 | USB MSC | | planned | | | |
 | USB Audio | | planned | | | |
 
@@ -145,6 +145,12 @@ pre-release validation of unreleased Host-side fixes.
 notification 8 bytes and bulk data 64 bytes so the FS Host path can allocate the
 endpoints.
 
+`peer/usb_midi` is the first USB MIDI test for `EspUsbDeviceMidi`. It verifies
+Device -> Host and Host -> Device channel voice messages, plus short Host ->
+Device SysEx packet splitting. The default profile uses the released Host
+version. `s3_peer_local` is only for optional pre-release validation of
+unreleased Host-side fixes.
+
 ## Initial Migration Order
 
 1. `unit/compile_smoke`
@@ -166,9 +172,10 @@ endpoints.
 17. ✅ `loopback/hid_gamepad`
 18. ✅ `peer/usb_serial`
 19. ✅ `loopback/usb_serial`
-20. `peer/usb_midi`
-21. `peer/usb_msc`
-22. `peer/usb_audio`
+20. ✅ `peer/usb_midi`
+21. `loopback/usb_midi`
+22. `peer/usb_msc`
+23. `peer/usb_audio`
 
 ## Acceptance Rules
 
