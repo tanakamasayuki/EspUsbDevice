@@ -38,8 +38,10 @@ raise its supported Host version and rerun the detailed tests to confirm
 compatibility.
 
 For this reason, peer and loopback default profiles use the released EspUsbHost
-version. Local-validation profiles `s3_peer_local` and `p4_loopback_local` use a
-local checkout instead, for example
+version. Normal verification should use only the default profiles. The
+local-validation profiles `s3_peer_local` and `p4_loopback_local` use a local
+checkout and are only for pre-release validation of unreleased Host-side fixes,
+for example
 `uv run --env-file .env pytest peer/ --profile=s3_peer_local` or
 `uv run --env-file .env pytest loopback/ --profile=p4_loopback_local`.
 
@@ -66,7 +68,7 @@ tests/
 | HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | | | |
 | Consumer control HID | planned | ✅ `hid_consumer_control` | | | |
 | System control HID | planned | ✅ `hid_system_control` | | | |
-| Gamepad HID | planned | ✅ `hid_gamepad` | | | |
+| Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | planned | planned | | |
 | USB MIDI | | planned | | | |
 | USB MSC | | planned | | | |
@@ -143,15 +145,18 @@ tests are stable, replace Host-side `peer/usb_serial`, `peer/usb_midi`,
 6. `probe/p4_device_fs_probe`
 7. `probe/p4_device_hs_probe`
 8. ✅ `loopback/hid_keyboard`
-9. ✅ `peer/custom_hid`
-10. ✅ `peer/hid_vendor`
-11. ✅ `peer/hid_consumer_control`
-12. ✅ `peer/hid_system_control`
-13. ✅ `peer/hid_gamepad`
-14. `peer/usb_serial`
-15. `peer/usb_midi`
-16. `peer/usb_msc`
-17. `peer/usb_audio`
+9. ✅ `loopback/hid_mouse`
+10. ✅ `loopback/hid_keyboard_mouse`
+11. ✅ `peer/custom_hid`
+12. ✅ `peer/hid_vendor`
+13. ✅ `peer/hid_consumer_control`
+14. ✅ `peer/hid_system_control`
+15. ✅ `peer/hid_gamepad`
+16. ✅ `loopback/hid_gamepad`
+17. `peer/usb_serial`
+18. `peer/usb_midi`
+19. `peer/usb_msc`
+20. `peer/usb_audio`
 
 ## Acceptance Rules
 

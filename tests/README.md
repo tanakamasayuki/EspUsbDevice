@@ -34,8 +34,8 @@ uv run --env-file .env pytest peer/
 uv run --env-file .env pytest --run-mode=build
 ```
 
-Regular peer and loopback tests use the released EspUsbHost version. To validate
-an unreleased local `../EspUsbHost` checkout, select a local profile.
+Regular peer and loopback tests use the released EspUsbHost version. Local
+profiles are only for pre-release validation of unreleased Host-side fixes.
 
 ```sh
 uv run --env-file .env pytest peer/ --profile=s3_peer_local
