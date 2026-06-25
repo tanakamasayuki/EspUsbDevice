@@ -218,6 +218,9 @@ CLICK 1
 - 2026-06-25: `EspUsbDeviceHidKeyboard::onProtocol()` を追加し、`peer/hid_keyboard` で
   Host の `sendSetProtocol()` が Device 側 TinyUSB Set_Protocol callback へ届くことを確認。
   default `s3_peer_host` で 3 tests passed。
+- 2026-06-25: `peer/hid_keyboard_layout` を追加し、Host / Device の layout を `EN_US` /
+  `JA_JP` に揃えた状態で記号キーの round-trip を検証。default `s3_peer_host` で
+  2 tests passed。
 
 probe で必ず出すログ:
 
