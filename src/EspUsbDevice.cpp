@@ -126,6 +126,43 @@ static constexpr uint8_t MOUSE_REPORT_DESCRIPTOR[] = {
     0xc0,             // End Collection
 };
 
+static constexpr uint8_t GAMEPAD_REPORT_DESCRIPTOR[] = {
+    0x05, 0x01,       // Usage Page (Generic Desktop)
+    0x09, 0x05,       // Usage (Game Pad)
+    0xa1, 0x01,       // Collection (Application)
+    0x85, 0x03,       //   Report ID (3)
+    0x15, 0x81,       //   Logical Minimum (-127)
+    0x25, 0x7f,       //   Logical Maximum (127)
+    0x09, 0x30,       //   Usage (X)
+    0x09, 0x31,       //   Usage (Y)
+    0x09, 0x32,       //   Usage (Z)
+    0x09, 0x35,       //   Usage (Rz)
+    0x09, 0x33,       //   Usage (Rx)
+    0x09, 0x34,       //   Usage (Ry)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x06,       //   Report Count (6)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x08,       //   Logical Maximum (8)
+    0x35, 0x00,       //   Physical Minimum (0)
+    0x46, 0x3b, 0x01, //   Physical Maximum (315)
+    0x65, 0x14,       //   Unit (Eng Rot:Angular Pos)
+    0x09, 0x39,       //   Usage (Hat switch)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x01,       //   Report Count (1)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0x65, 0x00,       //   Unit (None)
+    0x05, 0x09,       //   Usage Page (Button)
+    0x19, 0x01,       //   Usage Minimum (Button 1)
+    0x29, 0x20,       //   Usage Maximum (Button 32)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x20,       //   Report Count (32)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0xc0,             // End Collection
+};
+
 static constexpr uint8_t VENDOR_REPORT_DESCRIPTOR[] = {
     0x06, 0x00, 0xff, // Usage Page (Vendor Defined 0xff00)
     0x09, 0x01,       // Usage (1)
@@ -1084,6 +1121,85 @@ void EspUsbDeviceHidVendor::onHidSetReport(uint8_t reportId, uint8_t reportType,
   {
     featureCallback_(report);
   }
+}
+
+EspUsbDeviceHidGamepad::EspUsbDeviceHidGamepad(EspUsbDevice &device) : EspUsbDeviceClass(device)
+{
+}
+
+bool EspUsbDeviceHidGamepad::begin()
+{
+  return true;
+}
+
+bool EspUsbDeviceHidGamepad::sendReport(const EspUsbDeviceGamepadReport &report, uint32_t timeoutMs)
+{
+  report_ = report;
+  uint8_t data[11] = {
+      static_cast<uint8_t>(report_.x),
+      static_cast<uint8_t>(report_.y),
+      static_cast<uint8_t>(report_.z),
+      static_cast<uint8_t>(report_.rz),
+      static_cast<uint8_t>(report_.rx),
+      static_cast<uint8_t>(report_.ry),
+      report_.hat,
+      static_cast<uint8_t>(report_.buttons & 0xff),
+      static_cast<uint8_t>((report_.buttons >> 8) & 0xff),
+      static_cast<uint8_t>((report_.buttons >> 16) & 0xff),
+      static_cast<uint8_t>((report_.buttons >> 24) & 0xff),
+  };
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), hidReportId(), data, sizeof(data), timeoutMs);
+}
+
+bool EspUsbDeviceHidGamepad::send(int8_t x,
+                                  int8_t y,
+                                  int8_t z,
+                                  int8_t rz,
+                                  int8_t rx,
+                                  int8_t ry,
+                                  uint8_t hat,
+                                  uint32_t buttons,
+                                  uint32_t timeoutMs)
+{
+  EspUsbDeviceGamepadReport report;
+  report.x = x;
+  report.y = y;
+  report.z = z;
+  report.rz = rz;
+  report.rx = rx;
+  report.ry = ry;
+  report.hat = hat;
+  report.buttons = buttons;
+  return sendReport(report, timeoutMs);
+}
+
+bool EspUsbDeviceHidGamepad::releaseAll(uint32_t timeoutMs)
+{
+  return sendReport(EspUsbDeviceGamepadReport(), timeoutMs);
+}
+
+uint16_t EspUsbDeviceHidGamepad::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
+  const uint16_t mps = endpointSize < 12 ? 12 : endpointSize;
+  const uint16_t reportLen = hidReportDescriptorLength();
+  uint8_t descriptor[] = {
+      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, 0x00, 0x00, 0,
+      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
+      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(mps & 0xff), static_cast<uint8_t>((mps >> 8) & 0xff), 1,
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
+}
+
+const uint8_t *EspUsbDeviceHidGamepad::hidReportDescriptor() const
+{
+  return GAMEPAD_REPORT_DESCRIPTOR;
+}
+
+uint16_t EspUsbDeviceHidGamepad::hidReportDescriptorLength() const
+{
+  return sizeof(GAMEPAD_REPORT_DESCRIPTOR);
 }
 
 EspUsbDeviceHidConsumerControl::EspUsbDeviceHidConsumerControl(EspUsbDevice &device) : EspUsbDeviceClass(device)
