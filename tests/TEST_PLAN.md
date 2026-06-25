@@ -71,7 +71,7 @@ tests/
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
-| USB MSC | | ✅ `usb_msc` | planned | | |
+| USB MSC | | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USB Audio | | planned | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -160,6 +160,10 @@ a single-LUN RAM disk and verifies capacity, inquiry, max LUN, sense, test unit
 ready, synchronize cache, read, write, multi-block, chunked transfer,
 out-of-range, and failed-write behavior.
 
+`loopback/usb_msc` verifies the same behavior on one P4. The RAM disk is
+16 blocks x 512 bytes, and the chunked transfer case also checks the Host-side
+4096-byte chunk boundary.
+
 ## Initial Migration Order
 
 1. `unit/compile_smoke`
@@ -184,7 +188,7 @@ out-of-range, and failed-write behavior.
 20. ✅ `peer/usb_midi`
 21. ✅ `loopback/usb_midi`
 22. ✅ `peer/usb_msc`
-23. `loopback/usb_msc`
+23. ✅ `loopback/usb_msc`
 24. `peer/usb_audio`
 
 ## Acceptance Rules
