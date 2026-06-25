@@ -68,6 +68,10 @@ static void testFiles()
   EspUsbDeviceMscFatRamDisk disk(storage, sizeof(storage));
   check(disk.format("ESPUSB"), "files_format");
   check(disk.addTextFile("README.TXT", "hello\r\n"), "add_readme");
+  check(!disk.addTextFile("README.TXT", "duplicate\r\n"), "reject_duplicate");
+  check(!disk.addTextFile("TOO-LONG-NAME.TXT", "bad\r\n"), "reject_add_long_name");
+  check(!disk.addTextFile("BAD+NAME.TXT", "bad\r\n"), "reject_bad_char");
+  check(disk.addFile("EMPTY.BIN", reinterpret_cast<const uint8_t *>(""), 0), "add_empty");
 
   static uint8_t payload[700];
   for (size_t i = 0; i < sizeof(payload); ++i)
@@ -80,6 +84,7 @@ static void testFiles()
   check(disk.exists("data.bin"), "exists_casefold");
   check(!disk.exists("LONGFILENAME.TXT"), "reject_long_name");
   check(disk.fileSize("README.TXT") == 7, "readme_size");
+  check(disk.fileSize("EMPTY.BIN") == 0, "empty_size");
   check(disk.fileSize("DATA.BIN") == sizeof(payload), "data_size");
 
   uint8_t readme[16] = {};
@@ -90,6 +95,11 @@ static void testFiles()
   check(disk.readFile("DATA.BIN", data, sizeof(data)) == sizeof(data), "read_data_size");
   check(memcmp(data, payload, sizeof(data)) == 0, "read_data_content");
 
+  uint8_t partial[10] = {};
+  check(disk.readFile("DATA.BIN", partial, sizeof(partial)) == sizeof(partial), "read_partial_size");
+  check(memcmp(partial, payload, sizeof(partial)) == 0, "read_partial_content");
+  check(disk.readFile("MISSING.BIN", partial, sizeof(partial)) == 0, "read_missing");
+
   const uint16_t sectorsPerFat = le16(storage + 22);
   const uint8_t *root = storage + static_cast<size_t>(1 + 2 * sectorsPerFat) * 512;
   check(memcmp(root, "README  TXT", 11) == 0, "root_readme_name");
@@ -98,13 +108,29 @@ static void testFiles()
   check(le32(root + 28) == 7, "root_readme_size");
 
   const uint8_t *second = root + 32;
-  check(memcmp(second, "DATA    BIN", 11) == 0, "root_data_name");
-  check(le16(second + 26) == 3, "root_data_cluster");
-  check(le32(second + 28) == sizeof(payload), "root_data_size");
+  check(memcmp(second, "EMPTY   BIN", 11) == 0, "root_empty_name");
+  check(le16(second + 26) == 3, "root_empty_cluster");
+  check(le32(second + 28) == 0, "root_empty_size");
+
+  const uint8_t *third = root + 64;
+  check(memcmp(third, "DATA    BIN", 11) == 0, "root_data_name");
+  check(le16(third + 26) == 4, "root_data_cluster");
+  check(le32(third + 28) == sizeof(payload), "root_data_size");
 
   const uint8_t *fat = storage + 512;
   check(fat12Entry(fat, 2) == 0x0fff, "fat_readme_eoc");
-  check(fat12Entry(fat, 3) == 4 && fat12Entry(fat, 4) == 0x0fff, "fat_data_chain");
+  check(fat12Entry(fat, 3) == 0x0fff, "fat_empty_eoc");
+  check(fat12Entry(fat, 4) == 5 && fat12Entry(fat, 5) == 0x0fff, "fat_data_chain");
+}
+
+static void testInvalidDisks()
+{
+  uint8_t tiny[8 * 512] = {};
+  EspUsbDeviceMscFatRamDisk tooSmall(tiny, sizeof(tiny));
+  check(!tooSmall.format("SMALL"), "reject_too_small");
+
+  EspUsbDeviceMscFatRamDisk nullDisk(nullptr, sizeof(storage));
+  check(!nullDisk.format("NULL"), "reject_null_storage");
 }
 
 static void testAttachAndEject()
@@ -147,6 +173,7 @@ void setup()
   Serial.println("TEST_BEGIN fat_ramdisk");
   testFormat();
   testFiles();
+  testInvalidDisks();
   testAttachAndEject();
   Serial.printf("TEST_END pass=%d fail=%d\n", passCount, failCount);
   Serial.println(failCount == 0 ? "OK" : "NG");
