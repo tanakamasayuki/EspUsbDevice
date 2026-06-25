@@ -256,6 +256,14 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t reportId, hid_report_type_t
     g_activeDevice->handleHidSetReport(instance, reportId, static_cast<uint8_t>(reportType), buffer, bufsize);
   }
 }
+
+void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol)
+{
+  if (g_activeDevice)
+  {
+    g_activeDevice->handleHidSetProtocol(instance, protocol);
+  }
+}
 #endif
 
 EspUsbDevice::EspUsbDevice()
@@ -542,6 +550,29 @@ void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_
   }
 }
 
+void EspUsbDevice::handleHidSetProtocol(uint8_t instance, uint8_t protocol)
+{
+  if (compositeHid())
+  {
+    if (instance != 0)
+    {
+      return;
+    }
+    for (size_t i = 0; i < classCount_; i++)
+    {
+      if (classes_[i])
+      {
+        classes_[i]->onHidSetProtocol(protocol);
+      }
+    }
+    return;
+  }
+  if (instance < classCount_ && classes_[instance])
+  {
+    classes_[instance]->onHidSetProtocol(protocol);
+  }
+}
+
 bool EspUsbDevice::buildDescriptors()
 {
   const bool composite = compositeHid();
@@ -783,6 +814,16 @@ void EspUsbDeviceHidKeyboard::onOutputReport(OutputReportCallback callback)
   outputCallback_ = callback;
 }
 
+void EspUsbDeviceHidKeyboard::onProtocol(ProtocolCallback callback)
+{
+  protocolCallback_ = callback;
+}
+
+uint8_t EspUsbDeviceHidKeyboard::protocol() const
+{
+  return protocol_;
+}
+
 uint16_t EspUsbDeviceHidKeyboard::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
   const uint8_t epOut = endpointNumber;
@@ -823,6 +864,19 @@ void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportTyp
   report.compose = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_COMPOSE;
   report.kana = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_KANA;
   outputCallback_(report);
+}
+
+void EspUsbDeviceHidKeyboard::onHidSetProtocol(uint8_t protocol)
+{
+  protocol_ = protocol;
+  if (!protocolCallback_)
+  {
+    return;
+  }
+  EspUsbDeviceHidProtocolEvent event;
+  event.instance = hidInstance_;
+  event.protocol = protocol_;
+  protocolCallback_(event);
 }
 
 bool EspUsbDeviceHidKeyboard::asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const

@@ -115,7 +115,7 @@ First additions:
 
 | Host feature | Needed Device support | Expected |
 |--------------|-----------------------|----------|
-| `sendSetProtocol()` | HID Set_Protocol callback/state | boot/report protocol requests are observed |
+| `sendSetProtocol()` | ✅ `hid_keyboard` `onProtocol()` | report protocol requests are observed |
 | `sendHIDReport(... OUTPUT)` | ✅ `hid_vendor` | report ID / payload / length match |
 | `sendHIDReport(... FEATURE)` | ✅ `hid_vendor` | feature reports are observed |
 | `onVendorInput()` | ✅ `hid_vendor` | report ID 6 vendor input reaches callback |

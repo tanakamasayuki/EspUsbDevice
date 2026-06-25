@@ -226,6 +226,12 @@ struct EspUsbDeviceHidReport
   uint16_t length = 0;
 };
 
+struct EspUsbDeviceHidProtocolEvent
+{
+  uint8_t instance = 0;
+  uint8_t protocol = 0;
+};
+
 class EspUsbDeviceClass;
 
 class EspUsbDevice
@@ -254,6 +260,7 @@ public:
   const uint16_t *stringDescriptor(uint8_t index, uint16_t langid);
   const uint8_t *hidReportDescriptor(uint8_t instance);
   void handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length);
+  void handleHidSetProtocol(uint8_t instance, uint8_t protocol);
 
 private:
   friend class EspUsbDeviceClass;
@@ -302,6 +309,7 @@ public:
   virtual const uint8_t *hidReportDescriptor() const { return nullptr; }
   virtual uint16_t hidReportDescriptorLength() const { return 0; }
   virtual void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) {}
+  virtual void onHidSetProtocol(uint8_t protocol) { (void)protocol; }
 
 protected:
   friend class EspUsbDevice;
@@ -314,6 +322,7 @@ class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass
 {
 public:
   using OutputReportCallback = std::function<void(const EspUsbDeviceHidKeyboardOutputReport &)>;
+  using ProtocolCallback = std::function<void(const EspUsbDeviceHidProtocolEvent &)>;
 
   explicit EspUsbDeviceHidKeyboard(EspUsbDevice &device);
 
@@ -329,6 +338,8 @@ public:
   void setLayout(EspUsbDeviceKeyboardLayout layout);
   EspUsbDeviceKeyboardLayout layout() const;
   void onOutputReport(OutputReportCallback callback);
+  void onProtocol(ProtocolCallback callback);
+  uint8_t protocol() const;
 
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
@@ -337,13 +348,16 @@ public:
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;
   void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) override;
+  void onHidSetProtocol(uint8_t protocol) override;
 
 private:
   bool asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const;
 
   EspUsbDeviceBootKeyboardReport report_;
   EspUsbDeviceKeyboardLayout layout_ = ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US;
+  uint8_t protocol_ = 1;
   OutputReportCallback outputCallback_;
+  ProtocolCallback protocolCallback_;
 };
 
 class EspUsbDeviceHidMouse : public EspUsbDeviceClass
