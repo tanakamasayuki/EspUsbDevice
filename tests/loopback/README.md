@@ -23,6 +23,8 @@ port/speed behavior can be verified before broader class coverage is added.
   Host -> Device, and line coding callbacks.
 - `usb_midi`: starts USB MIDI on one P4 and verifies channel voice messages and
   short Host -> Device SysEx packet splitting.
+- `usb_msc`: starts USB Mass Storage on one P4 and verifies single-LUN RAM disk
+  capacity, inquiry, read, write, and error paths.
 
 ## Matrix
 

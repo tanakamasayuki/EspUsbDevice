@@ -237,6 +237,8 @@ CLICK 1
   capacity / inquiry / max LUN / sense / test unit ready / synchronize cache / read /
   write / multi-block / chunked transfer / out-of-range / failed write を確認。
   default `s3_peer_host` で 18 tests passed。
+- 2026-06-25: `loopback/usb_msc` を追加し、P4 1台構成で USB MSC の単一 LUN RAM disk を確認。
+  default `p4_loopback` で 1 test passed。`peer/usb_msc` も再実行して 18 tests passed。
 
 probe で必ず出すログ:
 
@@ -268,9 +270,8 @@ probe で必ず出すログ:
    `onVendorInput()`、HID parser field decode を検証する。
 9. ✅ consumer control / system control / gamepad HID Device class を追加し、Host 側 callback を検証する。
 10. CDC ACM の peer / loopback を維持し、必要なら line state / flush / buffering を追加検証する。
-11. USB MSC を loopback へ広げる。
-12. Audio の移行可否を Host 側既存テストから確認する。
-13. P4 probe で FS / HS device 初期化方式を確定する。
+11. Audio の移行可否を Host 側既存テストから確認する。
+12. P4 probe で FS / HS device 初期化方式を確定する。
 
 Host 側で怪しい挙動が見つかった場合:
 

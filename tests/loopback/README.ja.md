@@ -22,6 +22,8 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   line coding callback を確認する。
 - `usb_midi`: P4 1台上で USB MIDI を起動し、channel voice message と短い SysEx の
   Host -> Device packet 分割を確認する。
+- `usb_msc`: P4 1台上で USB Mass Storage を起動し、単一 LUN RAM disk の capacity /
+  inquiry / read / write / error path を確認する。
 
 ## Matrix
 
