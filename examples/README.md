@@ -55,7 +55,10 @@ See [MSC/README.md](MSC/README.md) for details.
 
 MSC separates the block device from the filesystem. To make host-mountable
 storage, provide a valid FAT image or back the callbacks with real block storage
-such as SD or flash.
+such as an SD card. Direct flash / SPIFFS / LittleFS exposure is not planned for
+standard examples. Practical persistent storage should use SD first, while RAM
+disk can support temporary firmware, configuration, or Wi-Fi handoff files once
+a FAT helper is added.
 
 ## Notes
 

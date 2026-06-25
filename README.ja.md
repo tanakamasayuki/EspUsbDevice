@@ -82,7 +82,9 @@ MSC:
 - `EspUsbDeviceMsc` は inquiry、media 状態、capacity、read/write callback を扱います。
 - `EspUsbDeviceMscRamDisk` は外部 RAM buffer を block device として公開する helper です。
 - MSC は block device と filesystem が別です。OS からドライブとしてマウントするには、
-  有効な FAT image か SD / flash などの実 storage を read/write callback に接続してください。
+  有効な FAT image か SD card などの実 storage を read/write callback に接続してください。
+- flash / SPIFFS / LittleFS の直接公開は標準方針にしません。永続ストレージは SD card、
+  一時ファイル受け渡しは RAM disk + FAT helper を優先します。
 
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。

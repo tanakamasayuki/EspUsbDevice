@@ -90,7 +90,10 @@ MSC:
 - `EspUsbDeviceMscRamDisk` wraps an external RAM buffer as a block device.
 - MSC separates the block device from the filesystem. To make a drive mountable
   by an OS, provide a valid FAT image or connect the read/write callbacks to
-  real storage such as SD or flash.
+  real storage such as an SD card.
+- Direct flash / SPIFFS / LittleFS exposure is not the standard direction.
+  Persistent storage should use SD card first, and temporary file handoff should
+  use RAM disk plus a FAT helper.
 
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
