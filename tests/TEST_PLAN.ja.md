@@ -63,7 +63,7 @@ tests/
 | gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
-| USB MSC | | 予定 | | | |
+| USB MSC | | ✅ `usb_msc` | 予定 | | |
 | USB Audio | | 予定 | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
@@ -143,6 +143,10 @@ Host -> Device の channel voice message と、Host -> Device の短い SysEx pa
 poll で読めるため、packet 順の逐次待ちではなく、必要な packet を両方観測したことを
 assert します。
 
+`peer/usb_msc` は `EspUsbDeviceMsc` の最初の USB Mass Storage テストです。単一 LUN の
+RAM disk として、capacity / inquiry / max LUN / sense / test unit ready / synchronize cache /
+read / write / multi-block / chunked transfer / out-of-range / failed write を検証します。
+
 ## 初期移行順
 
 1. `unit/compile_smoke`
@@ -166,8 +170,9 @@ assert します。
 19. ✅ `loopback/usb_serial`
 20. ✅ `peer/usb_midi`
 21. ✅ `loopback/usb_midi`
-22. `peer/usb_msc`
-23. `peer/usb_audio`
+22. ✅ `peer/usb_msc`
+23. `loopback/usb_msc`
+24. `peer/usb_audio`
 
 ## 合格条件
 

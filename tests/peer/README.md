@@ -36,5 +36,7 @@ PC.
   coding callbacks pass on the two-board S3 setup.
 - `usb_midi`: USB MIDI. Channel voice messages and short Host -> Device SysEx
   packet splitting pass on the two-board S3 setup.
+- `usb_msc`: USB Mass Storage. Single-LUN RAM disk capacity, inquiry, read,
+  write, and error paths pass on the two-board S3 setup.
 
-Later phases add MSC and Audio.
+Later phases add Audio.

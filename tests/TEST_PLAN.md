@@ -71,7 +71,7 @@ tests/
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
-| USB MSC | | planned | | | |
+| USB MSC | | ✅ `usb_msc` | planned | | |
 | USB Audio | | planned | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -155,6 +155,11 @@ unreleased Host-side fixes.
 read in the same poll pass, so the test asserts that both expected packets were
 observed rather than waiting for each packet strictly one at a time.
 
+`peer/usb_msc` is the first USB Mass Storage test for `EspUsbDeviceMsc`. It uses
+a single-LUN RAM disk and verifies capacity, inquiry, max LUN, sense, test unit
+ready, synchronize cache, read, write, multi-block, chunked transfer,
+out-of-range, and failed-write behavior.
+
 ## Initial Migration Order
 
 1. `unit/compile_smoke`
@@ -178,8 +183,9 @@ observed rather than waiting for each packet strictly one at a time.
 19. ✅ `loopback/usb_serial`
 20. ✅ `peer/usb_midi`
 21. ✅ `loopback/usb_midi`
-22. `peer/usb_msc`
-23. `peer/usb_audio`
+22. ✅ `peer/usb_msc`
+23. `loopback/usb_msc`
+24. `peer/usb_audio`
 
 ## Acceptance Rules
 

@@ -26,6 +26,7 @@
 #include "esp32-hal-tinyusb.h"
 #include "class/cdc/cdc_device.h"
 #include "class/midi/midi_device.h"
+#include "class/msc/msc_device.h"
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 1
 #else
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
@@ -44,10 +45,12 @@ static constexpr uint8_t USB_PROTOCOL_KEYBOARD = 0x01;
 static constexpr uint8_t USB_PROTOCOL_MOUSE = 0x02;
 
 static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
+static constexpr uint8_t USB_SCSI_CMD_SYNCHRONIZE_CACHE_10 = 0x35;
 
 static EspUsbDevice *g_activeDevice = nullptr;
 static EspUsbDeviceCdcSerial *g_activeCdcSerial = nullptr;
 static EspUsbDeviceMidi *g_activeMidi = nullptr;
+static EspUsbDeviceMsc *g_activeMsc = nullptr;
 
 static void put16(uint8_t *dst, uint16_t value)
 {
@@ -269,6 +272,23 @@ static uint16_t espUsbDeviceLoadMidiDescriptor(uint8_t *dst, uint8_t *itf)
   return sizeof(descriptor);
 }
 
+static uint16_t espUsbDeviceLoadMscDescriptor(uint8_t *dst, uint8_t *itf)
+{
+  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice MSC");
+  const uint8_t epNum = tinyusb_get_free_duplex_endpoint();
+  if (epNum == 0)
+  {
+    return 0;
+  }
+  static constexpr uint16_t MSC_ENDPOINT_SIZE = 64;
+  uint8_t descriptor[] = {
+      TUD_MSC_DESCRIPTOR(*itf, strIndex, epNum, static_cast<uint8_t>(0x80 | epNum), MSC_ENDPOINT_SIZE),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  *itf = static_cast<uint8_t>(*itf + 1);
+  return sizeof(descriptor);
+}
+
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
   return g_activeDevice ? g_activeDevice->hidReportDescriptor(instance) : nullptr;
@@ -322,6 +342,75 @@ void tud_cdc_rx_cb(uint8_t itf)
   {
     g_activeCdcSerial->handleRx();
   }
+}
+
+uint8_t tud_msc_get_maxlun_cb(void)
+{
+  return g_activeMsc ? g_activeMsc->maxLun() : 0;
+}
+
+void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendorId[8], uint8_t productId[16], uint8_t productRev[4])
+{
+  (void)lun;
+  if (g_activeMsc)
+  {
+    g_activeMsc->inquiry(vendorId, productId, productRev);
+  }
+}
+
+bool tud_msc_test_unit_ready_cb(uint8_t lun)
+{
+  (void)lun;
+  return g_activeMsc ? g_activeMsc->testUnitReady() : false;
+}
+
+void tud_msc_capacity_cb(uint8_t lun, uint32_t *blockCount, uint16_t *blockSize)
+{
+  (void)lun;
+  if (g_activeMsc)
+  {
+    g_activeMsc->capacity(blockCount, blockSize);
+  }
+}
+
+bool tud_msc_start_stop_cb(uint8_t lun, uint8_t powerCondition, bool start, bool loadEject)
+{
+  (void)lun;
+  return g_activeMsc ? g_activeMsc->startStop(powerCondition, start, loadEject) : true;
+}
+
+int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void *buffer, uint32_t bufsize)
+{
+  (void)lun;
+  return g_activeMsc ? g_activeMsc->read10(lba, offset, buffer, bufsize) : -1;
+}
+
+int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t bufsize)
+{
+  (void)lun;
+  return g_activeMsc ? g_activeMsc->write10(lba, offset, buffer, bufsize) : -1;
+}
+
+int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsiCmd[16], void *buffer, uint16_t bufsize)
+{
+  (void)buffer;
+  (void)bufsize;
+  if (scsiCmd[0] == SCSI_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL)
+  {
+    return 0;
+  }
+  if (scsiCmd[0] == USB_SCSI_CMD_SYNCHRONIZE_CACHE_10)
+  {
+    return 0;
+  }
+  tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
+  return -1;
+}
+
+bool tud_msc_is_writable_cb(uint8_t lun)
+{
+  (void)lun;
+  return g_activeMsc ? g_activeMsc->writable() : false;
 }
 #endif
 
@@ -393,6 +482,15 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     if (hasMidiClass())
     {
       err = tinyusb_enable_interface(USB_INTERFACE_MIDI, TUD_MIDI_DESC_LEN, espUsbDeviceLoadMidiDescriptor);
+      if (err != ESP_OK)
+      {
+        setLastError(err);
+        return false;
+      }
+    }
+    if (hasMscClass())
+    {
+      err = tinyusb_enable_interface(USB_INTERFACE_MSC, TUD_MSC_DESC_LEN, espUsbDeviceLoadMscDescriptor);
       if (err != ESP_OK)
       {
         setLastError(err);
@@ -816,6 +914,18 @@ bool EspUsbDevice::hasMidiClass() const
   return false;
 }
 
+bool EspUsbDevice::hasMscClass() const
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isMsc())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
 uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
 {
   if (!compositeHid())
@@ -1100,6 +1210,151 @@ uint8_t EspUsbDeviceMidi::status(uint8_t codeIndex, uint8_t channel)
 uint8_t EspUsbDeviceMidi::clamp7(uint8_t value)
 {
   return value > 127 ? 127 : value;
+}
+
+EspUsbDeviceMsc::EspUsbDeviceMsc(EspUsbDevice &device) : EspUsbDeviceClass(device)
+{
+}
+
+bool EspUsbDeviceMsc::begin()
+{
+  if (g_activeMsc && g_activeMsc != this)
+  {
+    return false;
+  }
+  g_activeMsc = this;
+  return blockCount_ > 0 && blockSize_ > 0 && readCallback_ && writeCallback_;
+}
+
+bool EspUsbDeviceMsc::begin(uint32_t blockCount, uint16_t blockSize)
+{
+  blockCount_ = blockCount;
+  blockSize_ = blockSize;
+  return blockCount_ > 0 && blockSize_ > 0 && readCallback_ && writeCallback_;
+}
+
+uint16_t EspUsbDeviceMsc::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  (void)dst;
+  (void)interfaceNumber;
+  (void)endpointNumber;
+  (void)endpointSize;
+  return 0;
+}
+
+void EspUsbDeviceMsc::vendorID(const char *value)
+{
+  copyPadded(reinterpret_cast<uint8_t *>(vendor_), sizeof(vendor_) - 1, value);
+  vendor_[sizeof(vendor_) - 1] = '\0';
+}
+
+void EspUsbDeviceMsc::productID(const char *value)
+{
+  copyPadded(reinterpret_cast<uint8_t *>(product_), sizeof(product_) - 1, value);
+  product_[sizeof(product_) - 1] = '\0';
+}
+
+void EspUsbDeviceMsc::productRevision(const char *value)
+{
+  copyPadded(reinterpret_cast<uint8_t *>(revision_), sizeof(revision_) - 1, value);
+  revision_[sizeof(revision_) - 1] = '\0';
+}
+
+void EspUsbDeviceMsc::mediaPresent(bool value)
+{
+  mediaPresent_ = value;
+}
+
+void EspUsbDeviceMsc::isWritable(bool value)
+{
+  writable_ = value;
+}
+
+void EspUsbDeviceMsc::onRead(EspUsbDeviceMscReadCallback callback)
+{
+  readCallback_ = callback;
+}
+
+void EspUsbDeviceMsc::onWrite(EspUsbDeviceMscWriteCallback callback)
+{
+  writeCallback_ = callback;
+}
+
+void EspUsbDeviceMsc::onStartStop(EspUsbDeviceMscStartStopCallback callback)
+{
+  startStopCallback_ = callback;
+}
+
+uint8_t EspUsbDeviceMsc::maxLun() const
+{
+  return 0;
+}
+
+void EspUsbDeviceMsc::inquiry(uint8_t vendor[8], uint8_t product[16], uint8_t revision[4]) const
+{
+  copyPadded(vendor, 8, vendor_);
+  copyPadded(product, 16, product_);
+  copyPadded(revision, 4, revision_);
+}
+
+bool EspUsbDeviceMsc::testUnitReady() const
+{
+  return mediaPresent_;
+}
+
+void EspUsbDeviceMsc::capacity(uint32_t *blockCount, uint16_t *blockSize) const
+{
+  if (!mediaPresent_)
+  {
+    *blockCount = 0;
+    *blockSize = 0;
+    return;
+  }
+  *blockCount = blockCount_;
+  *blockSize = blockSize_;
+}
+
+bool EspUsbDeviceMsc::startStop(uint8_t powerCondition, bool start, bool loadEject)
+{
+  return startStopCallback_ ? startStopCallback_(powerCondition, start, loadEject) : true;
+}
+
+int32_t EspUsbDeviceMsc::read10(uint32_t lba, uint32_t offset, void *buffer, uint32_t size)
+{
+  if (!mediaPresent_ || !readCallback_)
+  {
+    return -1;
+  }
+  return readCallback_(lba, offset, buffer, size);
+}
+
+int32_t EspUsbDeviceMsc::write10(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)
+{
+  if (!mediaPresent_ || !writable_ || !writeCallback_)
+  {
+    return -1;
+  }
+  return writeCallback_(lba, offset, buffer, size);
+}
+
+bool EspUsbDeviceMsc::writable() const
+{
+  return writable_;
+}
+
+void EspUsbDeviceMsc::copyPadded(uint8_t *dst, size_t size, const char *value)
+{
+  memset(dst, 0, size);
+  if (!value)
+  {
+    return;
+  }
+  size_t length = strlen(value);
+  if (length > size)
+  {
+    length = size;
+  }
+  memcpy(dst, value, length);
 }
 
 EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbDeviceClass(device)
