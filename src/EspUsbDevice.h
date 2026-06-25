@@ -504,6 +504,51 @@ private:
   uint16_t blockSize_ = 512;
 };
 
+class EspUsbDeviceMscFatRamDisk
+{
+public:
+  using EjectCallback = std::function<void()>;
+
+  EspUsbDeviceMscFatRamDisk(uint8_t *storage, size_t size);
+
+  bool format(const char *volumeLabel = "ESPUSB");
+  bool attach(EspUsbDeviceMsc &msc);
+  void onEject(EjectCallback callback);
+  bool addFile(const char *name, const uint8_t *data, size_t size);
+  bool addTextFile(const char *name, const char *text);
+  bool exists(const char *name) const;
+  size_t fileSize(const char *name) const;
+  size_t readFile(const char *name, uint8_t *buffer, size_t size) const;
+  uint32_t blockCount() const;
+  uint16_t blockSize() const;
+  size_t byteSize() const;
+
+private:
+  bool normalizeName(const char *name, char out[11]) const;
+  bool findFile(const char name[11], uint32_t *firstCluster, uint32_t *size) const;
+  bool allocateClusters(size_t size, uint16_t *firstCluster, size_t *clusterCount);
+  void setFatEntry(uint16_t cluster, uint16_t value);
+  uint16_t fatEntry(uint16_t cluster) const;
+  uint8_t *clusterPtr(uint16_t cluster);
+  const uint8_t *clusterPtr(uint16_t cluster) const;
+  uint8_t *rootEntry(uint16_t index);
+  const uint8_t *rootEntry(uint16_t index) const;
+  bool handleStartStop(uint8_t powerCondition, bool start, bool loadEject);
+
+  uint8_t *storage_ = nullptr;
+  size_t size_ = 0;
+  uint32_t blockCount_ = 0;
+  uint16_t sectorsPerFat_ = 0;
+  uint16_t rootEntryCount_ = 64;
+  uint16_t rootDirSectors_ = 0;
+  uint16_t dataStartSector_ = 0;
+  uint16_t clusterCount_ = 0;
+  uint16_t nextFreeCluster_ = 2;
+  uint16_t nextRootEntry_ = 0;
+  EspUsbDeviceMscRamDisk blocks_;
+  EjectCallback ejectCallback_;
+};
+
 class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass
 {
 public:

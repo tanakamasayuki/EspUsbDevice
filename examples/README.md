@@ -60,6 +60,18 @@ standard examples. Practical persistent storage should use SD first, while RAM
 disk can support temporary firmware, configuration, or Wi-Fi handoff files once
 a FAT helper is added.
 
+## MSCFatRamDisk
+
+MSC device example that creates a small FAT12 image in RAM.
+See [MSCFatRamDisk/README.md](MSCFatRamDisk/README.md) for details.
+
+- Use `EspUsbDeviceMscFatRamDisk` to create a host-mountable RAM disk.
+- Add `README.TXT` as an initial file.
+- Let the host copy `CONFIG.TXT`, eject the drive, then scan/read the file on the
+  device side.
+- This is the basic pattern for temporary firmware, configuration, and Wi-Fi
+  handoff files.
+
 ## Notes
 
 - Connect the USB-device-capable ESP32-S3 or similar board to a USB host.

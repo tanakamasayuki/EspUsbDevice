@@ -164,6 +164,21 @@ out-of-range, and failed-write behavior.
 16 blocks x 512 bytes, and the chunked transfer case also checks the Host-side
 4096-byte chunk boundary.
 
+MSC transport tests and file handoff tests are separate. `peer/usb_msc` and
+`loopback/usb_msc` remain raw block I/O, SCSI, and error-path tests. FAT and SD
+usability should be tested separately.
+
+After `EspUsbDeviceMscFatRamDisk` is added, the first test should verify a small
+host-mountable FAT image and device-side 8.3 filename scan/read after eject or
+stop. Firmware update and Wi-Fi forwarding start from the simpler requirement
+that a file written by the host can be extracted as bytes by the device after
+host ownership ends.
+
+`EspUsbDeviceMscSdCard` should start as a manual or optional automated test that
+exposes an SD card as a block device. While the host owns the SD card through
+MSC, the ESP32 side must not mount or write the same filesystem. Direct flash /
+SPIFFS / LittleFS exposure is not part of the standard test scope.
+
 ## Initial Migration Order
 
 1. `unit/compile_smoke`

@@ -239,6 +239,10 @@ CLICK 1
   default `s3_peer_host` で 18 tests passed。
 - 2026-06-25: `loopback/usb_msc` を追加し、P4 1台構成で USB MSC の単一 LUN RAM disk を確認。
   default `p4_loopback` で 1 test passed。`peer/usb_msc` も再実行して 18 tests passed。
+- 2026-06-25: MSC のユーザー向け方針を整理。`EspUsbDeviceMscRamDisk` は raw block I/O /
+  テスト / 一時 buffer、次段の `EspUsbDeviceMscFatRamDisk` は Host からの firmware /
+  設定ファイル / Wi-Fi 転送用の一時ファイル受け渡し、`EspUsbDeviceMscSdCard` は実用的な
+  永続ストレージ example とする。flash / SPIFFS / LittleFS の直接 MSC 公開は標準方針にしない。
 
 probe で必ず出すログ:
 

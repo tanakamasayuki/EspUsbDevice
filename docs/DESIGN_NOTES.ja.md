@@ -536,6 +536,65 @@ msc.begin({
 });
 ```
 
+MSC は block device と filesystem を分けて設計します。`EspUsbDeviceMsc` は SCSI /
+READ(10) / WRITE(10) の transport と block I/O callback だけを担当し、RAM、SD、FAT image
+などの使いやすさは helper class に分離します。
+
+初期 helper は次の分担にします。
+
+```cpp
+static uint8_t storage[256 * 1024];
+
+EspUsbDeviceMsc msc(device);
+EspUsbDeviceMscRamDisk blocks(storage, sizeof(storage) / 512);
+
+blocks.attach(msc);
+```
+
+`EspUsbDeviceMscRamDisk` は raw block I/O、peer / loopback テスト、低レベル MSC example
+向けです。FAT は生成しないため、PC が通常の USB drive として mount できるとは限りません。
+
+ファイル受け渡し用途には `EspUsbDeviceMscFatRamDisk` を追加する方針です。
+
+```cpp
+static uint8_t storage[256 * 1024];
+
+EspUsbDeviceMsc msc(device);
+EspUsbDeviceMscFatRamDisk disk(storage, sizeof(storage));
+
+disk.volumeLabel("ESPUSB");
+disk.addTextFile("README.TXT", "Drop firmware.bin and eject.\r\n");
+disk.attach(msc);
+
+disk.onEject([]() {
+  if (disk.exists("FIRMWARE.BIN")) {
+    // firmware update or Wi-Fi upload
+  }
+});
+```
+
+`EspUsbDeviceMscFatRamDisk` の最初の仕様は、実用範囲を意図的に小さくします。
+
+- 512 byte sector 固定。
+- FAT12 または小容量 FAT16 の最小 image を生成する。
+- long file name は扱わず、8.3 filename を標準にする。
+- root directory 直下の通常 file を対象にする。
+- directory、timestamp、attribute の高度な操作は後回しにする。
+- Host 書き込み中は ESP32 側で FAT を読まない。
+- `SYNCHRONIZE CACHE(10)`、eject、`START STOP UNIT` 後に file scan / read を行う。
+- firmware update や Wi-Fi 転送では、RAM 上に全保持する方式から始める。
+- 大きな file は後で streaming / PSRAM / SD へ拡張する。
+
+永続ストレージ用途には `EspUsbDeviceMscSdCard` を追加する方針です。SD は元から block
+device で、USB MSC と FAT の相性がよいため、ユーザー向けの実用 example に向いています。
+ただし Host が MSC として SD を所有している間は、ESP32 側が同じ filesystem を同時に
+mount / 書き込みしない排他設計にします。eject / stop 後に ESP32 側へ所有権を戻します。
+
+内蔵 flash、SPIFFS、LittleFS を USB MSC として直接公開する標準 API / example は作りません。
+USB MSC は sector-level block device であり、SPIFFS / LittleFS は ESP32 側 filesystem API
+なので抽象度が合いません。内蔵 flash は firmware partition、erase block、書き換え耐性の
+制約も強いため、一般ユーザー向け導線から外します。
+
 ## 実装上の注意
 
 ### TinyUSB 統合
@@ -710,6 +769,8 @@ EspUsbDevice/
 - MSC RAM disk。
 - failure injection。
 - multi-block read/write。
+- MSC FAT RAM disk helper。
+- MSC SD card helper。
 - Audio sink。
 - peer `usb_msc`、`usb_audio` 移行。
 
