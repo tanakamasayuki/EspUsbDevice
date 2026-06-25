@@ -224,6 +224,10 @@ CLICK 1
 - 2026-06-25: `EspUsbDeviceCdcSerial` を追加し、`peer/usb_serial` を作成。
   Device -> Host、Host -> Device、line coding callback を検証する構成にした。
   host / device sketch は build 通過。default `s3_peer_host` で 3 tests passed。
+- 2026-06-25: `loopback/usb_serial` を追加し、P4 1台構成で CDC ACM の Device -> Host、
+  Host -> Device、line coding callback を確認。CDC endpoint MPS は P4 FS Host が
+  確保できる notification 8 bytes / bulk 64 bytes に修正。default `p4_loopback` で
+  1 test passed。`peer/usb_serial` も再実行して 3 tests passed。
 
 probe で必ず出すログ:
 
@@ -254,7 +258,7 @@ probe で必ず出すログ:
 8. ✅ custom/vendor HID Device class を追加し、Host の `sendHIDReport()`、
    `onVendorInput()`、HID parser field decode を検証する。
 9. ✅ consumer control / system control / gamepad HID Device class を追加し、Host 側 callback を検証する。
-10. CDC ACM の `peer/usb_serial` 実機確認を行い、必要なら line state / flush / buffering を調整する。
+10. CDC ACM の peer / loopback を維持し、必要なら line state / flush / buffering を追加検証する。
 11. P4 probe で FS / HS device 初期化方式を確定する。
 
 Host 側で怪しい挙動が見つかった場合:
