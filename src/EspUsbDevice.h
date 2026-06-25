@@ -148,9 +148,20 @@ static constexpr uint8_t ESP_USB_DEVICE_MOUSE_FORWARD = 0x10;
 
 static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD = 0x01;
 static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_MOUSE = 0x02;
+static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_GAMEPAD = 0x03;
 static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_CONSUMER_CONTROL = 0x04;
 static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_SYSTEM_CONTROL = 0x05;
 static constexpr uint8_t ESP_USB_DEVICE_HID_REPORT_ID_VENDOR = 0x06;
+
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_CENTER = 0x00;
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_UP = 0x01;
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_UP_RIGHT = 0x02;
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_RIGHT = 0x03;
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_DOWN_RIGHT = 0x04;
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_DOWN = 0x05;
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_DOWN_LEFT = 0x06;
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_LEFT = 0x07;
+static constexpr uint8_t ESP_USB_DEVICE_GAMEPAD_HAT_UP_LEFT = 0x08;
 
 static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_NEXT_TRACK = 0x00b5;
 static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_PREVIOUS_TRACK = 0x00b6;
@@ -186,6 +197,18 @@ struct EspUsbDeviceBootMouseReport
   int8_t x = 0;
   int8_t y = 0;
   int8_t wheel = 0;
+};
+
+struct EspUsbDeviceGamepadReport
+{
+  int8_t x = 0;
+  int8_t y = 0;
+  int8_t z = 0;
+  int8_t rz = 0;
+  int8_t rx = 0;
+  int8_t ry = 0;
+  uint8_t hat = ESP_USB_DEVICE_GAMEPAD_HAT_CENTER;
+  uint32_t buttons = 0;
 };
 
 enum EspUsbDeviceHidReportType : uint8_t
@@ -238,6 +261,7 @@ private:
   friend class EspUsbDeviceHidMouse;
   friend class EspUsbDeviceHidCustom;
   friend class EspUsbDeviceHidVendor;
+  friend class EspUsbDeviceHidGamepad;
   friend class EspUsbDeviceHidConsumerControl;
   friend class EspUsbDeviceHidSystemControl;
   static constexpr size_t MAX_CLASSES = 4;
@@ -393,6 +417,35 @@ private:
   uint16_t reportSize_ = 63;
   ReportCallback outputCallback_;
   ReportCallback featureCallback_;
+};
+
+class EspUsbDeviceHidGamepad : public EspUsbDeviceClass
+{
+public:
+  explicit EspUsbDeviceHidGamepad(EspUsbDevice &device);
+
+  bool begin() override;
+  bool sendReport(const EspUsbDeviceGamepadReport &report, uint32_t timeoutMs = 100);
+  bool send(int8_t x,
+            int8_t y,
+            int8_t z,
+            int8_t rz,
+            int8_t rx,
+            int8_t ry,
+            uint8_t hat,
+            uint32_t buttons,
+            uint32_t timeoutMs = 100);
+  bool releaseAll(uint32_t timeoutMs = 100);
+
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 1; }
+  uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_GAMEPAD; }
+  const uint8_t *hidReportDescriptor() const override;
+  uint16_t hidReportDescriptorLength() const override;
+
+private:
+  EspUsbDeviceGamepadReport report_;
 };
 
 class EspUsbDeviceHidConsumerControl : public EspUsbDeviceClass

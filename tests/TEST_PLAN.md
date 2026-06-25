@@ -66,7 +66,7 @@ tests/
 | HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | | | |
 | Consumer control HID | planned | ✅ `hid_consumer_control` | | | |
 | System control HID | planned | ✅ `hid_system_control` | | | |
-| Gamepad HID | planned | planned | | | |
+| Gamepad HID | planned | ✅ `hid_gamepad` | | | |
 | CDC ACM | | planned | planned | | |
 | USB MIDI | | planned | | | |
 | USB MSC | | planned | | | |
@@ -125,7 +125,7 @@ First additions:
 |--------------|---------------------|----------|
 | `onConsumerControl()` | ✅ `hid_consumer_control` | play/pause, mute, volume, next/previous press/release events |
 | `onSystemControl()` | ✅ `hid_system_control` | power / sleep press/release events |
-| `onGamepad()` | gamepad HID | fields / fieldCount / changed / rawData / reportData match |
+| `onGamepad()` | ✅ `hid_gamepad` | fields / fieldCount / changed / rawData / reportData match |
 
 ### Non-HID Host Details
 
@@ -147,7 +147,7 @@ tests are stable, replace Host-side `peer/usb_serial`, `peer/usb_midi`,
 10. ✅ `peer/hid_vendor`
 11. ✅ `peer/hid_consumer_control`
 12. ✅ `peer/hid_system_control`
-13. `peer/hid_gamepad`
+13. ✅ `peer/hid_gamepad`
 14. `peer/usb_serial`
 15. `peer/usb_midi`
 16. `peer/usb_msc`
