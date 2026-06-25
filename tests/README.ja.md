@@ -34,8 +34,8 @@ uv run --env-file .env pytest peer/
 uv run --env-file .env pytest --run-mode=build
 ```
 
-通常の peer / loopback はリリース版 `EspUsbHost` を使います。ローカル checkout の
-`../EspUsbHost` を使って未リリース修正を確認する場合は、local profile を指定します。
+通常の peer / loopback はリリース版 `EspUsbHost` を使います。local profile は
+Host 側の未リリース修正をリリース前検証する場合だけ使います。
 
 ```sh
 uv run --env-file .env pytest peer/ --profile=s3_peer_local
