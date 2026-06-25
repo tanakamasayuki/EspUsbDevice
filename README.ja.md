@@ -21,17 +21,22 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 - Arduino-ESP32 標準 USB Device stack とは排他利用にする。このライブラリを使う
   スケッチでは `USB.begin()` を呼ばない。
 
-## 初期スコープ
+## 現在のスコープ
 
 最初のマイルストーンは、既存 `EspUsbHost` peer device を置き換え、実ハードウェアで
-コア API を検証するための HID MVP です。
+コア API を検証することです。HID MVP から始め、CDC ACM、USB MIDI、MSC まで peer /
+loopback テストで確認できる範囲を広げています。
 
 - device port / speed / VID / PID / string / power 設定。
 - speed に応じた descriptor 生成と endpoint MPS 選択。
 - HID boot keyboard の raw report 送信。
 - HID keyboard output report callback による LED 状態受信。
 - HID boot mouse の raw report 送信。
-- pytest-embedded peer テスト用の serial command sketch。
+- HID consumer / system / gamepad / custom / vendor report。
+- CDC ACM serial。
+- USB MIDI event packet と note / control change helper。
+- USB MSC block device と SCSI callback。
+- pytest-embedded peer / loopback テスト用の serial command sketch。
 
 ## Examples
 
@@ -40,6 +45,7 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 - `Keyboard`: layout 付き ASCII 文字列と HID usage ID を送信する boot keyboard。
 - `Mouse`: 移動、wheel、button を送信する boot mouse。
 - `KeyboardMouse`: keyboard + mouse の composite HID。
+- `MSC`: RAM buffer を block device として公開する Mass Storage Class。
 
 ## HID Keyboard / Mouse APIs
 
@@ -57,6 +63,26 @@ Mouse:
 - `mouse.move(x, y)`、`wheel(delta)`、`sendReport(report)` は移動と raw report を送信します。
 - `mouse.press(buttons)`、`release(buttons)`、`releaseAll()`、`click(button)`、
   `buttons()` は Device 側 button 状態を保持して扱います。
+
+## CDC / MIDI / MSC APIs
+
+CDC ACM:
+
+- `EspUsbDeviceCdcSerial` は USB serial の read / write callback と helper を提供します。
+- `available()`、`read()`、`write()`、`print()` 系の Arduino らしい使い方と、
+  raw callback の両方を扱えます。
+
+USB MIDI:
+
+- `EspUsbDeviceMidi` は 4 byte USB-MIDI event packet を送信します。
+- `noteOn()`、`noteOff()`、`controlChange()` などの helper と `writePacket()` を併用できます。
+
+MSC:
+
+- `EspUsbDeviceMsc` は inquiry、media 状態、capacity、read/write callback を扱います。
+- `EspUsbDeviceMscRamDisk` は外部 RAM buffer を block device として公開する helper です。
+- MSC は block device と filesystem が別です。OS からドライブとしてマウントするには、
+  有効な FAT image か SD / flash などの実 storage を read/write callback に接続してください。
 
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。

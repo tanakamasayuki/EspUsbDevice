@@ -1357,6 +1357,117 @@ void EspUsbDeviceMsc::copyPadded(uint8_t *dst, size_t size, const char *value)
   memcpy(dst, value, length);
 }
 
+EspUsbDeviceMscRamDisk::EspUsbDeviceMscRamDisk(uint8_t *storage, uint32_t blockCount, uint16_t blockSize)
+    : storage_(storage), blockCount_(blockCount), blockSize_(blockSize)
+{
+}
+
+bool EspUsbDeviceMscRamDisk::attach(EspUsbDeviceMsc &msc)
+{
+  if (!valid())
+  {
+    return false;
+  }
+  msc.onRead([this](uint32_t lba, uint32_t offset, void *buffer, uint32_t size)
+             { return read(lba, offset, buffer, size); });
+  msc.onWrite([this](uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)
+              { return write(lba, offset, buffer, size); });
+  return msc.begin(blockCount_, blockSize_);
+}
+
+bool EspUsbDeviceMscRamDisk::valid() const
+{
+  return storage_ && blockCount_ > 0 && blockSize_ > 0;
+}
+
+uint8_t *EspUsbDeviceMscRamDisk::data()
+{
+  return storage_;
+}
+
+const uint8_t *EspUsbDeviceMscRamDisk::data() const
+{
+  return storage_;
+}
+
+uint32_t EspUsbDeviceMscRamDisk::blockCount() const
+{
+  return blockCount_;
+}
+
+uint16_t EspUsbDeviceMscRamDisk::blockSize() const
+{
+  return blockSize_;
+}
+
+size_t EspUsbDeviceMscRamDisk::byteSize() const
+{
+  return static_cast<size_t>(blockCount_) * blockSize_;
+}
+
+void EspUsbDeviceMscRamDisk::clear(uint8_t value)
+{
+  if (valid())
+  {
+    memset(storage_, value, byteSize());
+  }
+}
+
+bool EspUsbDeviceMscRamDisk::readBlock(uint32_t lba, void *buffer) const
+{
+  return read(lba, 0, buffer, blockSize_) == blockSize_;
+}
+
+bool EspUsbDeviceMscRamDisk::writeBlock(uint32_t lba, const void *buffer)
+{
+  if (!buffer)
+  {
+    return false;
+  }
+  return write(lba, 0, const_cast<uint8_t *>(static_cast<const uint8_t *>(buffer)), blockSize_) == blockSize_;
+}
+
+void EspUsbDeviceMscRamDisk::writeByte(uint32_t lba, uint16_t offset, uint8_t value)
+{
+  if (!valid() || lba >= blockCount_ || offset >= blockSize_)
+  {
+    return;
+  }
+  storage_[static_cast<size_t>(lba) * blockSize_ + offset] = value;
+}
+
+int32_t EspUsbDeviceMscRamDisk::read(uint32_t lba, uint32_t offset, void *buffer, uint32_t size) const
+{
+  if (!valid() || !buffer || lba >= blockCount_ || offset >= blockSize_)
+  {
+    return -1;
+  }
+  const size_t start = static_cast<size_t>(lba) * blockSize_ + offset;
+  const size_t end = start + size;
+  if (end < start || end > byteSize())
+  {
+    return -1;
+  }
+  memcpy(buffer, storage_ + start, size);
+  return static_cast<int32_t>(size);
+}
+
+int32_t EspUsbDeviceMscRamDisk::write(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)
+{
+  if (!valid() || !buffer || lba >= blockCount_ || offset >= blockSize_)
+  {
+    return -1;
+  }
+  const size_t start = static_cast<size_t>(lba) * blockSize_ + offset;
+  const size_t end = start + size;
+  if (end < start || end > byteSize())
+  {
+    return -1;
+  }
+  memcpy(storage_ + start, buffer, size);
+  return static_cast<int32_t>(size);
+}
+
 EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbDeviceClass(device)
 {
 }

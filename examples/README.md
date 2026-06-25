@@ -41,6 +41,22 @@ See [KeyboardMouse/README.md](KeyboardMouse/README.md) for details.
 - Mouse report ID: `2`
 - Composite HID endpoint MPS: `16 bytes`
 
+## MSC
+
+USB Mass Storage Class device example.
+See [MSC/README.md](MSC/README.md) for details.
+
+- Configure SCSI inquiry strings, media state, and writability with
+  `EspUsbDeviceMsc`.
+- Expose a RAM buffer as a 512-byte block device with `EspUsbDeviceMscRamDisk`.
+- Use `disk.attach(msc)` to install read/write callbacks and call `msc.begin()`.
+- This example validates SCSI / block I/O transport. It is not a FAT-formatted
+  USB flash drive.
+
+MSC separates the block device from the filesystem. To make host-mountable
+storage, provide a valid FAT image or back the callbacks with real block storage
+such as SD or flash.
+
 ## Notes
 
 - Connect the USB-device-capable ESP32-S3 or similar board to a USB host.

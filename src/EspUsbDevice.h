@@ -478,6 +478,32 @@ private:
   EspUsbDeviceMscStartStopCallback startStopCallback_;
 };
 
+class EspUsbDeviceMscRamDisk
+{
+public:
+  EspUsbDeviceMscRamDisk(uint8_t *storage, uint32_t blockCount, uint16_t blockSize = 512);
+
+  bool attach(EspUsbDeviceMsc &msc);
+  bool valid() const;
+  uint8_t *data();
+  const uint8_t *data() const;
+  uint32_t blockCount() const;
+  uint16_t blockSize() const;
+  size_t byteSize() const;
+  void clear(uint8_t value = 0);
+  bool readBlock(uint32_t lba, void *buffer) const;
+  bool writeBlock(uint32_t lba, const void *buffer);
+  void writeByte(uint32_t lba, uint16_t offset, uint8_t value);
+
+private:
+  int32_t read(uint32_t lba, uint32_t offset, void *buffer, uint32_t size) const;
+  int32_t write(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size);
+
+  uint8_t *storage_ = nullptr;
+  uint32_t blockCount_ = 0;
+  uint16_t blockSize_ = 512;
+};
+
 class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass
 {
 public:

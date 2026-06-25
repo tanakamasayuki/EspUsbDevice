@@ -23,17 +23,23 @@ final boundary of the project.
 - Keep Arduino-ESP32's standard USB device stack mutually exclusive. Sketches
   using this library must not call `USB.begin()`.
 
-## Initial Scope
+## Current Scope
 
-The first milestone is the HID-focused MVP needed to replace existing EspUsbHost
-peer devices and validate the core API on real hardware:
+The first milestone is replacing existing EspUsbHost peer devices and validating
+the core API on real hardware. The project started with the HID MVP and now
+covers CDC ACM, USB MIDI, and MSC through peer and loopback tests where
+available:
 
 - Device port/speed/VID/PID/string/power configuration.
 - Speed-aware descriptor generation and endpoint MPS selection.
 - HID boot keyboard raw report sending.
 - HID keyboard output report callback for LED state.
 - HID boot mouse raw report sending.
-- Serial command sketches for pytest-embedded peer tests.
+- HID consumer / system / gamepad / custom / vendor reports.
+- CDC ACM serial.
+- USB MIDI event packets and note/control-change helpers.
+- USB MSC block device and SCSI callbacks.
+- Serial command sketches for pytest-embedded peer and loopback tests.
 
 ## Examples
 
@@ -42,6 +48,7 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
 - `Keyboard`: boot keyboard that sends layout-aware ASCII strings and HID usage IDs.
 - `Mouse`: boot mouse that sends movement, wheel, and buttons.
 - `KeyboardMouse`: composite keyboard + mouse HID.
+- `MSC`: Mass Storage Class device that exposes a RAM buffer as a block device.
 
 ## HID Keyboard / Mouse APIs
 
@@ -61,6 +68,29 @@ Mouse:
   raw reports.
 - `mouse.press(buttons)`, `release(buttons)`, `releaseAll()`, `click(button)`,
   and `buttons()` maintain device-side button state.
+
+## CDC / MIDI / MSC APIs
+
+CDC ACM:
+
+- `EspUsbDeviceCdcSerial` provides USB serial read/write callbacks and helpers.
+- It supports Arduino-style `available()`, `read()`, `write()`, and `print()`
+  usage as well as raw callbacks.
+
+USB MIDI:
+
+- `EspUsbDeviceMidi` sends 4-byte USB-MIDI event packets.
+- Use helpers such as `noteOn()`, `noteOff()`, and `controlChange()` together
+  with raw `writePacket()`.
+
+MSC:
+
+- `EspUsbDeviceMsc` handles inquiry strings, media state, capacity, and
+  read/write callbacks.
+- `EspUsbDeviceMscRamDisk` wraps an external RAM buffer as a block device.
+- MSC separates the block device from the filesystem. To make a drive mountable
+  by an OS, provide a valid FAT image or connect the read/write callbacks to
+  real storage such as SD or flash.
 
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
