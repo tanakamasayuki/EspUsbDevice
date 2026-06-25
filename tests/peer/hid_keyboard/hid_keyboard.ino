@@ -4,6 +4,8 @@
 EspUsbHost usb;
 static char textBuffer[32] = {};
 static size_t textLength = 0;
+static uint8_t keyboardAddress = 0;
+static uint8_t keyboardInterface = 0;
 
 static void printBytes(const uint8_t *data, size_t length, size_t maxLength)
 {
@@ -22,6 +24,7 @@ void setup()
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
                         {
                           Serial.printf("HOST_CONNECTED vid=%04x pid=%04x\n", device.vid, device.pid);
+                          keyboardAddress = device.address;
                         });
 
   usb.onKeyboard([](const EspUsbHostKeyboardEvent &event)
@@ -48,6 +51,7 @@ void setup()
                                             descriptor.length,
                                             descriptor.length > 0 ? descriptor.data[0] : 0,
                                             descriptor.length > 0 ? descriptor.data[descriptor.length - 1] : 0);
+                              keyboardInterface = descriptor.interfaceNumber;
                             });
 
   usb.onHIDInput([](const EspUsbHostHIDInput &input)
@@ -87,6 +91,13 @@ void loop()
     else if (command == '0')
     {
       Serial.printf("LED_TX %u\n", usb.setKeyboardLeds(false, false, false) ? 1 : 0);
+    }
+    else if (command == 'p')
+    {
+      Serial.printf("PROTOCOL_TX %u iface=%u address=%u\n",
+                    usb.sendSetProtocol(keyboardInterface, keyboardAddress) ? 1 : 0,
+                    keyboardInterface,
+                    keyboardAddress);
     }
   }
   delay(1);

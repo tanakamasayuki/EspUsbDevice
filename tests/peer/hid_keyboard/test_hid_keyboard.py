@@ -28,3 +28,11 @@ def test_hid_keyboard_led(dut, peers):
     dut.write("0")
     dut.expect_exact("LED_TX 1")
     device.expect_exact("LED numlock=0 capslock=0 scrolllock=0")
+
+
+def test_hid_keyboard_set_protocol(dut, peers):
+    device = peers["device"]
+
+    dut.write("p")
+    dut.expect("PROTOCOL_TX 1 iface=0 address=[1-9][0-9]*")
+    device.expect_exact("PROTOCOL instance=0 protocol=1")

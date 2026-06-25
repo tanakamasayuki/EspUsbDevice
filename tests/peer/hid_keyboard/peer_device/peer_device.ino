@@ -29,6 +29,10 @@ void setup()
                                           report.capsLock ? 1 : 0,
                                           report.scrollLock ? 1 : 0);
                           });
+  keyboard.onProtocol([](const EspUsbDeviceHidProtocolEvent &event)
+                      {
+                        Serial.printf("PROTOCOL instance=%u protocol=%u\n", event.instance, event.protocol);
+                      });
 
   EspUsbDeviceConfig config;
   config.port = ESP_USB_DEVICE_PORT_FULL_SPEED;

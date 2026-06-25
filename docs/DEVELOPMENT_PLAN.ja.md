@@ -215,6 +215,9 @@ CLICK 1
   HID field decode を確認。`s3_peer_local` で 3 tests passed。
 - 2026-06-25: `loopback/hid_gamepad` を追加。P4 1台構成で gamepad raw input /
   `onGamepad()` / HID field decode を確認。default `p4_loopback` で 1 test passed。
+- 2026-06-25: `EspUsbDeviceHidKeyboard::onProtocol()` を追加し、`peer/hid_keyboard` で
+  Host の `sendSetProtocol()` が Device 側 TinyUSB Set_Protocol callback へ届くことを確認。
+  default `s3_peer_host` で 3 tests passed。
 
 probe で必ず出すログ:
 
