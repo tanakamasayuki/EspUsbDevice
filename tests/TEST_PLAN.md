@@ -69,7 +69,7 @@ tests/
 | Consumer control HID | planned | ✅ `hid_consumer_control` | | | |
 | System control HID | planned | ✅ `hid_system_control` | | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
-| CDC ACM | | planned | planned | | |
+| CDC ACM | | ✅ `usb_serial` | planned | | |
 | USB MIDI | | planned | | | |
 | USB MSC | | planned | | | |
 | USB Audio | | planned | | | |
@@ -132,8 +132,14 @@ First additions:
 ### Non-HID Host Details
 
 CDC ACM, MIDI, MSC, and Audio require matching Device classes. After HID detail
-tests are stable, replace Host-side `peer/usb_serial`, `peer/usb_midi`,
-`peer/usb_msc`, and `peer/usb_audio` devices with EspUsbDevice implementations.
+tests are stable, add EspUsbDevice-based counterparts for Host-side
+`peer/usb_serial`, `peer/usb_midi`, `peer/usb_msc`, and `peer/usb_audio`.
+
+`peer/usb_serial` is the first CDC ACM test for `EspUsbDeviceCdcSerial`. The
+Host side uses released `EspUsbHost` and `EspUsbHostCdcSerial`, then verifies
+Device -> Host, Host -> Device, and line coding callbacks. The default profile
+uses the released Host version. `s3_peer_local` is only for optional
+pre-release validation of unreleased Host-side fixes.
 
 ## Initial Migration Order
 
@@ -154,7 +160,7 @@ tests are stable, replace Host-side `peer/usb_serial`, `peer/usb_midi`,
 15. ✅ `peer/hid_system_control`
 16. ✅ `peer/hid_gamepad`
 17. ✅ `loopback/hid_gamepad`
-18. `peer/usb_serial`
+18. ✅ `peer/usb_serial`
 19. `peer/usb_midi`
 20. `peer/usb_msc`
 21. `peer/usb_audio`

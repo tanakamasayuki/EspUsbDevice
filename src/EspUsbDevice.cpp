@@ -24,6 +24,7 @@
 
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED && __has_include("esp32-hal-tinyusb.h")
 #include "esp32-hal-tinyusb.h"
+#include "class/cdc/cdc_device.h"
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 1
 #else
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
@@ -44,6 +45,7 @@ static constexpr uint8_t USB_PROTOCOL_MOUSE = 0x02;
 static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
 
 static EspUsbDevice *g_activeDevice = nullptr;
+static EspUsbDeviceCdcSerial *g_activeCdcSerial = nullptr;
 
 static void put16(uint8_t *dst, uint16_t value)
 {
@@ -234,6 +236,17 @@ static uint16_t espUsbDeviceLoadHidDescriptor(uint8_t *dst, uint8_t *itf)
   return interfaceLength;
 }
 
+static uint16_t espUsbDeviceLoadCdcDescriptor(uint8_t *dst, uint8_t *itf)
+{
+  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice CDC");
+  uint8_t descriptor[] = {
+      TUD_CDC_DESCRIPTOR(*itf, strIndex, 0x85, CFG_TUD_ENDPOINT_SIZE, 0x03, 0x84, CFG_TUD_ENDPOINT_SIZE),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  *itf = static_cast<uint8_t>(*itf + 2);
+  return sizeof(descriptor);
+}
+
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
   return g_activeDevice ? g_activeDevice->hidReportDescriptor(instance) : nullptr;
@@ -262,6 +275,30 @@ void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol)
   if (g_activeDevice)
   {
     g_activeDevice->handleHidSetProtocol(instance, protocol);
+  }
+}
+
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+{
+  if (itf == 0 && g_activeCdcSerial)
+  {
+    g_activeCdcSerial->handleLineState(dtr, rts);
+  }
+}
+
+void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *lineCoding)
+{
+  if (itf == 0 && g_activeCdcSerial && lineCoding)
+  {
+    g_activeCdcSerial->handleLineCoding(lineCoding->bit_rate, lineCoding->stop_bits, lineCoding->parity, lineCoding->data_bits);
+  }
+}
+
+void tud_cdc_rx_cb(uint8_t itf)
+{
+  if (itf == 0 && g_activeCdcSerial)
+  {
+    g_activeCdcSerial->handleRx();
   }
 }
 #endif
@@ -309,14 +346,27 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     }
     g_activeDevice = this;
 
-    const uint8_t *configDescriptor = configurationDescriptor(0);
-    const uint16_t totalLength = static_cast<uint16_t>(configDescriptor[2]) | (static_cast<uint16_t>(configDescriptor[3]) << 8);
-    const uint16_t interfaceLength = totalLength >= 9 ? totalLength - 9 : 0;
-    esp_err_t err = tinyusb_enable_interface2(USB_INTERFACE_HID, interfaceLength, espUsbDeviceLoadHidDescriptor, false);
-    if (err != ESP_OK)
+    esp_err_t err = ESP_OK;
+    if (hasHidClass())
     {
-      setLastError(err);
-      return false;
+      const uint8_t *configDescriptor = configurationDescriptor(0);
+      const uint16_t totalLength = static_cast<uint16_t>(configDescriptor[2]) | (static_cast<uint16_t>(configDescriptor[3]) << 8);
+      const uint16_t interfaceLength = totalLength >= 9 ? totalLength - 9 : 0;
+      err = tinyusb_enable_interface2(USB_INTERFACE_HID, interfaceLength, espUsbDeviceLoadHidDescriptor, false);
+      if (err != ESP_OK)
+      {
+        setLastError(err);
+        return false;
+      }
+    }
+    if (hasCdcClass())
+    {
+      err = tinyusb_enable_interface(USB_INTERFACE_CDC, TUD_CDC_DESC_LEN, espUsbDeviceLoadCdcDescriptor);
+      if (err != ESP_OK)
+      {
+        setLastError(err);
+        return false;
+      }
     }
 
     tinyusb_device_config_t tinyusbConfig = {
@@ -527,6 +577,10 @@ const uint8_t *EspUsbDevice::hidReportDescriptor(uint8_t instance)
   {
     return nullptr;
   }
+  if (!classes_[instance]->isHid())
+  {
+    return nullptr;
+  }
   return classes_[instance]->hidReportDescriptor();
 }
 
@@ -536,6 +590,10 @@ void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_
   {
     for (size_t i = 0; i < classCount_; i++)
     {
+      if (!classes_[i] || !classes_[i]->isHid())
+      {
+        continue;
+      }
       if (classReportId(static_cast<uint8_t>(i)) == reportId && classes_[i])
       {
         classes_[i]->onHidSetReport(reportId, reportType, data, length);
@@ -581,7 +639,10 @@ bool EspUsbDevice::buildDescriptors()
   {
     for (size_t i = 0; i < classCount_; i++)
     {
-      interfaceCount += classes_[i]->interfaceCount();
+      if (classes_[i] && classes_[i]->isHid())
+      {
+        interfaceCount += classes_[i]->interfaceCount();
+      }
     }
   }
 
@@ -620,6 +681,10 @@ bool EspUsbDevice::buildDescriptors()
   {
     for (size_t i = 0; i < classCount_; i++)
     {
+      if (!classes_[i] || !classes_[i]->isHid())
+      {
+        continue;
+      }
       const uint8_t *src = classes_[i]->hidReportDescriptor();
       const uint16_t srcLen = classes_[i]->hidReportDescriptorLength();
       if (!src || srcLen < 6 || hidReportDescriptorLength_ + srcLen + 2 > MAX_HID_REPORT_DESCRIPTOR)
@@ -650,6 +715,10 @@ bool EspUsbDevice::buildDescriptors()
   {
     for (size_t i = 0; i < classCount_; i++)
     {
+      if (!classes_[i] || !classes_[i]->isHid())
+      {
+        continue;
+      }
       uint16_t written = classes_[i]->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, endpointSize);
       offset += written;
       interfaceNumber += classes_[i]->interfaceCount();
@@ -669,7 +738,39 @@ bool EspUsbDevice::buildDescriptors()
 
 bool EspUsbDevice::compositeHid() const
 {
-  return classCount_ > 1;
+  size_t hidCount = 0;
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isHid())
+    {
+      hidCount++;
+    }
+  }
+  return hidCount > 1;
+}
+
+bool EspUsbDevice::hasHidClass() const
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isHid())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool EspUsbDevice::hasCdcClass() const
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isCdc())
+    {
+      return true;
+    }
+  }
+  return false;
 }
 
 uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
@@ -702,6 +803,152 @@ void EspUsbDevice::setLastError(esp_err_t error)
 EspUsbDeviceClass::EspUsbDeviceClass(EspUsbDevice &device) : device_(device)
 {
   device_.addClass(this);
+}
+
+EspUsbDeviceCdcSerial::EspUsbDeviceCdcSerial(EspUsbDevice &device) : EspUsbDeviceClass(device)
+{
+}
+
+bool EspUsbDeviceCdcSerial::begin()
+{
+  if (g_activeCdcSerial && g_activeCdcSerial != this)
+  {
+    return false;
+  }
+  g_activeCdcSerial = this;
+  return true;
+}
+
+uint16_t EspUsbDeviceCdcSerial::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  (void)dst;
+  (void)interfaceNumber;
+  (void)endpointNumber;
+  (void)endpointSize;
+  return 0;
+}
+
+int EspUsbDeviceCdcSerial::available()
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return static_cast<int>(tud_cdc_n_available(0));
+#else
+  return 0;
+#endif
+}
+
+int EspUsbDeviceCdcSerial::read()
+{
+  uint8_t data = 0;
+  return read(&data, 1) == 1 ? data : -1;
+}
+
+size_t EspUsbDeviceCdcSerial::read(uint8_t *buffer, size_t size)
+{
+  if (!buffer || size == 0)
+  {
+    return 0;
+  }
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return tud_cdc_n_read(0, buffer, static_cast<uint32_t>(size));
+#else
+  return 0;
+#endif
+}
+
+size_t EspUsbDeviceCdcSerial::write(uint8_t data)
+{
+  return write(&data, 1);
+}
+
+size_t EspUsbDeviceCdcSerial::write(const uint8_t *buffer, size_t size)
+{
+  if (!buffer || size == 0)
+  {
+    return 0;
+  }
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  if (!tud_cdc_n_ready(0))
+  {
+    return 0;
+  }
+  const uint32_t written = tud_cdc_n_write(0, buffer, static_cast<uint32_t>(size));
+  tud_cdc_n_write_flush(0);
+  return written;
+#else
+  return 0;
+#endif
+}
+
+void EspUsbDeviceCdcSerial::flush()
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  tud_cdc_n_write_flush(0);
+#endif
+}
+
+bool EspUsbDeviceCdcSerial::connected() const
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return tud_cdc_n_connected(0);
+#else
+  return false;
+#endif
+}
+
+const EspUsbDeviceCdcLineCoding &EspUsbDeviceCdcSerial::lineCoding() const
+{
+  return lineCoding_;
+}
+
+const EspUsbDeviceCdcLineState &EspUsbDeviceCdcSerial::lineState() const
+{
+  return lineState_;
+}
+
+void EspUsbDeviceCdcSerial::onLineCoding(LineCodingCallback callback)
+{
+  lineCodingCallback_ = callback;
+}
+
+void EspUsbDeviceCdcSerial::onLineState(LineStateCallback callback)
+{
+  lineStateCallback_ = callback;
+}
+
+void EspUsbDeviceCdcSerial::onRx(RxCallback callback)
+{
+  rxCallback_ = callback;
+}
+
+void EspUsbDeviceCdcSerial::handleLineCoding(uint32_t baud, uint8_t stopBits, uint8_t parity, uint8_t dataBits)
+{
+  lineCoding_.baud = baud;
+  lineCoding_.stopBits = stopBits;
+  lineCoding_.parity = parity;
+  lineCoding_.dataBits = dataBits;
+  if (lineCodingCallback_)
+  {
+    lineCodingCallback_(lineCoding_);
+  }
+}
+
+void EspUsbDeviceCdcSerial::handleLineState(bool dtr, bool rts)
+{
+  lineState_.dtr = dtr;
+  lineState_.rts = rts;
+  if (lineStateCallback_)
+  {
+    lineStateCallback_(lineState_);
+  }
+}
+
+void EspUsbDeviceCdcSerial::handleRx()
+{
+  if (rxCallback_)
+  {
+    rxCallback_(available());
+  }
 }
 
 EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbDeviceClass(device)

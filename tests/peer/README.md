@@ -32,6 +32,7 @@ PC.
   two-board S3 setup.
 - `custom_hid`: fixed custom report descriptor and raw input.
 - `hid_vendor`: interrupt IN/OUT and feature report.
+- `usb_serial`: CDC ACM serial. Device -> Host, Host -> Device, and line
+  coding callbacks pass on the two-board S3 setup.
 
-Later phases add consumer control, system control, gamepad, CDC ACM, MIDI, MSC,
-and Audio.
+Later phases add MIDI, MSC, and Audio.

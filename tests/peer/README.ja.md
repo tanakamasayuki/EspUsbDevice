@@ -29,6 +29,6 @@ assertion を安定させるためです。
 - `hid_keyboard_mouse`: keyboard + mouse composite device。S3 2台構成で通過済み。
 - `custom_hid`: 固定 custom report descriptor と raw input。
 - `hid_vendor`: interrupt IN/OUT と feature report。
+- `usb_serial`: CDC ACM serial。Device -> Host、Host -> Device、line coding callback が S3 2台構成で通過済み。
 
-以降のフェーズで consumer control、system control、gamepad、CDC ACM、MIDI、MSC、
-Audio を追加します。
+以降のフェーズで MIDI、MSC、Audio を追加します。
