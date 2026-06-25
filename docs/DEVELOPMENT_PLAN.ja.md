@@ -228,6 +228,9 @@ CLICK 1
   Host -> Device、line coding callback を確認。CDC endpoint MPS は P4 FS Host が
   確保できる notification 8 bytes / bulk 64 bytes に修正。default `p4_loopback` で
   1 test passed。`peer/usb_serial` も再実行して 3 tests passed。
+- 2026-06-25: `EspUsbDeviceMidi` を追加し、`peer/usb_midi` を作成。Device -> Host /
+  Host -> Device の channel voice message と Host -> Device の短い SysEx packet 分割を確認。
+  default `s3_peer_host` で 5 tests passed。
 
 probe で必ず出すログ:
 
@@ -259,7 +262,8 @@ probe で必ず出すログ:
    `onVendorInput()`、HID parser field decode を検証する。
 9. ✅ consumer control / system control / gamepad HID Device class を追加し、Host 側 callback を検証する。
 10. CDC ACM の peer / loopback を維持し、必要なら line state / flush / buffering を追加検証する。
-11. P4 probe で FS / HS device 初期化方式を確定する。
+11. USB MIDI を loopback へ広げる。
+12. P4 probe で FS / HS device 初期化方式を確定する。
 
 Host 側で怪しい挙動が見つかった場合:
 

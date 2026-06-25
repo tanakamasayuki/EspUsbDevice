@@ -25,6 +25,7 @@
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED && __has_include("esp32-hal-tinyusb.h")
 #include "esp32-hal-tinyusb.h"
 #include "class/cdc/cdc_device.h"
+#include "class/midi/midi_device.h"
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 1
 #else
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
@@ -46,6 +47,7 @@ static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
 
 static EspUsbDevice *g_activeDevice = nullptr;
 static EspUsbDeviceCdcSerial *g_activeCdcSerial = nullptr;
+static EspUsbDeviceMidi *g_activeMidi = nullptr;
 
 static void put16(uint8_t *dst, uint16_t value)
 {
@@ -249,6 +251,24 @@ static uint16_t espUsbDeviceLoadCdcDescriptor(uint8_t *dst, uint8_t *itf)
   return sizeof(descriptor);
 }
 
+static uint16_t espUsbDeviceLoadMidiDescriptor(uint8_t *dst, uint8_t *itf)
+{
+  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice MIDI");
+  const uint8_t epIn = tinyusb_get_free_in_endpoint();
+  const uint8_t epOut = tinyusb_get_free_out_endpoint();
+  if (epIn == 0 || epOut == 0)
+  {
+    return 0;
+  }
+  static constexpr uint16_t MIDI_ENDPOINT_SIZE = 64;
+  uint8_t descriptor[] = {
+      TUD_MIDI_DESCRIPTOR(*itf, strIndex, epOut, static_cast<uint8_t>(0x80 | epIn), MIDI_ENDPOINT_SIZE),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  *itf = static_cast<uint8_t>(*itf + 2);
+  return sizeof(descriptor);
+}
+
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
   return g_activeDevice ? g_activeDevice->hidReportDescriptor(instance) : nullptr;
@@ -364,6 +384,15 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     if (hasCdcClass())
     {
       err = tinyusb_enable_interface(USB_INTERFACE_CDC, TUD_CDC_DESC_LEN, espUsbDeviceLoadCdcDescriptor);
+      if (err != ESP_OK)
+      {
+        setLastError(err);
+        return false;
+      }
+    }
+    if (hasMidiClass())
+    {
+      err = tinyusb_enable_interface(USB_INTERFACE_MIDI, TUD_MIDI_DESC_LEN, espUsbDeviceLoadMidiDescriptor);
       if (err != ESP_OK)
       {
         setLastError(err);
@@ -775,6 +804,18 @@ bool EspUsbDevice::hasCdcClass() const
   return false;
 }
 
+bool EspUsbDevice::hasMidiClass() const
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isMidi())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
 uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
 {
   if (!compositeHid())
@@ -951,6 +992,114 @@ void EspUsbDeviceCdcSerial::handleRx()
   {
     rxCallback_(available());
   }
+}
+
+EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device) : EspUsbDeviceClass(device)
+{
+}
+
+bool EspUsbDeviceMidi::begin()
+{
+  if (g_activeMidi && g_activeMidi != this)
+  {
+    return false;
+  }
+  g_activeMidi = this;
+  return true;
+}
+
+uint16_t EspUsbDeviceMidi::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  (void)dst;
+  (void)interfaceNumber;
+  (void)endpointNumber;
+  (void)endpointSize;
+  return 0;
+}
+
+bool EspUsbDeviceMidi::readPacket(EspUsbDeviceMidiPacket &packet)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return tud_midi_packet_read(reinterpret_cast<uint8_t *>(&packet));
+#else
+  (void)packet;
+  return false;
+#endif
+}
+
+bool EspUsbDeviceMidi::writePacket(const EspUsbDeviceMidiPacket &packet)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return tud_midi_packet_write(reinterpret_cast<const uint8_t *>(&packet));
+#else
+  (void)packet;
+  return false;
+#endif
+}
+
+bool EspUsbDeviceMidi::noteOn(uint8_t channel, uint8_t note, uint8_t velocity)
+{
+  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, status(ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, channel), clamp7(note), clamp7(velocity)};
+  return writePacket(packet);
+}
+
+bool EspUsbDeviceMidi::noteOff(uint8_t channel, uint8_t note, uint8_t velocity)
+{
+  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, status(ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, channel), clamp7(note), clamp7(velocity)};
+  return writePacket(packet);
+}
+
+bool EspUsbDeviceMidi::controlChange(uint8_t channel, uint8_t control, uint8_t value)
+{
+  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, status(ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, channel), clamp7(control), clamp7(value)};
+  return writePacket(packet);
+}
+
+bool EspUsbDeviceMidi::programChange(uint8_t channel, uint8_t program)
+{
+  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, status(ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, channel), clamp7(program), 0};
+  return writePacket(packet);
+}
+
+bool EspUsbDeviceMidi::polyPressure(uint8_t channel, uint8_t note, uint8_t pressure)
+{
+  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, status(ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, channel), clamp7(note), clamp7(pressure)};
+  return writePacket(packet);
+}
+
+bool EspUsbDeviceMidi::channelPressure(uint8_t channel, uint8_t pressure)
+{
+  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, status(ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, channel), clamp7(pressure), 0};
+  return writePacket(packet);
+}
+
+bool EspUsbDeviceMidi::pitchBend(uint8_t channel, uint16_t value)
+{
+  if (value > 16383)
+  {
+    value = 16383;
+  }
+  EspUsbDeviceMidiPacket packet = {
+      ESP_USB_DEVICE_MIDI_CIN_PITCH_BEND_CHANGE,
+      status(ESP_USB_DEVICE_MIDI_CIN_PITCH_BEND_CHANGE, channel),
+      static_cast<uint8_t>(value & 0x7f),
+      static_cast<uint8_t>((value >> 7) & 0x7f),
+  };
+  return writePacket(packet);
+}
+
+uint8_t EspUsbDeviceMidi::status(uint8_t codeIndex, uint8_t channel)
+{
+  if (channel > 15)
+  {
+    channel = 15;
+  }
+  return static_cast<uint8_t>((codeIndex << 4) | channel);
+}
+
+uint8_t EspUsbDeviceMidi::clamp7(uint8_t value)
+{
+  return value > 127 ? 127 : value;
 }
 
 EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbDeviceClass(device)
