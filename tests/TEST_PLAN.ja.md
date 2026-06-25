@@ -63,7 +63,7 @@ tests/
 | gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
-| USB MSC | | ✅ `usb_msc` | ✅ `usb_msc` | | |
+| USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USB Audio | | 予定 | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
@@ -158,6 +158,10 @@ FAT や SD の使いやすさは別テストにします。
 eject / stop 後に ESP32 側で 8.3 filename の file を scan / read できることを確認します。
 firmware update や Wi-Fi 転送は、まず「Host が書いた file を eject 後に Device 側が
 byte 列として取り出せる」ことを合格条件にします。
+
+`unit/fat_ramdisk` は、Host mount 前に FAT12 image の基本構造、root entry、cluster chain、
+`exists()` / `fileSize()` / `readFile()`、MSC attach と eject callback を検証します。
+PC mount / file copy / OS eject は別途 manual または peer テストで確認します。
 
 `EspUsbDeviceMscSdCard` は SD card を block device として公開する手動または任意自動テストから
 始めます。Host が MSC として SD を所有している間、ESP32 側は同じ filesystem を mount /

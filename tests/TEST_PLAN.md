@@ -71,7 +71,7 @@ tests/
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
-| USB MSC | | ✅ `usb_msc` | ✅ `usb_msc` | | |
+| USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USB Audio | | planned | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -173,6 +173,11 @@ host-mountable FAT image and device-side 8.3 filename scan/read after eject or
 stop. Firmware update and Wi-Fi forwarding start from the simpler requirement
 that a file written by the host can be extracted as bytes by the device after
 host ownership ends.
+
+`unit/fat_ramdisk` verifies the FAT12 image structure, root entries, cluster
+chains, `exists()` / `fileSize()` / `readFile()`, MSC attach, and eject callback
+before host-mount testing. PC mount / file copy / OS eject should be covered by
+manual or peer tests separately.
 
 `EspUsbDeviceMscSdCard` should start as a manual or optional automated test that
 exposes an SD card as a block device. While the host owns the SD card through
