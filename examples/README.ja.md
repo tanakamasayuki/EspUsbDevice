@@ -46,7 +46,10 @@ USB Mass Storage Class device の例です。
 - この example は SCSI / block I/O 疎通確認用で、FAT でフォーマットされた USB メモリではありません。
 
 MSC は block device と filesystem が分かれます。Host から通常のドライブとしてマウント
-させたい場合は、有効な FAT image か SD / flash などの実 block storage が別途必要です。
+させたい場合は、有効な FAT image か SD card などの実 block storage が別途必要です。
+flash / SPIFFS / LittleFS の直接公開は標準 example では扱わず、実用的な永続ストレージは
+SD card を優先します。RAM disk は、FAT helper を追加すると firmware、設定ファイル、
+Wi-Fi 転送用の一時ファイル受け渡しにも使えます。
 
 ## 注意
 
