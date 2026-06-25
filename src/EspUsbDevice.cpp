@@ -239,8 +239,10 @@ static uint16_t espUsbDeviceLoadHidDescriptor(uint8_t *dst, uint8_t *itf)
 static uint16_t espUsbDeviceLoadCdcDescriptor(uint8_t *dst, uint8_t *itf)
 {
   const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice CDC");
+  static constexpr uint16_t CDC_NOTIFICATION_ENDPOINT_SIZE = 8;
+  static constexpr uint16_t CDC_DATA_ENDPOINT_SIZE = 64;
   uint8_t descriptor[] = {
-      TUD_CDC_DESCRIPTOR(*itf, strIndex, 0x85, CFG_TUD_ENDPOINT_SIZE, 0x03, 0x84, CFG_TUD_ENDPOINT_SIZE),
+      TUD_CDC_DESCRIPTOR(*itf, strIndex, 0x85, CDC_NOTIFICATION_ENDPOINT_SIZE, 0x03, 0x84, CDC_DATA_ENDPOINT_SIZE),
   };
   memcpy(dst, descriptor, sizeof(descriptor));
   *itf = static_cast<uint8_t>(*itf + 2);

@@ -19,6 +19,8 @@ port/speed behavior can be verified before broader class coverage is added.
   `onMouse()`.
 - `hid_keyboard_mouse`: starts a keyboard + mouse composite device on one P4
   and verifies that both reports reach Host callbacks.
+- `usb_serial`: starts CDC ACM serial on one P4 and verifies Device -> Host,
+  Host -> Device, and line coding callbacks.
 
 ## Matrix
 
