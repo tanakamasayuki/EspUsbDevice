@@ -31,5 +31,6 @@ assertion を安定させるためです。
 - `hid_vendor`: interrupt IN/OUT と feature report。
 - `usb_serial`: CDC ACM serial。Device -> Host、Host -> Device、line coding callback が S3 2台構成で通過済み。
 - `usb_midi`: USB MIDI。channel voice message と短い SysEx の Host -> Device packet 分割が S3 2台構成で通過済み。
+- `usb_msc`: USB Mass Storage。単一 LUN RAM disk の capacity / inquiry / read / write / error path が S3 2台構成で通過済み。
 
-以降のフェーズで MSC、Audio を追加します。
+以降のフェーズで Audio を追加します。

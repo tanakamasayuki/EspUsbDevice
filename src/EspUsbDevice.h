@@ -263,6 +263,10 @@ struct EspUsbDeviceMidiPacket
   uint8_t byte3 = 0;
 };
 
+using EspUsbDeviceMscReadCallback = std::function<int32_t(uint32_t lba, uint32_t offset, void *buffer, uint32_t size)>;
+using EspUsbDeviceMscWriteCallback = std::function<int32_t(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)>;
+using EspUsbDeviceMscStartStopCallback = std::function<bool(uint8_t powerCondition, bool start, bool loadEject)>;
+
 class EspUsbDeviceClass;
 
 class EspUsbDevice
@@ -313,6 +317,7 @@ private:
   bool hasHidClass() const;
   bool hasCdcClass() const;
   bool hasMidiClass() const;
+  bool hasMscClass() const;
   uint8_t classReportId(uint8_t classInstance) const;
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
   void setLastError(esp_err_t error);
@@ -340,6 +345,7 @@ public:
   virtual bool isHid() const { return true; }
   virtual bool isCdc() const { return false; }
   virtual bool isMidi() const { return false; }
+  virtual bool isMsc() const { return false; }
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
@@ -424,6 +430,52 @@ public:
 private:
   static uint8_t status(uint8_t codeIndex, uint8_t channel);
   static uint8_t clamp7(uint8_t value);
+};
+
+class EspUsbDeviceMsc : public EspUsbDeviceClass
+{
+public:
+  explicit EspUsbDeviceMsc(EspUsbDevice &device);
+
+  bool begin() override;
+  bool begin(uint32_t blockCount, uint16_t blockSize);
+  bool isHid() const override { return false; }
+  bool isMsc() const override { return true; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 2; }
+
+  void vendorID(const char *value);
+  void productID(const char *value);
+  void productRevision(const char *value);
+  void mediaPresent(bool value);
+  void isWritable(bool value);
+  void onRead(EspUsbDeviceMscReadCallback callback);
+  void onWrite(EspUsbDeviceMscWriteCallback callback);
+  void onStartStop(EspUsbDeviceMscStartStopCallback callback);
+
+  uint8_t maxLun() const;
+  void inquiry(uint8_t vendor[8], uint8_t product[16], uint8_t revision[4]) const;
+  bool testUnitReady() const;
+  void capacity(uint32_t *blockCount, uint16_t *blockSize) const;
+  bool startStop(uint8_t powerCondition, bool start, bool loadEject);
+  int32_t read10(uint32_t lba, uint32_t offset, void *buffer, uint32_t size);
+  int32_t write10(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size);
+  bool writable() const;
+
+private:
+  static void copyPadded(uint8_t *dst, size_t size, const char *value);
+
+  char vendor_[9] = "ESP32";
+  char product_[17] = "MSC";
+  char revision_[5] = "1.0";
+  uint32_t blockCount_ = 0;
+  uint16_t blockSize_ = 0;
+  bool mediaPresent_ = false;
+  bool writable_ = true;
+  EspUsbDeviceMscReadCallback readCallback_;
+  EspUsbDeviceMscWriteCallback writeCallback_;
+  EspUsbDeviceMscStartStopCallback startStopCallback_;
 };
 
 class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass
