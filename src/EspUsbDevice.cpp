@@ -1822,7 +1822,8 @@ const uint8_t *EspUsbDeviceMscFatRamDisk::rootEntry(uint16_t index) const
 bool EspUsbDeviceMscFatRamDisk::handleStartStop(uint8_t powerCondition, bool start, bool loadEject)
 {
   (void)powerCondition;
-  if ((!start || loadEject) && ejectCallback_)
+  (void)loadEject;
+  if (!start && ejectCallback_)
   {
     ejectCallback_();
   }
