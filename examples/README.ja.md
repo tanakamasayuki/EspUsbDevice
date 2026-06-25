@@ -61,6 +61,16 @@ RAM 上に小さい FAT12 image を作る MSC device の例です。
 - Host が `CONFIG.TXT` をコピーして eject した後、Device 側で file scan / read します。
 - firmware update、設定ファイル投入、Wi-Fi 転送などの一時ファイル受け渡しの基本形です。
 
+## MSCSdCard
+
+SPI 接続の SD card を MSC block device として公開する例です。
+詳しくは [MSCSdCard/README.ja.md](MSCSdCard/README.ja.md) を参照してください。
+
+- `EspUsbDeviceMscSdCard` で Arduino `SD` の raw sector I/O を MSC に接続します。
+- Host から SD card を通常の USB storage として読み書きします。
+- Host が SD を所有している間、ESP32 側では `SD.open()` などの file API を使わない設計にします。
+- 実用的な永続ストレージ example の基本形です。
+
 ## 注意
 
 - USB device として使う側の ESP32-S3 などを USB host に接続してください。

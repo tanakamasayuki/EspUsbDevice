@@ -51,6 +51,8 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
 - `MSC`: Mass Storage Class device that exposes a RAM buffer as a block device.
 - `MSCFatRamDisk`: Mass Storage Class device that exchanges files through a RAM
   FAT12 disk.
+- `MSCSdCard`: Mass Storage Class device that exposes an SPI SD card as USB
+  storage.
 
 ## HID Keyboard / Mouse APIs
 
@@ -92,6 +94,7 @@ MSC:
 - `EspUsbDeviceMscRamDisk` wraps an external RAM buffer as a block device.
 - `EspUsbDeviceMscFatRamDisk` creates a small FAT12 image in RAM for temporary
   host/device file handoff.
+- `EspUsbDeviceMscSdCard` connects Arduino `SD` raw sector I/O to MSC.
 - MSC separates the block device from the filesystem. To make a drive mountable
   by an OS, provide a valid FAT image or connect the read/write callbacks to
   real storage such as an SD card.

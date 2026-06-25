@@ -183,6 +183,8 @@ manual or peer tests separately.
 exposes an SD card as a block device. While the host owns the SD card through
 MSC, the ESP32 side must not mount or write the same filesystem. Direct flash /
 SPIFFS / LittleFS exposure is not part of the standard test scope.
+`examples/MSCSdCard` must compile at minimum; host OS mount / file write / eject
+is covered by the `tests/manual` procedure.
 
 ## Initial Migration Order
 

@@ -41,3 +41,37 @@ Notes:
   writing it.
 - Large firmware images should use PSRAM, SD card, or streaming update instead
   of this small example.
+
+## `examples/MSCSdCard`
+
+Purpose:
+
+- Verify that an SPI-connected SD card can be read/written by the host OS
+  through USB MSC.
+- Verify that ownership can return to the device side after host eject /
+  unmount.
+
+Steps:
+
+1. Change `SD_CS_PIN` in `examples/MSCSdCard/MSCSdCard.ino` for the board.
+2. Insert an SD card. Back it up first if needed because the host can modify it.
+3. Flash `examples/MSCSdCard` to the USB device board.
+4. Open Serial monitor and wait for `USB SD MSC ready`.
+5. Connect the USB device port to the PC.
+6. Verify that the SD card appears as USB storage on the PC.
+7. Create, read back, and delete a small test file.
+8. Eject or unmount the drive from the OS.
+9. Verify that Serial monitor prints `SD_EJECT`.
+
+Expected:
+
+- The host can mount the SD card's existing FAT filesystem.
+- Host writes are reflected on the SD card.
+- ESP32-side file APIs such as `SD.open()` are not used before eject.
+
+Notes:
+
+- Concurrent writes from the host and ESP32 side can corrupt the SD filesystem.
+- This example calls `SD.begin()`, which also mounts the Arduino-side
+  filesystem, but file APIs are intentionally avoided while MSC owns the card.
+- SD socket, CS pin, and SPI pins vary by board.

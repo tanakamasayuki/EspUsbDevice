@@ -47,6 +47,7 @@ loopback テストで確認できる範囲を広げています。
 - `KeyboardMouse`: keyboard + mouse の composite HID。
 - `MSC`: RAM buffer を block device として公開する Mass Storage Class。
 - `MSCFatRamDisk`: RAM 上の FAT12 disk で Host とファイルを受け渡す Mass Storage Class。
+- `MSCSdCard`: SPI SD card を Host へ USB storage として公開する Mass Storage Class。
 
 ## HID Keyboard / Mouse APIs
 
@@ -84,6 +85,7 @@ MSC:
 - `EspUsbDeviceMscRamDisk` は外部 RAM buffer を block device として公開する helper です。
 - `EspUsbDeviceMscFatRamDisk` は RAM 上に小さい FAT12 image を作り、Host との一時ファイル
   受け渡しに使う helper です。
+- `EspUsbDeviceMscSdCard` は Arduino `SD` の raw sector I/O を MSC に接続する helper です。
 - MSC は block device と filesystem が別です。OS からドライブとしてマウントするには、
   有効な FAT image か SD card などの実 storage を read/write callback に接続してください。
 - flash / SPIFFS / LittleFS の直接公開は標準方針にしません。永続ストレージは SD card、
