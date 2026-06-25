@@ -70,7 +70,7 @@ tests/
 | System control HID | planned | ✅ `hid_system_control` | | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | | ✅ `usb_midi` | planned | | |
+| USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | | planned | | | |
 | USB Audio | | planned | | | |
 
@@ -151,6 +151,10 @@ Device SysEx packet splitting. The default profile uses the released Host
 version. `s3_peer_local` is only for optional pre-release validation of
 unreleased Host-side fixes.
 
+`loopback/usb_midi` verifies the same behavior on one P4. SysEx packets can be
+read in the same poll pass, so the test asserts that both expected packets were
+observed rather than waiting for each packet strictly one at a time.
+
 ## Initial Migration Order
 
 1. `unit/compile_smoke`
@@ -173,7 +177,7 @@ unreleased Host-side fixes.
 18. ✅ `peer/usb_serial`
 19. ✅ `loopback/usb_serial`
 20. ✅ `peer/usb_midi`
-21. `loopback/usb_midi`
+21. ✅ `loopback/usb_midi`
 22. `peer/usb_msc`
 23. `peer/usb_audio`
 

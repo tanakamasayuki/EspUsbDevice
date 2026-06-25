@@ -62,7 +62,7 @@ tests/
 | system control HID | 予定 | ✅ `hid_system_control` | | | |
 | gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | | ✅ `usb_midi` | 予定 | | |
+| USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | | 予定 | | | |
 | USB Audio | | 予定 | | | |
 
@@ -139,6 +139,10 @@ Host -> Device の channel voice message と、Host -> Device の短い SysEx pa
 検証します。default profile は released Host を使い、`s3_peer_local` は Host 側未リリース
 修正の任意確認にだけ使います。
 
+`loopback/usb_midi` は同じ観点を P4 1台構成で確認します。SysEx は複数 packet が同じ
+poll で読めるため、packet 順の逐次待ちではなく、必要な packet を両方観測したことを
+assert します。
+
 ## 初期移行順
 
 1. `unit/compile_smoke`
@@ -161,7 +165,7 @@ Host -> Device の channel voice message と、Host -> Device の短い SysEx pa
 18. ✅ `peer/usb_serial`
 19. ✅ `loopback/usb_serial`
 20. ✅ `peer/usb_midi`
-21. `loopback/usb_midi`
+21. ✅ `loopback/usb_midi`
 22. `peer/usb_msc`
 23. `peer/usb_audio`
 

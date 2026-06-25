@@ -21,6 +21,8 @@ port/speed behavior can be verified before broader class coverage is added.
   and verifies that both reports reach Host callbacks.
 - `usb_serial`: starts CDC ACM serial on one P4 and verifies Device -> Host,
   Host -> Device, and line coding callbacks.
+- `usb_midi`: starts USB MIDI on one P4 and verifies channel voice messages and
+  short Host -> Device SysEx packet splitting.
 
 ## Matrix
 

@@ -20,6 +20,8 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   keyboard report と mouse report が同時に Host 側 callback へ届くことを確認する。
 - `usb_serial`: P4 1台上で CDC ACM serial を起動し、Device -> Host、Host -> Device、
   line coding callback を確認する。
+- `usb_midi`: P4 1台上で USB MIDI を起動し、channel voice message と短い SysEx の
+  Host -> Device packet 分割を確認する。
 
 ## Matrix
 

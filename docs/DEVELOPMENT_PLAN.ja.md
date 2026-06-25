@@ -231,6 +231,8 @@ CLICK 1
 - 2026-06-25: `EspUsbDeviceMidi` を追加し、`peer/usb_midi` を作成。Device -> Host /
   Host -> Device の channel voice message と Host -> Device の短い SysEx packet 分割を確認。
   default `s3_peer_host` で 5 tests passed。
+- 2026-06-25: `loopback/usb_midi` を追加し、P4 1台構成で USB MIDI の channel voice
+  message と短い SysEx packet 分割を確認。default `p4_loopback` で 1 test passed。
 
 probe で必ず出すログ:
 
@@ -262,7 +264,7 @@ probe で必ず出すログ:
    `onVendorInput()`、HID parser field decode を検証する。
 9. ✅ consumer control / system control / gamepad HID Device class を追加し、Host 側 callback を検証する。
 10. CDC ACM の peer / loopback を維持し、必要なら line state / flush / buffering を追加検証する。
-11. USB MIDI を loopback へ広げる。
+11. MSC / Audio の移行可否を Host 側既存テストから確認する。
 12. P4 probe で FS / HS device 初期化方式を確定する。
 
 Host 側で怪しい挙動が見つかった場合:
