@@ -1830,6 +1830,156 @@ bool EspUsbDeviceMscFatRamDisk::handleStartStop(uint8_t powerCondition, bool sta
   return true;
 }
 
+#if ESP_USB_DEVICE_HAS_ARDUINO_SD
+EspUsbDeviceMscSdCard::EspUsbDeviceMscSdCard(fs::SDFS &sd) : sd_(&sd)
+{
+}
+
+bool EspUsbDeviceMscSdCard::begin(uint8_t ssPin, SPIClass &spi, uint32_t frequency, const char *mountpoint, uint8_t maxFiles)
+{
+  if (!sd_ || !sd_->begin(ssPin, spi, frequency, mountpoint, maxFiles, false))
+  {
+    mounted_ = false;
+    blockCount_ = 0;
+    blockSize_ = 0;
+    return false;
+  }
+  blockCount_ = static_cast<uint32_t>(sd_->numSectors());
+  blockSize_ = static_cast<uint16_t>(sd_->sectorSize());
+  mounted_ = blockCount_ > 0 && blockSize_ == 512;
+  return mounted_;
+}
+
+bool EspUsbDeviceMscSdCard::attach(EspUsbDeviceMsc &msc)
+{
+  if (!mounted_ || blockSize_ != 512)
+  {
+    return false;
+  }
+  msc.onRead([this](uint32_t lba, uint32_t offset, void *buffer, uint32_t size)
+             { return read(lba, offset, buffer, size); });
+  msc.onWrite([this](uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)
+              { return write(lba, offset, buffer, size); });
+  msc.onStartStop([this](uint8_t powerCondition, bool start, bool loadEject)
+                  { return handleStartStop(powerCondition, start, loadEject); });
+  return msc.begin(blockCount_, blockSize_);
+}
+
+void EspUsbDeviceMscSdCard::onEject(EjectCallback callback)
+{
+  ejectCallback_ = callback;
+}
+
+void EspUsbDeviceMscSdCard::readOnly(bool value)
+{
+  readOnly_ = value;
+}
+
+bool EspUsbDeviceMscSdCard::readOnly() const
+{
+  return readOnly_;
+}
+
+uint32_t EspUsbDeviceMscSdCard::blockCount() const
+{
+  return blockCount_;
+}
+
+uint16_t EspUsbDeviceMscSdCard::blockSize() const
+{
+  return blockSize_;
+}
+
+bool EspUsbDeviceMscSdCard::mounted() const
+{
+  return mounted_;
+}
+
+int32_t EspUsbDeviceMscSdCard::read(uint32_t lba, uint32_t offset, void *buffer, uint32_t size)
+{
+  if (!mounted_ || !buffer || offset >= blockSize_ || lba >= blockCount_)
+  {
+    return -1;
+  }
+  const uint32_t end = lba + ((offset + size + blockSize_ - 1) / blockSize_);
+  if (end < lba || end > blockCount_)
+  {
+    return -1;
+  }
+
+  uint8_t sector[512];
+  uint8_t *dst = static_cast<uint8_t *>(buffer);
+  uint32_t remaining = size;
+  uint32_t sectorLba = lba;
+  uint32_t sectorOffset = offset;
+  while (remaining > 0)
+  {
+    if (!sd_->readRAW(sector, sectorLba))
+    {
+      return -1;
+    }
+    const uint32_t chunk = remaining < (blockSize_ - sectorOffset) ? remaining : (blockSize_ - sectorOffset);
+    memcpy(dst, sector + sectorOffset, chunk);
+    dst += chunk;
+    remaining -= chunk;
+    sectorOffset = 0;
+    sectorLba++;
+  }
+  return static_cast<int32_t>(size);
+}
+
+int32_t EspUsbDeviceMscSdCard::write(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)
+{
+  if (readOnly_ || !mounted_ || !buffer || offset >= blockSize_ || lba >= blockCount_)
+  {
+    return -1;
+  }
+  const uint32_t end = lba + ((offset + size + blockSize_ - 1) / blockSize_);
+  if (end < lba || end > blockCount_)
+  {
+    return -1;
+  }
+
+  uint8_t sector[512];
+  uint8_t *src = buffer;
+  uint32_t remaining = size;
+  uint32_t sectorLba = lba;
+  uint32_t sectorOffset = offset;
+  while (remaining > 0)
+  {
+    const uint32_t chunk = remaining < (blockSize_ - sectorOffset) ? remaining : (blockSize_ - sectorOffset);
+    if (chunk != blockSize_)
+    {
+      if (!sd_->readRAW(sector, sectorLba))
+      {
+        return -1;
+      }
+    }
+    memcpy(sector + sectorOffset, src, chunk);
+    if (!sd_->writeRAW(sector, sectorLba))
+    {
+      return -1;
+    }
+    src += chunk;
+    remaining -= chunk;
+    sectorOffset = 0;
+    sectorLba++;
+  }
+  return static_cast<int32_t>(size);
+}
+
+bool EspUsbDeviceMscSdCard::handleStartStop(uint8_t powerCondition, bool start, bool loadEject)
+{
+  (void)powerCondition;
+  (void)loadEject;
+  if (!start && ejectCallback_)
+  {
+    ejectCallback_();
+  }
+  return true;
+}
+#endif
+
 EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbDeviceClass(device)
 {
 }

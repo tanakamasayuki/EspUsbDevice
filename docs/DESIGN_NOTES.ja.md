@@ -590,6 +590,39 @@ device で、USB MSC と FAT の相性がよいため、ユーザー向けの実
 ただし Host が MSC として SD を所有している間は、ESP32 側が同じ filesystem を同時に
 mount / 書き込みしない排他設計にします。eject / stop 後に ESP32 側へ所有権を戻します。
 
+初期実装では Arduino-ESP32 の SPI `SD` を対象にし、`SDFS::readRAW()` /
+`SDFS::writeRAW()` を使います。Arduino の通常 file API ではなく、sector 単位の raw I/O
+として扱うことが重要です。
+
+```cpp
+#include <SD.h>
+#include "EspUsbDevice.h"
+
+EspUsbDevice device;
+EspUsbDeviceMsc msc(device);
+EspUsbDeviceMscSdCard sdMsc(SD);
+
+void setup() {
+  sdMsc.begin(SD_CS, SPI, 4000000);
+  sdMsc.onEject([]() {
+    // Host ownership ended. Device-side file access may resume here.
+  });
+  sdMsc.attach(msc);
+  msc.mediaPresent(true);
+  msc.isWritable(true);
+  device.begin(config);
+}
+```
+
+`EspUsbDeviceMscSdCard` の最初の仕様は以下にします。
+
+- Arduino `SD` / SPI 接続から始める。
+- sector size は 512 bytes のみ対応する。
+- MSC の offset 付き read/write は内部で sector read-modify-write する。
+- `readOnly(true)` で Host write を拒否できる。
+- Host 所有中は ESP32 側 file API を使わないことを docs / example で強調する。
+- `SD_MMC` 対応は、同じ raw sector API で扱えることを確認してから追加する。
+
 内蔵 flash、SPIFFS、LittleFS を USB MSC として直接公開する標準 API / example は作りません。
 USB MSC は sector-level block device であり、SPIFFS / LittleFS は ESP32 側 filesystem API
 なので抽象度が合いません。内蔵 flash は firmware partition、erase block、書き換え耐性の

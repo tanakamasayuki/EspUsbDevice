@@ -6,6 +6,13 @@
 #include <functional>
 #include "espusbdevice_version.h"
 
+#if __has_include(<SD.h>)
+#include <SD.h>
+#define ESP_USB_DEVICE_HAS_ARDUINO_SD 1
+#else
+#define ESP_USB_DEVICE_HAS_ARDUINO_SD 0
+#endif
+
 #if __has_include(<esp_err.h>)
 #include <esp_err.h>
 #else
@@ -548,6 +555,37 @@ private:
   EspUsbDeviceMscRamDisk blocks_;
   EjectCallback ejectCallback_;
 };
+
+#if ESP_USB_DEVICE_HAS_ARDUINO_SD
+class EspUsbDeviceMscSdCard
+{
+public:
+  using EjectCallback = std::function<void()>;
+
+  explicit EspUsbDeviceMscSdCard(fs::SDFS &sd = SD);
+
+  bool begin(uint8_t ssPin = SS, SPIClass &spi = SPI, uint32_t frequency = 4000000, const char *mountpoint = "/sd", uint8_t maxFiles = 5);
+  bool attach(EspUsbDeviceMsc &msc);
+  void onEject(EjectCallback callback);
+  void readOnly(bool value);
+  bool readOnly() const;
+  uint32_t blockCount() const;
+  uint16_t blockSize() const;
+  bool mounted() const;
+
+private:
+  int32_t read(uint32_t lba, uint32_t offset, void *buffer, uint32_t size);
+  int32_t write(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size);
+  bool handleStartStop(uint8_t powerCondition, bool start, bool loadEject);
+
+  fs::SDFS *sd_ = nullptr;
+  uint32_t blockCount_ = 0;
+  uint16_t blockSize_ = 512;
+  bool mounted_ = false;
+  bool readOnly_ = false;
+  EjectCallback ejectCallback_;
+};
+#endif
 
 class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass
 {

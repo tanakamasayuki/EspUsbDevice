@@ -72,6 +72,17 @@ See [MSCFatRamDisk/README.md](MSCFatRamDisk/README.md) for details.
 - This is the basic pattern for temporary firmware, configuration, and Wi-Fi
   handoff files.
 
+## MSCSdCard
+
+MSC example that exposes an SPI-connected SD card as a block device.
+See [MSCSdCard/README.md](MSCSdCard/README.md) for details.
+
+- Connect Arduino `SD` raw sector I/O to MSC with `EspUsbDeviceMscSdCard`.
+- Let the host read/write the SD card as ordinary USB storage.
+- Do not use ESP32-side file APIs such as `SD.open()` while the host owns the SD
+  card.
+- This is the basic practical persistent-storage example.
+
 ## Notes
 
 - Connect the USB-device-capable ESP32-S3 or similar board to a USB host.
