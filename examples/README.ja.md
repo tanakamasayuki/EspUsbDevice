@@ -35,6 +35,19 @@ keyboard と mouse を同時に登録する composite HID device の例です。
 - mouse report ID: `2`
 - composite HID endpoint MPS: `16 bytes`
 
+## MSC
+
+USB Mass Storage Class device の例です。
+詳しくは [MSC/README.ja.md](MSC/README.ja.md) を参照してください。
+
+- `EspUsbDeviceMsc` で SCSI inquiry、media 状態、write 可否を設定します。
+- `EspUsbDeviceMscRamDisk` で RAM buffer を 512 byte block device として公開します。
+- `disk.attach(msc)` で read/write callback と `msc.begin()` をまとめて設定します。
+- この example は SCSI / block I/O 疎通確認用で、FAT でフォーマットされた USB メモリではありません。
+
+MSC は block device と filesystem が分かれます。Host から通常のドライブとしてマウント
+させたい場合は、有効な FAT image か SD / flash などの実 block storage が別途必要です。
+
 ## 注意
 
 - USB device として使う側の ESP32-S3 などを USB host に接続してください。
