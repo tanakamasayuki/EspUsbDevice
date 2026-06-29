@@ -35,6 +35,16 @@ keyboard と mouse を同時に登録する composite HID device の例です。
 - mouse report ID: `2`
 - composite HID endpoint MPS: `16 bytes`
 
+## Serial
+
+USB CDC ACM serial device の例です。
+詳しくは [Serial/README.ja.md](Serial/README.ja.md) を参照してください。
+
+- `EspUsbDeviceCdcSerial` で PC / Host とテキストを送受信します。
+- `available()` / `read()` / `write()` / `print()` / `printf()` を使います。
+- Host からの line coding と DTR / RTS 状態を callback で受け取ります。
+- USB CDC とログ用 Serial monitor を分けて扱います。
+
 ## MSC
 
 USB Mass Storage Class device の例です。
