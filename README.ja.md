@@ -45,6 +45,7 @@ loopback テストで確認できる範囲を広げています。
 - `Keyboard`: layout 付き ASCII 文字列と HID usage ID を送信する boot keyboard。
 - `Mouse`: 移動、wheel、button を送信する boot mouse。
 - `KeyboardMouse`: keyboard + mouse の composite HID。
+- `Gamepad`: axes、hat、button を送信する HID gamepad。
 - `Serial`: PC / Host とテキストを送受信する CDC ACM serial。
 - `MIDI`: note / control change を送受信する USB MIDI device。
 - `MSC`: RAM buffer を block device として公開する Mass Storage Class。

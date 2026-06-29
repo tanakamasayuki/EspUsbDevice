@@ -48,6 +48,7 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
 - `Keyboard`: boot keyboard that sends layout-aware ASCII strings and HID usage IDs.
 - `Mouse`: boot mouse that sends movement, wheel, and buttons.
 - `KeyboardMouse`: composite keyboard + mouse HID.
+- `Gamepad`: HID gamepad that sends axes, hat, and buttons.
 - `Serial`: CDC ACM serial for text communication with a PC or host.
 - `MIDI`: USB MIDI device for note / control-change send and receive.
 - `MSC`: Mass Storage Class device that exposes a RAM buffer as a block device.
