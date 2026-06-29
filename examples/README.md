@@ -115,6 +115,15 @@ See [MIDIController/README.md](MIDIController/README.md) for details.
 - Convert button press / release to Note On / Off.
 - Build a simple MIDI controller with a potentiometer or BOOT button.
 
+## MIDIInterface
+
+Bridge example between UART MIDI 1.0 and USB MIDI 1.0.
+See [MIDIInterface/README.md](MIDIInterface/README.md) for details.
+
+- Convert 31250-baud serial MIDI to USB-MIDI event packets.
+- Convert host USB-MIDI event packets back to serial MIDI byte stream.
+- Use it as a bridge between DIN MIDI devices and a USB MIDI host.
+
 ## MSC
 
 USB Mass Storage Class device example.
