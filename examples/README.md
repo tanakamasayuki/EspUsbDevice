@@ -41,6 +41,16 @@ See [KeyboardMouse/README.md](KeyboardMouse/README.md) for details.
 - Mouse report ID: `2`
 - Composite HID endpoint MPS: `16 bytes`
 
+## Serial
+
+USB CDC ACM serial device example.
+See [Serial/README.md](Serial/README.md) for details.
+
+- Use `EspUsbDeviceCdcSerial` to exchange text with a PC or host.
+- Use `available()` / `read()` / `write()` / `print()` / `printf()`.
+- Receive host line coding and DTR / RTS state through callbacks.
+- Keep USB CDC separate from the logging Serial monitor.
+
 ## MSC
 
 USB Mass Storage Class device example.
