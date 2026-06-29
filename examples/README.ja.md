@@ -35,6 +35,15 @@ keyboard と mouse を同時に登録する composite HID device の例です。
 - mouse report ID: `2`
 - composite HID endpoint MPS: `16 bytes`
 
+## Gamepad
+
+HID gamepad device の例です。
+詳しくは [Gamepad/README.ja.md](Gamepad/README.ja.md) を参照してください。
+
+- `EspUsbDeviceHidGamepad` で axes、hat switch、button bitmask を送信します。
+- `send()` で 6 axes、hat、32 buttons をまとめて送れます。
+- PC の game controller 設定画面や EspUsbHost の `onGamepad()` で確認できます。
+
 ## Serial
 
 USB CDC ACM serial device の例です。

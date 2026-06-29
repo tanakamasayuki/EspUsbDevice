@@ -41,6 +41,16 @@ See [KeyboardMouse/README.md](KeyboardMouse/README.md) for details.
 - Mouse report ID: `2`
 - Composite HID endpoint MPS: `16 bytes`
 
+## Gamepad
+
+HID gamepad device example.
+See [Gamepad/README.md](Gamepad/README.md) for details.
+
+- Send axes, hat switch, and button bitmask with `EspUsbDeviceHidGamepad`.
+- Use `send()` to send 6 axes, hat, and 32 buttons together.
+- Check behavior through a PC game controller settings screen or EspUsbHost's
+  `onGamepad()`.
+
 ## Serial
 
 USB CDC ACM serial device example.
