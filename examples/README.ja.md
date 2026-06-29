@@ -44,6 +44,15 @@ HID gamepad device の例です。
 - `send()` で 6 axes、hat、32 buttons をまとめて送れます。
 - PC の game controller 設定画面や EspUsbHost の `onGamepad()` で確認できます。
 
+## MediaKeys
+
+HID consumer control / system control device の例です。
+詳しくは [MediaKeys/README.ja.md](MediaKeys/README.ja.md) を参照してください。
+
+- `EspUsbDeviceHidConsumerControl` で volume、mute、play/pause、track 操作を送信します。
+- `EspUsbDeviceHidSystemControl` で power / standby / wake usage も扱えます。
+- system control key は Host の電源状態に影響するため、自動送信しない example にしています。
+
 ## Serial
 
 USB CDC ACM serial device の例です。

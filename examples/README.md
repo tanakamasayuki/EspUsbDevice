@@ -51,6 +51,17 @@ See [Gamepad/README.md](Gamepad/README.md) for details.
 - Check behavior through a PC game controller settings screen or EspUsbHost's
   `onGamepad()`.
 
+## MediaKeys
+
+HID consumer control / system control device example.
+See [MediaKeys/README.md](MediaKeys/README.md) for details.
+
+- Send volume, mute, play/pause, and track controls with
+  `EspUsbDeviceHidConsumerControl`.
+- Handle power / standby / wake usages with `EspUsbDeviceHidSystemControl`.
+- System control keys can affect host power state, so this example does not send
+  them automatically.
+
 ## Serial
 
 USB CDC ACM serial device example.
