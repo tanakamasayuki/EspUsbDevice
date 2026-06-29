@@ -102,6 +102,15 @@ ADC と button input を USB MIDI message に変換する例です。
 - button press / release を Note On / Off に変換します。
 - potentiometer や BOOT button で簡単な MIDI controller を作れます。
 
+## MIDIInterface
+
+UART MIDI 1.0 と USB MIDI 1.0 を相互変換する bridge example です。
+詳しくは [MIDIInterface/README.ja.md](MIDIInterface/README.ja.md) を参照してください。
+
+- 31250 baud serial MIDI を USB-MIDI event packet に変換します。
+- Host からの USB-MIDI event packet を serial MIDI byte stream に戻します。
+- DIN MIDI 機器と USB MIDI host の bridge として使えます。
+
 ## MSC
 
 USB Mass Storage Class device の例です。
