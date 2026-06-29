@@ -48,6 +48,7 @@ for example
 ```text
 tests/
   unit/       Automated - descriptor builders and report helpers.
+  examples_compile/ Automated - build-only smoke tests for examples sketches.
   peer/       Automated - two boards: EspUsbHost host + EspUsbDevice device.
   loopback/   Automated - one ESP32-P4 running host and device roles.
   probe/      Bring-up - port/speed/PHY identification and OS enumeration.
@@ -73,6 +74,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USB Audio | | planned | | | |
+| examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
 
@@ -185,6 +187,10 @@ MSC, the ESP32 side must not mount or write the same filesystem. Direct flash /
 SPIFFS / LittleFS exposure is not part of the standard test scope.
 `examples/MSCSdCard` must compile at minimum; host OS mount / file write / eject
 is covered by the `tests/manual` procedure.
+
+`examples_compile` enumerates `examples/*/*.ino` and builds each sketch with
+`arduino-cli compile --profile s3`. Examples are the user-facing API entry
+points, so they must compile independently of peer / loopback hardware tests.
 
 ## Initial Migration Order
 

@@ -23,6 +23,7 @@ explicitly for those tests.
 ## Layout
 
 - `unit/`: host-independent descriptor, report helper, and FAT RAM disk tests.
+- `examples_compile/`: build-only smoke tests for examples sketches.
 - `peer/`: two-board tests using EspUsbHost as host and EspUsbDevice as device.
 - `loopback/`: one-board ESP32-P4 tests running EspUsbHost and EspUsbDevice together.
 - `probe/`: bring-up sketches for P4 port and speed investigation.
@@ -36,6 +37,7 @@ From this directory:
 uv run --env-file .env pytest
 uv run --env-file .env pytest peer/
 uv run --env-file .env pytest --run-mode=build
+uv run --env-file .env pytest examples_compile/
 ```
 
 Regular peer and loopback tests use the released EspUsbHost version. Local
