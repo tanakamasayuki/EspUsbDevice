@@ -262,6 +262,16 @@ CLICK 1
   mount / file write / eject は未確認。
 - 2026-06-29: `tests/manual/README.*` に `examples/MSCFatRamDisk` と `examples/MSCSdCard` の
   手動確認手順を追加。PC mount、file copy/write、OS eject、Serial log の期待値を記載。
+- 2026-06-29: examples のユーザー向けカバレッジを拡張。`examples/Serial`、`MIDI`、
+  `Gamepad`、`MediaKeys`、`VendorHID`、`CustomHID`、`MIDIController`、`MIDIInterface` を
+  追加し、各 README を日本語 / 英語で作成。MSC は準備コストが高く利用頻度も相対的に
+  低いため、追加強化の優先度は下げる。
+- 2026-06-29: `tests/examples_compile` を追加。`examples/*/*.ino` を列挙し、
+  `arduino-cli compile --profile s3` で build-only 確認する。`uv run --env-file .env
+  pytest examples_compile/ -vv` で 14 examples が通過。実行時間は約 3 分のため、push 時の
+  CI ではなく、example 追加時 / API 変更時 / release 前の手動実行を基本方針にする。
+- 2026-06-29: Arduino-ESP32 3.3.10 bundled USB examples と比較。対応状況と不足項目は
+  [EXAMPLES_COVERAGE.ja.md](EXAMPLES_COVERAGE.ja.md) に整理した。
 
 probe で必ず出すログ:
 
@@ -285,18 +295,19 @@ probe で必ず出すログ:
 2. HID keyboard / mouse / keyboard_mouse / custom / vendor / consumer / system / gamepad の
    peer / loopback coverage を維持する。
 3. CDC ACM、USB MIDI、USB MSC raw block の peer / loopback coverage を維持する。
-4. `examples/MSCFatRamDisk` を実機 PC mount で確認し、`CONFIG.TXT` copy -> OS eject ->
+4. examples 全体の compile smoke を、example 追加時 / API 変更時 / release 前に手動実行する。
+5. `examples/MSCFatRamDisk` を実機 PC mount で確認し、`CONFIG.TXT` copy -> OS eject ->
    Device 側 `readFile()` の結果を記録する。
-5. `examples/MSCSdCard` を実機 SD card で確認し、Host OS mount / file write / OS eject /
+6. `examples/MSCSdCard` を実機 SD card で確認し、Host OS mount / file write / OS eject /
    `SD_EJECT` log を記録する。Host 所有中に ESP32 側 file API を使わない排他方針も確認する。
-6. SD_MMC 対応を追加するか判断する。Arduino `SD_MMC` の raw sector API が SPI `SD` と同じ
+7. SD_MMC 対応を追加するか判断する。Arduino `SD_MMC` の raw sector API が SPI `SD` と同じ
    形で使えるなら、`EspUsbDeviceMscSdMmc` または共通 raw block adapter を検討する。
-7. Audio の移行可否を Host 側既存テストから確認し、最小 Audio sink の descriptor /
+8. USBVendor / WebUSB 相当を実装するか判断する。公式 `USBVendor` は HID ではなく vendor
+   interface + control request + WebUSB URL なので、`VendorHID` とは別 class として仕様化する。
+9. Audio の移行可否を Host 側既存テストから確認し、最小 Audio sink の descriptor /
    endpoint / callback 仕様を先に固める。
-8. P4 probe で FS / HS device 初期化方式を確定する。現状 loopback は実用テストが進んでいるが、
+10. P4 probe で FS / HS device 初期化方式を確定する。現状 loopback は実用テストが進んでいるが、
    probe 文書化は残っている。
-9. 追加 examples が増えたため、examples 全体の compile smoke をまとめて実行する手順を
-   tests または docs に用意するか検討する。
 
 Host 側で怪しい挙動が見つかった場合:
 
