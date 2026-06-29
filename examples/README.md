@@ -74,6 +74,17 @@ See [VendorHID/README.md](VendorHID/README.md) for details.
   monitor.
 - Useful for small custom protocols with a host application or EspUsbHost.
 
+## CustomHID
+
+Custom HID device example using a sketch-provided HID report descriptor.
+See [CustomHID/README.md](CustomHID/README.md) for details.
+
+- Define `REPORT_DESCRIPTOR` in the sketch.
+- Pass the descriptor and input report size to `EspUsbDeviceHidCustom`.
+- Send an 8-byte Input report every second.
+- Useful for validating custom descriptors or prototyping small fixed-size HID
+  reports.
+
 ## Serial
 
 USB CDC ACM serial device example.
