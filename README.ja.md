@@ -46,6 +46,7 @@ loopback テストで確認できる範囲を広げています。
 - `Mouse`: 移動、wheel、button を送信する boot mouse。
 - `KeyboardMouse`: keyboard + mouse の composite HID。
 - `Serial`: PC / Host とテキストを送受信する CDC ACM serial。
+- `MIDI`: note / control change を送受信する USB MIDI device。
 - `MSC`: RAM buffer を block device として公開する Mass Storage Class。
 - `MSCFatRamDisk`: RAM 上の FAT12 disk で Host とファイルを受け渡す Mass Storage Class。
 - `MSCSdCard`: SPI SD card を Host へ USB storage として公開する Mass Storage Class。
