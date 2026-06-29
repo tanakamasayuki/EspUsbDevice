@@ -51,6 +51,7 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
 - `Gamepad`: HID gamepad that sends axes, hat, and buttons.
 - `MediaKeys`: HID media keys for volume, playback, and system control usages.
 - `VendorHID`: vendor-defined HID for custom 63-byte report exchange.
+- `CustomHID`: custom HID with a sketch-defined HID report descriptor.
 - `Serial`: CDC ACM serial for text communication with a PC or host.
 - `MIDI`: USB MIDI device for note / control-change send and receive.
 - `MSC`: Mass Storage Class device that exposes a RAM buffer as a block device.

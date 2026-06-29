@@ -63,6 +63,16 @@ Vendor-defined HID device の例です。
 - Host からの Output / Feature report を callback で受け取り、Serial monitor に出力します。
 - 専用 Host application や EspUsbHost との小さな独自プロトコルに向いています。
 
+## CustomHID
+
+任意の HID report descriptor を使う custom HID device の例です。
+詳しくは [CustomHID/README.ja.md](CustomHID/README.ja.md) を参照してください。
+
+- sketch 内で `REPORT_DESCRIPTOR` を定義します。
+- `EspUsbDeviceHidCustom` に descriptor と input report size を渡します。
+- 1 秒ごとに 8 byte Input report を送信します。
+- 独自 descriptor の検証や、小さな固定長 HID report の試作に向いています。
+
 ## Serial
 
 USB CDC ACM serial device の例です。
