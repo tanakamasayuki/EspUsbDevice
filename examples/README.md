@@ -62,6 +62,18 @@ See [MediaKeys/README.md](MediaKeys/README.md) for details.
 - System control keys can affect host power state, so this example does not send
   them automatically.
 
+## VendorHID
+
+Vendor-defined HID device example.
+See [VendorHID/README.md](VendorHID/README.md) for details.
+
+- Exchange 63-byte Input / Output / Feature report payloads with
+  `EspUsbDeviceHidVendor`.
+- Send periodic Input reports from device to host.
+- Receive host Output / Feature reports in callbacks and print them to Serial
+  monitor.
+- Useful for small custom protocols with a host application or EspUsbHost.
+
 ## Serial
 
 USB CDC ACM serial device example.

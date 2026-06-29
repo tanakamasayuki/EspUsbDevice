@@ -53,6 +53,16 @@ HID consumer control / system control device の例です。
 - `EspUsbDeviceHidSystemControl` で power / standby / wake usage も扱えます。
 - system control key は Host の電源状態に影響するため、自動送信しない example にしています。
 
+## VendorHID
+
+Vendor-defined HID device の例です。
+詳しくは [VendorHID/README.ja.md](VendorHID/README.ja.md) を参照してください。
+
+- `EspUsbDeviceHidVendor` で 63 byte payload の Input / Output / Feature report を扱います。
+- Device から Host へ Input report を定期送信します。
+- Host からの Output / Feature report を callback で受け取り、Serial monitor に出力します。
+- 専用 Host application や EspUsbHost との小さな独自プロトコルに向いています。
+
 ## Serial
 
 USB CDC ACM serial device の例です。
