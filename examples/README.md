@@ -106,6 +106,15 @@ See [MIDI/README.md](MIDI/README.md) for details.
 - Print MIDI packets received from the host to Serial monitor.
 - Test with a DAW, MIDI monitor, EspUsbHost, or another USB host.
 
+## MIDIController
+
+Example that turns ADC and button input into USB MIDI messages.
+See [MIDIController/README.md](MIDIController/README.md) for details.
+
+- Convert analog input to MIDI CC.
+- Convert button press / release to Note On / Off.
+- Build a simple MIDI controller with a potentiometer or BOOT button.
+
 ## MSC
 
 USB Mass Storage Class device example.

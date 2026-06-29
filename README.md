@@ -54,6 +54,7 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
 - `CustomHID`: custom HID with a sketch-defined HID report descriptor.
 - `Serial`: CDC ACM serial for text communication with a PC or host.
 - `MIDI`: USB MIDI device for note / control-change send and receive.
+- `MIDIController`: controller that turns ADC / button input into MIDI CC / notes.
 - `MSC`: Mass Storage Class device that exposes a RAM buffer as a block device.
 - `MSCFatRamDisk`: Mass Storage Class device that exchanges files through a RAM
   FAT12 disk.
