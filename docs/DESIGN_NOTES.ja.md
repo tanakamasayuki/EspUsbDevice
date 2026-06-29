@@ -714,10 +714,11 @@ MSC は `EspUsbDevice` の中盤以降のマイルストーンにします。
 
 ### `loopback/hid_keyboard`
 
-現在は P4 上で `EspUsbHost` と Arduino `USBHIDKeyboard` を同時に使っています。
-Arduino device 側が HS 固定で MPS 512 を出し、FS host 側で claim できません。
+初期検討では P4 上で `EspUsbHost` と Arduino `USBHIDKeyboard` を同時に使う構成を試しました。
+Arduino device 側が HS 固定で MPS 512 を出し、FS host 側で claim できないことが分かったため、
+現在は `EspUsbHost` と `EspUsbDeviceHidKeyboard` の組み合わせへ移行しています。
 
-`EspUsbDevice` 移行後は以下の matrix を試します。
+`EspUsbDevice` 側では以下の matrix を明示的に扱います。
 
 | Device | Host | 期待 |
 |--------|------|------|

@@ -2,11 +2,15 @@
 
 > 日本語: [README.ja.md](README.ja.md)
 
-This directory contains the EspUsbDevice test specifications and, later, the
-automated pytest-embedded tests.
+This directory contains the EspUsbDevice test specifications and automated
+pytest-embedded tests.
 
 The structure intentionally mirrors EspUsbHost so peer tests can move from
 Arduino-ESP32 USB device sketches to EspUsbDevice sketches incrementally.
+ESP32-P4 loopback is a primary target here because Arduino-ESP32's standard
+Device implementation is fixed to high-speed behavior on P4 and is difficult to
+pair with the FS host side. EspUsbDevice controls port, speed, and endpoint MPS
+explicitly for those tests.
 
 ## Requirements
 
@@ -18,9 +22,9 @@ Arduino-ESP32 USB device sketches to EspUsbDevice sketches incrementally.
 
 ## Layout
 
-- `unit/`: host-independent descriptor and report helper tests.
+- `unit/`: host-independent descriptor, report helper, and FAT RAM disk tests.
 - `peer/`: two-board tests using EspUsbHost as host and EspUsbDevice as device.
-- `loopback/`: one-board ESP32-P4 host/device tests.
+- `loopback/`: one-board ESP32-P4 tests running EspUsbHost and EspUsbDevice together.
 - `probe/`: bring-up sketches for P4 port and speed investigation.
 - `manual/`: tests that require physical devices or visual confirmation.
 
@@ -42,4 +46,4 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_local
 uv run --env-file .env pytest loopback/ --profile=p4_loopback_local
 ```
 
-The exact tests will be added as the library implementation lands.
+See [TEST_PLAN.md](TEST_PLAN.md) for current coverage and planned additions.
