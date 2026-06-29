@@ -20,6 +20,7 @@ ESP32-P4 の loopback は、Arduino-ESP32 標準 Device 実装が HS 固定で F
 ## 構成
 
 - `unit/`: ホスト不要の descriptor / report helper / FAT RAM disk テスト。
+- `examples_compile/`: examples sketch の build-only smoke テスト。
 - `peer/`: EspUsbHost を host、EspUsbDevice を device とする2台構成テスト。
 - `loopback/`: ESP32-P4 1台で EspUsbHost と EspUsbDevice を同時に動かすテスト。
 - `probe/`: P4 の port / speed 切り分け用スケッチ。
@@ -33,6 +34,7 @@ ESP32-P4 の loopback は、Arduino-ESP32 標準 Device 実装が HS 固定で F
 uv run --env-file .env pytest
 uv run --env-file .env pytest peer/
 uv run --env-file .env pytest --run-mode=build
+uv run --env-file .env pytest examples_compile/
 ```
 
 通常の peer / loopback はリリース版 `EspUsbHost` を使います。local profile は
