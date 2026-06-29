@@ -45,6 +45,16 @@ USB CDC ACM serial device の例です。
 - Host からの line coding と DTR / RTS 状態を callback で受け取ります。
 - USB CDC とログ用 Serial monitor を分けて扱います。
 
+## MIDI
+
+USB MIDI device の例です。
+詳しくは [MIDI/README.ja.md](MIDI/README.ja.md) を参照してください。
+
+- `EspUsbDeviceMidi` で Note On / Off、Control Change などを送信します。
+- 4 byte USB-MIDI event packet を raw に送受信できます。
+- Host から受信した MIDI packet を Serial monitor に出力します。
+- DAW、MIDI monitor、EspUsbHost などで確認できます。
+
 ## MSC
 
 USB Mass Storage Class device の例です。

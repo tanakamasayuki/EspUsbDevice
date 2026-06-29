@@ -51,6 +51,17 @@ See [Serial/README.md](Serial/README.md) for details.
 - Receive host line coding and DTR / RTS state through callbacks.
 - Keep USB CDC separate from the logging Serial monitor.
 
+## MIDI
+
+USB MIDI device example.
+See [MIDI/README.md](MIDI/README.md) for details.
+
+- Send Note On / Off, Control Change, and related messages with
+  `EspUsbDeviceMidi`.
+- Send and receive raw 4-byte USB-MIDI event packets.
+- Print MIDI packets received from the host to Serial monitor.
+- Test with a DAW, MIDI monitor, EspUsbHost, or another USB host.
+
 ## MSC
 
 USB Mass Storage Class device example.
