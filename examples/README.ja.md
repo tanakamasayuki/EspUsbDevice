@@ -93,6 +93,15 @@ USB MIDI device の例です。
 - Host から受信した MIDI packet を Serial monitor に出力します。
 - DAW、MIDI monitor、EspUsbHost などで確認できます。
 
+## MIDIController
+
+ADC と button input を USB MIDI message に変換する例です。
+詳しくは [MIDIController/README.ja.md](MIDIController/README.ja.md) を参照してください。
+
+- analog input を MIDI CC に変換します。
+- button press / release を Note On / Off に変換します。
+- potentiometer や BOOT button で簡単な MIDI controller を作れます。
+
 ## MSC
 
 USB Mass Storage Class device の例です。
