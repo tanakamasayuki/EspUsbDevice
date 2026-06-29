@@ -243,6 +243,25 @@ CLICK 1
   テスト / 一時 buffer、次段の `EspUsbDeviceMscFatRamDisk` は Host からの firmware /
   設定ファイル / Wi-Fi 転送用の一時ファイル受け渡し、`EspUsbDeviceMscSdCard` は実用的な
   永続ストレージ example とする。flash / SPIFFS / LittleFS の直接 MSC 公開は標準方針にしない。
+- 2026-06-29: `EspUsbDeviceMscRamDisk` helper と `examples/MSC` を追加。raw block I/O の
+  最小 MSC example とし、FAT でフォーマットされた USB drive ではないことを README に明記。
+  `arduino-cli compile --profile s3 examples/MSC` は通過。
+- 2026-06-29: `EspUsbDeviceMscFatRamDisk` helper と `examples/MSCFatRamDisk` を追加。
+  RAM 上に小さい FAT12 image を生成し、Host から `CONFIG.TXT` を置いて eject 後に
+  Device 側で `exists()` / `fileSize()` / `readFile()` する導線を作成。通常 DRAM に
+  収まるよう example は 96 KB の RAM disk とした。`arduino-cli compile --profile s3
+  examples/MSCFatRamDisk` は通過。
+- 2026-06-29: `unit/fat_ramdisk` を追加し、FAT12 boot sector、volume label、root entry、
+  FAT12 cluster chain、8.3 filename、duplicate / invalid name reject、zero-byte file、
+  partial read、missing file、MSC attach、read/write callback、eject callback を検証。
+  `uv run --env-file .env pytest unit/fat_ramdisk -vv` で 1 test passed。
+- 2026-06-29: `EspUsbDeviceMscSdCard` helper と `examples/MSCSdCard` を追加。Arduino `SD`
+  の `readRAW()` / `writeRAW()` を MSC read/write callback に接続する SPI SD card 用
+  helper とし、Host 所有中は ESP32 側 file API を使わない方針を README / manual に明記。
+  `arduino-cli compile --profile s3 examples/MSCSdCard` は通過。SD card 実機での Host OS
+  mount / file write / eject は未確認。
+- 2026-06-29: `tests/manual/README.*` に `examples/MSCFatRamDisk` と `examples/MSCSdCard` の
+  手動確認手順を追加。PC mount、file copy/write、OS eject、Serial log の期待値を記載。
 
 probe で必ず出すログ:
 
@@ -262,20 +281,22 @@ probe で必ず出すログ:
 
 ## 当面の優先順位
 
-1. `unit/compile_smoke` を維持する。
-2. `unit/descriptor` の仕様とテストを維持する。
-3. HID keyboard peer を維持する。
-4. HID mouse peer を維持する。
-5. keyboard + mouse composite に広げる。
-6. P4 loopback を peer と同等の keyboard / mouse / composite coverage に保つ。
-7. Host 詳細挙動テストとして、追加 Device class なしで可能な `onHIDInput()` と
-   `onHIDReportDescriptor()` の assert を loopback / peer に追加する。
-8. ✅ custom/vendor HID Device class を追加し、Host の `sendHIDReport()`、
-   `onVendorInput()`、HID parser field decode を検証する。
-9. ✅ consumer control / system control / gamepad HID Device class を追加し、Host 側 callback を検証する。
-10. CDC ACM の peer / loopback を維持し、必要なら line state / flush / buffering を追加検証する。
-11. Audio の移行可否を Host 側既存テストから確認する。
-12. P4 probe で FS / HS device 初期化方式を確定する。
+1. `unit/compile_smoke`、`unit/descriptor`、`unit/fat_ramdisk` を維持する。
+2. HID keyboard / mouse / keyboard_mouse / custom / vendor / consumer / system / gamepad の
+   peer / loopback coverage を維持する。
+3. CDC ACM、USB MIDI、USB MSC raw block の peer / loopback coverage を維持する。
+4. `examples/MSCFatRamDisk` を実機 PC mount で確認し、`CONFIG.TXT` copy -> OS eject ->
+   Device 側 `readFile()` の結果を記録する。
+5. `examples/MSCSdCard` を実機 SD card で確認し、Host OS mount / file write / OS eject /
+   `SD_EJECT` log を記録する。Host 所有中に ESP32 側 file API を使わない排他方針も確認する。
+6. SD_MMC 対応を追加するか判断する。Arduino `SD_MMC` の raw sector API が SPI `SD` と同じ
+   形で使えるなら、`EspUsbDeviceMscSdMmc` または共通 raw block adapter を検討する。
+7. Audio の移行可否を Host 側既存テストから確認し、最小 Audio sink の descriptor /
+   endpoint / callback 仕様を先に固める。
+8. P4 probe で FS / HS device 初期化方式を確定する。現状 loopback は実用テストが進んでいるが、
+   probe 文書化は残っている。
+9. 追加 examples が増えたため、examples 全体の compile smoke をまとめて実行する手順を
+   tests または docs に用意するか検討する。
 
 Host 側で怪しい挙動が見つかった場合:
 
