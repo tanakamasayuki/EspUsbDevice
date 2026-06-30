@@ -14,12 +14,36 @@ void setup()
 
   usb.onKeyboard([](const EspUsbHostKeyboardEvent &event)
                  {
-                   if (event.pressed && event.ascii)
+                   if (event.pressed)
                    {
-                     Serial.printf("KEY %c keycode=0x%02x modifiers=0x%02x\n",
-                                   static_cast<char>(event.ascii),
+                     Serial.printf("RAW_KEY ascii=0x%02x keycode=0x%02x modifiers=0x%02x\n",
+                                   event.ascii,
                                    event.keycode,
                                    event.modifiers);
+                     if (event.ascii)
+                     {
+                       Serial.printf("KEY %c keycode=0x%02x modifiers=0x%02x\n",
+                                     static_cast<char>(event.ascii),
+                                     event.keycode,
+                                     event.modifiers);
+                     }
+                   }
+                 });
+
+  usb.onHIDInput([](const EspUsbHostHIDInput &input)
+                 {
+                   if (input.length >= 8)
+                   {
+                     Serial.printf("HID_INPUT len=%u bytes=%02x %02x %02x %02x %02x %02x %02x %02x\n",
+                                   static_cast<unsigned>(input.length),
+                                   input.data[0],
+                                   input.data[1],
+                                   input.data[2],
+                                   input.data[3],
+                                   input.data[4],
+                                   input.data[5],
+                                   input.data[6],
+                                   input.data[7]);
                    }
                  });
 

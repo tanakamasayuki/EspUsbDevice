@@ -5,6 +5,47 @@
 手動テストは、pytest だけでは完全に制御できない挙動に限定します。
 例: ホスト OS の列挙表示、LED の目視確認、外部 USB analyzer、物理的な配線変更。
 
+## `examples/USBVendor`
+
+目的:
+
+- Host OS が vendor-specific interface を認識できることを確認する。
+- bulk IN / OUT の echo が動くことを確認する。
+- vendor control request に Device が応答できることを確認する。
+- WebUSB BOS descriptor と landing URL が Host / browser から見えることを確認する。
+
+手順:
+
+1. `examples/USBVendor` を USB device 側 board に書き込む。
+2. Serial monitor を開き、`USB vendor device ready` を確認する。
+3. USB device port を PC に接続する。
+4. Linux では `lsusb -d 303a:4019 -v` で以下を確認する。
+   - `bInterfaceClass 255 Vendor Specific Class`
+   - bulk OUT endpoint
+   - bulk IN endpoint
+   - BOS descriptor に WebUSB platform capability があること
+5. libusb / WinUSB / WebUSB などの Host 側 tool から interface を claim する。
+6. bulk OUT に短い byte列を送信し、bulk IN で `echo: ...` が返ることを確認する。
+7. control IN request `bRequest = 0x01` を送り、`EspUsbDeviceVendor` が返ることを確認する。
+8. control OUT request `bRequest = 0x02` を送り、status stage が成功することを確認する。
+9. WebUSB 対応 browser で device を選択し、landing URL が期待どおり見えるか確認する。
+
+期待:
+
+- Serial monitor に `VENDOR_RX` と `VENDOR_CONTROL` が出る。
+- Host 側で `bInterfaceClass = 0xff` の interface を開ける。
+- bulk OUT の payload が bulk IN の echo と一致する。
+- WebUSB URL は `example.com/espusbdevice` として返る。
+
+注意:
+
+- Host OS によっては kernel driver detach、permission、udev rule、WinUSB driver binding が必要。
+- `EspUsbDevice` は WebUSB URL を設定できるが、vendor code や Microsoft OS 2.0 descriptor の
+  内容差し替え API はまだ持たない。
+- Arduino-ESP32 TinyUSB core は WebUSB 有効時に Microsoft OS 2.0 descriptor も返す。
+  GUID などの内容は core 側既定値になる。
+- この確認は Host OS / browser / driver の状態に依存するため、自動テストではなく manual に置く。
+
 ## `examples/MSCFatRamDisk`
 
 目的:
