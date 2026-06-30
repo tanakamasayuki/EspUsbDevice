@@ -73,7 +73,7 @@ tests/
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
-| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ enumeration `usb_vendor` | planned | | ✅ `examples/USBVendor` |
+| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | planned | | ✅ `examples/USBVendor` |
 | USB Audio | | planned | | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
@@ -168,13 +168,13 @@ out-of-range, and failed-write behavior.
 16 blocks x 512 bytes, and the chunked transfer case also checks the Host-side
 4096-byte chunk boundary.
 
-`EspUsbDeviceVendor` starts with descriptor unit coverage, build-only coverage
-for `examples/USBVendor`, and `peer/usb_vendor` coverage for interface / bulk
-endpoint enumeration. Bulk OUT -> Device -> bulk IN echo, control IN request
-`0x01`, and control OUT request `0x02` will be automated after Host-side non-HID
-vendor bulk/control APIs are available. WebUSB BOS / landing URL and Microsoft
-OS 2.0 descriptors depend heavily on the host OS, browser, and driver state, so
-they start in `tests/manual`.
+`EspUsbDeviceVendor` covers descriptor unit tests, build-only coverage for
+`examples/USBVendor`, `peer/usb_vendor` interface / bulk endpoint enumeration,
+bulk OUT -> Device -> bulk IN echo, application vendor control IN/OUT, and WebUSB
+landing URL reads. This peer test uses unreleased Host-side vendor bulk/control
+APIs, so it is verified with `--profile=s3_peer_local` until the Host release is
+available. Microsoft OS 2.0 descriptors depend heavily on the host OS, browser,
+and driver state, so they start in `tests/manual`.
 
 MSC transport tests and file handoff tests are separate. `peer/usb_msc` and
 `loopback/usb_msc` remain raw block I/O, SCSI, and error-path tests. FAT and SD
@@ -227,7 +227,7 @@ points, so they must compile independently of peer / loopback hardware tests.
 21. ✅ `loopback/usb_midi`
 22. ✅ `peer/usb_msc`
 23. ✅ `loopback/usb_msc`
-24. ✅ `peer/usb_vendor` enumeration
+24. ✅ `peer/usb_vendor` bulk/control/WebUSB URL
 25. `loopback/usb_vendor`
 26. `peer/usb_audio`
 
