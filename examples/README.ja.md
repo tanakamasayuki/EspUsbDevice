@@ -63,6 +63,16 @@ Vendor-defined HID device の例です。
 - Host からの Output / Feature report を callback で受け取り、Serial monitor に出力します。
 - 専用 Host application や EspUsbHost との小さな独自プロトコルに向いています。
 
+## USBVendor
+
+HID ではない vendor-specific USB interface の例です。
+詳しくは [USBVendor/README.ja.md](USBVendor/README.ja.md) を参照してください。
+
+- `EspUsbDeviceVendor` で bulk IN / OUT endpoint を使う独自通信を扱います。
+- `available()` / `read()` / `write()` / `flush()` を使う stream 風 API です。
+- `onControlRequest()` で EP0 の vendor request を受け取ります。
+- WebUSB / Microsoft OS 2.0 descriptor は後続段階で追加予定です。
+
 ## CustomHID
 
 任意の HID report descriptor を使う custom HID device の例です。

@@ -48,6 +48,7 @@ loopback テストで確認できる範囲を広げています。
 - `Gamepad`: axes、hat、button を送信する HID gamepad。
 - `MediaKeys`: volume、再生停止、system control を送信する HID media keys。
 - `VendorHID`: 独自 63 byte report を送受信する vendor-defined HID。
+- `USBVendor`: bulk IN/OUT と control request を扱う vendor-specific interface。
 - `CustomHID`: sketch 定義の HID report descriptor を使う custom HID。
 - `Serial`: PC / Host とテキストを送受信する CDC ACM serial。
 - `MIDI`: note / control change を送受信する USB MIDI device。

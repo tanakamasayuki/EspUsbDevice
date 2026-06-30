@@ -74,6 +74,16 @@ See [VendorHID/README.md](VendorHID/README.md) for details.
   monitor.
 - Useful for small custom protocols with a host application or EspUsbHost.
 
+## USBVendor
+
+Non-HID vendor-specific USB interface example.
+See [USBVendor/README.md](USBVendor/README.md) for details.
+
+- Use `EspUsbDeviceVendor` for custom traffic over bulk IN / OUT endpoints.
+- Use the stream-like `available()` / `read()` / `write()` / `flush()` API.
+- Receive EP0 vendor requests with `onControlRequest()`.
+- WebUSB / Microsoft OS 2.0 descriptors are planned for a later stage.
+
 ## CustomHID
 
 Custom HID device example using a sketch-provided HID report descriptor.
