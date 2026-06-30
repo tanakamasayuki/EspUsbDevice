@@ -32,5 +32,6 @@ assertion を安定させるためです。
 - `usb_serial`: CDC ACM serial。Device -> Host、Host -> Device、line coding callback が S3 2台構成で通過済み。
 - `usb_midi`: USB MIDI。channel voice message と短い SysEx の Host -> Device packet 分割が S3 2台構成で通過済み。
 - `usb_msc`: USB Mass Storage。単一 LUN RAM disk の capacity / inquiry / read / write / error path が S3 2台構成で通過済み。
+- `usb_vendor`: vendor-specific interface。現状は interface / bulk endpoint 列挙まで。bulk/control transfer は Host 側 API 追加後に拡張予定。
 
 以降のフェーズで Audio を追加します。

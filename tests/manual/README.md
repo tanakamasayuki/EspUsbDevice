@@ -6,6 +6,55 @@ Manual tests are reserved for behavior that cannot be fully controlled by
 pytest, such as host OS enumeration dialogs, visual LED confirmation, external
 USB analyzers, or physical cabling changes.
 
+## `examples/USBVendor`
+
+Purpose:
+
+- Verify that the host OS sees a vendor-specific interface.
+- Verify bulk IN / OUT echo.
+- Verify device responses to vendor control requests.
+- Verify that the WebUSB BOS descriptor and landing URL are visible from a host
+  or browser.
+
+Steps:
+
+1. Flash `examples/USBVendor` to the USB device board.
+2. Open Serial monitor and wait for `USB vendor device ready`.
+3. Connect the USB device port to the PC.
+4. On Linux, run `lsusb -d 303a:4019 -v` and verify:
+   - `bInterfaceClass 255 Vendor Specific Class`
+   - bulk OUT endpoint
+   - bulk IN endpoint
+   - WebUSB platform capability in the BOS descriptor
+5. Claim the interface from a host-side tool using libusb, WinUSB, WebUSB, or a
+   similar API.
+6. Send a short byte sequence to bulk OUT and verify that bulk IN returns
+   `echo: ...`.
+7. Send control IN request `bRequest = 0x01` and verify that it returns
+   `EspUsbDeviceVendor`.
+8. Send control OUT request `bRequest = 0x02` and verify that the status stage
+   succeeds.
+9. In a WebUSB-capable browser, select the device and verify that the landing
+   URL is as expected.
+
+Expected:
+
+- Serial monitor prints `VENDOR_RX` and `VENDOR_CONTROL`.
+- The host can open the interface with `bInterfaceClass = 0xff`.
+- The bulk OUT payload matches the bulk IN echo.
+- WebUSB URL is returned as `example.com/espusbdevice`.
+
+Notes:
+
+- Depending on the host OS, kernel driver detach, permissions, udev rules, or
+  WinUSB driver binding may be required.
+- `EspUsbDevice` can configure the WebUSB URL, but it does not yet expose APIs
+  to replace the vendor code or Microsoft OS 2.0 descriptor contents.
+- The Arduino-ESP32 TinyUSB core also returns a Microsoft OS 2.0 descriptor when
+  WebUSB is enabled. GUIDs and other contents are the core defaults.
+- This belongs in manual testing because it depends on the host OS, browser, and
+  driver state.
+
 ## `examples/MSCFatRamDisk`
 
 Purpose:

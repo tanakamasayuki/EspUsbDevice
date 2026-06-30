@@ -17,15 +17,15 @@ void setup()
                           Serial.printf("HOST_CONNECTED vid=%04x pid=%04x\n", device.vid, device.pid);
                         });
 
-  usb.onVendorInput([](const EspUsbHostVendorInput &input)
-                    {
-                      Serial.print("VENDOR ");
-                      for (size_t i = 0; i < input.reportLength && input.reportData[i] != 0; i++)
-                      {
-                        Serial.write(input.reportData[i]);
-                      }
-                      Serial.println();
-                    });
+  usb.onHIDVendorInput([](const EspUsbHostHIDVendorInput &input)
+                       {
+                         Serial.print("VENDOR ");
+                         for (size_t i = 0; i < input.reportLength && input.reportData[i] != 0; i++)
+                         {
+                           Serial.write(input.reportData[i]);
+                         }
+                         Serial.println();
+                       });
 
   if (!usb.begin())
   {
@@ -40,11 +40,11 @@ void loop()
     const char command = static_cast<char>(Serial.read());
     if (command == 'o')
     {
-      Serial.printf("SEND_OUTPUT %u\n", usb.sendVendorOutput(OUTPUT_REPORT, sizeof(OUTPUT_REPORT)) ? 1 : 0);
+      Serial.printf("SEND_OUTPUT %u\n", usb.sendHIDVendorOutput(OUTPUT_REPORT, sizeof(OUTPUT_REPORT)) ? 1 : 0);
     }
     else if (command == 'f')
     {
-      Serial.printf("SEND_FEATURE %u\n", usb.sendVendorFeature(FEATURE_REPORT, sizeof(FEATURE_REPORT)) ? 1 : 0);
+      Serial.printf("SEND_FEATURE %u\n", usb.sendHIDVendorFeature(FEATURE_REPORT, sizeof(FEATURE_REPORT)) ? 1 : 0);
     }
   }
   delay(1);

@@ -38,5 +38,8 @@ PC.
   packet splitting pass on the two-board S3 setup.
 - `usb_msc`: USB Mass Storage. Single-LUN RAM disk capacity, inquiry, read,
   write, and error paths pass on the two-board S3 setup.
+- `usb_vendor`: vendor-specific interface. Currently covers interface and bulk
+  endpoint enumeration. Bulk/control transfers will be added after Host-side
+  APIs are available.
 
 Later phases add Audio.

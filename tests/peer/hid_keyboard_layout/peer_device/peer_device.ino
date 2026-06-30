@@ -49,6 +49,10 @@ void loop()
       keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP);
       Serial.println("DEVICE_LAYOUT JA_JP");
     }
+    else if (command == '?')
+    {
+      Serial.println("DEVICE_READY");
+    }
     else if (command != '\r' && command != '\n')
     {
       const bool ok = sendAscii(command);
