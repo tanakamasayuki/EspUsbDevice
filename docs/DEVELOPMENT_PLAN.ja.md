@@ -272,6 +272,9 @@ CLICK 1
   CI ではなく、example 追加時 / API 変更時 / release 前の手動実行を基本方針にする。
 - 2026-06-29: Arduino-ESP32 3.3.10 bundled USB examples と比較。対応状況と不足項目は
   [EXAMPLES_COVERAGE.ja.md](EXAMPLES_COVERAGE.ja.md) に整理した。
+- 2026-06-30: USBVendor / WebUSB は実装予定に変更。公式 `USBVendor` 互換ではなく、
+  `EspUsbDeviceVendor` として vendor-specific interface、bulk IN/OUT、control request callback
+  を最小実装にする。WebUSB BOS / landing URL と Microsoft OS 2.0 descriptor は段階的に追加する。
 
 probe で必ず出すログ:
 
@@ -302,8 +305,10 @@ probe で必ず出すログ:
    `SD_EJECT` log を記録する。Host 所有中に ESP32 側 file API を使わない排他方針も確認する。
 7. SD_MMC 対応を追加するか判断する。Arduino `SD_MMC` の raw sector API が SPI `SD` と同じ
    形で使えるなら、`EspUsbDeviceMscSdMmc` または共通 raw block adapter を検討する。
-8. USBVendor / WebUSB 相当を実装するか判断する。公式 `USBVendor` は HID ではなく vendor
-   interface + control request + WebUSB URL なので、`VendorHID` とは別 class として仕様化する。
+8. USBVendor / WebUSB 相当を `EspUsbDeviceVendor` として仕様化・実装する。公式 `USBVendor` は
+   HID ではなく vendor interface + control request + WebUSB URL なので、`VendorHID` とは別 class
+   にする。最小実装は bulk IN/OUT + control request callback とし、WebUSB / Microsoft OS 2.0
+   descriptor は後続段階で追加する。
 9. Audio の移行可否を Host 側既存テストから確認し、最小 Audio sink の descriptor /
    endpoint / callback 仕様を先に固める。
 10. P4 probe で FS / HS device 初期化方式を確定する。現状 loopback は実用テストが進んでいるが、
