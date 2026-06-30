@@ -127,6 +127,53 @@ static void testCompositeDescriptor()
   check(device.hidReportDescriptor(1) == nullptr, "composite_single_runtime_hid_instance");
 }
 
+static void testVendorDescriptor()
+{
+  EspUsbDevice device;
+  EspUsbDeviceVendor vendor(device);
+  EspUsbDeviceConfig config;
+  config.pid = 0x4019;
+  config.startTinyUsb = false;
+
+  check(device.begin(config), "vendor_begin");
+
+  const uint8_t *cfg = device.configurationDescriptor(0);
+  check(le16(&cfg[2]) == 32, "vendor_config_total_len");
+  check(cfg[4] == 1, "vendor_interface_count");
+
+  const uint8_t *itf = &cfg[9];
+  check(itf[0] == 9 && itf[1] == 0x04 && itf[2] == 0 && itf[4] == 2, "vendor_interface");
+  check(itf[5] == 0xff && itf[6] == 0x00 && itf[7] == 0x00, "vendor_class");
+
+  const uint8_t *epOut = &cfg[18];
+  const uint8_t *epIn = &cfg[25];
+  check(epOut[0] == 7 && epOut[1] == 0x05 && epOut[2] == 0x01, "vendor_ep_out_addr");
+  check(epIn[0] == 7 && epIn[1] == 0x05 && epIn[2] == 0x81, "vendor_ep_in_addr");
+  check(epOut[3] == 0x02 && epIn[3] == 0x02, "vendor_ep_bulk");
+  check(le16(&epOut[4]) == 64 && le16(&epIn[4]) == 64, "vendor_ep_mps");
+}
+
+static void testCompositeWithVendorDescriptor()
+{
+  EspUsbDevice device;
+  EspUsbDeviceHidKeyboard keyboard(device);
+  EspUsbDeviceHidMouse mouse(device);
+  EspUsbDeviceVendor vendor(device);
+  EspUsbDeviceConfig config;
+  config.pid = 0x401a;
+  config.startTinyUsb = false;
+
+  check(device.begin(config), "composite_vendor_begin");
+
+  const uint8_t *cfg = device.configurationDescriptor(0);
+  check(le16(&cfg[2]) == 64, "composite_vendor_config_total_len");
+  check(cfg[4] == 2, "composite_vendor_interface_count");
+  check(cfg[9 + 2] == 0, "composite_vendor_hid_interface_number");
+  check(cfg[41 + 2] == 1, "composite_vendor_interface_number");
+  check(cfg[41 + 5] == 0xff, "composite_vendor_class");
+  check(cfg[50 + 2] == 0x03 && cfg[57 + 2] == 0x83, "composite_vendor_eps");
+}
+
 static void testStringDescriptors()
 {
   EspUsbDevice device;
@@ -154,6 +201,8 @@ void setup()
   testKeyboardDescriptor();
   testMouseDescriptor();
   testCompositeDescriptor();
+  testVendorDescriptor();
+  testCompositeWithVendorDescriptor();
   testStringDescriptors();
   Serial.printf("TEST_END pass=%d fail=%d\n", passCount, failCount);
   Serial.println(failCount == 0 ? "OK" : "NG");

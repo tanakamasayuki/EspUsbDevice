@@ -5,6 +5,7 @@ static void compileApiSmoke()
   EspUsbDevice device;
   EspUsbDeviceHidKeyboard keyboard(device);
   EspUsbDeviceHidMouse mouse(device);
+  EspUsbDeviceVendor vendor(device);
   const uint8_t customDescriptor[] = {
       0x05, 0x01,
       0x09, 0x04,
@@ -65,6 +66,16 @@ static void compileApiSmoke()
   (void)mouse.press(ESP_USB_DEVICE_MOUSE_RIGHT);
   (void)mouse.wheel(1);
   (void)mouse.releaseAll();
+  (void)vendor.available();
+  (void)vendor.write(static_cast<uint8_t>('x'));
+  vendor.onRx([](size_t available)
+              {
+                (void)available;
+              });
+  vendor.onControlRequest([&vendor](const EspUsbDeviceVendorControlRequest &request)
+                          {
+                            return vendor.sendControlResponse(request);
+                          });
   const uint8_t customReport[8] = {};
   (void)customHid.sendReport(customReport, sizeof(customReport));
 }

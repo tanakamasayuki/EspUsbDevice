@@ -28,6 +28,7 @@
 #include "class/cdc/cdc_device.h"
 #include "class/midi/midi_device.h"
 #include "class/msc/msc_device.h"
+#include "class/vendor/vendor_device.h"
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 1
 #else
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
@@ -41,10 +42,12 @@ static constexpr uint8_t USB_DESC_ENDPOINT = 0x05;
 static constexpr uint8_t USB_DESC_HID = 0x21;
 
 static constexpr uint8_t USB_CLASS_HID = 0x03;
+static constexpr uint8_t USB_CLASS_VENDOR_SPECIFIC = 0xff;
 static constexpr uint8_t USB_SUBCLASS_BOOT = 0x01;
 static constexpr uint8_t USB_PROTOCOL_KEYBOARD = 0x01;
 static constexpr uint8_t USB_PROTOCOL_MOUSE = 0x02;
 
+static constexpr uint8_t USB_ENDPOINT_ATTR_BULK = 0x02;
 static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
 static constexpr uint8_t USB_SCSI_CMD_SYNCHRONIZE_CACHE_10 = 0x35;
 
@@ -52,6 +55,7 @@ static EspUsbDevice *g_activeDevice = nullptr;
 static EspUsbDeviceCdcSerial *g_activeCdcSerial = nullptr;
 static EspUsbDeviceMidi *g_activeMidi = nullptr;
 static EspUsbDeviceMsc *g_activeMsc = nullptr;
+static EspUsbDeviceVendor *g_activeVendor = nullptr;
 
 static void put16(uint8_t *dst, uint16_t value)
 {
@@ -290,6 +294,27 @@ static uint16_t espUsbDeviceLoadMscDescriptor(uint8_t *dst, uint8_t *itf)
   return sizeof(descriptor);
 }
 
+static uint16_t espUsbDeviceLoadVendorDescriptor(uint8_t *dst, uint8_t *itf)
+{
+  if (!g_activeVendor)
+  {
+    return 0;
+  }
+  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice Vendor");
+  const uint8_t epNum = tinyusb_get_free_duplex_endpoint();
+  if (epNum == 0)
+  {
+    return 0;
+  }
+  const uint16_t endpointSize = g_activeVendor->endpointSize();
+  uint8_t descriptor[] = {
+      TUD_VENDOR_DESCRIPTOR(*itf, strIndex, epNum, static_cast<uint8_t>(0x80 | epNum), endpointSize),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  *itf = static_cast<uint8_t>(*itf + 1);
+  return sizeof(descriptor);
+}
+
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
   return g_activeDevice ? g_activeDevice->hidReportDescriptor(instance) : nullptr;
@@ -413,6 +438,20 @@ bool tud_msc_is_writable_cb(uint8_t lun)
   (void)lun;
   return g_activeMsc ? g_activeMsc->writable() : false;
 }
+
+void tud_vendor_rx_cb(uint8_t itf)
+{
+  (void)itf;
+  if (g_activeVendor)
+  {
+    g_activeVendor->handleRx();
+  }
+}
+
+extern "C" bool tinyusb_vendor_control_request_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
+{
+  return g_activeVendor ? g_activeVendor->handleControlRequest(rhport, stage, request) : false;
+}
 #endif
 
 EspUsbDevice::EspUsbDevice()
@@ -492,6 +531,15 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     if (hasMscClass())
     {
       err = tinyusb_enable_interface(USB_INTERFACE_MSC, TUD_MSC_DESC_LEN, espUsbDeviceLoadMscDescriptor);
+      if (err != ESP_OK)
+      {
+        setLastError(err);
+        return false;
+      }
+    }
+    if (hasVendorClass())
+    {
+      err = tinyusb_enable_interface(USB_INTERFACE_VENDOR, TUD_VENDOR_DESC_LEN, espUsbDeviceLoadVendorDescriptor);
       if (err != ESP_OK)
       {
         setLastError(err);
@@ -775,6 +823,13 @@ bool EspUsbDevice::buildDescriptors()
       }
     }
   }
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isVendor())
+    {
+      interfaceCount += classes_[i]->interfaceCount();
+    }
+  }
 
   memset(deviceDescriptor_, 0, sizeof(deviceDescriptor_));
   deviceDescriptor_[0] = 18;
@@ -840,6 +895,8 @@ bool EspUsbDevice::buildDescriptors()
     };
     memcpy(&configDescriptor_[offset], descriptor, sizeof(descriptor));
     offset += sizeof(descriptor);
+    interfaceNumber += 1;
+    endpointNumber += 2;
   }
   else
   {
@@ -858,6 +915,22 @@ bool EspUsbDevice::buildDescriptors()
         setLastError(ESP_FAIL);
         return false;
       }
+    }
+  }
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (!classes_[i] || !classes_[i]->isVendor())
+    {
+      continue;
+    }
+    uint16_t written = classes_[i]->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, 64);
+    offset += written;
+    interfaceNumber += classes_[i]->interfaceCount();
+    endpointNumber += classes_[i]->endpointCount();
+    if (offset > MAX_CONFIG_DESCRIPTOR)
+    {
+      setLastError(ESP_FAIL);
+      return false;
     }
   }
   configDescriptorLength_ = offset;
@@ -920,6 +993,18 @@ bool EspUsbDevice::hasMscClass() const
   for (size_t i = 0; i < classCount_; i++)
   {
     if (classes_[i] && classes_[i]->isMsc())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool EspUsbDevice::hasVendorClass() const
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isVendor())
     {
       return true;
     }
@@ -1103,6 +1188,176 @@ void EspUsbDeviceCdcSerial::handleRx()
   {
     rxCallback_(available());
   }
+}
+
+EspUsbDeviceVendor::EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize) : EspUsbDeviceClass(device)
+{
+  endpointSize_ = endpointSize == 0 ? 64 : endpointSize;
+}
+
+bool EspUsbDeviceVendor::begin()
+{
+  if (g_activeVendor && g_activeVendor != this)
+  {
+    return false;
+  }
+  g_activeVendor = this;
+  return true;
+}
+
+uint16_t EspUsbDeviceVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  (void)endpointSize;
+  const uint8_t epOut = endpointNumber;
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
+  uint8_t descriptor[] = {
+      9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_VENDOR_SPECIFIC, 0x00, 0x00, 0,
+      7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(endpointSize_ & 0xff), static_cast<uint8_t>((endpointSize_ >> 8) & 0xff), 0,
+      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(endpointSize_ & 0xff), static_cast<uint8_t>((endpointSize_ >> 8) & 0xff), 0,
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
+}
+
+bool EspUsbDeviceVendor::mounted() const
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return tud_vendor_n_mounted(0);
+#else
+  return false;
+#endif
+}
+
+int EspUsbDeviceVendor::available()
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return static_cast<int>(tud_vendor_n_available(0));
+#else
+  return 0;
+#endif
+}
+
+int EspUsbDeviceVendor::read()
+{
+  uint8_t data = 0;
+  return read(&data, 1) == 1 ? data : -1;
+}
+
+size_t EspUsbDeviceVendor::read(uint8_t *buffer, size_t size)
+{
+  if (!buffer || size == 0)
+  {
+    return 0;
+  }
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return tud_vendor_n_read(0, buffer, static_cast<uint32_t>(size));
+#else
+  return 0;
+#endif
+}
+
+size_t EspUsbDeviceVendor::write(uint8_t data)
+{
+  return write(&data, 1);
+}
+
+size_t EspUsbDeviceVendor::write(const uint8_t *buffer, size_t size)
+{
+  if (!buffer || size == 0)
+  {
+    return 0;
+  }
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  if (!mounted())
+  {
+    return 0;
+  }
+  const uint32_t available = tud_vendor_n_write_available(0);
+  if (size > available)
+  {
+    size = available;
+  }
+  return size ? tud_vendor_n_write(0, buffer, static_cast<uint32_t>(size)) : 0;
+#else
+  return 0;
+#endif
+}
+
+void EspUsbDeviceVendor::flush()
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  tud_vendor_n_write_flush(0);
+#endif
+}
+
+void EspUsbDeviceVendor::onRx(RxCallback callback)
+{
+  rxCallback_ = callback;
+}
+
+void EspUsbDeviceVendor::onControlRequest(ControlRequestCallback callback)
+{
+  controlRequestCallback_ = callback;
+}
+
+bool EspUsbDeviceVendor::sendControlResponse(const EspUsbDeviceVendorControlRequest &request, const void *data, size_t length)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  const tusb_control_request_t *raw = static_cast<const tusb_control_request_t *>(request.rawRequest);
+  if (!raw)
+  {
+    return false;
+  }
+  if (!data || length == 0)
+  {
+    return tud_control_status(request.rhport, raw);
+  }
+  return tud_control_xfer(request.rhport, raw, const_cast<void *>(data), static_cast<uint16_t>(length));
+#else
+  (void)request;
+  (void)data;
+  (void)length;
+  return false;
+#endif
+}
+
+uint16_t EspUsbDeviceVendor::endpointSize() const
+{
+  return endpointSize_;
+}
+
+void EspUsbDeviceVendor::handleRx()
+{
+  if (rxCallback_)
+  {
+    rxCallback_(available());
+  }
+}
+
+bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, const void *request)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  const tusb_control_request_t *raw = static_cast<const tusb_control_request_t *>(request);
+  if (!raw || !controlRequestCallback_)
+  {
+    return false;
+  }
+  EspUsbDeviceVendorControlRequest event;
+  event.rhport = rhport;
+  event.stage = stage;
+  event.bmRequestType = raw->bmRequestType;
+  event.bRequest = raw->bRequest;
+  event.wValue = raw->wValue;
+  event.wIndex = raw->wIndex;
+  event.wLength = raw->wLength;
+  event.rawRequest = raw;
+  return controlRequestCallback_(event);
+#else
+  (void)rhport;
+  (void)stage;
+  (void)request;
+  return false;
+#endif
 }
 
 EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device) : EspUsbDeviceClass(device)

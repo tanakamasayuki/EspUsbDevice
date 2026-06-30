@@ -262,6 +262,18 @@ struct EspUsbDeviceCdcLineState
   bool rts = false;
 };
 
+struct EspUsbDeviceVendorControlRequest
+{
+  uint8_t rhport = 0;
+  uint8_t stage = 0;
+  uint8_t bmRequestType = 0;
+  uint8_t bRequest = 0;
+  uint16_t wValue = 0;
+  uint16_t wIndex = 0;
+  uint16_t wLength = 0;
+  const void *rawRequest = nullptr;
+};
+
 struct EspUsbDeviceMidiPacket
 {
   uint8_t header = 0;
@@ -314,6 +326,7 @@ private:
   friend class EspUsbDeviceHidGamepad;
   friend class EspUsbDeviceHidConsumerControl;
   friend class EspUsbDeviceHidSystemControl;
+  friend class EspUsbDeviceVendor;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
@@ -325,6 +338,7 @@ private:
   bool hasCdcClass() const;
   bool hasMidiClass() const;
   bool hasMscClass() const;
+  bool hasVendorClass() const;
   uint8_t classReportId(uint8_t classInstance) const;
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
   void setLastError(esp_err_t error);
@@ -353,6 +367,7 @@ public:
   virtual bool isCdc() const { return false; }
   virtual bool isMidi() const { return false; }
   virtual bool isMsc() const { return false; }
+  virtual bool isVendor() const { return false; }
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
@@ -410,6 +425,42 @@ private:
   LineCodingCallback lineCodingCallback_;
   LineStateCallback lineStateCallback_;
   RxCallback rxCallback_;
+};
+
+class EspUsbDeviceVendor : public EspUsbDeviceClass, public Print
+{
+public:
+  using RxCallback = std::function<void(size_t)>;
+  using ControlRequestCallback = std::function<bool(const EspUsbDeviceVendorControlRequest &)>;
+
+  explicit EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize = 64);
+
+  bool begin() override;
+  bool isHid() const override { return false; }
+  bool isVendor() const override { return true; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 1; }
+
+  bool mounted() const;
+  int available();
+  int read();
+  size_t read(uint8_t *buffer, size_t size);
+  size_t write(uint8_t data) override;
+  size_t write(const uint8_t *buffer, size_t size) override;
+  void flush();
+  void onRx(RxCallback callback);
+  void onControlRequest(ControlRequestCallback callback);
+  bool sendControlResponse(const EspUsbDeviceVendorControlRequest &request, const void *data = nullptr, size_t length = 0);
+  uint16_t endpointSize() const;
+
+  void handleRx();
+  bool handleControlRequest(uint8_t rhport, uint8_t stage, const void *request);
+
+private:
+  uint16_t endpointSize_ = 64;
+  RxCallback rxCallback_;
+  ControlRequestCallback controlRequestCallback_;
 };
 
 class EspUsbDeviceMidi : public EspUsbDeviceClass
