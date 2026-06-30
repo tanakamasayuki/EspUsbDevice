@@ -71,7 +71,7 @@ HID ではない vendor-specific USB interface の例です。
 - `EspUsbDeviceVendor` で bulk IN / OUT endpoint を使う独自通信を扱います。
 - `available()` / `read()` / `write()` / `flush()` を使う stream 風 API です。
 - `onControlRequest()` で EP0 の vendor request を受け取ります。
-- WebUSB / Microsoft OS 2.0 descriptor は後続段階で追加予定です。
+- `EspUsbDeviceConfig` で WebUSB landing URL を設定できます。
 
 ## CustomHID
 

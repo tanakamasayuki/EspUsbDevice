@@ -82,7 +82,7 @@ See [USBVendor/README.md](USBVendor/README.md) for details.
 - Use `EspUsbDeviceVendor` for custom traffic over bulk IN / OUT endpoints.
 - Use the stream-like `available()` / `read()` / `write()` / `flush()` API.
 - Receive EP0 vendor requests with `onControlRequest()`.
-- WebUSB / Microsoft OS 2.0 descriptors are planned for a later stage.
+- Configure a WebUSB landing URL through `EspUsbDeviceConfig`.
 
 ## CustomHID
 

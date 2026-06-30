@@ -560,8 +560,8 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
         .usb_protocol = 0x00,
         .usb_attributes = static_cast<uint8_t>(0x80 | (config_.selfPowered ? 0x40 : 0x00)),
         .usb_power_ma = config_.maxPowerMilliamps,
-        .webusb_enabled = false,
-        .webusb_url = nullptr,
+        .webusb_enabled = config_.webusbEnabled,
+        .webusb_url = config_.webusbUrl,
     };
 
     err = tinyusb_init(&tinyusbConfig);

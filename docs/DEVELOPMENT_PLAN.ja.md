@@ -276,9 +276,12 @@ CLICK 1
   `EspUsbDeviceVendor` として vendor-specific interface、bulk IN/OUT、control request callback
   を最小実装にする。WebUSB BOS / landing URL と Microsoft OS 2.0 descriptor は段階的に追加する。
 - 2026-06-30: `EspUsbDeviceVendor` の最小実装と `examples/USBVendor` を追加。bulk IN/OUT と
-  control request callback は対応済み。WebUSB BOS / landing URL と Microsoft OS 2.0 descriptor は
-  未実装の後続項目として残す。`uv run --env-file .env pytest examples_compile/ -vv` は
+  control request callback は対応済み。この時点では WebUSB BOS / landing URL と Microsoft OS 2.0
+  descriptor は後続項目として残した。`uv run --env-file .env pytest examples_compile/ -vv` は
   15 examples passed。
+- 2026-06-30: `EspUsbDeviceConfig::webusbEnabled` / `webusbUrl` を追加し、Arduino-ESP32
+  TinyUSB core の WebUSB BOS / landing URL を有効化できるようにした。core は WebUSB 有効時に
+  Microsoft OS 2.0 descriptor も返すが、GUID や descriptor 内容を差し替える API は未実装。
 
 probe で必ず出すログ:
 
@@ -309,9 +312,9 @@ probe で必ず出すログ:
    `SD_EJECT` log を記録する。Host 所有中に ESP32 側 file API を使わない排他方針も確認する。
 7. SD_MMC 対応を追加するか判断する。Arduino `SD_MMC` の raw sector API が SPI `SD` と同じ
    形で使えるなら、`EspUsbDeviceMscSdMmc` または共通 raw block adapter を検討する。
-8. USBVendor / WebUSB 相当を `EspUsbDeviceVendor` として育てる。最小実装の bulk IN/OUT +
-   control request callback は追加済み。次は WebUSB BOS / landing URL、必要なら Microsoft OS 2.0
-   descriptor を追加する。
+8. USBVendor / WebUSB 相当を `EspUsbDeviceVendor` として育てる。bulk IN/OUT、control request
+   callback、WebUSB landing URL は追加済み。次は browser / libusb / WinUSB の手動確認手順と、
+   必要なら custom vendor code / Microsoft OS 2.0 descriptor 差し替え API を検討する。
 9. Audio の移行可否を Host 側既存テストから確認し、最小 Audio sink の descriptor /
    endpoint / callback 仕様を先に固める。
 10. P4 probe で FS / HS device 初期化方式を確定する。現状 loopback は実用テストが進んでいるが、
