@@ -80,6 +80,8 @@ void setup()
   config.manufacturer = "EspUsb";
   config.product = "EspUsbDevice USBVendor";
   config.serialNumber = "espusb-vendor";
+  config.webusbEnabled = true;
+  config.webusbUrl = "example.com/espusbdevice";
 
   if (!device.begin(config))
   {

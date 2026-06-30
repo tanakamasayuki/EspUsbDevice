@@ -71,6 +71,8 @@ struct EspUsbDeviceConfig
   uint16_t pid = 0x4000;
   bool selfPowered = false;
   uint16_t maxPowerMilliamps = 100;
+  bool webusbEnabled = false;
+  const char *webusbUrl = nullptr;
   bool startTinyUsb = true;
 };
 

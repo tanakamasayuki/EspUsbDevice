@@ -19,6 +19,8 @@ static void compileApiSmoke()
   config.speed = ESP_USB_DEVICE_SPEED_FULL;
   config.vid = 0x303a;
   config.pid = 0x4000;
+  config.webusbEnabled = true;
+  config.webusbUrl = "example.com/espusbdevice";
 
   EspUsbDeviceBootKeyboardReport keyboardReport;
   keyboardReport.modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
