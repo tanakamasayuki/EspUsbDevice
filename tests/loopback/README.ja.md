@@ -18,6 +18,10 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   move / wheel / left / right / middle / back / forward を Host 側 `onMouse()` で確認する。
 - `hid_keyboard_mouse`: P4 1台上で keyboard + mouse composite device を起動し、
   keyboard report と mouse report が同時に Host 側 callback へ届くことを確認する。
+- `custom_hid`: P4 1台上で custom HID report descriptor を持つ device を起動し、
+  Host 側 `onHIDReportDescriptor()` と `onHIDInput()` で descriptor 長と raw report を確認する。
+- `hid_vendor`: P4 1台上で HID vendor device を起動し、Device -> Host input、
+  Host -> Device feature report、Host -> Device output report を確認する。
 - `usb_serial`: P4 1台上で CDC ACM serial を起動し、Device -> Host、Host -> Device、
   line coding callback を確認する。
 - `usb_midi`: P4 1台上で USB MIDI を起動し、channel voice message と短い SysEx の

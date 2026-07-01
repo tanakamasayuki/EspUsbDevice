@@ -19,6 +19,11 @@ port/speed behavior can be verified before broader class coverage is added.
   `onMouse()`.
 - `hid_keyboard_mouse`: starts a keyboard + mouse composite device on one P4
   and verifies that both reports reach Host callbacks.
+- `custom_hid`: starts a custom HID report descriptor device on one P4 and
+  verifies descriptor length and raw reports through Host `onHIDReportDescriptor()`
+  and `onHIDInput()`.
+- `hid_vendor`: starts a HID vendor device on one P4 and verifies Device -> Host
+  input, Host -> Device feature reports, and Host -> Device output reports.
 - `usb_serial`: starts CDC ACM serial on one P4 and verifies Device -> Host,
   Host -> Device, and line coding callbacks.
 - `usb_midi`: starts USB MIDI on one P4 and verifies channel voice messages and
