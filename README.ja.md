@@ -36,7 +36,11 @@ loopback テストで確認できる範囲を広げています。
 - CDC ACM serial。
 - USB MIDI event packet と note / control change helper。
 - USB MSC block device と SCSI callback。
+- USBVendor bulk IN/OUT、control request、WebUSB landing URL。
 - pytest-embedded peer / loopback テスト用の serial command sketch。
+
+USB Audio class は未実装です。実装量が大きいため、最小 Audio sink/source の仕様確認後に
+別マイルストーンとして扱います。
 
 ## Examples
 

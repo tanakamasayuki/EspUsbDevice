@@ -50,6 +50,6 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   write, and error paths pass on the two-board S3 setup.
 - `usb_vendor`: vendor-specific interface. Interface / bulk endpoint
   enumeration, bulk echo, application vendor control IN/OUT, and WebUSB landing
-  URL reads pass on the two-board S3 setup with the local Host profile.
+  URL reads pass on the two-board S3 setup.
 
 Later phases add Audio.
