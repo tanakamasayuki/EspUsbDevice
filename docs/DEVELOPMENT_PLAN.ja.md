@@ -143,6 +143,8 @@ uv run --env-file .env pytest --clean
 - `loopback/hid_keyboard`
 - `loopback/hid_mouse`
 - `loopback/hid_keyboard_mouse`
+- `loopback/custom_hid`
+- `loopback/hid_vendor`
 - `loopback/hid_gamepad`
 - `loopback/usb_serial`
 - `loopback/usb_midi`

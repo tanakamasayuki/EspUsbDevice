@@ -65,8 +65,8 @@ tests/
 | HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | builds `hid_keyboard` | | optional |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | | |
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
-| Custom HID report descriptor | planned | ✅ `custom_hid` | | | |
-| HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | | | |
+| Custom HID report descriptor | planned | ✅ `custom_hid` | ✅ `custom_hid` | | |
+| HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | ✅ `hid_vendor` | | |
 | Consumer control HID | planned | ✅ `hid_consumer_control` | | | |
 | System control HID | planned | ✅ `hid_system_control` | | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
@@ -119,7 +119,7 @@ First additions:
 | Host feature | Needed Device support | Expected |
 |--------------|-----------------------|----------|
 | `sendSetProtocol()` | ✅ `hid_keyboard` `onProtocol()` | report protocol requests are observed |
-| `sendHIDReport(... OUTPUT)` | ✅ `hid_vendor` | report ID / payload / length match |
+| `sendHIDReport(... OUTPUT)` | ✅ `hid_vendor` | payload / length match; P4 loopback observes Device-side report ID as `0` |
 | `sendHIDReport(... FEATURE)` | ✅ `hid_vendor` | feature reports are observed |
 | `onVendorInput()` | ✅ `hid_vendor` | report ID 6 vendor input reaches callback |
 | HID parser fields | Starts with ✅ `custom_hid` descriptor/input | usage page / usage / bit offset / bit size / logical min/max match |
@@ -229,7 +229,9 @@ points, so they must compile independently of peer / loopback hardware tests.
 23. ✅ `loopback/usb_msc`
 24. ✅ `peer/usb_vendor` bulk/control/WebUSB URL
 25. ✅ `loopback/usb_vendor`
-26. `peer/usb_audio`
+26. ✅ `loopback/custom_hid`
+27. ✅ `loopback/hid_vendor`
+28. `peer/usb_audio`
 
 ## Acceptance Rules
 
