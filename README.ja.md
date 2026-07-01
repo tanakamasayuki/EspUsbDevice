@@ -11,6 +11,18 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 具体的に検証でき、ライブラリが制御すべき低レベル挙動を明確にできるためです。
 テスト向けの機能を先に実装しますが、それはプロジェクトの最終的な範囲ではありません。
 
+## リリース範囲
+
+このリリースでは、HID keyboard / mouse / gamepad / consumer / system / custom / vendor HID、
+CDC ACM、USB MIDI、MSC、USBVendor を扱えます。USB Audio は未実装です。
+
+代表的な用途:
+
+- layout 対応 keyboard、raw HID usage、mouse / gamepad / media key を送る。
+- PC や `EspUsbHost` と CDC ACM serial / USB MIDI で通信する。
+- RAM disk、FAT RAM disk、SD card を USB MSC として公開する。
+- HID ではない vendor-specific bulk/control interface を作る。
+
 ## 設計目標
 
 - `EspUsbHost` と同じように、明示設定と callback ベースの API にする。
@@ -41,6 +53,60 @@ loopback テストで確認できる範囲を広げています。
 
 USB Audio class は未実装です。実装量が大きいため、最小 Audio sink/source の仕様確認後に
 別マイルストーンとして扱います。
+
+## 最小例
+
+Keyboard:
+
+```cpp
+#include "EspUsbDevice.h"
+
+EspUsbDevice device;
+EspUsbDeviceHidKeyboard keyboard(device);
+
+void setup()
+{
+  EspUsbDeviceConfig config;
+  config.vid = 0x303a;
+  config.pid = 0x4001;
+  config.product = "EspUsbDevice Keyboard";
+  device.begin(config);
+}
+
+void loop()
+{
+  if (device.ready())
+  {
+    keyboard.write("hello");
+    delay(1000);
+  }
+}
+```
+
+CDC ACM serial:
+
+```cpp
+#include "EspUsbDevice.h"
+
+EspUsbDevice device;
+EspUsbDeviceCdcSerial SerialUSB(device);
+
+void setup()
+{
+  EspUsbDeviceConfig config;
+  config.product = "EspUsbDevice Serial";
+  device.begin(config);
+}
+
+void loop()
+{
+  if (SerialUSB.connected())
+  {
+    SerialUSB.println("hello");
+    delay(1000);
+  }
+}
+```
 
 ## Examples
 
@@ -104,9 +170,21 @@ MSC:
 - flash / SPIFFS / LittleFS の直接公開は標準方針にしません。永続ストレージは SD card、
   一時ファイル受け渡しは RAM disk + FAT helper を優先します。
 
+## 制限事項
+
+- Arduino-ESP32 標準の `USB.begin()`、`USBHIDKeyboard`、`USBHIDMouse` などとは併用しません。
+- USB Audio class は未実装です。
+- MSC は block device と filesystem を分けて扱います。Host から通常の drive として mount
+  するには FAT RAM disk helper または SD card などを使います。
+- flash / SPIFFS / LittleFS を USB MSC として直接公開することは標準方針にしません。
+- SD card を MSC として Host に公開している間は、ESP32 側で同じ card の file API を使わないでください。
+- WebUSB / Microsoft OS 2.0 descriptor の基本応答は Arduino-ESP32 TinyUSB core に依存します。
+  custom vendor code、GUID、Microsoft OS 2.0 descriptor 内容の差し替え API は未実装です。
+
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。
 設計背景と `EspUsbHost` 既存テストからの移行メモは [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md)
 にまとめています。
-現在の実機・ツール環境に基づく開発順序は [docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md)
+現在の開発方針と残作業は [docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md)
 にまとめています。
+リリース前確認は [docs/RELEASE_CHECKLIST.ja.md](docs/RELEASE_CHECKLIST.ja.md) を参照してください。

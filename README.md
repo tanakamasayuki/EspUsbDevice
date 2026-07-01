@@ -12,6 +12,18 @@ those tests give concrete hardware coverage and expose the low-level behavior
 the library must control. Test-oriented features are the starting point, not the
 final boundary of the project.
 
+## Release Scope
+
+This release covers HID keyboard / mouse / gamepad / consumer / system / custom /
+vendor HID, CDC ACM, USB MIDI, MSC, and USBVendor. USB Audio is not implemented.
+
+Typical use cases:
+
+- Send layout-aware keyboard input, raw HID usages, mouse, gamepad, and media keys.
+- Communicate with a PC or EspUsbHost over CDC ACM serial or USB MIDI.
+- Expose RAM disks, FAT RAM disks, or SD cards as USB MSC devices.
+- Build non-HID vendor-specific bulk/control interfaces.
+
 ## Design Goals
 
 - Use EspUsbHost-style explicit configuration and callback APIs.
@@ -44,6 +56,60 @@ available:
 
 USB Audio class is not implemented yet. It is large enough to be handled as a
 separate milestone after the minimal Audio sink/source specification is settled.
+
+## Minimal Examples
+
+Keyboard:
+
+```cpp
+#include "EspUsbDevice.h"
+
+EspUsbDevice device;
+EspUsbDeviceHidKeyboard keyboard(device);
+
+void setup()
+{
+  EspUsbDeviceConfig config;
+  config.vid = 0x303a;
+  config.pid = 0x4001;
+  config.product = "EspUsbDevice Keyboard";
+  device.begin(config);
+}
+
+void loop()
+{
+  if (device.ready())
+  {
+    keyboard.write("hello");
+    delay(1000);
+  }
+}
+```
+
+CDC ACM serial:
+
+```cpp
+#include "EspUsbDevice.h"
+
+EspUsbDevice device;
+EspUsbDeviceCdcSerial SerialUSB(device);
+
+void setup()
+{
+  EspUsbDeviceConfig config;
+  config.product = "EspUsbDevice Serial";
+  device.begin(config);
+}
+
+void loop()
+{
+  if (SerialUSB.connected())
+  {
+    SerialUSB.println("hello");
+    delay(1000);
+  }
+}
+```
 
 ## Examples
 
@@ -115,9 +181,24 @@ MSC:
   Persistent storage should use SD card first, and temporary file handoff should
   use RAM disk plus a FAT helper.
 
+## Limitations
+
+- Do not use this library together with Arduino-ESP32's standard `USB.begin()`,
+  `USBHIDKeyboard`, `USBHIDMouse`, or other built-in USB device classes.
+- USB Audio class is not implemented.
+- MSC keeps block devices and filesystems separate. Use the FAT RAM disk helper
+  or SD card support when the host should mount a normal drive.
+- Direct flash / SPIFFS / LittleFS exposure as USB MSC is not a standard goal.
+- When an SD card is exposed to the host as MSC, do not use ESP32-side file APIs
+  for the same card while the host owns it.
+- WebUSB / Microsoft OS 2.0 descriptor basics are provided by the Arduino-ESP32
+  TinyUSB core. Custom vendor code, GUID, and Microsoft OS 2.0 descriptor
+  replacement APIs are not implemented yet.
+
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
 Design background and migration notes from existing EspUsbHost tests are in
 [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md).
-The development order based on the currently verified hardware and tool
-environment is in [docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md).
+Current development policy and remaining work are in
+[docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md).
+See [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) before cutting a release.
