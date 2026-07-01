@@ -23,6 +23,16 @@ Connect the USB data pins between the host and device boards:
 Avoid tying VBUS together when both boards are powered separately from the host
 PC.
 
+## Run Notes
+
+After an `EspUsbHost` release upgrade or after switching between `s3_peer_host`
+and `s3_peer_local`, stale build cache can look like boot-time crashes or
+timeouts. Use `--clean` for release validation.
+
+```sh
+uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
+```
+
 ## Initial Tests
 
 - `hid_keyboard`: raw boot keyboard report and LED output report. Passing on the two-board S3 setup.

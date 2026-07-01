@@ -22,6 +22,16 @@ assertion を安定させるためです。
 
 両方のボードを PC などから別々に給電している場合、VBUS は接続しないでください。
 
+## 実行メモ
+
+`EspUsbHost` のリリース更新後や `s3_peer_host` / `s3_peer_local` の切り替え後は、
+古い build cache が残ると起動時クラッシュや timeout に見えることがあります。
+リリース確認では `--clean` を付けて実行してください。
+
+```sh
+uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
+```
+
 ## 初期テスト
 
 - `hid_keyboard`: raw boot keyboard report と LED output report。S3 2台構成で通過済み。
