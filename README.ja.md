@@ -14,7 +14,7 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 ## リリース範囲
 
 このリリースでは、HID keyboard / mouse / gamepad / consumer / system / custom / vendor HID、
-CDC ACM、USB MIDI、MSC、USBVendor を扱えます。USB Audio は未実装です。
+CDC ACM、USB MIDI、MSC、USBVendor、最小 USB Audio sink を扱えます。
 
 代表的な用途:
 
@@ -22,6 +22,7 @@ CDC ACM、USB MIDI、MSC、USBVendor を扱えます。USB Audio は未実装で
 - PC や `EspUsbHost` と CDC ACM serial / USB MIDI で通信する。
 - RAM disk、FAT RAM disk、SD card を USB MSC として公開する。
 - HID ではない vendor-specific bulk/control interface を作る。
+- Host からの USB Audio speaker PCM を callback で受け取る。
 
 ## 設計目標
 
@@ -49,10 +50,11 @@ loopback テストで確認できる範囲を広げています。
 - USB MIDI event packet と note / control change helper。
 - USB MSC block device と SCSI callback。
 - USBVendor bulk IN/OUT、control request、WebUSB landing URL。
+- USB Audio speaker sink callback。
 - pytest-embedded peer / loopback テスト用の serial command sketch。
 
-USB Audio class は未実装です。実装量が大きいため、最小 Audio sink/source の仕様確認後に
-別マイルストーンとして扱います。
+USB Audio は単独 device の最小 speaker sink から開始しています。複合 Audio device、I2S bridge、
+codec 初期化、Audio source の詳細 example は別マイルストーンとして扱います。
 
 ## 最小例
 
@@ -173,7 +175,7 @@ MSC:
 ## 制限事項
 
 - Arduino-ESP32 標準の `USB.begin()`、`USBHIDKeyboard`、`USBHIDMouse` などとは併用しません。
-- USB Audio class は未実装です。
+- USB Audio は単独 device の最小 speaker sink 実装です。複合 Audio device、I2S bridge、codec 初期化、Audio source の詳細実装は未対応です。
 - MSC は block device と filesystem を分けて扱います。Host から通常の drive として mount
   するには FAT RAM disk helper または SD card などを使います。
 - flash / SPIFFS / LittleFS を USB MSC として直接公開することは標準方針にしません。

@@ -13,6 +13,14 @@
 #define ESP_USB_DEVICE_HAS_ARDUINO_SD 0
 #endif
 
+#if __has_include("soc/soc_caps.h")
+#include "soc/soc_caps.h"
+#endif
+
+#if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED && __has_include("USBAudioCard.h")
+#include "USBAudioCard.h"
+#endif
+
 #if __has_include(<esp_err.h>)
 #include <esp_err.h>
 #else
@@ -284,9 +292,64 @@ struct EspUsbDeviceMidiPacket
   uint8_t byte3 = 0;
 };
 
+enum EspUsbDeviceAudioBitsPerSample : uint8_t
+{
+  ESP_USB_DEVICE_AUDIO_BITS_16 = 16,
+  ESP_USB_DEVICE_AUDIO_BITS_24 = 24,
+  ESP_USB_DEVICE_AUDIO_BITS_32 = 32,
+};
+
+enum EspUsbDeviceAudioSpeakerChannels : uint8_t
+{
+  ESP_USB_DEVICE_AUDIO_SPK_NONE = 0,
+  ESP_USB_DEVICE_AUDIO_SPK_MONO = 1,
+  ESP_USB_DEVICE_AUDIO_SPK_STEREO = 2,
+};
+
+enum EspUsbDeviceAudioMicChannels : uint8_t
+{
+  ESP_USB_DEVICE_AUDIO_MIC_NONE = 0,
+  ESP_USB_DEVICE_AUDIO_MIC_MONO = 1,
+  ESP_USB_DEVICE_AUDIO_MIC_STEREO = 2,
+};
+
+enum EspUsbDeviceAudioChannel : uint8_t
+{
+  ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER = 0,
+  ESP_USB_DEVICE_AUDIO_CHANNEL_LEFT = 1,
+  ESP_USB_DEVICE_AUDIO_CHANNEL_RIGHT = 2,
+};
+
+enum EspUsbDeviceAudioInterface : uint8_t
+{
+  ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER = 0,
+  ESP_USB_DEVICE_AUDIO_INTERFACE_MIC = 1,
+};
+
+enum EspUsbDeviceAudioEventType : uint8_t
+{
+  ESP_USB_DEVICE_AUDIO_EVENT_VOLUME,
+  ESP_USB_DEVICE_AUDIO_EVENT_MUTE,
+  ESP_USB_DEVICE_AUDIO_EVENT_SAMPLE_RATE,
+  ESP_USB_DEVICE_AUDIO_EVENT_INTERFACE,
+};
+
+struct EspUsbDeviceAudioEvent
+{
+  EspUsbDeviceAudioEventType type = ESP_USB_DEVICE_AUDIO_EVENT_SAMPLE_RATE;
+  EspUsbDeviceAudioChannel channel = ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER;
+  EspUsbDeviceAudioInterface interface = ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER;
+  int8_t volumeDb = 0;
+  bool muted = false;
+  uint32_t sampleRate = 0;
+  bool enabled = false;
+};
+
 using EspUsbDeviceMscReadCallback = std::function<int32_t(uint32_t lba, uint32_t offset, void *buffer, uint32_t size)>;
 using EspUsbDeviceMscWriteCallback = std::function<int32_t(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)>;
 using EspUsbDeviceMscStartStopCallback = std::function<bool(uint8_t powerCondition, bool start, bool loadEject)>;
+using EspUsbDeviceAudioDataCallback = std::function<void(void *data, uint16_t length)>;
+using EspUsbDeviceAudioEventCallback = std::function<void(const EspUsbDeviceAudioEvent &)>;
 
 class EspUsbDeviceClass;
 
@@ -329,6 +392,7 @@ private:
   friend class EspUsbDeviceHidConsumerControl;
   friend class EspUsbDeviceHidSystemControl;
   friend class EspUsbDeviceVendor;
+  friend class EspUsbDeviceAudioSink;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
@@ -341,6 +405,7 @@ private:
   bool hasMidiClass() const;
   bool hasMscClass() const;
   bool hasVendorClass() const;
+  bool hasAudioClass() const;
   uint8_t classReportId(uint8_t classInstance) const;
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
   void setLastError(esp_err_t error);
@@ -365,11 +430,13 @@ class EspUsbDeviceClass
 public:
   virtual ~EspUsbDeviceClass() = default;
   virtual bool begin() { return true; }
+  virtual bool afterDeviceStarted() { return true; }
   virtual bool isHid() const { return true; }
   virtual bool isCdc() const { return false; }
   virtual bool isMidi() const { return false; }
   virtual bool isMsc() const { return false; }
   virtual bool isVendor() const { return false; }
+  virtual bool isAudio() const { return false; }
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
@@ -396,6 +463,7 @@ public:
   explicit EspUsbDeviceCdcSerial(EspUsbDevice &device);
 
   bool begin() override;
+  bool afterDeviceStarted() override;
   bool isHid() const override { return false; }
   bool isCdc() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
@@ -490,6 +558,51 @@ public:
 private:
   static uint8_t status(uint8_t codeIndex, uint8_t channel);
   static uint8_t clamp7(uint8_t value);
+};
+
+class EspUsbDeviceAudioSink : public EspUsbDeviceClass
+{
+public:
+  EspUsbDeviceAudioSink(EspUsbDevice &device,
+                        uint32_t sampleRate = 48000,
+                        EspUsbDeviceAudioBitsPerSample bitsPerSample = ESP_USB_DEVICE_AUDIO_BITS_16,
+                        EspUsbDeviceAudioSpeakerChannels speakerChannels = ESP_USB_DEVICE_AUDIO_SPK_STEREO,
+                        EspUsbDeviceAudioMicChannels micChannels = ESP_USB_DEVICE_AUDIO_MIC_NONE);
+  ~EspUsbDeviceAudioSink() override;
+
+  bool begin() override;
+  bool afterDeviceStarted() override;
+  bool isHid() const override { return false; }
+  bool isAudio() const override { return true; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 0; }
+  uint8_t endpointCount() const override { return 0; }
+
+  void onData(EspUsbDeviceAudioDataCallback callback);
+  void onEvent(EspUsbDeviceAudioEventCallback callback);
+  uint16_t writeMic(const void *data, uint16_t length);
+  void applyVolume(void *data, uint16_t length);
+  bool mute(EspUsbDeviceAudioChannel channel) const;
+  bool mute(EspUsbDeviceAudioChannel channel, bool muted);
+  int8_t volume(EspUsbDeviceAudioChannel channel) const;
+  bool volume(EspUsbDeviceAudioChannel channel, int8_t volumeDb);
+  uint32_t sampleRate() const;
+  uint8_t bytesPerSample() const;
+  EspUsbDeviceAudioBitsPerSample bitsPerSample() const;
+  EspUsbDeviceAudioSpeakerChannels speakerChannels() const;
+  EspUsbDeviceAudioMicChannels micChannels() const;
+
+  void handleData(void *data, uint16_t length);
+  void handleEvent(const EspUsbDeviceAudioEvent &event);
+
+private:
+  uint32_t sampleRate_ = 48000;
+  EspUsbDeviceAudioBitsPerSample bitsPerSample_ = ESP_USB_DEVICE_AUDIO_BITS_16;
+  EspUsbDeviceAudioSpeakerChannels speakerChannels_ = ESP_USB_DEVICE_AUDIO_SPK_STEREO;
+  EspUsbDeviceAudioMicChannels micChannels_ = ESP_USB_DEVICE_AUDIO_MIC_NONE;
+  void *audioCard_ = nullptr;
+  EspUsbDeviceAudioDataCallback dataCallback_;
+  EspUsbDeviceAudioEventCallback eventCallback_;
 };
 
 class EspUsbDeviceMsc : public EspUsbDeviceClass
