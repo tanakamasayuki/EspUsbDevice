@@ -67,8 +67,8 @@ tests/
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
 | Custom HID report descriptor | planned | ✅ `custom_hid` | ✅ `custom_hid` | | |
 | HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | ✅ `hid_vendor` | | |
-| Consumer control HID | planned | ✅ `hid_consumer_control` | | | |
-| System control HID | planned | ✅ `hid_system_control` | | | |
+| Consumer control HID | planned | ✅ `hid_consumer_control` | ✅ `hid_consumer_control` | | |
+| System control HID | planned | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
@@ -231,7 +231,9 @@ points, so they must compile independently of peer / loopback hardware tests.
 25. ✅ `loopback/usb_vendor`
 26. ✅ `loopback/custom_hid`
 27. ✅ `loopback/hid_vendor`
-28. `peer/usb_audio`
+28. ✅ `loopback/hid_consumer_control`
+29. ✅ `loopback/hid_system_control`
+30. `peer/usb_audio`
 
 ## Acceptance Rules
 
