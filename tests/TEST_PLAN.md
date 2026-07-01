@@ -73,7 +73,7 @@ tests/
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
-| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | planned | | ✅ `examples/USBVendor` |
+| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | | planned | | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
@@ -228,7 +228,7 @@ points, so they must compile independently of peer / loopback hardware tests.
 22. ✅ `peer/usb_msc`
 23. ✅ `loopback/usb_msc`
 24. ✅ `peer/usb_vendor` bulk/control/WebUSB URL
-25. `loopback/usb_vendor`
+25. ✅ `loopback/usb_vendor`
 26. `peer/usb_audio`
 
 ## Acceptance Rules

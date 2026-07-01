@@ -147,6 +147,7 @@ uv run --env-file .env pytest --clean
 - `loopback/usb_serial`
 - `loopback/usb_midi`
 - `loopback/usb_msc`
+- `loopback/usb_vendor`
 
 manual 確認に残す範囲:
 
