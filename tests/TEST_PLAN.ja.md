@@ -66,7 +66,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | | 予定 | | | |
+| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | 予定 | | ✅ `examples/AudioSink` |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## EspUsbHost 詳細挙動テスト計画

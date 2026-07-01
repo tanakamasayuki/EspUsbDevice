@@ -34,6 +34,14 @@
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
 #endif
 
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB && defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED && __has_include("USBAudioCard.h")
+#include "USB.h"
+#include "USBAudioCard.h"
+#define ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO 1
+#else
+#define ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO 0
+#endif
+
 static constexpr uint8_t USB_DESC_DEVICE = 0x01;
 static constexpr uint8_t USB_DESC_CONFIGURATION = 0x02;
 static constexpr uint8_t USB_DESC_STRING = 0x03;
@@ -56,6 +64,7 @@ static EspUsbDeviceCdcSerial *g_activeCdcSerial = nullptr;
 static EspUsbDeviceMidi *g_activeMidi = nullptr;
 static EspUsbDeviceMsc *g_activeMsc = nullptr;
 static EspUsbDeviceVendor *g_activeVendor = nullptr;
+static EspUsbDeviceAudioSink *g_activeAudioSink = nullptr;
 
 static void put16(uint8_t *dst, uint16_t value)
 {
@@ -454,6 +463,53 @@ extern "C" bool tinyusb_vendor_control_request_cb(uint8_t rhport, uint8_t stage,
 }
 #endif
 
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+static void espUsbDeviceAudioDataCb(void *data, uint16_t length)
+{
+  if (g_activeAudioSink)
+  {
+    g_activeAudioSink->handleData(data, length);
+  }
+}
+
+static void espUsbDeviceAudioEventCb(void *arg, esp_event_base_t eventBase, int32_t eventId, void *eventData)
+{
+  (void)arg;
+  if (!g_activeAudioSink || eventBase != ARDUINO_USB_AUDIO_CARD_EVENTS || !eventData)
+  {
+    return;
+  }
+
+  const arduino_usb_audio_card_event_data_t *data = static_cast<const arduino_usb_audio_card_event_data_t *>(eventData);
+  EspUsbDeviceAudioEvent event;
+  switch (eventId)
+  {
+  case ARDUINO_USB_AUDIO_CARD_VOLUME_EVENT:
+    event.type = ESP_USB_DEVICE_AUDIO_EVENT_VOLUME;
+    event.channel = static_cast<EspUsbDeviceAudioChannel>(data->volume.channel);
+    event.volumeDb = data->volume.db;
+    break;
+  case ARDUINO_USB_AUDIO_CARD_MUTE_EVENT:
+    event.type = ESP_USB_DEVICE_AUDIO_EVENT_MUTE;
+    event.channel = static_cast<EspUsbDeviceAudioChannel>(data->mute.channel);
+    event.muted = data->mute.muted;
+    break;
+  case ARDUINO_USB_AUDIO_CARD_SAMPLE_RATE_EVENT:
+    event.type = ESP_USB_DEVICE_AUDIO_EVENT_SAMPLE_RATE;
+    event.sampleRate = data->sample_rate.rate;
+    break;
+  case ARDUINO_USB_AUDIO_CARD_INTERFACE_ENABLE_EVENT:
+    event.type = ESP_USB_DEVICE_AUDIO_EVENT_INTERFACE;
+    event.interface = data->interface_enable.interface == UAC_INTERFACE_MIC ? ESP_USB_DEVICE_AUDIO_INTERFACE_MIC : ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER;
+    event.enabled = data->interface_enable.enable;
+    break;
+  default:
+    return;
+  }
+  g_activeAudioSink->handleEvent(event);
+}
+#endif
+
 EspUsbDevice::EspUsbDevice()
 {
 }
@@ -490,6 +546,38 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
   if (config_.startTinyUsb && classCount_ > 0)
   {
 #if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+    if (hasAudioClass())
+    {
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+      if (classCount_ != 1 || hasHidClass() || hasCdcClass() || hasMidiClass() || hasMscClass() || hasVendorClass())
+      {
+        setLastError(ESP_ERR_NOT_SUPPORTED);
+        return false;
+      }
+      for (size_t i = 0; i < classCount_; i++)
+      {
+        if (classes_[i] && !classes_[i]->afterDeviceStarted())
+        {
+          setLastError(ESP_FAIL);
+          return false;
+        }
+      }
+      if (!USB.begin())
+      {
+        setLastError(ESP_FAIL);
+        return false;
+      }
+      tinyusbStarted_ = true;
+      running_ = true;
+      ready_ = true;
+      setLastError(ESP_OK);
+      return true;
+#else
+      setLastError(ESP_ERR_NOT_SUPPORTED);
+      return false;
+#endif
+    }
+
     if (g_activeDevice && g_activeDevice != this)
     {
       setLastError(ESP_ERR_INVALID_STATE);
@@ -555,9 +643,9 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
         .serial_number = config_.serialNumber,
         .fw_version = 0x0100,
         .usb_version = 0x0200,
-        .usb_class = 0x00,
-        .usb_subclass = 0x00,
-        .usb_protocol = 0x00,
+        .usb_class = static_cast<uint8_t>(hasAudioClass() ? 0xef : 0x00),
+        .usb_subclass = static_cast<uint8_t>(hasAudioClass() ? 0x02 : 0x00),
+        .usb_protocol = static_cast<uint8_t>(hasAudioClass() ? 0x01 : 0x00),
         .usb_attributes = static_cast<uint8_t>(0x80 | (config_.selfPowered ? 0x40 : 0x00)),
         .usb_power_ma = config_.maxPowerMilliamps,
         .webusb_enabled = config_.webusbEnabled,
@@ -565,6 +653,17 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     };
 
     err = tinyusb_init(&tinyusbConfig);
+    if (err == ESP_OK)
+    {
+      for (size_t i = 0; i < classCount_; i++)
+      {
+        if (classes_[i] && !classes_[i]->afterDeviceStarted())
+        {
+          setLastError(ESP_FAIL);
+          return false;
+        }
+      }
+    }
     if (err != ESP_OK)
     {
       setLastError(err);
@@ -1012,6 +1111,18 @@ bool EspUsbDevice::hasVendorClass() const
   return false;
 }
 
+bool EspUsbDevice::hasAudioClass() const
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isAudio())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
 uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
 {
   if (!compositeHid())
@@ -1055,6 +1166,11 @@ bool EspUsbDeviceCdcSerial::begin()
     return false;
   }
   g_activeCdcSerial = this;
+  return true;
+}
+
+bool EspUsbDeviceCdcSerial::afterDeviceStarted()
+{
   return true;
 }
 
@@ -1466,6 +1582,215 @@ uint8_t EspUsbDeviceMidi::status(uint8_t codeIndex, uint8_t channel)
 uint8_t EspUsbDeviceMidi::clamp7(uint8_t value)
 {
   return value > 127 ? 127 : value;
+}
+
+EspUsbDeviceAudioSink::EspUsbDeviceAudioSink(EspUsbDevice &device,
+                                             uint32_t sampleRate,
+                                             EspUsbDeviceAudioBitsPerSample bitsPerSample,
+                                             EspUsbDeviceAudioSpeakerChannels speakerChannels,
+                                             EspUsbDeviceAudioMicChannels micChannels) : EspUsbDeviceClass(device)
+{
+  sampleRate_ = sampleRate;
+  bitsPerSample_ = bitsPerSample;
+  speakerChannels_ = speakerChannels;
+  micChannels_ = micChannels;
+}
+
+EspUsbDeviceAudioSink::~EspUsbDeviceAudioSink()
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  if (audioCard_)
+  {
+    delete static_cast<USBAudioCard *>(audioCard_);
+    audioCard_ = nullptr;
+  }
+#endif
+  if (g_activeAudioSink == this)
+  {
+    g_activeAudioSink = nullptr;
+  }
+}
+
+bool EspUsbDeviceAudioSink::begin()
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  if (g_activeAudioSink && g_activeAudioSink != this)
+  {
+    return false;
+  }
+  if (!audioCard_)
+  {
+    UAC_Bits_Per_Sample bps = UAC_BPS_16;
+    if (bitsPerSample_ == ESP_USB_DEVICE_AUDIO_BITS_24)
+    {
+      bps = UAC_BPS_24;
+    }
+    else if (bitsPerSample_ == ESP_USB_DEVICE_AUDIO_BITS_32)
+    {
+      bps = UAC_BPS_32;
+    }
+    audioCard_ = new USBAudioCard(sampleRate_,
+                                  bps,
+                                  static_cast<UAC_SPK_Channels>(speakerChannels_),
+                                  static_cast<UAC_MIC_Channels>(micChannels_));
+  }
+  if (!audioCard_)
+  {
+    return false;
+  }
+  (void)USB;
+  g_activeAudioSink = this;
+  USBAudioCard *audio = static_cast<USBAudioCard *>(audioCard_);
+  audio->onData(espUsbDeviceAudioDataCb);
+  audio->onEvent(espUsbDeviceAudioEventCb);
+  return true;
+#else
+  device_.setLastError(ESP_ERR_NOT_SUPPORTED);
+  return false;
+#endif
+}
+
+bool EspUsbDeviceAudioSink::afterDeviceStarted()
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  return audioCard_ ? static_cast<USBAudioCard *>(audioCard_)->begin() : false;
+#else
+  return false;
+#endif
+}
+
+uint16_t EspUsbDeviceAudioSink::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  (void)dst;
+  (void)interfaceNumber;
+  (void)endpointNumber;
+  (void)endpointSize;
+  return 0;
+}
+
+void EspUsbDeviceAudioSink::onData(EspUsbDeviceAudioDataCallback callback)
+{
+  dataCallback_ = callback;
+}
+
+void EspUsbDeviceAudioSink::onEvent(EspUsbDeviceAudioEventCallback callback)
+{
+  eventCallback_ = callback;
+}
+
+uint16_t EspUsbDeviceAudioSink::writeMic(const void *data, uint16_t length)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  return audioCard_ ? static_cast<USBAudioCard *>(audioCard_)->write(data, length) : 0;
+#else
+  (void)data;
+  (void)length;
+  return 0;
+#endif
+}
+
+void EspUsbDeviceAudioSink::applyVolume(void *data, uint16_t length)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  if (audioCard_)
+  {
+    static_cast<USBAudioCard *>(audioCard_)->applyVolume(data, length);
+  }
+#else
+  (void)data;
+  (void)length;
+#endif
+}
+
+bool EspUsbDeviceAudioSink::mute(EspUsbDeviceAudioChannel channel) const
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  return audioCard_ ? static_cast<USBAudioCard *>(audioCard_)->mute(static_cast<UAC_Channel>(channel)) : false;
+#else
+  (void)channel;
+  return false;
+#endif
+}
+
+bool EspUsbDeviceAudioSink::mute(EspUsbDeviceAudioChannel channel, bool muted)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  return audioCard_ ? static_cast<USBAudioCard *>(audioCard_)->mute(static_cast<UAC_Channel>(channel), muted) : false;
+#else
+  (void)channel;
+  (void)muted;
+  return false;
+#endif
+}
+
+int8_t EspUsbDeviceAudioSink::volume(EspUsbDeviceAudioChannel channel) const
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  return audioCard_ ? static_cast<USBAudioCard *>(audioCard_)->volume(static_cast<UAC_Channel>(channel)) : 0;
+#else
+  (void)channel;
+  return 0;
+#endif
+}
+
+bool EspUsbDeviceAudioSink::volume(EspUsbDeviceAudioChannel channel, int8_t volumeDb)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  return audioCard_ ? static_cast<USBAudioCard *>(audioCard_)->volume(static_cast<UAC_Channel>(channel), volumeDb) : false;
+#else
+  (void)channel;
+  (void)volumeDb;
+  return false;
+#endif
+}
+
+uint32_t EspUsbDeviceAudioSink::sampleRate() const
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  return audioCard_ ? static_cast<USBAudioCard *>(audioCard_)->sampleRate() : sampleRate_;
+#else
+  return sampleRate_;
+#endif
+}
+
+uint8_t EspUsbDeviceAudioSink::bytesPerSample() const
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
+  return audioCard_ ? static_cast<USBAudioCard *>(audioCard_)->bytesPerSample() : (bitsPerSample_ <= ESP_USB_DEVICE_AUDIO_BITS_16 ? 2 : 4);
+#else
+  return bitsPerSample_ <= ESP_USB_DEVICE_AUDIO_BITS_16 ? 2 : 4;
+#endif
+}
+
+EspUsbDeviceAudioBitsPerSample EspUsbDeviceAudioSink::bitsPerSample() const
+{
+  return bitsPerSample_;
+}
+
+EspUsbDeviceAudioSpeakerChannels EspUsbDeviceAudioSink::speakerChannels() const
+{
+  return speakerChannels_;
+}
+
+EspUsbDeviceAudioMicChannels EspUsbDeviceAudioSink::micChannels() const
+{
+  return micChannels_;
+}
+
+void EspUsbDeviceAudioSink::handleData(void *data, uint16_t length)
+{
+  if (dataCallback_)
+  {
+    dataCallback_(data, length);
+  }
+}
+
+void EspUsbDeviceAudioSink::handleEvent(const EspUsbDeviceAudioEvent &event)
+{
+  if (eventCallback_)
+  {
+    eventCallback_(event);
+  }
 }
 
 EspUsbDeviceMsc::EspUsbDeviceMsc(EspUsbDevice &device) : EspUsbDeviceClass(device)

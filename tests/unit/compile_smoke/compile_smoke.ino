@@ -6,6 +6,11 @@ static void compileApiSmoke()
   EspUsbDeviceHidKeyboard keyboard(device);
   EspUsbDeviceHidMouse mouse(device);
   EspUsbDeviceVendor vendor(device);
+  EspUsbDeviceAudioSink audio(device,
+                              48000,
+                              ESP_USB_DEVICE_AUDIO_BITS_16,
+                              ESP_USB_DEVICE_AUDIO_SPK_STEREO,
+                              ESP_USB_DEVICE_AUDIO_MIC_NONE);
   const uint8_t customDescriptor[] = {
       0x05, 0x01,
       0x09, 0x04,
@@ -80,6 +85,27 @@ static void compileApiSmoke()
                           });
   const uint8_t customReport[8] = {};
   (void)customHid.sendReport(customReport, sizeof(customReport));
+  audio.onData([](void *data, uint16_t length)
+               {
+                 (void)data;
+                 (void)length;
+               });
+  audio.onEvent([](const EspUsbDeviceAudioEvent &event)
+                {
+                  (void)event;
+                });
+  uint8_t audioBuffer[16] = {};
+  audio.applyVolume(audioBuffer, sizeof(audioBuffer));
+  (void)audio.writeMic(audioBuffer, sizeof(audioBuffer));
+  (void)audio.sampleRate();
+  (void)audio.bytesPerSample();
+  (void)audio.bitsPerSample();
+  (void)audio.speakerChannels();
+  (void)audio.micChannels();
+  (void)audio.mute(ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER);
+  (void)audio.mute(ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER, false);
+  (void)audio.volume(ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER);
+  (void)audio.volume(ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER, -6);
 }
 
 void setup()

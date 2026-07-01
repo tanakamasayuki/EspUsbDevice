@@ -121,6 +121,16 @@ UART MIDI 1.0 と USB MIDI 1.0 を相互変換する bridge example です。
 - Host からの USB-MIDI event packet を serial MIDI byte stream に戻します。
 - DIN MIDI 機器と USB MIDI host の bridge として使えます。
 
+## AudioSink
+
+USB Audio speaker sink device の例です。
+詳しくは [AudioSink/README.ja.md](AudioSink/README.ja.md) を参照してください。
+
+- `EspUsbDeviceAudioSink` で Host からの speaker PCM を受け取ります。
+- `onData()` callback で PCM chunk を受信します。
+- `onEvent()` callback で volume、mute、sample rate、interface enable を受け取ります。
+- I2S bridge や codec 初期化は含まず、最小 Audio sink として受信状態を Serial monitor に出力します。
+
 ## MSC
 
 USB Mass Storage Class device の例です。

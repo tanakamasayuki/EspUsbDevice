@@ -67,9 +67,12 @@ uv run --env-file .env pytest --clean
 - MSC raw block device と SCSI callback。
 - MSC RAM disk、FAT RAM disk、SD card helper。
 - HID ではない USBVendor bulk IN/OUT、control request、WebUSB landing URL。
+- 最小 USB Audio speaker sink。
 
-USB Audio class は未実装です。descriptor、isochronous endpoint、alternate setting、sample format、
-I2S bridge などの実装量が大きいため、初回リリースからは外し、別マイルストーンとして扱います。
+USB Audio は単独 device の最小 speaker sink から開始しています。Arduino Core の Audio descriptor /
+isochronous endpoint 実装をベースにし、Host からの PCM を callback で受ける API を提供します。
+HID / CDC / MSC などとの複合 Audio device、I2S bridge、codec 初期化、Audio source の詳細実装は
+別マイルストーンとして扱います。
 
 ## 確定した設計判断
 
@@ -169,5 +172,5 @@ manual 確認に残す範囲:
 6. USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API を検討する。
 7. FirmwareMSC は FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example として検討する。
 8. CDC + HID + MSC + Vendor などの all-in-one composite example を必要に応じて追加する。
-9. USB Audio は最小 Audio sink / source の仕様を先に固め、別マイルストーンで実装する。
+9. USB Audio sink の peer / loopback / manual 確認を追加し、次に source と I2S bridge の仕様を固める。
 10. P4 probe の結果を整理し、port / speed / PHY の制約を設計メモへ反映する。

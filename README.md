@@ -15,7 +15,7 @@ final boundary of the project.
 ## Release Scope
 
 This release covers HID keyboard / mouse / gamepad / consumer / system / custom /
-vendor HID, CDC ACM, USB MIDI, MSC, and USBVendor. USB Audio is not implemented.
+vendor HID, CDC ACM, USB MIDI, MSC, USBVendor, and a minimal USB Audio sink.
 
 Typical use cases:
 
@@ -23,6 +23,7 @@ Typical use cases:
 - Communicate with a PC or EspUsbHost over CDC ACM serial or USB MIDI.
 - Expose RAM disks, FAT RAM disks, or SD cards as USB MSC devices.
 - Build non-HID vendor-specific bulk/control interfaces.
+- Receive USB Audio speaker PCM from the host through a callback.
 
 ## Design Goals
 
@@ -52,10 +53,12 @@ available:
 - USB MIDI event packets and note/control-change helpers.
 - USB MSC block device and SCSI callbacks.
 - USBVendor bulk IN/OUT, control requests, and WebUSB landing URL.
+- USB Audio speaker sink callback.
 - Serial command sketches for pytest-embedded peer and loopback tests.
 
-USB Audio class is not implemented yet. It is large enough to be handled as a
-separate milestone after the minimal Audio sink/source specification is settled.
+USB Audio starts with a standalone minimal speaker sink. Composite Audio
+devices, I2S bridging, codec setup, and detailed Audio source examples remain
+separate milestones.
 
 ## Minimal Examples
 
@@ -185,7 +188,8 @@ MSC:
 
 - Do not use this library together with Arduino-ESP32's standard `USB.begin()`,
   `USBHIDKeyboard`, `USBHIDMouse`, or other built-in USB device classes.
-- USB Audio class is not implemented.
+- USB Audio is a standalone minimal speaker sink. Composite Audio devices, I2S
+  bridging, codec setup, and detailed Audio source support are not covered yet.
 - MSC keeps block devices and filesystems separate. Use the FAT RAM disk helper
   or SD card support when the host should mount a normal drive.
 - Direct flash / SPIFFS / LittleFS exposure as USB MSC is not a standard goal.

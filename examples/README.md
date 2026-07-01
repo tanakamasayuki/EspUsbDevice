@@ -134,6 +134,18 @@ See [MIDIInterface/README.md](MIDIInterface/README.md) for details.
 - Convert host USB-MIDI event packets back to serial MIDI byte stream.
 - Use it as a bridge between DIN MIDI devices and a USB MIDI host.
 
+## AudioSink
+
+USB Audio speaker sink device example.
+See [AudioSink/README.md](AudioSink/README.md) for details.
+
+- Receive speaker PCM from the host with `EspUsbDeviceAudioSink`.
+- Receive PCM chunks through the `onData()` callback.
+- Receive volume, mute, sample-rate, and interface-enable changes through
+  `onEvent()`.
+- Keep I2S bridging and codec setup out of this minimal example; it prints
+  receive status to the Serial monitor.
+
 ## MSC
 
 USB Mass Storage Class device example.
