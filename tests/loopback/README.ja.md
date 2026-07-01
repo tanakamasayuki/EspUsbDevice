@@ -24,6 +24,8 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   Host -> Device packet 分割を確認する。
 - `usb_msc`: P4 1台上で USB Mass Storage を起動し、単一 LUN RAM disk の capacity /
   inquiry / read / write / error path を確認する。
+- `usb_vendor`: P4 1台上で vendor-specific interface を起動し、bulk echo、application
+  control IN/OUT、WebUSB landing URL 読み出しを確認する。
 
 ## Matrix
 

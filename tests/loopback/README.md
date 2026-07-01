@@ -25,6 +25,8 @@ port/speed behavior can be verified before broader class coverage is added.
   short Host -> Device SysEx packet splitting.
 - `usb_msc`: starts USB Mass Storage on one P4 and verifies single-LUN RAM disk
   capacity, inquiry, read, write, and error paths.
+- `usb_vendor`: starts a vendor-specific interface on one P4 and verifies bulk
+  echo, application control IN/OUT, and WebUSB landing URL reads.
 
 ## Matrix
 
