@@ -48,4 +48,13 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_local
 uv run --env-file .env pytest loopback/ --profile=p4_loopback_local
 ```
 
+After upgrading `EspUsbHost` / `EspUsbDevice`, or after switching between release
+and local profiles, stale build cache / intermediate files can cause boot-time
+crashes or unexpected timeouts. Rebuild with `--clean` in that case.
+
+```sh
+uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
+uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
+```
+
 See [TEST_PLAN.md](TEST_PLAN.md) for current coverage and planned additions.

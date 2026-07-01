@@ -45,4 +45,14 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_local
 uv run --env-file .env pytest loopback/ --profile=p4_loopback_local
 ```
 
+`EspUsbHost` / `EspUsbDevice` のライブラリバージョンを上げた直後、または
+release profile と local profile を切り替えた直後は、古い build cache / 中間生成物が残って
+起動時クラッシュや不自然な timeout になることがあります。その場合は `--clean` を付けて
+再ビルドします。
+
+```sh
+uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
+uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
+```
+
 現在のカバレッジと追加予定は [TEST_PLAN.ja.md](TEST_PLAN.ja.md) を参照してください。
