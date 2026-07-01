@@ -39,7 +39,11 @@ available:
 - CDC ACM serial.
 - USB MIDI event packets and note/control-change helpers.
 - USB MSC block device and SCSI callbacks.
+- USBVendor bulk IN/OUT, control requests, and WebUSB landing URL.
 - Serial command sketches for pytest-embedded peer and loopback tests.
+
+USB Audio class is not implemented yet. It is large enough to be handled as a
+separate milestone after the minimal Audio sink/source specification is settled.
 
 ## Examples
 

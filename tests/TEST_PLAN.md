@@ -171,10 +171,10 @@ out-of-range, and failed-write behavior.
 `EspUsbDeviceVendor` covers descriptor unit tests, build-only coverage for
 `examples/USBVendor`, `peer/usb_vendor` interface / bulk endpoint enumeration,
 bulk OUT -> Device -> bulk IN echo, application vendor control IN/OUT, and WebUSB
-landing URL reads. This peer test uses unreleased Host-side vendor bulk/control
-APIs, so it is verified with `--profile=s3_peer_local` until the Host release is
-available. Microsoft OS 2.0 descriptors depend heavily on the host OS, browser,
-and driver state, so they start in `tests/manual`.
+landing URL reads. The default profile uses the released Host version.
+`s3_peer_local` is only for optional pre-release validation of unreleased
+Host-side fixes. Microsoft OS 2.0 descriptors depend heavily on the host OS,
+browser, and driver state, so they start in `tests/manual`.
 
 MSC transport tests and file handoff tests are separate. `peer/usb_msc` and
 `loopback/usb_msc` remain raw block I/O, SCSI, and error-path tests. FAT and SD
