@@ -22,6 +22,10 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   Host 側 `onHIDReportDescriptor()` と `onHIDInput()` で descriptor 長と raw report を確認する。
 - `hid_vendor`: P4 1台上で HID vendor device を起動し、Device -> Host input、
   Host -> Device feature report、Host -> Device output report を確認する。
+- `hid_consumer_control`: P4 1台上で consumer control device を起動し、
+  volume / media key の press / release を Host 側 `onConsumerControl()` で確認する。
+- `hid_system_control`: P4 1台上で system control device を起動し、
+  power / standby / wake usage の press / release を Host 側 `onSystemControl()` で確認する。
 - `usb_serial`: P4 1台上で CDC ACM serial を起動し、Device -> Host、Host -> Device、
   line coding callback を確認する。
 - `usb_midi`: P4 1台上で USB MIDI を起動し、channel voice message と短い SysEx の

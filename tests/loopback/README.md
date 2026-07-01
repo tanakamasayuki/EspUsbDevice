@@ -24,6 +24,10 @@ port/speed behavior can be verified before broader class coverage is added.
   and `onHIDInput()`.
 - `hid_vendor`: starts a HID vendor device on one P4 and verifies Device -> Host
   input, Host -> Device feature reports, and Host -> Device output reports.
+- `hid_consumer_control`: starts a consumer control device on one P4 and verifies
+  volume / media-key press and release events through Host `onConsumerControl()`.
+- `hid_system_control`: starts a system control device on one P4 and verifies
+  power / standby / wake press and release events through Host `onSystemControl()`.
 - `usb_serial`: starts CDC ACM serial on one P4 and verifies Device -> Host,
   Host -> Device, and line coding callbacks.
 - `usb_midi`: starts USB MIDI on one P4 and verifies channel voice messages and
