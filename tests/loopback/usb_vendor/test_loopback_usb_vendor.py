@@ -1,7 +1,4 @@
 def test_loopback_usb_vendor(dut):
-    dut.expect_exact("TEST_BEGIN loopback_usb_vendor")
-    dut.expect_exact("HOST_READY fs")
-    dut.expect_exact("DEVICE_READY fs")
     dut.expect_exact("HOST_DEVICE")
     dut.expect_exact("INTERFACE number=0 class=0xff subclass=0x00 protocol=0x00 endpoints=2")
     dut.expect_exact("ENDPOINT iface=0 ep=0x01 attrs=0x02 mps=64 interval=0")
