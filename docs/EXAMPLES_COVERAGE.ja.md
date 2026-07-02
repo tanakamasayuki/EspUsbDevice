@@ -35,7 +35,7 @@
 | `MIDI/MidiMultiChannel` | `MIDI` | 一部対応 | channel 指定 API はある。専用 multi-channel example は未作成。 |
 | `MIDI/ReceiveMidi` | `MIDI` | 対応済み | `readPacket()` の受信ログあり。 |
 | `USBVendor` | `USBVendor` | 一部対応 | HID ではない vendor interface / bulk IN/OUT / control request / WebUSB URL。custom vendor code と Microsoft OS 2.0 descriptor 差し替え API は未実装。 |
-| `AudioCard` | `AudioSink` | 一部対応 | 最小 speaker sink。I2S bridge / codec はこのライブラリの責務外。 |
+| `AudioCard` | `AudioSink` / `AudioSinkM5Speaker` | 一部対応 | 最小 speaker sink と M5 speaker 連携例。I2S bridge / codec はこのライブラリの責務外。 |
 | `CompositeDevice` | 複数 example に分割 | 一部対応 | CDC + HID + MSC + Vendor 全部入りは未作成。 |
 
 ## 現在の EspUsbDevice examples
@@ -54,6 +54,8 @@
 | `MIDI` | USB MIDI basic send/receive | 中 |
 | `MIDIController` | ADC/button to MIDI | 中 |
 | `MIDIInterface` | UART MIDI <-> USB MIDI bridge | 中 |
+| `AudioSink` | USB Audio speaker sink | 中 |
+| `AudioSinkM5Speaker` | USB Audio -> PCMFlowDevice -> M5 speaker 連携 | 中 |
 | `MSC` | raw MSC block I/O | 低 |
 | `MSCFatRamDisk` | FAT RAM disk file handoff | 低 |
 | `MSCSdCard` | SD card as USB storage | 低-中 |
@@ -116,6 +118,8 @@ PCM callback 境界だけを扱い、I2S bridge / codec / DAC 接続は PCMFlowD
 `AudioSink` で単独 device の最小 speaker sink を追加済みです。複合 Audio device は未対応です。
 `onPcm()` で PCM buffer と sample rate / channel count / sample width をまとめて受け取れます。
 PCMFlow 連携は有力な利用形ですが、汎用 callback I/F を維持して特定ライブラリへの必須依存にはしません。
+`AudioSinkM5Speaker` は example 側だけで PCMFlow / PCMFlowDevice / M5Unified に依存し、PC から受け取った
+stereo PCM を mono に downmix して M5 speaker へ渡す連携例です。
 
 ### FirmwareMSC
 
@@ -165,4 +169,4 @@ cd tests
 uv run --env-file .env pytest examples_compile/ -vv
 ```
 
-現在のリリース範囲では 15 examples を compile smoke の対象にします。
+現在のリリース範囲では 17 examples を compile smoke の対象にします。

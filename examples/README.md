@@ -140,12 +140,26 @@ USB Audio speaker sink device example.
 See [AudioSink/README.md](AudioSink/README.md) for details.
 
 - Receive speaker PCM from the host with `EspUsbDeviceAudioSink`.
-- Receive PCM chunks through the `onData()` callback.
+- Receive PCM chunks and format metadata through the `onPcm()` callback.
 - Receive volume, mute, sample-rate, and interface-enable changes through
   `onEvent()`.
 - I2S bridging and codec setup are outside this library's responsibility. The
   received PCM can be forwarded to the application, PCMFlow, PCMFlowDevice, or
   another output layer.
+
+## AudioSinkM5Speaker
+
+Example that connects the USB Audio speaker sink to PCMFlowDevice's M5 speaker
+helper.
+See [AudioSinkM5Speaker/README.md](AudioSinkM5Speaker/README.md) for details.
+
+- Receives PCM from the PC as a 48 kHz / 16-bit / stereo USB Audio speaker.
+- Applies host mute / volume with `audio.applyVolume()`.
+- Downmixes to mono for the M5 speaker with PCMFlow's
+  `PCMConvert::stereoToMonoS16()`.
+- Uses PCMFlowDevice's `M5SpeakerBufferedPlayer` to feed `M5.Speaker` safely.
+- EspUsbDevice itself does not depend on PCMFlow or PCMFlowDevice; only this
+  example uses them as optional integration libraries.
 
 ## MSC
 
