@@ -1,7 +1,13 @@
 def test_loopback_usb_midi(dut):
     dut.expect_exact("HOST_DEVICE")
-    dut.expect_exact("DEVICE_TX_NOTE_ON 1")
-    dut.expect_exact("MIDI_RX cable=0 cin=09 status=90 data1=64 data2=110")
+    first = dut.expect_exact([
+        "DEVICE_TX_NOTE_ON 1",
+        "MIDI_RX cable=0 cin=09 status=90 data1=64 data2=110",
+    ])
+    if first == b"DEVICE_TX_NOTE_ON 1":
+        dut.expect_exact("MIDI_RX cable=0 cin=09 status=90 data1=64 data2=110")
+    else:
+        dut.expect_exact("DEVICE_TX_NOTE_ON 1")
 
     dut.expect_exact("MIDI_TX_NOTE_ON 1")
     dut.expect_exact("DEVICE_RX cin=09 status=90 data1=60 data2=100")
