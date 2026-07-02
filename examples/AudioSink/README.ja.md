@@ -5,8 +5,8 @@
 USB Audio speaker device を作り、Host から送られてくる PCM playback data を受け取る例です。
 
 この example は I2S DAC / codec へ出力しません。最初の Audio 実装確認用として、受信 chunk 数、
-byte 数、直近 sample を Serial monitor に出力します。実際に音を出す場合は `onAudioData()` 内で
-I2S や外部 codec へ PCM を渡してください。
+byte 数、直近 sample を Serial monitor に出力します。実際に音を出す場合は `onData()` で受け取った
+PCM をアプリケーション、PCMFlow、PCMFlowDevice などへ渡してください。
 
 ## ハードウェア
 
@@ -34,6 +34,7 @@ I2S や外部 codec へ PCM を渡してください。
 ## 注意
 
 - この example は speaker sink の最小例です。I2S pin、DMA buffer、codec 初期化は扱いません。
+- このライブラリは USB Audio class と PCM callback までを担当します。I2S bridge や codec / DAC 接続は PCMFlowDevice など出力側ライブラリの責務です。
 - Arduino Core の USB Audio 実装をベースにした機能です。対象 board / core 設定で TinyUSB Audio が有効である必要があります。
 - 現在は Audio 単独 device として使う想定です。HID / CDC / MSC などとの複合 Audio device は未対応です。
 - full-speed では 48 kHz / 16-bit / stereo 程度を基本にしてください。
@@ -41,5 +42,7 @@ I2S や外部 codec へ PCM を渡してください。
 
 ## 関連
 
+- [PCMFlow](https://github.com/tanakamasayuki/PCMFlow) - PCM data flow
+- [PCMFlowDevice](https://github.com/tanakamasayuki/PCMFlowDevice) - PCM output device integration
 - [MIDI](../MIDI/) - USB MIDI device
 - [Serial](../Serial/) - CDC ACM serial device

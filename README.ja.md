@@ -53,8 +53,12 @@ loopback テストで確認できる範囲を広げています。
 - USB Audio speaker sink callback。
 - pytest-embedded peer / loopback テスト用の serial command sketch。
 
-USB Audio は単独 device の最小 speaker sink から開始しています。複合 Audio device、I2S bridge、
-codec 初期化、Audio source の詳細 example は別マイルストーンとして扱います。
+USB Audio は単独 device の最小 speaker sink から開始しています。このライブラリの責務は
+USB Audio class と PCM callback までです。受け取った PCM はアプリケーション、PCMFlow、
+PCMFlowDevice など任意の処理系へ渡します。
+
+- PCMFlow: https://github.com/tanakamasayuki/PCMFlow
+- PCMFlowDevice: https://github.com/tanakamasayuki/PCMFlowDevice
 
 ## 最小例
 
@@ -175,7 +179,7 @@ MSC:
 ## 制限事項
 
 - Arduino-ESP32 標準の `USB.begin()`、`USBHIDKeyboard`、`USBHIDMouse` などとは併用しません。
-- USB Audio は単独 device の最小 speaker sink 実装です。複合 Audio device、I2S bridge、codec 初期化、Audio source の詳細実装は未対応です。
+- USB Audio は単独 device の最小 speaker sink 実装です。複合 Audio device は未対応です。I2S、codec、DAC などのデバイス接続はこのライブラリの責務外です。
 - MSC は block device と filesystem を分けて扱います。Host から通常の drive として mount
   するには FAT RAM disk helper または SD card などを使います。
 - flash / SPIFFS / LittleFS を USB MSC として直接公開することは標準方針にしません。
