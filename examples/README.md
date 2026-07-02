@@ -143,8 +143,9 @@ See [AudioSink/README.md](AudioSink/README.md) for details.
 - Receive PCM chunks through the `onData()` callback.
 - Receive volume, mute, sample-rate, and interface-enable changes through
   `onEvent()`.
-- Keep I2S bridging and codec setup out of this minimal example; it prints
-  receive status to the Serial monitor.
+- I2S bridging and codec setup are outside this library's responsibility. The
+  received PCM can be forwarded to the application, PCMFlow, PCMFlowDevice, or
+  another output layer.
 
 ## MSC
 

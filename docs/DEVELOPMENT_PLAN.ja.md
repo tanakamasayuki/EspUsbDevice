@@ -71,8 +71,9 @@ uv run --env-file .env pytest --clean
 
 USB Audio は単独 device の最小 speaker sink から開始しています。Arduino Core の Audio descriptor /
 isochronous endpoint 実装をベースにし、Host からの PCM を callback で受ける API を提供します。
-HID / CDC / MSC などとの複合 Audio device、I2S bridge、codec 初期化、Audio source の詳細実装は
-別マイルストーンとして扱います。
+このライブラリの責務は USB Audio class と PCM callback 境界までです。I2S、codec、DAC などの
+出力デバイス接続は PCMFlowDevice など出力側ライブラリの責務とします。PCMFlow 連携は有力な
+連携先ですが必須依存にはしません。
 
 ## 確定した設計判断
 
@@ -172,5 +173,5 @@ manual 確認に残す範囲:
 6. USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API を検討する。
 7. FirmwareMSC は FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example として検討する。
 8. CDC + HID + MSC + Vendor などの all-in-one composite example を必要に応じて追加する。
-9. USB Audio sink の peer / loopback / manual 確認を追加し、次に source と I2S bridge の仕様を固める。
+9. USB Audio sink の loopback / manual 確認を追加し、PCMFlow などへ渡しやすい PCM callback I/F を磨く。
 10. P4 probe の結果を整理し、port / speed / PHY の制約を設計メモへ反映する。

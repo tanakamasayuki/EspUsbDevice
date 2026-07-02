@@ -129,7 +129,8 @@ USB Audio speaker sink device の例です。
 - `EspUsbDeviceAudioSink` で Host からの speaker PCM を受け取ります。
 - `onData()` callback で PCM chunk を受信します。
 - `onEvent()` callback で volume、mute、sample rate、interface enable を受け取ります。
-- I2S bridge や codec 初期化は含まず、最小 Audio sink として受信状態を Serial monitor に出力します。
+- I2S bridge や codec 初期化はこのライブラリの責務外です。受信した PCM はアプリケーション、
+  PCMFlow、PCMFlowDevice などへ渡せます。
 
 ## MSC
 

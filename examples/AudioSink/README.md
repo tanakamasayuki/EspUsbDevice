@@ -7,7 +7,7 @@ Creates a USB Audio speaker device and receives PCM playback data from the host.
 This example does not drive an I2S DAC or codec. It is a minimal Audio
 implementation check that prints received chunk counts, byte counts, and the
 latest samples to the Serial monitor. To play real audio, forward PCM from
-`onAudioData()` to I2S or an external codec.
+`onData()` to the application, PCMFlow, PCMFlowDevice, or another output layer.
 
 ## Hardware
 
@@ -40,6 +40,9 @@ latest samples to the Serial monitor. To play real audio, forward PCM from
 
 - This is a minimal speaker sink example. It intentionally does not configure
   I2S pins, DMA buffers, or codecs.
+- This library owns the USB Audio class and PCM callback boundary. I2S bridging
+  and codec/DAC connections belong in output-side libraries such as
+  PCMFlowDevice.
 - It is based on Arduino Core's USB Audio implementation, so TinyUSB Audio must
   be enabled for the selected board/core configuration.
 - It currently targets standalone Audio devices. Composite Audio with HID, CDC,
@@ -50,5 +53,7 @@ latest samples to the Serial monitor. To play real audio, forward PCM from
 
 ## Related
 
+- [PCMFlow](https://github.com/tanakamasayuki/PCMFlow) - PCM data flow
+- [PCMFlowDevice](https://github.com/tanakamasayuki/PCMFlowDevice) - PCM output device integration
 - [MIDI](../MIDI/) - USB MIDI device
 - [Serial](../Serial/) - CDC ACM serial device

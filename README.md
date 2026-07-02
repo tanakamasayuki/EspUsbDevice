@@ -56,9 +56,12 @@ available:
 - USB Audio speaker sink callback.
 - Serial command sketches for pytest-embedded peer and loopback tests.
 
-USB Audio starts with a standalone minimal speaker sink. Composite Audio
-devices, I2S bridging, codec setup, and detailed Audio source examples remain
-separate milestones.
+USB Audio starts with a standalone minimal speaker sink. This library owns the
+USB Audio class and PCM callback boundary only. Applications can forward PCM to
+PCMFlow, PCMFlowDevice, or any other processing/output layer.
+
+- PCMFlow: https://github.com/tanakamasayuki/PCMFlow
+- PCMFlowDevice: https://github.com/tanakamasayuki/PCMFlowDevice
 
 ## Minimal Examples
 
@@ -188,8 +191,9 @@ MSC:
 
 - Do not use this library together with Arduino-ESP32's standard `USB.begin()`,
   `USBHIDKeyboard`, `USBHIDMouse`, or other built-in USB device classes.
-- USB Audio is a standalone minimal speaker sink. Composite Audio devices, I2S
-  bridging, codec setup, and detailed Audio source support are not covered yet.
+- USB Audio is a standalone minimal speaker sink. Composite Audio devices are
+  not supported yet. I2S, codecs, DACs, and other output hardware are outside
+  this library's responsibility.
 - MSC keeps block devices and filesystems separate. Use the FAT RAM disk helper
   or SD card support when the host should mount a normal drive.
 - Direct flash / SPIFFS / LittleFS exposure as USB MSC is not a standard goal.

@@ -347,8 +347,10 @@ MSC は実装量が大きいので、HID/CDC/MIDI の後に着手してよいで
 
 - 最初は Audio output sink として、host からの speaker stream を受ける。
 - sample rate、format、channel count を限定してよい。
-- data callback で受信確認する。
-- 将来は Audio input source も検討。
+- data callback で PCM を受け取る。
+- このライブラリの責務は USB Audio class と PCM callback 境界までに限定する。
+- 受け取った PCM はアプリケーション、PCMFlow、PCMFlowDevice などへ渡す。I2S、codec、DAC などの
+  出力デバイス接続はこのライブラリでは扱わない。
 
 既存 Host 側テストとの対応:
 
@@ -806,6 +808,7 @@ EspUsbDevice/
 - MSC FAT RAM disk helper。
 - MSC SD card helper。
 - Audio sink。
+- PCMFlow などへ渡しやすい PCM callback I/F。
 - peer `usb_msc`、`usb_audio` 移行。
 
 ## 完了条件
