@@ -73,7 +73,8 @@ USB Audio は単独 device の最小 speaker sink から開始しています。
 isochronous endpoint 実装をベースにし、Host からの PCM を `onPcm()` callback で受ける API を提供します。
 このライブラリの責務は USB Audio class と PCM callback 境界までです。I2S、codec、DAC などの
 出力デバイス接続は PCMFlowDevice など出力側ライブラリの責務とします。PCMFlow 連携は有力な
-連携先ですが必須依存にはしません。
+連携先ですが必須依存にはしません。M5 speaker 連携は `examples/AudioSinkM5Speaker` で扱い、
+stereo downmix と speaker 用短期 buffer は PCMFlowDevice の `M5SpeakerBufferedPlayer::writePcm()` に任せます。
 
 ## 確定した設計判断
 
@@ -162,16 +163,19 @@ manual 確認に残す範囲:
 - `examples/MSCFatRamDisk` の PC mount、file copy、OS eject、Device 側 file read。
 - `examples/MSCSdCard` の SD card mount、Host OS read/write、OS eject。
 - `examples/USBVendor` の browser / libusb / WinUSB からの claim、bulk echo、control request、WebUSB URL。
+- `examples/AudioSink` の PC 連続再生、volume / mute、stream stop / restart。
+- `examples/AudioSinkM5Speaker` の実音確認、drop / gap / wait の実測、PCMFlowDevice profile 調整。
 
 ## 当面の優先順位
 
-1. 初回リリース範囲の API と examples を安定化する。
-2. `uv run --env-file .env pytest --clean` を release 前の基準にする。
-3. examples 全体の compile smoke を API 変更時と release 前に維持する。
-4. MSC FAT RAM disk / SD card / USBVendor の manual 確認手順を実機で消化する。
-5. WebUSB / libusb / WinUSB の Host 側サンプルを追加するか判断する。
-6. USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API を検討する。
-7. FirmwareMSC は FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example として検討する。
-8. CDC + HID + MSC + Vendor などの all-in-one composite example を必要に応じて追加する。
-9. USB Audio sink の loopback / manual 確認を追加し、`onPcm()` の実運用で必要な metadata / buffer ownership を磨く。
-10. P4 probe の結果を整理し、port / speed / PHY の制約を設計メモへ反映する。
+1. `uv run --env-file .env pytest --clean` と examples compile smoke を API 変更時の基準として維持する。
+2. `AudioSink` / `AudioSinkM5Speaker` の manual 確認を消化し、必要なら buffer / profile / event handling を調整する。
+3. USB Audio の loopback / manual test を追加し、自動化できる範囲と人が確認する範囲を分ける。
+4. USB Audio microphone path の example / test を追加するか判断する。
+5. USB Audio composite device の可否と制約を確認する。
+6. MSC FAT RAM disk / SD card / USBVendor の manual 確認手順を実機で消化する。
+7. WebUSB / libusb / WinUSB の Host 側サンプルを追加するか判断する。
+8. USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API を検討する。
+9. FirmwareMSC は FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example として検討する。
+10. CDC + HID + MSC + Vendor などの all-in-one composite example を必要に応じて追加する。
+11. P4 probe の結果を整理し、port / speed / PHY の制約を設計メモへ反映する。

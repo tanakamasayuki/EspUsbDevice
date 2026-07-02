@@ -357,7 +357,8 @@ MSC は実装量が大きいので、HID/CDC/MIDI の後に着手してよいで
 
 - `peer/usb_audio`
 
-Audio は descriptor と isochronous endpoint の扱いが重いため、MVP からは外してよいです。
+Audio speaker sink は最小実装と peer test まで追加済みです。残作業は、loopback / manual 確認、
+M5 speaker 実音確認、microphone path、複合 Audio device の制約確認です。
 
 ## テスト計画
 
@@ -809,8 +810,8 @@ EspUsbDevice/
 - MSC FAT RAM disk helper。
 - MSC SD card helper。
 - Audio sink。
-- `onPcm()` の実機確認と必要な metadata 追加。
-- peer `usb_msc`、`usb_audio` 移行。
+- `AudioSink` / `AudioSinkM5Speaker` の manual 確認。
+- USB Audio loopback / microphone path / composite Audio の検討。
 
 ## 完了条件
 
