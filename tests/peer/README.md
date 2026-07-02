@@ -51,5 +51,8 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `usb_vendor`: vendor-specific interface. Interface / bulk endpoint
   enumeration, bulk echo, application vendor control IN/OUT, and WebUSB landing
   URL reads pass on the two-board S3 setup.
+- `usb_audio`: USB Audio speaker sink. Host -> Device speaker PCM reception
+  passes on the two-board S3 setup.
 
-Later phases add Audio.
+Audio follow-up work remains for loopback, microphone path, long playback, and
+real speaker-output checks.

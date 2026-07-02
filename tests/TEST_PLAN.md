@@ -74,7 +74,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | planned | | ✅ `examples/AudioSink` |
+| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | planned | | ✅ `examples/AudioSink` / `AudioSinkM5Speaker` |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -134,10 +134,11 @@ First additions:
 
 ### Non-HID Host Details
 
-CDC ACM, MIDI, MSC, USBVendor, and Audio require matching Device classes. After HID detail
-tests are stable, add EspUsbDevice-based counterparts for Host-side
-`peer/usb_serial`, `peer/usb_midi`, `peer/usb_msc`, `peer/usb_vendor`, and
-`peer/usb_audio`.
+CDC ACM, MIDI, MSC, USBVendor, and Audio require matching Device classes.
+EspUsbDevice-based counterparts for `peer/usb_serial`, `peer/usb_midi`,
+`peer/usb_msc`, `peer/usb_vendor`, and `peer/usb_audio` are in place.
+Audio is automated through the speaker-sink peer test; loopback, microphone
+path, long playback, and real speaker-output checks remain.
 
 `peer/usb_serial` is the first CDC ACM test for `EspUsbDeviceCdcSerial`. The
 Host side uses released `EspUsbHost` and `EspUsbHostCdcSerial`, then verifies
