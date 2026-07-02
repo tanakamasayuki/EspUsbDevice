@@ -345,10 +345,22 @@ struct EspUsbDeviceAudioEvent
   bool enabled = false;
 };
 
+struct EspUsbDeviceAudioPcm
+{
+  void *data = nullptr;
+  uint16_t length = 0;
+  uint32_t sampleRate = 0;
+  uint8_t channels = 0;
+  uint8_t bytesPerSample = 0;
+  EspUsbDeviceAudioBitsPerSample bitsPerSample = ESP_USB_DEVICE_AUDIO_BITS_16;
+  EspUsbDeviceAudioInterface interface = ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER;
+};
+
 using EspUsbDeviceMscReadCallback = std::function<int32_t(uint32_t lba, uint32_t offset, void *buffer, uint32_t size)>;
 using EspUsbDeviceMscWriteCallback = std::function<int32_t(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)>;
 using EspUsbDeviceMscStartStopCallback = std::function<bool(uint8_t powerCondition, bool start, bool loadEject)>;
 using EspUsbDeviceAudioDataCallback = std::function<void(void *data, uint16_t length)>;
+using EspUsbDeviceAudioPcmCallback = std::function<void(const EspUsbDeviceAudioPcm &)>;
 using EspUsbDeviceAudioEventCallback = std::function<void(const EspUsbDeviceAudioEvent &)>;
 
 class EspUsbDeviceClass;
@@ -579,6 +591,7 @@ public:
   uint8_t endpointCount() const override { return 0; }
 
   void onData(EspUsbDeviceAudioDataCallback callback);
+  void onPcm(EspUsbDeviceAudioPcmCallback callback);
   void onEvent(EspUsbDeviceAudioEventCallback callback);
   uint16_t writeMic(const void *data, uint16_t length);
   void applyVolume(void *data, uint16_t length);
@@ -602,6 +615,7 @@ private:
   EspUsbDeviceAudioMicChannels micChannels_ = ESP_USB_DEVICE_AUDIO_MIC_NONE;
   void *audioCard_ = nullptr;
   EspUsbDeviceAudioDataCallback dataCallback_;
+  EspUsbDeviceAudioPcmCallback pcmCallback_;
   EspUsbDeviceAudioEventCallback eventCallback_;
 };
 

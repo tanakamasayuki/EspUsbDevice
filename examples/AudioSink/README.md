@@ -7,7 +7,7 @@ Creates a USB Audio speaker device and receives PCM playback data from the host.
 This example does not drive an I2S DAC or codec. It is a minimal Audio
 implementation check that prints received chunk counts, byte counts, and the
 latest samples to the Serial monitor. To play real audio, forward PCM from
-`onData()` to the application, PCMFlow, PCMFlowDevice, or another output layer.
+`onPcm()` to the application, PCMFlow, PCMFlowDevice, or another output layer.
 
 ## Hardware
 
@@ -20,7 +20,7 @@ latest samples to the Serial monitor. To play real audio, forward PCM from
 - Registers `EspUsbDeviceAudioSink` as a 48 kHz / 16-bit / stereo speaker.
 - When the host selects it as an audio output device, the speaker streaming
   interface becomes active.
-- Receives host PCM chunks through the `onData()` callback.
+- Receives host PCM chunks through the `onPcm()` callback.
 - Applies host mute / volume state to the sample buffer with `applyVolume()`.
 - Prints received chunks, bytes, and recent samples once per second.
 
@@ -28,13 +28,25 @@ latest samples to the Serial monitor. To play real audio, forward PCM from
 
 - `EspUsbDeviceAudioSink audio(device, 48000, ESP_USB_DEVICE_AUDIO_BITS_16, ESP_USB_DEVICE_AUDIO_SPK_STEREO)`
   registers the USB Audio speaker function.
-- `audio.onData(callback)` receives Host -> Device speaker PCM.
+- `audio.onPcm(callback)` receives Host -> Device speaker PCM. The callback
+  receives `EspUsbDeviceAudioPcm` with `data`, `length`, `sampleRate`,
+  `channels`, and `bytesPerSample`.
+- `audio.onData(callback)` is the lower-level callback that only receives
+  `void *data` and `length`.
 - `audio.onEvent(callback)` receives volume, mute, sample-rate, and interface
   enable changes.
 - `audio.applyVolume(data, length)` applies Audio-class volume / mute state to
   a PCM buffer.
 - `audio.writeMic(data, length)` sends Device -> Host PCM when the microphone
   path is enabled.
+
+## PCM Handoff
+
+`onPcm()` groups the buffer and format metadata so it can be passed to PCMFlow
+or another processing/output layer without a hard dependency. This library does
+not own the received PCM buffer. Copy the buffer in the application if it must
+outlive the callback. Call `applyVolume()` inside the callback when the next
+layer should receive PCM with host mute / volume state applied.
 
 ## Notes
 

@@ -1673,6 +1673,11 @@ void EspUsbDeviceAudioSink::onData(EspUsbDeviceAudioDataCallback callback)
   dataCallback_ = callback;
 }
 
+void EspUsbDeviceAudioSink::onPcm(EspUsbDeviceAudioPcmCallback callback)
+{
+  pcmCallback_ = callback;
+}
+
 void EspUsbDeviceAudioSink::onEvent(EspUsbDeviceAudioEventCallback callback)
 {
   eventCallback_ = callback;
@@ -1782,6 +1787,18 @@ void EspUsbDeviceAudioSink::handleData(void *data, uint16_t length)
   if (dataCallback_)
   {
     dataCallback_(data, length);
+  }
+  if (pcmCallback_)
+  {
+    EspUsbDeviceAudioPcm pcm;
+    pcm.data = data;
+    pcm.length = length;
+    pcm.sampleRate = sampleRate();
+    pcm.channels = static_cast<uint8_t>(speakerChannels_);
+    pcm.bytesPerSample = bytesPerSample();
+    pcm.bitsPerSample = bitsPerSample_;
+    pcm.interface = ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER;
+    pcmCallback_(pcm);
   }
 }
 
