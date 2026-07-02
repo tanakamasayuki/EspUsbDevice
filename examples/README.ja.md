@@ -127,10 +127,21 @@ USB Audio speaker sink device の例です。
 詳しくは [AudioSink/README.ja.md](AudioSink/README.ja.md) を参照してください。
 
 - `EspUsbDeviceAudioSink` で Host からの speaker PCM を受け取ります。
-- `onData()` callback で PCM chunk を受信します。
+- `onPcm()` callback で PCM chunk と format 情報を受信します。
 - `onEvent()` callback で volume、mute、sample rate、interface enable を受け取ります。
 - I2S bridge や codec 初期化はこのライブラリの責務外です。受信した PCM はアプリケーション、
   PCMFlow、PCMFlowDevice などへ渡せます。
+
+## AudioSinkM5Speaker
+
+USB Audio speaker sink と PCMFlowDevice の M5 speaker helper をつなぐ例です。
+詳しくは [AudioSinkM5Speaker/README.ja.md](AudioSinkM5Speaker/README.ja.md) を参照してください。
+
+- PC から 48 kHz / 16-bit / stereo の USB Audio speaker として PCM を受け取ります。
+- `audio.applyVolume()` で Host 側の mute / volume を反映します。
+- PCMFlow の `PCMConvert::stereoToMonoS16()` で M5 speaker 向けに mono へ downmix します。
+- PCMFlowDevice の `M5SpeakerBufferedPlayer` で `M5.Speaker` に安定して渡します。
+- EspUsbDevice 本体は PCMFlow / PCMFlowDevice へ依存せず、この example だけが任意連携します。
 
 ## MSC
 
