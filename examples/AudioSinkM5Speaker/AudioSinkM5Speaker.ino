@@ -1,11 +1,9 @@
 #include <EspUsbDevice.h>
 #include <M5Unified.h>
-#include <PCMConvert.h>
 #include <PCMFlowDeviceM5.h>
 
 static constexpr uint32_t kSampleRate = 48000;
 static constexpr size_t kMaxPlayFrames = (kSampleRate * 80u) / 1000u;
-static constexpr size_t kConvertFrames = 256;
 
 EspUsbDevice device;
 EspUsbDeviceAudioSink audio(device,
@@ -16,29 +14,11 @@ EspUsbDeviceAudioSink audio(device,
 
 M5SpeakerBufferedPlayer<kMaxPlayFrames> player;
 
-static int16_t mono[kConvertFrames] = {};
 static volatile uint32_t audioChunks = 0;
 static volatile uint32_t audioBytes = 0;
-static volatile uint32_t convertedFrames = 0;
+static volatile uint32_t speakerBytes = 0;
 static volatile uint32_t unsupportedChunks = 0;
 static uint32_t lastLogMs = 0;
-
-static void writeStereo16ToSpeaker(const int16_t *stereo, size_t frames)
-{
-  while (frames > 0)
-  {
-    size_t take = frames;
-    if (take > kConvertFrames)
-    {
-      take = kConvertFrames;
-    }
-    PCMConvert::stereoToMonoS16(stereo, mono, take);
-    player.writeFrames(mono, take);
-    stereo += take * 2;
-    frames -= take;
-    convertedFrames += take;
-  }
-}
 
 static void onAudioPcm(const EspUsbDeviceAudioPcm &pcm)
 {
@@ -51,15 +31,14 @@ static void onAudioPcm(const EspUsbDeviceAudioPcm &pcm)
   audioChunks++;
   audioBytes += pcm.length;
 
-  if (pcm.sampleRate != kSampleRate || pcm.channels != 2 || pcm.bytesPerSample != 2)
+  const PCMFormat format{pcm.sampleRate, pcm.channels, static_cast<uint8_t>(pcm.bytesPerSample * 8u)};
+  const size_t written = player.writePcm(pcm.data, pcm.length, format);
+  if (written == 0)
   {
     unsupportedChunks++;
     return;
   }
-
-  const size_t frameBytes = static_cast<size_t>(pcm.channels) * pcm.bytesPerSample;
-  const size_t frames = pcm.length / frameBytes;
-  writeStereo16ToSpeaker(static_cast<const int16_t *>(pcm.data), frames);
+  speakerBytes += written;
 }
 
 static void onAudioEvent(const EspUsbDeviceAudioEvent &event)
@@ -145,18 +124,18 @@ void loop()
     noInterrupts();
     const uint32_t chunks = audioChunks;
     const uint32_t bytes = audioBytes;
-    const uint32_t frames = convertedFrames;
+    const uint32_t speaker = speakerBytes;
     const uint32_t unsupported = unsupportedChunks;
     audioChunks = 0;
     audioBytes = 0;
-    convertedFrames = 0;
+    speakerBytes = 0;
     unsupportedChunks = 0;
     interrupts();
 
-    Serial.printf("AUDIO_M5 chunks=%lu bytes=%lu frames=%lu unsupported=%lu play_chunks=%lu waits=%lu gaps=%lu drops=%lu\n",
+    Serial.printf("AUDIO_M5 chunks=%lu bytes=%lu speaker_bytes=%lu unsupported=%lu play_chunks=%lu waits=%lu gaps=%lu drops=%lu\n",
                   static_cast<unsigned long>(chunks),
                   static_cast<unsigned long>(bytes),
-                  static_cast<unsigned long>(frames),
+                  static_cast<unsigned long>(speaker),
                   static_cast<unsigned long>(unsupported),
                   static_cast<unsigned long>(player.chunks()),
                   static_cast<unsigned long>(player.waits()),

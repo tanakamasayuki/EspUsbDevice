@@ -119,7 +119,8 @@ PCM callback 境界だけを扱い、I2S bridge / codec / DAC 接続は PCMFlowD
 `onPcm()` で PCM buffer と sample rate / channel count / sample width をまとめて受け取れます。
 PCMFlow 連携は有力な利用形ですが、汎用 callback I/F を維持して特定ライブラリへの必須依存にはしません。
 `AudioSinkM5Speaker` は example 側だけで PCMFlow / PCMFlowDevice / M5Unified に依存し、PC から受け取った
-stereo PCM を mono に downmix して M5 speaker へ渡す連携例です。
+PCM を `M5SpeakerBufferedPlayer::writePcm()` へ渡す連携例です。stereo 入力の mono downmix と
+`M5.Speaker` 用の短期 buffer は PCMFlowDevice 側で扱います。
 
 ### FirmwareMSC
 

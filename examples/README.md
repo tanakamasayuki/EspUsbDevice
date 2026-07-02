@@ -155,9 +155,8 @@ See [AudioSinkM5Speaker/README.md](AudioSinkM5Speaker/README.md) for details.
 
 - Receives PCM from the PC as a 48 kHz / 16-bit / stereo USB Audio speaker.
 - Applies host mute / volume with `audio.applyVolume()`.
-- Downmixes to mono for the M5 speaker with PCMFlow's
-  `PCMConvert::stereoToMonoS16()`.
-- Uses PCMFlowDevice's `M5SpeakerBufferedPlayer` to feed `M5.Speaker` safely.
+- Uses PCMFlowDevice's `M5SpeakerBufferedPlayer::writePcm()` to downmix stereo
+  input and feed `M5.Speaker` safely.
 - EspUsbDevice itself does not depend on PCMFlow or PCMFlowDevice; only this
   example uses them as optional integration libraries.
 

@@ -23,8 +23,10 @@ playback.
 - Appears to the PC as a 48 kHz / 16-bit / stereo USB Audio speaker.
 - Receives Host -> Device PCM chunks through `audio.onPcm()`.
 - Applies host mute / volume state to the PCM buffer with `audio.applyVolume()`.
-- Downmixes stereo 16-bit PCM to mono 16-bit PCM.
-- Passes the mono PCM to PCMFlowDevice's `M5SpeakerBufferedPlayer`.
+- Passes PCM plus format metadata to PCMFlowDevice's
+  `M5SpeakerBufferedPlayer::writePcm()`.
+- `writePcm()` downmixes stereo 16-bit PCM to mono 16-bit PCM and plays it
+  through the built-in M5 speaker.
 - Prints received chunks, playback chunks, waits, gaps, and drops once per
   second.
 
@@ -35,8 +37,7 @@ PC / Host
   -> USB Audio speaker stream
   -> EspUsbDeviceAudioSink::onPcm()
   -> applyVolume()
-  -> PCMConvert::stereoToMonoS16()
-  -> M5SpeakerBufferedPlayer
+  -> M5SpeakerBufferedPlayer::writePcm()
   -> M5.Speaker
 ```
 
@@ -45,29 +46,22 @@ PC / Host
 - `EspUsbDeviceAudioSink` registers the USB Audio speaker function.
 - `audio.onPcm(callback)` receives the PCM buffer plus `sampleRate`,
   `channels`, and `bytesPerSample`.
-- `PCMConvert::stereoToMonoS16()` converts the PC's stereo PCM to mono PCM for
-  the M5 speaker helper.
-- `M5SpeakerBufferedPlayer` keeps short-lived buffers for
+- `M5SpeakerBufferedPlayer::writePcm(data, bytes, format)` accepts 16-bit mono
+  or stereo PCM and downmixes stereo input to mono.
+- `M5SpeakerBufferedPlayer` also keeps short-lived buffers for
   `M5.Speaker.playRaw()`.
 
 ## Notes
 
 - This example needs `PCMFlow`, `PCMFlowDevice`, `M5Unified`, and `M5GFX`.
-- `M5SpeakerBufferedPlayer` currently expects 16-bit mono input, so this example
-  downmixes stereo to mono before writing to it.
+- `M5SpeakerBufferedPlayer::writePcm()` accepts same-rate 16-bit mono or stereo
+  PCM. If resampling or bit-depth conversion is needed, insert a PCMFlow
+  pipeline separately.
 - Do not keep the USB callback PCM buffer after the callback returns. Copy it in
   the application if it must outlive the callback.
 - The full-speed USB Audio baseline is 48 kHz / 16-bit / stereo.
 - If playback underruns on hardware, tune the PCMFlowDevice profile, chunk size,
   or buffer count.
-
-## Useful PCMFlow / PCMFlowDevice Follow-Ups
-
-- A `M5SpeakerBufferedPlayer` helper that accepts stereo input and writes mono
-  speaker output.
-- A format-aware `writePcm(data, bytes, PCMFormat)` API.
-- A lightweight adapter that can insert PCMFlow conversion / resampling when
-  formats do not match.
 
 ## Related
 
