@@ -183,6 +183,27 @@ See [AudioSpeakerM5/README.md](AudioSpeakerM5/README.md) for details.
 - EspUsbDevice itself does not depend on PCMFlow or PCMFlowDevice; only this
   example uses them as optional integration libraries.
 
+## AudioMicrophoneM5
+
+USB Audio microphone backed by the M5 built-in microphone (device -> host).
+
+- Captures mono 16 kHz / 16-bit PCM from `M5.Mic` and streams it to the host
+  with `writeMic()`; the PC sees a recording device.
+- Uses `M5.Mic.record()` (asynchronous, double-buffered) with a small ring, and
+  sends the oldest completed block.
+- Only depends on M5Unified for capture; EspUsbDevice provides the USB side.
+
+## AudioHeadsetM5
+
+USB Audio headset backed by M5 hardware: M5 speaker playback (host -> device)
+and M5 microphone capture (device -> host) at the same time.
+
+- Plays received PCM on `M5.Speaker` via PCMFlowDevice's `M5SpeakerBufferedPlayer`
+  and streams `M5.Mic` capture back to the host, both mono 16 kHz / 16-bit.
+- Full duplex needs hardware whose speaker and mic are on independent buses
+  (e.g. CoreS3). On shared-I2S devices (M5StickC, Core2) only the last-started
+  direction produces sound.
+
 ## MSC
 
 USB Mass Storage Class device example.

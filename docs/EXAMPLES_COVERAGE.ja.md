@@ -56,6 +56,8 @@
 | `MIDIInterface` | UART MIDI <-> USB MIDI bridge | 中 |
 | `AudioSpeaker` | USB Audio speaker sink（Host → Device） | 中 |
 | `AudioSpeakerM5` | USB Audio -> PCMFlowDevice -> M5 speaker 連携 | 中 |
+| `AudioMicrophoneM5` | M5 内蔵マイク -> USB Audio microphone（Device → Host） | 中 |
+| `AudioHeadsetM5` | M5 speaker + M5 mic の headset（IN/OUT 同時、要 full-duplex HW） | 中 |
 | `AudioMicrophone` | USB Audio source / microphone（Device → Host、`writeMic()`） | 中 |
 | `AudioHeadset` | USB Audio headset（speaker + microphone 同時、IN/OUT 両方向） | 中 |
 | `MSC` | raw MSC block I/O | 低 |
