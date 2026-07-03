@@ -1,11 +1,11 @@
-# EspUsbDevice AudioSinkM5Speaker
+# EspUsbDevice AudioSpeakerM5
 
 > English: [README.md](README.md)
 
 PC などの Host から USB Audio speaker として PCM を受け取り、M5Stack 系 board の内蔵 speaker で再生する例です。
 
 この example は EspUsbDevice、PCMFlow、PCMFlowDevice、M5Unified の連携例です。EspUsbDevice 本体は
-PCMFlow / PCMFlowDevice に依存しません。USB Audio の受信は `EspUsbDeviceAudioSink`、speaker への
+PCMFlow / PCMFlowDevice に依存しません。USB Audio の受信は `EspUsbDeviceAudio`、speaker への
 安定した受け渡しは PCMFlowDevice の `M5SpeakerBufferedPlayer` が担当します。
 
 ## ハードウェア
@@ -29,7 +29,7 @@ PCMFlow / PCMFlowDevice に依存しません。USB Audio の受信は `EspUsbDe
 ```text
 PC / Host
   -> USB Audio speaker stream
-  -> EspUsbDeviceAudioSink::onPcm()
+  -> EspUsbDeviceAudio::onPcm()
   -> applyVolume()
   -> M5SpeakerBufferedPlayer::writePcm()
   -> M5.Speaker
@@ -37,7 +37,7 @@ PC / Host
 
 ## 主要 API
 
-- `EspUsbDeviceAudioSink` は USB Audio speaker function を登録します。
+- `EspUsbDeviceAudio` は USB Audio speaker function を登録します。
 - `audio.onPcm(callback)` は PCM buffer と `sampleRate`、`channels`、`bytesPerSample` をまとめて受け取ります。
 - `M5SpeakerBufferedPlayer::writePcm(data, bytes, format)` は 16-bit mono / stereo PCM を受け取り、
   stereo 入力は mono に downmix します。
@@ -54,6 +54,6 @@ PC / Host
 
 ## 関連
 
-- [AudioSink](../AudioSink/) - USB Audio speaker sink の最小例
+- [AudioSpeaker](../AudioSpeaker/) - USB Audio speaker sink の最小例
 - [PCMFlow](https://github.com/tanakamasayuki/PCMFlow) - PCM data flow
 - [PCMFlowDevice](https://github.com/tanakamasayuki/PCMFlowDevice) - PCM output device integration

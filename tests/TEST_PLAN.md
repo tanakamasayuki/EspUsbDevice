@@ -74,7 +74,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | N/A (P4 audio is UAC2/HS; loopback is FS-only) | | ✅ `examples/AudioSink` / `AudioSinkM5Speaker` (P4 HS) |
+| USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` | N/A (P4 audio is UAC2/HS; loopback is FS-only) | | ✅ `examples/AudioSpeaker` / `AudioSpeakerM5` (P4 HS) |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -136,14 +136,14 @@ First additions:
 
 CDC ACM, MIDI, MSC, USBVendor, and Audio require matching Device classes.
 EspUsbDevice-based counterparts for `peer/usb_serial`, `peer/usb_midi`,
-`peer/usb_msc`, `peer/usb_vendor`, and `peer/usb_audio` are in place.
+`peer/usb_msc`, `peer/usb_vendor`, and `peer/usb_audio_speaker` are in place.
 Audio is automated through the speaker-sink peer test (S3, UAC1 / full speed).
 There is deliberately no P4 loopback audio test: on P4 this library's audio is
 UAC2 / high speed only (`TUD_OPT_HIGH_SPEED`), while one-board loopback is
 full-speed (single UTMI PHY held by the device), so the two are fundamentally
 incompatible. P4 audio (UAC2/HS) is therefore HS-only and validated by manual
 high-speed checks; a two-board P4 HS peer could add automated UAC2 coverage later.
-See `docs/DESIGN_NOTES.ja.md`. `peer/usb_audio_mic` covers the USB Audio source
+See `docs/DESIGN_NOTES.ja.md`. `peer/usb_audio_microphone` covers the USB Audio source
 (microphone) direction: the device streams generated PCM and the host verifies
 device -> host reception (S3, UAC1). Long playback, real speaker-output checks,
 and real microphone-capture input also remain.
@@ -249,9 +249,10 @@ points, so they must compile independently of peer / loopback hardware tests.
 27. ✅ `loopback/hid_vendor`
 28. ✅ `loopback/hid_consumer_control`
 29. ✅ `loopback/hid_system_control`
-30. ✅ `peer/usb_audio`
+30. ✅ `peer/usb_audio_speaker`
 31. ✅ `loopback/hid_keyboard_layout`
 32. (no `loopback/usb_audio`: P4 audio is UAC2/HS, loopback is FS-only)
+33. ✅ `peer/usb_audio_microphone`
 
 ## Acceptance Rules
 

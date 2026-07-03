@@ -51,8 +51,9 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `usb_vendor`: vendor-specific interface. Interface / bulk endpoint
   enumeration, bulk echo, application vendor control IN/OUT, and WebUSB landing
   URL reads pass on the two-board S3 setup.
-- `usb_audio`: USB Audio speaker sink. Host -> Device speaker PCM reception
-  passes on the two-board S3 setup (UAC1 / full speed). `test_usb_audio_volume_flood`
+- `usb_audio_speaker`: USB Audio speaker sink (host -> device). Host -> Device
+  speaker PCM reception passes on the two-board S3 setup (UAC1 / full speed).
+  `test_usb_audio_speaker_volume_flood`
   reproduces a real-Windows failure mode by blasting a burst of rapid volume /
   mute SET_CUR changes (like dragging the volume slider) and asserts the device
   keeps running without rebooting. There is no P4 loopback
@@ -60,9 +61,10 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   full-speed, so the two cannot meet. P4 audio (UAC2/HS) is validated by manual
   high-speed checks.
 
-- `usb_audio_mic`: USB Audio source (microphone). The device streams a generated
-  sawtooth to the host; the host starts the input stream and verifies device ->
-  host PCM arrives and is non-silent. UAC1 / full speed on the two-board S3 setup.
+- `usb_audio_microphone`: USB Audio source / microphone (device -> host). The
+  device streams a generated sawtooth to the host; the host starts the input
+  stream and verifies device -> host PCM arrives and is non-silent. UAC1 / full
+  speed on the two-board S3 setup.
 
 Audio follow-up work remains for long playback, real speaker-output checks, real
 microphone-capture input, and (optionally) a two-board P4 HS peer for UAC2 coverage.

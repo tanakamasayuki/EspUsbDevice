@@ -4,7 +4,7 @@
 // sawtooth so the host can confirm it received real, non-silent audio.
 
 EspUsbDevice device;
-EspUsbDeviceAudioSink audio(device,
+EspUsbDeviceAudio audio(device,
                             48000,
                             ESP_USB_DEVICE_AUDIO_BITS_16,
                             ESP_USB_DEVICE_AUDIO_SPK_NONE,

@@ -1,7 +1,7 @@
 #include "EspUsbDevice.h"
 
 EspUsbDevice device;
-EspUsbDeviceAudioSink audio(device,
+EspUsbDeviceAudio audio(device,
                             48000,
                             ESP_USB_DEVICE_AUDIO_BITS_16,
                             ESP_USB_DEVICE_AUDIO_SPK_STEREO,
@@ -69,7 +69,7 @@ void setup()
   config.vid = 0x303a;
   config.pid = 0x4020;
   config.manufacturer = "EspUsb";
-  config.product = "EspUsbDevice Audio Sink";
+  config.product = "EspUsbDevice Speaker";
   config.serialNumber = "espusb-audio-sink";
 
   if (!device.begin(config))
