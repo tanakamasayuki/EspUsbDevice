@@ -19,12 +19,50 @@
 #include "USBAudioCardDescriptors.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_event.h"
 #include <math.h>
 #include <inttypes.h>
 
 ESP_EVENT_DEFINE_BASE(ARDUINO_USB_AUDIO_CARD_EVENTS);
-esp_err_t arduino_usb_event_post(esp_event_base_t event_base, int32_t event_id, void *event_data, size_t event_data_size, TickType_t ticks_to_wait);
-esp_err_t arduino_usb_event_handler_register_with(esp_event_base_t event_base, int32_t event_id, esp_event_handler_t event_handler, void *event_handler_arg);
+
+// Audio control events (volume / mute / interface / sample-rate) are delivered
+// to the user onEvent() callback on this dedicated event loop. It must have a
+// generous stack: the Arduino core "arduino_usb_events" loop only has a
+// 2048-byte stack (ARDUINO_SERIAL_EVENT_TASK_STACK_SIZE), which overflows as
+// soon as a user callback does anything nontrivial such as Serial.printf(). A
+// Windows volume-slider drag sends a burst of SET_CUR requests and reliably
+// crashed that loop with a stack-canary panic.
+static esp_event_loop_handle_t _uac_event_loop = NULL;
+
+static esp_event_loop_handle_t uacEventLoop() {
+  if (_uac_event_loop == NULL) {
+    esp_event_loop_args_t args = {};
+    args.queue_size = 32;
+    args.task_name = "uacEvents";
+    args.task_priority = 5;
+    args.task_stack_size = 8192;
+    args.task_core_id = tskNO_AFFINITY;
+    if (esp_event_loop_create(&args, &_uac_event_loop) != ESP_OK) {
+      _uac_event_loop = NULL;
+    }
+  }
+  return _uac_event_loop;
+}
+
+// Non-blocking post: never block the USB device task inside a control-transfer
+// callback. If the queue is full (e.g. a rapid volume-slider drag) the extra
+// notifications are dropped. The authoritative volume/mute state is already in
+// _volume[]/_mute[] and applied by applyVolume(), so dropping a notification is
+// harmless. Signature matches the old arduino_usb_event_post so call sites are
+// unchanged; the requested ticks are intentionally ignored.
+static esp_err_t uacEventPost(esp_event_base_t base, int32_t id, void *data, size_t size, TickType_t ticks) {
+  (void)ticks;
+  esp_event_loop_handle_t loop = uacEventLoop();
+  if (loop == NULL) {
+    return ESP_FAIL;
+  }
+  return esp_event_post_to(loop, base, id, data, size, 0);
+}
 
 static uint8_t _itf_num = 0;
 static uint32_t _sample_rate = 48000;
@@ -221,7 +259,7 @@ bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const *p_req
     // Send SAMPLE RATE Event
     arduino_usb_audio_card_event_data_t p;
     p.sample_rate.rate = _sample_rate;
-    arduino_usb_event_post(
+    uacEventPost(
       ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_SAMPLE_RATE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY
     );
     return true;
@@ -315,6 +353,10 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
   uint8_t entityID = TU_U16_HIGH(p_request->wIndex);
 
   if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+    if (channelNum >= (sizeof(_mute) / sizeof(_mute[0]))) {
+      log_w("Invalid channel %u for feature unit get request", channelNum);
+      return false;
+    }
     if (ctrlSel == AUDIO10_FU_CTRL_MUTE) {
       uint8_t muted = _mute[channelNum];
       log_d("Get Mute of channel: %u", channelNum);
@@ -356,6 +398,10 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
 #if TUD_OPT_HIGH_SPEED
   audio20_control_request_t const *request = (audio20_control_request_t const *)p_request;
   if (request->bEntityID == UAC2_ENTITY_SPK_FEATURE_UNIT && request->bRequest == AUDIO20_CS_REQ_CUR) {
+    if (request->bChannelNumber >= (sizeof(_mute) / sizeof(_mute[0]))) {
+      log_w("Invalid channel %u for feature unit set request", request->bChannelNumber);
+      return false;
+    }
     if (request->bControlSelector == AUDIO20_FU_CTRL_MUTE) {
       TU_VERIFY(request->wLength == sizeof(audio20_control_cur_1_t));
       _mute[request->bChannelNumber] = ((audio20_control_cur_1_t const *)buf)->bCur;
@@ -364,7 +410,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
       arduino_usb_audio_card_event_data_t p;
       p.mute.channel = (UAC_Channel)request->bChannelNumber;
       p.mute.muted = _mute[request->bChannelNumber];
-      arduino_usb_event_post(ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_MUTE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY);
+      uacEventPost(ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_MUTE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY);
       return true;
     } else if (request->bControlSelector == AUDIO20_FU_CTRL_VOLUME) {
       TU_VERIFY(request->wLength == sizeof(audio20_control_cur_2_t));
@@ -374,7 +420,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
       arduino_usb_audio_card_event_data_t p;
       p.volume.channel = (UAC_Channel)request->bChannelNumber;
       p.volume.db = _volume[request->bChannelNumber] / 256;
-      arduino_usb_event_post(
+      uacEventPost(
         ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_VOLUME_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY
       );
       return true;
@@ -389,7 +435,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
       // Send SAMPLE RATE Event
       arduino_usb_audio_card_event_data_t p;
       p.sample_rate.rate = _sample_rate;
-      arduino_usb_event_post(
+      uacEventPost(
         ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_SAMPLE_RATE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY
       );
       return true;
@@ -405,6 +451,10 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
   uint8_t entityID = TU_U16_HIGH(p_request->wIndex);
 
   if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT && p_request->bRequest == AUDIO10_CS_REQ_SET_CUR) {
+    if (channelNum >= (sizeof(_mute) / sizeof(_mute[0]))) {
+      log_w("Invalid channel %u for feature unit set request", channelNum);
+      return false;
+    }
     if (ctrlSel == AUDIO10_FU_CTRL_MUTE && p_request->wLength == 1) {
       _mute[channelNum] = buf[0];
       log_d("Set Mute: %d of channel: %u", _mute[channelNum], channelNum);
@@ -412,7 +462,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
       arduino_usb_audio_card_event_data_t p;
       p.mute.channel = (UAC_Channel)channelNum;
       p.mute.muted = _mute[channelNum];
-      arduino_usb_event_post(ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_MUTE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY);
+      uacEventPost(ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_MUTE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY);
       return true;
     } else if (ctrlSel == AUDIO10_FU_CTRL_VOLUME && p_request->wLength == 2) {
       _volume[channelNum] = (int16_t)tu_unaligned_read16(buf);
@@ -421,7 +471,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
       arduino_usb_audio_card_event_data_t p;
       p.volume.channel = (UAC_Channel)channelNum;
       p.volume.db = _volume[channelNum] / 256;
-      arduino_usb_event_post(
+      uacEventPost(
         ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_VOLUME_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY
       );
       return true;
@@ -459,7 +509,7 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_reques
     p.interface_enable.interface = UAC_INTERFACE_MIC;
   }
   p.interface_enable.enable = alt != 0;
-  arduino_usb_event_post(
+  uacEventPost(
     ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_INTERFACE_ENABLE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY
   );
   return true;
@@ -615,7 +665,7 @@ bool USBAudioCard::mute(UAC_Channel channel, bool muted) {
     arduino_usb_audio_card_event_data_t p;
     p.mute.channel = channel;
     p.mute.muted = _mute[channel];
-    arduino_usb_event_post(ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_MUTE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY);
+    uacEventPost(ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_MUTE_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY);
     return true;
   }
   return false;
@@ -656,7 +706,7 @@ bool USBAudioCard::volume(UAC_Channel channel, int8_t volume_db) {
     arduino_usb_audio_card_event_data_t p;
     p.volume.channel = channel;
     p.volume.db = _volume[channel] / 256;
-    arduino_usb_event_post(ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_VOLUME_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY);
+    uacEventPost(ARDUINO_USB_AUDIO_CARD_EVENTS, ARDUINO_USB_AUDIO_CARD_VOLUME_EVENT, &p, sizeof(arduino_usb_audio_card_event_data_t), portMAX_DELAY);
     return true;
   }
   return false;
@@ -739,7 +789,10 @@ void USBAudioCard::onEvent(esp_event_handler_t callback) {
 }
 
 void USBAudioCard::onEvent(arduino_usb_audio_card_event_t event, esp_event_handler_t callback) {
-  arduino_usb_event_handler_register_with(ARDUINO_USB_AUDIO_CARD_EVENTS, event, callback, this);
+  esp_event_loop_handle_t loop = uacEventLoop();
+  if (loop != NULL) {
+    esp_event_handler_register_with(loop, ARDUINO_USB_AUDIO_CARD_EVENTS, event, callback, this);
+  }
 }
 
 #endif /* CONFIG_TINYUSB_AUDIO_ENABLED */

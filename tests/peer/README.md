@@ -52,7 +52,10 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   enumeration, bulk echo, application vendor control IN/OUT, and WebUSB landing
   URL reads pass on the two-board S3 setup.
 - `usb_audio`: USB Audio speaker sink. Host -> Device speaker PCM reception
-  passes on the two-board S3 setup (UAC1 / full speed). There is no P4 loopback
+  passes on the two-board S3 setup (UAC1 / full speed). `test_usb_audio_volume_flood`
+  reproduces a real-Windows failure mode by blasting a burst of rapid volume /
+  mute SET_CUR changes (like dragging the volume slider) and asserts the device
+  keeps running without rebooting. There is no P4 loopback
   counterpart: P4 audio is UAC2 / high-speed only while one-board loopback is
   full-speed, so the two cannot meet. P4 audio (UAC2/HS) is validated by manual
   high-speed checks.
