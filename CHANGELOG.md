@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 1.2.0
 - (EN) Internal: fold the vendored `USBAudioCard` class into `EspUsbDeviceAudio` as a single self-contained implementation (`src/EspUsbDeviceAudio.cpp`), removing `src/USBAudioCard.{h,cpp}`, the `void*` indirection, the duplicate `UAC_*` enum set, the second singleton, and the `ARDUINO_USB_AUDIO_CARD_EVENTS` translation layer. The descriptor macros move to `src/EspUsbDeviceAudioDescriptors.h`. No public API change: `EspUsbDeviceAudio` and its methods behave identically, including the 1.1.1 dedicated-event-loop crash fix. (Espressif Apache-2.0 attribution is preserved on the derived file.)
 - (JA) 内部変更: vendored な `USBAudioCard` クラスを `EspUsbDeviceAudio` に畳み込み、単一の自己完結実装（`src/EspUsbDeviceAudio.cpp`）にしました。`src/USBAudioCard.{h,cpp}`、`void*` 経由の間接参照、重複していた `UAC_*` enum、二重 singleton、`ARDUINO_USB_AUDIO_CARD_EVENTS` の変換層を削除。descriptor マクロは `src/EspUsbDeviceAudioDescriptors.h` へ移動。公開 API は不変で、`EspUsbDeviceAudio` とそのメソッドの挙動は 1.1.1 の専用イベントループによるクラッシュ修正を含め同一です（Espressif の Apache-2.0 帰属表示は派生ファイルに保持）。
 - (EN) **Breaking:** rename the USB Audio class `EspUsbDeviceAudioSink` to `EspUsbDeviceAudio`, since the one class covers both directions (speaker sink and microphone source, and both at once). The `AudioSink` / `AudioSinkM5Speaker` examples become `AudioSpeaker` / `AudioSpeakerM5`, the new microphone example is `AudioMicrophone`, and the peer tests `usb_audio` / `usb_audio_mic` become `usb_audio_speaker` / `usb_audio_microphone`. Update sketches to the `EspUsbDeviceAudio` type name; the constructor signature and methods are unchanged.
