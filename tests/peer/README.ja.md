@@ -52,4 +52,8 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `usb_audio_microphone`: USB Audio source（マイク、Device → Host）。device が生成した sawtooth を Host へストリームし、
   Host 側で入力ストリームを開始して device → Host の PCM が届き無音でないことを検証する。S3 2台構成の UAC1 / FS。
 
+- `usb_audio_headset`: USB Audio headset（1台で speaker + microphone）。両方向を同時に検証する：OUT と IN の両ストリームが
+  enumerate/開始でき、Host が送った speaker PCM を device が受信し、device の mic ストリームが Host に届き無音でないこと。
+  S3 2台構成の UAC1 / FS。
+
 Audio の残作業は長時間再生、実音確認、実マイク入力の取り込み、（任意で）UAC2 検証用の P4 2台 HS peer です。

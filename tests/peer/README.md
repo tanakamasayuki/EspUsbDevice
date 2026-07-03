@@ -66,5 +66,11 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   stream and verifies device -> host PCM arrives and is non-silent. UAC1 / full
   speed on the two-board S3 setup.
 
+- `usb_audio_headset`: USB Audio headset (speaker + microphone on one device).
+  Verifies both directions at once: both an OUT and an IN stream enumerate and
+  start, the host sends speaker PCM that the device receives, and the device's
+  mic stream reaches the host and is non-silent. UAC1 / full speed on the
+  two-board S3 setup.
+
 Audio follow-up work remains for long playback, real speaker-output checks, real
 microphone-capture input, and (optionally) a two-board P4 HS peer for UAC2 coverage.
