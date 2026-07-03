@@ -142,6 +142,15 @@ USB Audio source（マイク）device の例です。device から Host へ PCM 
 - 同じクラスで両方向を扱います（speaker=Host→device、microphone=device→Host）。音声取り込みや
   codec 入力はアプリケーションの責務です。
 
+## AudioHeadset
+
+USB Audio headset の例です。1台で speaker（Host→device）と microphone（device→Host）を同時に担います。
+
+- `EspUsbDeviceAudio` を speaker + microphone の両チャンネル構成（ここでは mono 48 kHz / 16-bit）で作り、
+  Host からは再生デバイスと録音デバイスの両方に見えます。
+- loopback headset：`onData()` で受け取った speaker PCM を `writeMic()` でそのまま microphone へ返します。
+- 単一の `EspUsbDeviceAudio` インスタンスが両方向を同時に扱えることを示します。
+
 ## AudioSpeakerM5
 
 USB Audio speaker sink と PCMFlowDevice の M5 speaker helper をつなぐ例です。

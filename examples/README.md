@@ -157,6 +157,19 @@ USB Audio source (microphone) device example: the device sends PCM to the host.
 - The same class covers both directions (speaker for host -> device, microphone
   for device -> host); audio capture/codec input is the application's job.
 
+## AudioHeadset
+
+USB Audio headset example: one device that is both a speaker (host -> device)
+and a microphone (device -> host) at the same time.
+
+- Configure `EspUsbDeviceAudio` with both a speaker and a microphone channel
+  layout (mono 48 kHz / 16-bit here); the host sees one playback and one
+  recording device.
+- Loopback headset: received speaker PCM is echoed straight back to the
+  microphone with `writeMic()` from the `onData()` callback.
+- Shows that a single `EspUsbDeviceAudio` instance carries both directions
+  simultaneously.
+
 ## AudioSpeakerM5
 
 Example that connects the USB Audio speaker sink to PCMFlowDevice's M5 speaker

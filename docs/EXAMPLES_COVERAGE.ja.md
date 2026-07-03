@@ -57,6 +57,7 @@
 | `AudioSpeaker` | USB Audio speaker sink（Host → Device） | 中 |
 | `AudioSpeakerM5` | USB Audio -> PCMFlowDevice -> M5 speaker 連携 | 中 |
 | `AudioMicrophone` | USB Audio source / microphone（Device → Host、`writeMic()`） | 中 |
+| `AudioHeadset` | USB Audio headset（speaker + microphone 同時、IN/OUT 両方向） | 中 |
 | `MSC` | raw MSC block I/O | 低 |
 | `MSCFatRamDisk` | FAT RAM disk file handoff | 低 |
 | `MSCSdCard` | SD card as USB storage | 低-中 |

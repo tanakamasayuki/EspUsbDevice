@@ -74,7 +74,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` | N/A (P4 audio is UAC2/HS; loopback is FS-only) | | ✅ `examples/AudioSpeaker` / `AudioSpeakerM5` (P4 HS) |
+| USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | N/A (P4 audio is UAC2/HS; loopback is FS-only) | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` (P4 HS) |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -145,8 +145,9 @@ incompatible. P4 audio (UAC2/HS) is therefore HS-only and validated by manual
 high-speed checks; a two-board P4 HS peer could add automated UAC2 coverage later.
 See `docs/DESIGN_NOTES.ja.md`. `peer/usb_audio_microphone` covers the USB Audio source
 (microphone) direction: the device streams generated PCM and the host verifies
-device -> host reception (S3, UAC1). Long playback, real speaker-output checks,
-and real microphone-capture input also remain.
+device -> host reception (S3, UAC1). `peer/usb_audio_headset` covers both
+directions at once (speaker + microphone on one device). Long playback, real
+speaker-output checks, and real microphone-capture input also remain.
 
 Endpoint sizing is currently full-speed-fixed for every class (HID interrupt 8,
 CDC/MIDI/MSC/Vendor bulk 64). This is correct for S3 (FS) and P4 one-board
@@ -253,6 +254,7 @@ points, so they must compile independently of peer / loopback hardware tests.
 31. ✅ `loopback/hid_keyboard_layout`
 32. (no `loopback/usb_audio`: P4 audio is UAC2/HS, loopback is FS-only)
 33. ✅ `peer/usb_audio_microphone`
+34. ✅ `peer/usb_audio_headset`
 
 ## Acceptance Rules
 
