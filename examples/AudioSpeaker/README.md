@@ -1,4 +1,4 @@
-# EspUsbDevice AudioSink
+# EspUsbDevice AudioSpeaker
 
 > 日本語: [README.ja.md](README.ja.md)
 
@@ -17,7 +17,7 @@ latest samples to the Serial monitor. To play real audio, forward PCM from
 
 ## Behavior
 
-- Registers `EspUsbDeviceAudioSink` as a 48 kHz / 16-bit / stereo speaker.
+- Registers `EspUsbDeviceAudio` as a 48 kHz / 16-bit / stereo speaker.
 - When the host selects it as an audio output device, the speaker streaming
   interface becomes active.
 - Receives host PCM chunks through the `onPcm()` callback.
@@ -26,7 +26,7 @@ latest samples to the Serial monitor. To play real audio, forward PCM from
 
 ## Key API
 
-- `EspUsbDeviceAudioSink audio(device, 48000, ESP_USB_DEVICE_AUDIO_BITS_16, ESP_USB_DEVICE_AUDIO_SPK_STEREO)`
+- `EspUsbDeviceAudio audio(device, 48000, ESP_USB_DEVICE_AUDIO_BITS_16, ESP_USB_DEVICE_AUDIO_SPK_STEREO)`
   registers the USB Audio speaker function.
 - `audio.onPcm(callback)` receives Host -> Device speaker PCM. The callback
   receives `EspUsbDeviceAudioPcm` with `data`, `length`, `sampleRate`,

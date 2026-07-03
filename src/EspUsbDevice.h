@@ -392,7 +392,7 @@ private:
   friend class EspUsbDeviceHidConsumerControl;
   friend class EspUsbDeviceHidSystemControl;
   friend class EspUsbDeviceVendor;
-  friend class EspUsbDeviceAudioSink;
+  friend class EspUsbDeviceAudio;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
@@ -560,15 +560,15 @@ private:
   static uint8_t clamp7(uint8_t value);
 };
 
-class EspUsbDeviceAudioSink : public EspUsbDeviceClass
+class EspUsbDeviceAudio : public EspUsbDeviceClass
 {
 public:
-  EspUsbDeviceAudioSink(EspUsbDevice &device,
+  EspUsbDeviceAudio(EspUsbDevice &device,
                         uint32_t sampleRate = 48000,
                         EspUsbDeviceAudioBitsPerSample bitsPerSample = ESP_USB_DEVICE_AUDIO_BITS_16,
                         EspUsbDeviceAudioSpeakerChannels speakerChannels = ESP_USB_DEVICE_AUDIO_SPK_STEREO,
                         EspUsbDeviceAudioMicChannels micChannels = ESP_USB_DEVICE_AUDIO_MIC_NONE);
-  ~EspUsbDeviceAudioSink() override;
+  ~EspUsbDeviceAudio() override;
 
   bool begin() override;
   bool afterDeviceStarted() override;

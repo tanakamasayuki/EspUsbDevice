@@ -16,7 +16,7 @@ def _probe_device(device, pattern, retries=8, timeout=6):
     raise last
 
 
-def test_usb_audio_host_to_device(dut, peers):
+def test_usb_audio_speaker_host_to_device(dut, peers):
     device = peers["device"]
 
     device.expect_exact("AUDIO_DEVICE_READY 1")
@@ -38,7 +38,7 @@ def test_usb_audio_host_to_device(dut, peers):
     device.expect("DEVICE_RX_AUDIO [1-9][0-9]*")
 
 
-def test_usb_audio_volume_flood(dut, peers):
+def test_usb_audio_speaker_volume_flood(dut, peers):
     """Reproduce the crash seen on a real Windows host: dragging the volume
     slider sends a rapid burst of intermediate SET_CUR values. The host blasts
     rapid volume (then mute) changes; the device must keep running and must not

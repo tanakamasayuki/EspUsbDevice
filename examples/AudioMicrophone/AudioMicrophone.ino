@@ -5,12 +5,12 @@
 // exposes a mono 48 kHz / 16-bit recording device that streams a 440 Hz sine
 // tone. Select it as a recording/input device on the host to hear the tone.
 //
-// The same EspUsbDeviceAudioSink class handles both directions: speaker
+// The same EspUsbDeviceAudio class handles both directions: speaker
 // channels for host -> device (sink) and microphone channels for device ->
 // host (source). Here speaker is NONE and microphone is MONO.
 
 EspUsbDevice device;
-EspUsbDeviceAudioSink audio(device,
+EspUsbDeviceAudio audio(device,
                             48000,
                             ESP_USB_DEVICE_AUDIO_BITS_16,
                             ESP_USB_DEVICE_AUDIO_SPK_NONE,

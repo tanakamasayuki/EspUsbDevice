@@ -39,7 +39,7 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   control IN/OUT、WebUSB landing URL 読み出しを確認する。
 - `usb_audio`: 意図的に用意しない。P4 では本ライブラリの Audio は UAC2 / High Speed 専用だが、
   1台 loopback は Full Speed でしか動けない（下の P4 注記参照）ため、P4 Audio は loopback で
-  流せない。Audio は `peer/usb_audio`（S3, UAC1）と実機 HS 手動確認でカバーする。
+  流せない。Audio は `peer/usb_audio_speaker`（S3, UAC1）と実機 HS 手動確認でカバーする。
 
 ## P4 ポート / PHY の実態（2026-07 実機確認）
 

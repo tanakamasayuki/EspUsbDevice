@@ -1,4 +1,4 @@
-# EspUsbDevice AudioSinkM5Speaker
+# EspUsbDevice AudioSpeakerM5
 
 > 日本語: [README.ja.md](README.ja.md)
 
@@ -7,7 +7,7 @@ through an M5Stack-family board's built-in speaker.
 
 This example integrates EspUsbDevice, PCMFlow, PCMFlowDevice, and M5Unified.
 The EspUsbDevice library itself does not depend on PCMFlow or PCMFlowDevice.
-`EspUsbDeviceAudioSink` receives USB Audio, and PCMFlowDevice's
+`EspUsbDeviceAudio` receives USB Audio, and PCMFlowDevice's
 `M5SpeakerBufferedPlayer` owns the short-lived buffers needed for stable speaker
 playback.
 
@@ -35,7 +35,7 @@ playback.
 ```text
 PC / Host
   -> USB Audio speaker stream
-  -> EspUsbDeviceAudioSink::onPcm()
+  -> EspUsbDeviceAudio::onPcm()
   -> applyVolume()
   -> M5SpeakerBufferedPlayer::writePcm()
   -> M5.Speaker
@@ -43,7 +43,7 @@ PC / Host
 
 ## Key API
 
-- `EspUsbDeviceAudioSink` registers the USB Audio speaker function.
+- `EspUsbDeviceAudio` registers the USB Audio speaker function.
 - `audio.onPcm(callback)` receives the PCM buffer plus `sampleRate`,
   `channels`, and `bytesPerSample`.
 - `M5SpeakerBufferedPlayer::writePcm(data, bytes, format)` accepts 16-bit mono
@@ -65,6 +65,6 @@ PC / Host
 
 ## Related
 
-- [AudioSink](../AudioSink/) - minimal USB Audio speaker sink
+- [AudioSpeaker](../AudioSpeaker/) - minimal USB Audio speaker sink
 - [PCMFlow](https://github.com/tanakamasayuki/PCMFlow) - PCM data flow
 - [PCMFlowDevice](https://github.com/tanakamasayuki/PCMFlowDevice) - PCM output device integration

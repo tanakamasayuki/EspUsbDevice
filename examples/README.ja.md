@@ -121,31 +121,31 @@ UART MIDI 1.0 と USB MIDI 1.0 を相互変換する bridge example です。
 - Host からの USB-MIDI event packet を serial MIDI byte stream に戻します。
 - DIN MIDI 機器と USB MIDI host の bridge として使えます。
 
-## AudioSink
+## AudioSpeaker
 
 USB Audio speaker sink device の例です。
-詳しくは [AudioSink/README.ja.md](AudioSink/README.ja.md) を参照してください。
+詳しくは [AudioSpeaker/README.ja.md](AudioSpeaker/README.ja.md) を参照してください。
 
-- `EspUsbDeviceAudioSink` で Host からの speaker PCM を受け取ります。
+- `EspUsbDeviceAudio` で Host からの speaker PCM を受け取ります。
 - `onPcm()` callback で PCM chunk と format 情報を受信します。
 - `onEvent()` callback で volume、mute、sample rate、interface enable を受け取ります。
 - I2S bridge や codec 初期化はこのライブラリの責務外です。受信した PCM はアプリケーション、
   PCMFlow、PCMFlowDevice などへ渡せます。
 
-## Microphone
+## AudioMicrophone
 
 USB Audio source（マイク）device の例です。device から Host へ PCM を送ります。
 
-- `EspUsbDeviceAudioSink` を speaker `NONE` + microphone `MONO` で構成し、mono 48 kHz / 16-bit の
+- `EspUsbDeviceAudio` を speaker `NONE` + microphone `MONO` で構成し、mono 48 kHz / 16-bit の
   録音デバイスとして見せます。
 - `writeMic()` で Host へ PCM を送出します（ここでは 440 Hz の正弦波を生成）。
 - 同じクラスで両方向を扱います（speaker=Host→device、microphone=device→Host）。音声取り込みや
   codec 入力はアプリケーションの責務です。
 
-## AudioSinkM5Speaker
+## AudioSpeakerM5
 
 USB Audio speaker sink と PCMFlowDevice の M5 speaker helper をつなぐ例です。
-詳しくは [AudioSinkM5Speaker/README.ja.md](AudioSinkM5Speaker/README.ja.md) を参照してください。
+詳しくは [AudioSpeakerM5/README.ja.md](AudioSpeakerM5/README.ja.md) を参照してください。
 
 - PC から 48 kHz / 16-bit / stereo の USB Audio speaker として PCM を受け取ります。
 - `audio.applyVolume()` で Host 側の mute / volume を反映します。

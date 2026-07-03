@@ -6,7 +6,7 @@ static constexpr uint32_t kSampleRate = 48000;
 static constexpr size_t kMaxPlayFrames = (kSampleRate * 80u) / 1000u;
 
 EspUsbDevice device;
-EspUsbDeviceAudioSink audio(device,
+EspUsbDeviceAudio audio(device,
                             kSampleRate,
                             ESP_USB_DEVICE_AUDIO_BITS_16,
                             ESP_USB_DEVICE_AUDIO_SPK_STEREO,
@@ -77,7 +77,7 @@ void setup()
   M5.Display.setTextSize(2);
   M5.Display.setCursor(0, 0);
   M5.Display.println("EspUsbDevice");
-  M5.Display.println("AudioSink M5");
+  M5.Display.println("AudioSpeaker M5");
 
   M5.Speaker.begin();
   M5.Speaker.setVolume(128);
@@ -107,7 +107,7 @@ void setup()
     return;
   }
 
-  Serial.println("AudioSinkM5Speaker ready");
+  Serial.println("AudioSpeakerM5 ready");
   M5.Display.println("USB audio ready");
 }
 

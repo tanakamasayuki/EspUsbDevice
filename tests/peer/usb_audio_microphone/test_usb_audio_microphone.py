@@ -1,7 +1,7 @@
 import time
 
 
-def test_usb_audio_mic(dut, peers):
+def test_usb_audio_microphone(dut, peers):
     """USB Audio source (microphone): the device streams PCM to the host. Start
     the input stream and confirm device -> host PCM arrives and is non-silent."""
     device = peers["device"]

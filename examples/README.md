@@ -134,12 +134,12 @@ See [MIDIInterface/README.md](MIDIInterface/README.md) for details.
 - Convert host USB-MIDI event packets back to serial MIDI byte stream.
 - Use it as a bridge between DIN MIDI devices and a USB MIDI host.
 
-## AudioSink
+## AudioSpeaker
 
 USB Audio speaker sink device example.
-See [AudioSink/README.md](AudioSink/README.md) for details.
+See [AudioSpeaker/README.md](AudioSpeaker/README.md) for details.
 
-- Receive speaker PCM from the host with `EspUsbDeviceAudioSink`.
+- Receive speaker PCM from the host with `EspUsbDeviceAudio`.
 - Receive PCM chunks and format metadata through the `onPcm()` callback.
 - Receive volume, mute, sample-rate, and interface-enable changes through
   `onEvent()`.
@@ -147,21 +147,21 @@ See [AudioSink/README.md](AudioSink/README.md) for details.
   received PCM can be forwarded to the application, PCMFlow, PCMFlowDevice, or
   another output layer.
 
-## Microphone
+## AudioMicrophone
 
 USB Audio source (microphone) device example: the device sends PCM to the host.
 
-- Expose a mono 48 kHz / 16-bit recording device with `EspUsbDeviceAudioSink`
+- Expose a mono 48 kHz / 16-bit recording device with `EspUsbDeviceAudio`
   configured as speaker `NONE` + microphone `MONO`.
 - Push PCM toward the host with `writeMic()`; here a generated 440 Hz sine tone.
 - The same class covers both directions (speaker for host -> device, microphone
   for device -> host); audio capture/codec input is the application's job.
 
-## AudioSinkM5Speaker
+## AudioSpeakerM5
 
 Example that connects the USB Audio speaker sink to PCMFlowDevice's M5 speaker
 helper.
-See [AudioSinkM5Speaker/README.md](AudioSinkM5Speaker/README.md) for details.
+See [AudioSpeakerM5/README.md](AudioSpeakerM5/README.md) for details.
 
 - Receives PCM from the PC as a 48 kHz / 16-bit / stereo USB Audio speaker.
 - Applies host mute / volume with `audio.applyVolume()`.

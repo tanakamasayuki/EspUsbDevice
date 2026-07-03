@@ -42,7 +42,7 @@ port/speed behavior can be verified before broader class coverage is added.
 - `usb_audio`: intentionally omitted. On P4 this library's audio is UAC2 / high
   speed only, but one-board loopback can only run at full speed (see the P4 note
   below), so P4 audio cannot be exercised in loopback. Audio is covered by
-  `peer/usb_audio` (S3, UAC1) plus manual high-speed checks.
+  `peer/usb_audio_speaker` (S3, UAC1) plus manual high-speed checks.
 
 ## P4 port / PHY reality (verified 2026-07)
 
