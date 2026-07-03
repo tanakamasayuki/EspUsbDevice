@@ -147,6 +147,16 @@ See [AudioSink/README.md](AudioSink/README.md) for details.
   received PCM can be forwarded to the application, PCMFlow, PCMFlowDevice, or
   another output layer.
 
+## Microphone
+
+USB Audio source (microphone) device example: the device sends PCM to the host.
+
+- Expose a mono 48 kHz / 16-bit recording device with `EspUsbDeviceAudioSink`
+  configured as speaker `NONE` + microphone `MONO`.
+- Push PCM toward the host with `writeMic()`; here a generated 440 Hz sine tone.
+- The same class covers both directions (speaker for host -> device, microphone
+  for device -> host); audio capture/codec input is the application's job.
+
 ## AudioSinkM5Speaker
 
 Example that connects the USB Audio speaker sink to PCMFlowDevice's M5 speaker

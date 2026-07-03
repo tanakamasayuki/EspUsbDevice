@@ -143,8 +143,10 @@ UAC2 / high speed only (`TUD_OPT_HIGH_SPEED`), while one-board loopback is
 full-speed (single UTMI PHY held by the device), so the two are fundamentally
 incompatible. P4 audio (UAC2/HS) is therefore HS-only and validated by manual
 high-speed checks; a two-board P4 HS peer could add automated UAC2 coverage later.
-See `docs/DESIGN_NOTES.ja.md`. Microphone path, long playback, and real
-speaker-output checks also remain.
+See `docs/DESIGN_NOTES.ja.md`. `peer/usb_audio_mic` covers the USB Audio source
+(microphone) direction: the device streams generated PCM and the host verifies
+device -> host reception (S3, UAC1). Long playback, real speaker-output checks,
+and real microphone-capture input also remain.
 
 Endpoint sizing is currently full-speed-fixed for every class (HID interrupt 8,
 CDC/MIDI/MSC/Vendor bulk 64). This is correct for S3 (FS) and P4 one-board

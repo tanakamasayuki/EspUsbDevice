@@ -132,6 +132,16 @@ USB Audio speaker sink device の例です。
 - I2S bridge や codec 初期化はこのライブラリの責務外です。受信した PCM はアプリケーション、
   PCMFlow、PCMFlowDevice などへ渡せます。
 
+## Microphone
+
+USB Audio source（マイク）device の例です。device から Host へ PCM を送ります。
+
+- `EspUsbDeviceAudioSink` を speaker `NONE` + microphone `MONO` で構成し、mono 48 kHz / 16-bit の
+  録音デバイスとして見せます。
+- `writeMic()` で Host へ PCM を送出します（ここでは 440 Hz の正弦波を生成）。
+- 同じクラスで両方向を扱います（speaker=Host→device、microphone=device→Host）。音声取り込みや
+  codec 入力はアプリケーションの責務です。
+
 ## AudioSinkM5Speaker
 
 USB Audio speaker sink と PCMFlowDevice の M5 speaker helper をつなぐ例です。

@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Add a `Microphone` example and a `peer/usb_audio_mic` test for the USB Audio source (microphone) direction (`writeMic()` / device -> host PCM): the example streams a generated 440 Hz tone as a mono 48 kHz / 16-bit recording device, and the peer test verifies the host receives non-silent PCM (S3, UAC1).
+- (JA) USB Audio source（マイク）方向（`writeMic()` / device -> host PCM）の `Microphone` example と `peer/usb_audio_mic` テストを追加しました。example は mono 48 kHz / 16-bit の録音デバイスとして 440 Hz トーンを送出し、peer テストは Host が無音でない PCM を受信することを検証します（S3, UAC1）。
 
 ## 1.1.1
 - (EN) Fix a USB Audio crash where a rapid burst of volume/mute changes (e.g. dragging the Windows volume slider) rebooted the device. The audio control-transfer callback ran the user `onEvent()` on the 2048-byte Arduino USB event-loop task and overflowed its stack. Audio events now dispatch on a dedicated event loop with a generous stack, the event post is non-blocking (drops under overload instead of blocking the USB task), and the feature-unit channel index is bounds-checked. Adds a `peer/usb_audio` volume/mute flood regression test.
