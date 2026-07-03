@@ -41,12 +41,34 @@ port/speed behavior can be verified before broader class coverage is added.
   echo, application control IN/OUT, and WebUSB landing URL reads.
 - `usb_audio`: starts a USB Audio speaker sink on one P4, starts Host audio output,
   sends speaker PCM from the Host side, and verifies Device `onData()` reception.
+  Currently `xfail` on P4 (FS link but UAC2 descriptor vs UAC1-only host — see the
+  P4 note below).
+
+## P4 port / PHY reality (verified 2026-07)
+
+P4 has two USB OTG controllers but only one UTMI (high-speed) PHY
+(`SOC_USB_OTG_PERIPH_NUM=2`, `SOC_USB_UTMI_PHY_NUM=1`). The Arduino core pins the
+device stack to the HS/UTMI PHY (`EspUsbDeviceConfig.port`/`speed` are not wired to
+`tinyusb_init`). Speed and controller are separate: the HS-capable device still
+negotiates **Full Speed** when the link partner is a full-speed host.
+
+Consequences for one-board loopback:
+
+- The device sits on the HS/UTMI PHY but runs at FS against an FS host, and it
+  enumerates fine.
+- The single UTMI PHY is held by the device, so the host must use
+  `ESP_USB_HOST_PORT_FULL_SPEED`. An HS host collides on the PHY
+  (`usb_phy: selected PHY is in use`).
+- Therefore an HS link is impossible on one board; HS-link validation needs the
+  two-board peer setup.
 
 ## Matrix
 
 | Device | Host | Expected |
 |--------|------|----------|
-| FS device | FS host | Primary target if the SDK allows this pairing. |
-| HS device | HS host | Expected baseline for P4 high-speed paths. |
-| FS device | HS host | Probe/diagnostic case. |
-| HS device | FS host | Expected to fail or be unsupported; document explicitly. |
+| HS(UTMI) device, FS operation | FS host | The realizable one-board loopback. Device is HS-PHY-fixed but negotiates FS. |
+| HS device | HS host | Not possible on one P4 — the single UTMI PHY cannot be shared (PHY conflict). Use two boards for an HS link. |
+
+> `usb_audio` on P4 currently fails and is treated as a known limitation: the FS
+> link carries a UAC2 descriptor (compile-time `TUD_OPT_HIGH_SPEED`), but EspUsbHost
+> only parses UAC1. See `docs/DESIGN_NOTES.ja.md` "P4 USB ポート/PHY の実測整理".

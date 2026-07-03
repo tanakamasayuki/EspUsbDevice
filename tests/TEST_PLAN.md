@@ -74,7 +74,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | ✅ `usb_audio` speaker sink | | ✅ `examples/AudioSink` / `AudioSinkM5Speaker` |
+| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | ⚠️ `usb_audio` xfail (P4 FS link + UAC2 vs UAC1 host) | | ✅ `examples/AudioSink` / `AudioSinkM5Speaker` |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -137,9 +137,12 @@ First additions:
 CDC ACM, MIDI, MSC, USBVendor, and Audio require matching Device classes.
 EspUsbDevice-based counterparts for `peer/usb_serial`, `peer/usb_midi`,
 `peer/usb_msc`, `peer/usb_vendor`, and `peer/usb_audio` are in place.
-Audio is automated through the speaker-sink peer test and the `loopback/usb_audio`
-one-P4 test; microphone path, long playback, and real speaker-output checks
-remain.
+Audio is automated through the speaker-sink peer test. `loopback/usb_audio` exists
+but is `xfail` on P4: the one-board loopback link is Full Speed, yet the device
+emits a UAC2 descriptor (compile-time `TUD_OPT_HIGH_SPEED`) while EspUsbHost parses
+only UAC1. The fix is UAC1-at-FS on the device or a UAC2 parser in EspUsbHost (see
+`docs/DESIGN_NOTES.ja.md`). Microphone path, long playback, and real speaker-output
+checks also remain.
 
 `peer/usb_serial` is the first CDC ACM test for `EspUsbDeviceCdcSerial`. The
 Host side uses released `EspUsbHost` and `EspUsbHostCdcSerial`, then verifies
@@ -237,7 +240,7 @@ points, so they must compile independently of peer / loopback hardware tests.
 29. ✅ `loopback/hid_system_control`
 30. ✅ `peer/usb_audio`
 31. ✅ `loopback/hid_keyboard_layout`
-32. ✅ `loopback/usb_audio`
+32. ⚠️ `loopback/usb_audio` (xfail on P4: FS link + UAC2 vs UAC1 host)
 
 ## Acceptance Rules
 
