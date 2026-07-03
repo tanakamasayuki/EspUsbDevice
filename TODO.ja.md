@@ -2,7 +2,7 @@
 
 - [ ] USB Audio speaker sink の実機長時間確認。PC からの連続再生、volume / mute、stream stop / restart を見る。
 - [ ] `AudioSinkM5Speaker` の実音確認。PCMFlowDevice profile、drop / gap / wait の実測値を整理する。
-- [ ] USB Audio の loopback / manual test を追加する。自動化できる範囲と人が確認する範囲を分ける。
+- [x] USB Audio の loopback test を追加する（`loopback/usb_audio`）。manual test は自動化できる範囲と人が確認する範囲を分けて別途整理する。
 - [ ] USB Audio microphone path。`writeMic()` の example / test と、Device -> Host PCM の仕様を固める。
 - [ ] USB Audio composite device。HID / CDC / MIDI などとの複合化可否と制約を確認する。
 - [ ] USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API。

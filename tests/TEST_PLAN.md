@@ -74,7 +74,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | planned | | ✅ `examples/AudioSink` / `AudioSinkM5Speaker` |
+| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | ✅ `usb_audio` speaker sink | | ✅ `examples/AudioSink` / `AudioSinkM5Speaker` |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -100,7 +100,7 @@ runtime constraint.
 | Host feature | Device stimulus | Expected |
 |--------------|-----------------|----------|
 | `onKeyboard()` | `keyboard.write()` / `tapKey()` / `pressUsage()` | `pressed` / `released` / `keycode` / `ascii` / `modifiers` match |
-| Keyboard layout | ✅ `hid_keyboard_layout` | Symbols match for `EN_US` and `JA_JP` |
+| Keyboard layout | ✅ `hid_keyboard_layout` (peer + loopback) | Symbols match for `EN_US` and `JA_JP` |
 | Keyboard lock state | Host `setKeyboardLeds()`, Device `onOutputReport()` | NumLock / CapsLock / ScrollLock output reports are received |
 | `onMouse()` | `mouse.move()` / `wheel()` / `press()` / `release()` | `x` / `y` / `wheel` / `buttons` / `previousButtons` / `moved` / `buttonsChanged` match |
 | `onHIDInput()` | Keyboard/mouse input reports | raw input address / interface / subclass / protocol / length / bytes match |
@@ -137,8 +137,9 @@ First additions:
 CDC ACM, MIDI, MSC, USBVendor, and Audio require matching Device classes.
 EspUsbDevice-based counterparts for `peer/usb_serial`, `peer/usb_midi`,
 `peer/usb_msc`, `peer/usb_vendor`, and `peer/usb_audio` are in place.
-Audio is automated through the speaker-sink peer test; loopback, microphone
-path, long playback, and real speaker-output checks remain.
+Audio is automated through the speaker-sink peer test and the `loopback/usb_audio`
+one-P4 test; microphone path, long playback, and real speaker-output checks
+remain.
 
 `peer/usb_serial` is the first CDC ACM test for `EspUsbDeviceCdcSerial`. The
 Host side uses released `EspUsbHost` and `EspUsbHostCdcSerial`, then verifies
@@ -234,7 +235,9 @@ points, so they must compile independently of peer / loopback hardware tests.
 27. ✅ `loopback/hid_vendor`
 28. ✅ `loopback/hid_consumer_control`
 29. ✅ `loopback/hid_system_control`
-30. `peer/usb_audio`
+30. ✅ `peer/usb_audio`
+31. ✅ `loopback/hid_keyboard_layout`
+32. ✅ `loopback/usb_audio`
 
 ## Acceptance Rules
 

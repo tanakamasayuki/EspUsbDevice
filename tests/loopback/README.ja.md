@@ -26,6 +26,9 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   volume / media key の press / release を Host 側 `onConsumerControl()` で確認する。
 - `hid_system_control`: P4 1台上で system control device を起動し、
   power / standby / wake usage の press / release を Host 側 `onSystemControl()` で確認する。
+- `hid_keyboard_layout`: P4 1台上で keyboard device を起動し、Host 側と Device 側の
+  keyboard layout を揃えて切り替え、`EN_US` と `JA_JP` の記号キーが同じ ASCII として
+  Host 側 `onKeyboard()` に届くことを確認する。
 - `usb_serial`: P4 1台上で CDC ACM serial を起動し、Device -> Host、Host -> Device、
   line coding callback を確認する。
 - `usb_midi`: P4 1台上で USB MIDI を起動し、channel voice message と短い SysEx の
@@ -34,6 +37,8 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   inquiry / read / write / error path を確認する。
 - `usb_vendor`: P4 1台上で vendor-specific interface を起動し、bulk echo、application
   control IN/OUT、WebUSB landing URL 読み出しを確認する。
+- `usb_audio`: P4 1台上で USB Audio speaker sink を起動し、Host 側の audio output を
+  開始して speaker PCM を送信し、Device 側 `onData()` での受信を確認する。
 
 ## Matrix
 
