@@ -17,10 +17,6 @@
 #include "soc/soc_caps.h"
 #endif
 
-#if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED && __has_include("USBAudioCard.h")
-#include "USBAudioCard.h"
-#endif
-
 #if __has_include(<esp_err.h>)
 #include <esp_err.h>
 #else
@@ -601,7 +597,6 @@ private:
   EspUsbDeviceAudioBitsPerSample bitsPerSample_ = ESP_USB_DEVICE_AUDIO_BITS_16;
   EspUsbDeviceAudioSpeakerChannels speakerChannels_ = ESP_USB_DEVICE_AUDIO_SPK_STEREO;
   EspUsbDeviceAudioMicChannels micChannels_ = ESP_USB_DEVICE_AUDIO_MIC_NONE;
-  void *audioCard_ = nullptr;
   EspUsbDeviceAudioDataCallback dataCallback_;
   EspUsbDeviceAudioPcmCallback pcmCallback_;
   EspUsbDeviceAudioEventCallback eventCallback_;
