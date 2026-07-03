@@ -146,6 +146,13 @@ high-speed checks; a two-board P4 HS peer could add automated UAC2 coverage late
 See `docs/DESIGN_NOTES.ja.md`. Microphone path, long playback, and real
 speaker-output checks also remain.
 
+Endpoint sizing is currently full-speed-fixed for every class (HID interrupt 8,
+CDC/MIDI/MSC/Vendor bulk 64). This is correct for S3 (FS) and P4 one-board
+loopback (FS), but a P4 device on a real high-speed host is non-compliant for
+bulk (HS bulk must be 512). We accept this for now since FS loopback is the
+primary target; the correct fix is per-speed descriptors, deferred to the
+real-PC/HS milestone. See `docs/DESIGN_NOTES.ja.md` "bulk エンドポイントサイズと HS 準拠".
+
 `peer/usb_serial` is the first CDC ACM test for `EspUsbDeviceCdcSerial`. The
 Host side uses released `EspUsbHost` and `EspUsbHostCdcSerial`, then verifies
 Device -> Host, Host -> Device, and line coding callbacks. The default profile
