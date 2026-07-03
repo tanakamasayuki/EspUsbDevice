@@ -37,9 +37,9 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   inquiry / read / write / error path を確認する。
 - `usb_vendor`: P4 1台上で vendor-specific interface を起動し、bulk echo、application
   control IN/OUT、WebUSB landing URL 読み出しを確認する。
-- `usb_audio`: P4 1台上で USB Audio speaker sink を起動し、Host 側の audio output を
-  開始して speaker PCM を送信し、Device 側 `onData()` での受信を確認する。
-  現状 P4 では `xfail`（FS リンクなのに UAC2 descriptor を出し、host が UAC1 のみ対応のため。下の P4 注記参照）。
+- `usb_audio`: 意図的に用意しない。P4 では本ライブラリの Audio は UAC2 / High Speed 専用だが、
+  1台 loopback は Full Speed でしか動けない（下の P4 注記参照）ため、P4 Audio は loopback で
+  流せない。Audio は `peer/usb_audio`（S3, UAC1）と実機 HS 手動確認でカバーする。
 
 ## P4 ポート / PHY の実態（2026-07 実機確認）
 
@@ -63,6 +63,7 @@ FS ホストなら **Full Speed** でネゴして動く。
 | HS(UTMI) device / FS 動作 | FS host | 1台 loopback で実現できる構成。デバイスは HS PHY 固定だが FS でネゴ。 |
 | HS device | HS host | 1台 P4 では不可。UTMI PHY を共有できず衝突。HS リンクは2台構成で。 |
 
-> P4 の `usb_audio` は現状 fail で既知制約扱い。FS リンクなのに UAC2 descriptor
-> （コンパイル時 `TUD_OPT_HIGH_SPEED`）を出し、EspUsbHost は UAC1 のみ解釈するため。
+> P4 に audio loopback は無い：本ライブラリの Audio は P4 で UAC2 / High Speed
+> （`TUD_OPT_HIGH_SPEED`）専用だが、1台 loopback のリンクは Full Speed なので原理的に噛み合わない。
+> よって P4 Audio は HS 専用とし、loopback 外で検証する。
 > 詳細は `docs/DESIGN_NOTES.ja.md`「P4 USB ポート/PHY の実測整理」。
