@@ -58,8 +58,6 @@ void setup()
   smoothedAdc = analogRead(CONTROLLER_PIN);
 
   EspUsbDeviceConfig config;
-  config.port = ESP_USB_DEVICE_PORT_FULL_SPEED;
-  config.speed = ESP_USB_DEVICE_SPEED_FULL;
   config.vid = 0x303a;
   config.pid = 0x4018;
   config.manufacturer = "EspUsb";

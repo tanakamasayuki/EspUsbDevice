@@ -28,7 +28,6 @@ static void testKeyboardDescriptor()
   EspUsbDeviceHidKeyboard keyboard(device);
 
   EspUsbDeviceConfig config;
-  config.speed = ESP_USB_DEVICE_SPEED_FULL;
   config.vid = 0x303a;
   config.pid = 0x4001;
   config.manufacturer = "EspUsb";

@@ -90,8 +90,6 @@ void setup()
   keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);
 
   EspUsbDeviceConfig deviceConfig;
-  deviceConfig.port = ESP_USB_DEVICE_PORT_FULL_SPEED;
-  deviceConfig.speed = ESP_USB_DEVICE_SPEED_FULL;
   deviceConfig.vid = 0x303a;
   deviceConfig.pid = 0x4009;
   deviceConfig.manufacturer = "EspUsb";

@@ -94,8 +94,6 @@ void setup()
   audio.onEvent(onAudioEvent);
 
   EspUsbDeviceConfig usb;
-  usb.port = ESP_USB_DEVICE_PORT_FULL_SPEED;
-  usb.speed = ESP_USB_DEVICE_SPEED_FULL;
   usb.vid = 0x303a;
   usb.pid = 0x4021;
   usb.manufacturer = "EspUsb";
