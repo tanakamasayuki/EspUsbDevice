@@ -9,6 +9,8 @@ EspUsbDeviceAudioSink audio(device,
 
 static uint32_t receivedAudioBytes = 0;
 static bool receivedAudioReported = false;
+static volatile uint32_t volumeEventCount = 0;
+static volatile uint32_t muteEventCount = 0;
 
 static void audioEventCallback(const EspUsbDeviceAudioEvent &event)
 {
@@ -17,6 +19,24 @@ static void audioEventCallback(const EspUsbDeviceAudioEvent &event)
     Serial.printf("AUDIO_INTERFACE %s %u\n",
                   event.interface == ESP_USB_DEVICE_AUDIO_INTERFACE_MIC ? "MIC" : "SPK",
                   event.enabled ? 1 : 0);
+  }
+  else if (event.type == ESP_USB_DEVICE_AUDIO_EVENT_VOLUME)
+  {
+    // A real app often does visible work per volume event (log / update UI).
+    // Keep it lightweight but non-trivial so consumer pressure is realistic.
+    volumeEventCount++;
+    Serial.printf("DEV_VOL ch=%u db=%d n=%lu\n",
+                  static_cast<unsigned>(event.channel),
+                  event.volumeDb,
+                  static_cast<unsigned long>(volumeEventCount));
+  }
+  else if (event.type == ESP_USB_DEVICE_AUDIO_EVENT_MUTE)
+  {
+    muteEventCount++;
+    Serial.printf("DEV_MUTE ch=%u m=%u n=%lu\n",
+                  static_cast<unsigned>(event.channel),
+                  event.muted ? 1 : 0,
+                  static_cast<unsigned long>(muteEventCount));
   }
 }
 
@@ -60,6 +80,15 @@ void loop()
       receivedAudioBytes = 0;
       receivedAudioReported = false;
       Serial.println("DEVICE_AUDIO_RESET");
+    }
+    else if (command == '?')
+    {
+      // Liveness probe. If the device rebooted during a volume flood, setup()
+      // reruns and prints AUDIO_DEVICE_READY again; a healthy device answers
+      // here with its accumulated event counts and never reset.
+      Serial.printf("DEVICE_ALIVE vol=%lu mute=%lu\n",
+                    static_cast<unsigned long>(volumeEventCount),
+                    static_cast<unsigned long>(muteEventCount));
     }
   }
   delay(1);

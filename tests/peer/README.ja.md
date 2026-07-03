@@ -44,6 +44,8 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `usb_msc`: USB Mass Storage。単一 LUN RAM disk の capacity / inquiry / read / write / error path が S3 2台構成で通過済み。
 - `usb_vendor`: vendor-specific interface。interface / bulk endpoint 列挙、bulk echo、application vendor control IN/OUT、WebUSB landing URL 読み出しが S3 2台構成で通過済み。
 - `usb_audio`: USB Audio speaker sink。Host から Device への speaker PCM 受信が S3 2台構成で通過済み（UAC1 / FS）。
+  `test_usb_audio_volume_flood` は、実 Windows で volume スライダーをドラッグしたときのように volume / mute の
+  SET_CUR を高速連打し、デバイスが再起動せず動き続けることを検証する（実機不具合の再現テスト）。
   P4 の loopback 版は用意しない：P4 の Audio は UAC2 / High Speed 専用で、1台 loopback は Full Speed の
   ため原理的に噛み合わないため。P4 Audio(UAC2/HS) は実機 HS 手動確認でカバーする。
 

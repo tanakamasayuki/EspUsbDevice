@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Fix a USB Audio crash where a rapid burst of volume/mute changes (e.g. dragging the Windows volume slider) rebooted the device. The audio control-transfer callback ran the user `onEvent()` on the 2048-byte Arduino USB event-loop task and overflowed its stack. Audio events now dispatch on a dedicated event loop with a generous stack, the event post is non-blocking (drops under overload instead of blocking the USB task), and the feature-unit channel index is bounds-checked. Adds a `peer/usb_audio` volume/mute flood regression test.
+- (JA) USB Audio の音量/ミュートを高速連打（Windows の音量スライダードラッグ等）するとデバイスが再起動するクラッシュを修正しました。audio のコントロール転送コールバックがユーザーの `onEvent()` を 2048 バイトの Arduino USB イベントループタスク上で実行し、スタックオーバーフローしていました。audio イベントを大きめのスタックを持つ専用イベントループで配送し、ポストをノンブロッキング化（過負荷時は USB タスクを止めず破棄）、フィーチャーユニットのチャンネル番号に境界チェックを追加しました。`peer/usb_audio` に音量/ミュート連打の回帰テストを追加しています。
 
 ## 1.1.0
 - (EN) **Breaking:** remove `EspUsbDeviceConfig::port` / `speed` and the `EspUsbDevicePort` / `EspUsbDeviceSpeed` enums. The device no longer selects its USB port/speed: on ESP32-P4 the Arduino core fixes the device to the high-speed (UTMI) controller and the actual link speed is negotiated with the host. Remove any `config.port` / `config.speed` assignments from sketches.
