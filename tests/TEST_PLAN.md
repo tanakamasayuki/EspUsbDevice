@@ -74,7 +74,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | ⚠️ `usb_audio` xfail (P4 FS link + UAC2 vs UAC1 host) | | ✅ `examples/AudioSink` / `AudioSinkM5Speaker` |
+| USB Audio | ✅ compile smoke | ✅ `usb_audio` speaker sink | N/A (P4 audio is UAC2/HS; loopback is FS-only) | | ✅ `examples/AudioSink` / `AudioSinkM5Speaker` (P4 HS) |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -137,12 +137,14 @@ First additions:
 CDC ACM, MIDI, MSC, USBVendor, and Audio require matching Device classes.
 EspUsbDevice-based counterparts for `peer/usb_serial`, `peer/usb_midi`,
 `peer/usb_msc`, `peer/usb_vendor`, and `peer/usb_audio` are in place.
-Audio is automated through the speaker-sink peer test. `loopback/usb_audio` exists
-but is `xfail` on P4: the one-board loopback link is Full Speed, yet the device
-emits a UAC2 descriptor (compile-time `TUD_OPT_HIGH_SPEED`) while EspUsbHost parses
-only UAC1. The fix is UAC1-at-FS on the device or a UAC2 parser in EspUsbHost (see
-`docs/DESIGN_NOTES.ja.md`). Microphone path, long playback, and real speaker-output
-checks also remain.
+Audio is automated through the speaker-sink peer test (S3, UAC1 / full speed).
+There is deliberately no P4 loopback audio test: on P4 this library's audio is
+UAC2 / high speed only (`TUD_OPT_HIGH_SPEED`), while one-board loopback is
+full-speed (single UTMI PHY held by the device), so the two are fundamentally
+incompatible. P4 audio (UAC2/HS) is therefore HS-only and validated by manual
+high-speed checks; a two-board P4 HS peer could add automated UAC2 coverage later.
+See `docs/DESIGN_NOTES.ja.md`. Microphone path, long playback, and real
+speaker-output checks also remain.
 
 `peer/usb_serial` is the first CDC ACM test for `EspUsbDeviceCdcSerial`. The
 Host side uses released `EspUsbHost` and `EspUsbHostCdcSerial`, then verifies
@@ -240,7 +242,7 @@ points, so they must compile independently of peer / loopback hardware tests.
 29. ✅ `loopback/hid_system_control`
 30. ✅ `peer/usb_audio`
 31. ✅ `loopback/hid_keyboard_layout`
-32. ⚠️ `loopback/usb_audio` (xfail on P4: FS link + UAC2 vs UAC1 host)
+32. (no `loopback/usb_audio`: P4 audio is UAC2/HS, loopback is FS-only)
 
 ## Acceptance Rules
 
