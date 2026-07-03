@@ -708,11 +708,6 @@ const EspUsbDeviceConfig &EspUsbDevice::config() const
   return config_;
 }
 
-EspUsbDeviceSpeed EspUsbDevice::requestedSpeed() const
-{
-  return config_.speed;
-}
-
 uint16_t EspUsbDevice::hidEndpointSize() const
 {
   return 8;

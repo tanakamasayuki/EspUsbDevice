@@ -31,20 +31,11 @@ typedef int esp_err_t;
 #define ESP_ERR_NOT_SUPPORTED 0x106
 #endif
 
-enum EspUsbDevicePort
-{
-  ESP_USB_DEVICE_PORT_DEFAULT = 0,
-  ESP_USB_DEVICE_PORT_HIGH_SPEED,
-  ESP_USB_DEVICE_PORT_FULL_SPEED,
-};
-
-enum EspUsbDeviceSpeed
-{
-  ESP_USB_DEVICE_SPEED_DEFAULT = 0,
-  ESP_USB_DEVICE_SPEED_FULL,
-  ESP_USB_DEVICE_SPEED_HIGH,
-};
-
+// Note: the device does not select its USB port or speed. On P4 the Arduino core
+// pins the device stack to the HS/UTMI controller, and the actual link speed is
+// negotiated with the host. Endpoint sizes and descriptor variants should follow
+// the negotiated speed, not a sketch-declared value, so there is no port/speed
+// field here. See docs/DESIGN_NOTES.ja.md "P4 USB ポート/PHY の実測整理".
 enum EspUsbDeviceKeyboardLayout : uint16_t
 {
   ESP_USB_DEVICE_KEYBOARD_LAYOUT_ZH_TW = 0x0404,
@@ -70,8 +61,6 @@ enum EspUsbDeviceKeyboardLayout : uint16_t
 
 struct EspUsbDeviceConfig
 {
-  EspUsbDevicePort port = ESP_USB_DEVICE_PORT_DEFAULT;
-  EspUsbDeviceSpeed speed = ESP_USB_DEVICE_SPEED_DEFAULT;
   const char *manufacturer = "EspUsbDevice";
   const char *product = "EspUsbDevice";
   const char *serialNumber = nullptr;
@@ -378,7 +367,6 @@ public:
   bool ready() const;
 
   const EspUsbDeviceConfig &config() const;
-  EspUsbDeviceSpeed requestedSpeed() const;
   uint16_t hidEndpointSize() const;
   esp_err_t lastError() const;
   const char *lastErrorName() const;
