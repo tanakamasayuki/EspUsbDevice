@@ -39,12 +39,30 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   control IN/OUT、WebUSB landing URL 読み出しを確認する。
 - `usb_audio`: P4 1台上で USB Audio speaker sink を起動し、Host 側の audio output を
   開始して speaker PCM を送信し、Device 側 `onData()` での受信を確認する。
+  現状 P4 では `xfail`（FS リンクなのに UAC2 descriptor を出し、host が UAC1 のみ対応のため。下の P4 注記参照）。
+
+## P4 ポート / PHY の実態（2026-07 実機確認）
+
+P4 は OTG コントローラが2個あるが UTMI(HS) PHY は1個だけ
+（`SOC_USB_OTG_PERIPH_NUM=2`, `SOC_USB_UTMI_PHY_NUM=1`）。Arduino core がデバイス
+スタックを HS/UTMI PHY に固定しており、`EspUsbDeviceConfig.port` / `speed` は
+`tinyusb_init` に渡っていない。速度とコントローラは別で、HS 対応デバイスでも相手が
+FS ホストなら **Full Speed** でネゴして動く。
+
+1台 loopback での帰結:
+
+- デバイスは HS/UTMI PHY 上にいるが FS ホスト相手なので FS 動作。enumerate は正常。
+- 唯一の UTMI PHY をデバイスが握るため、ホストは `ESP_USB_HOST_PORT_FULL_SPEED` 限定。
+  ホストを HS にすると PHY 衝突（`usb_phy: selected PHY is in use`）。
+- よって 1台では HS リンクは作れない。HS リンクの検証は2台構成の peer で行う。
 
 ## Matrix
 
 | Device | Host | 期待 |
 |--------|------|------|
-| FS device | FS host | SDK が許すなら最重要ターゲット。 |
-| HS device | HS host | P4 high-speed 経路の baseline。 |
-| FS device | HS host | probe / diagnostic 用。 |
-| HS device | FS host | 失敗または未対応想定。明示的に記録する。 |
+| HS(UTMI) device / FS 動作 | FS host | 1台 loopback で実現できる構成。デバイスは HS PHY 固定だが FS でネゴ。 |
+| HS device | HS host | 1台 P4 では不可。UTMI PHY を共有できず衝突。HS リンクは2台構成で。 |
+
+> P4 の `usb_audio` は現状 fail で既知制約扱い。FS リンクなのに UAC2 descriptor
+> （コンパイル時 `TUD_OPT_HIGH_SPEED`）を出し、EspUsbHost は UAC1 のみ解釈するため。
+> 詳細は `docs/DESIGN_NOTES.ja.md`「P4 USB ポート/PHY の実測整理」。

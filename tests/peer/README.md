@@ -52,8 +52,9 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   enumeration, bulk echo, application vendor control IN/OUT, and WebUSB landing
   URL reads pass on the two-board S3 setup.
 - `usb_audio`: USB Audio speaker sink. Host -> Device speaker PCM reception
-  passes on the two-board S3 setup. The same speaker-sink path is also covered by
-  `loopback/usb_audio` on one P4.
+  passes on the two-board S3 setup (UAC1 / full speed). `loopback/usb_audio` mirrors
+  it on one P4 but is `xfail`: the P4 loopback link is FS while the device emits a
+  UAC2 descriptor and EspUsbHost parses only UAC1.
 
-Audio follow-up work remains for microphone path, long playback, and real
-speaker-output checks.
+Audio follow-up work remains for the P4 UAC1/UAC2 speed handling, microphone path,
+long playback, and real speaker-output checks.
