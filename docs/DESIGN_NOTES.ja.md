@@ -475,14 +475,17 @@ P4 1台で host と device を同時に起動するテストです。
 既存の Arduino USB Device では P4 device が HS 固定になり、FS host 側 loopback が失敗しました。
 `EspUsbDevice` では P4 の port/speed を明示し、以下を検証します。
 
-- HS device + HS host loopback。
-- FS device + FS host loopback。実装可能であれば最重要。
-- HS host に FS device を接続した場合の挙動。
+- FS リンクの loopback（device は HS/UTMI PHY 上で FS 動作、host は FS 側）。これが 1台で実現できる唯一の形。
 - endpoint MPS が speed と class に対して正しいこと。
-- P4 SDK の HS Host Hub 非対応制約を回避できないケースは明示的に skip/xfail。
+- HS device + HS host の loopback は **1台では不可**（UTMI PHY が1個で共有できない）。HS リンクは 2台 peer が必要。詳細は「P4 USB ポート/PHY の実測整理」。
 
 Loopback は最初からすべて通す必要はありません。
 まずは device speed と descriptor が意図通りになっていることをログ化できる probe を作り、その後 HID keyboard から自動テスト化します。
+
+> 【メモ / 将来の P4 peer との関係】P4 の HS パス（HS enumerate、bulk=512、UAC2/HS audio 等）は
+> loopback では物理的に届かないため、将来は **P4 2台の HS peer**（両側とも無指定で HS になる）を追加して補完するのが自然。
+> ただし **P4 peer は2台＋配線が要り維持コストが高く、常時 CI 的には回せない想定**。位置づけは「HS 検証用の時々／手動レイヤー」。
+> 一方 **loopback は1台で回せて、P4 FS＋両スタック共存を検証できる主力**として維持する。両者は置き換えでなく補完。
 
 ### Probe
 
