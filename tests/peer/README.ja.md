@@ -49,4 +49,7 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   P4 の loopback 版は用意しない：P4 の Audio は UAC2 / High Speed 専用で、1台 loopback は Full Speed の
   ため原理的に噛み合わないため。P4 Audio(UAC2/HS) は実機 HS 手動確認でカバーする。
 
-Audio の残作業は microphone path、長時間再生、実音確認、（任意で）UAC2 検証用の P4 2台 HS peer です。
+- `usb_audio_mic`: USB Audio source（マイク）。device が生成した sawtooth を Host へストリームし、
+  Host 側で入力ストリームを開始して device → Host の PCM が届き無音でないことを検証する。S3 2台構成の UAC1 / FS。
+
+Audio の残作業は長時間再生、実音確認、実マイク入力の取り込み、（任意で）UAC2 検証用の P4 2台 HS peer です。

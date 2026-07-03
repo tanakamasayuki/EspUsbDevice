@@ -60,5 +60,9 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   full-speed, so the two cannot meet. P4 audio (UAC2/HS) is validated by manual
   high-speed checks.
 
-Audio follow-up work remains for microphone path, long playback, real
-speaker-output checks, and (optionally) a two-board P4 HS peer for UAC2 coverage.
+- `usb_audio_mic`: USB Audio source (microphone). The device streams a generated
+  sawtooth to the host; the host starts the input stream and verifies device ->
+  host PCM arrives and is non-silent. UAC1 / full speed on the two-board S3 setup.
+
+Audio follow-up work remains for long playback, real speaker-output checks, real
+microphone-capture input, and (optionally) a two-board P4 HS peer for UAC2 coverage.
