@@ -52,7 +52,8 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   enumeration, bulk echo, application vendor control IN/OUT, and WebUSB landing
   URL reads pass on the two-board S3 setup.
 - `usb_audio`: USB Audio speaker sink. Host -> Device speaker PCM reception
-  passes on the two-board S3 setup.
+  passes on the two-board S3 setup. The same speaker-sink path is also covered by
+  `loopback/usb_audio` on one P4.
 
-Audio follow-up work remains for loopback, microphone path, long playback, and
-real speaker-output checks.
+Audio follow-up work remains for microphone path, long playback, and real
+speaker-output checks.

@@ -28,6 +28,9 @@ port/speed behavior can be verified before broader class coverage is added.
   volume / media-key press and release events through Host `onConsumerControl()`.
 - `hid_system_control`: starts a system control device on one P4 and verifies
   power / standby / wake press and release events through Host `onSystemControl()`.
+- `hid_keyboard_layout`: starts a keyboard device on one P4, switches the Host and
+  Device keyboard layout together, and verifies that `EN_US` and `JA_JP` symbol keys
+  arrive as the same ASCII through Host `onKeyboard()`.
 - `usb_serial`: starts CDC ACM serial on one P4 and verifies Device -> Host,
   Host -> Device, and line coding callbacks.
 - `usb_midi`: starts USB MIDI on one P4 and verifies channel voice messages and
@@ -36,6 +39,8 @@ port/speed behavior can be verified before broader class coverage is added.
   capacity, inquiry, read, write, and error paths.
 - `usb_vendor`: starts a vendor-specific interface on one P4 and verifies bulk
   echo, application control IN/OUT, and WebUSB landing URL reads.
+- `usb_audio`: starts a USB Audio speaker sink on one P4, starts Host audio output,
+  sends speaker PCM from the Host side, and verifies Device `onData()` reception.
 
 ## Matrix
 

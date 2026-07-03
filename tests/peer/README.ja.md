@@ -44,5 +44,6 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `usb_msc`: USB Mass Storage。単一 LUN RAM disk の capacity / inquiry / read / write / error path が S3 2台構成で通過済み。
 - `usb_vendor`: vendor-specific interface。interface / bulk endpoint 列挙、bulk echo、application vendor control IN/OUT、WebUSB landing URL 読み出しが S3 2台構成で通過済み。
 - `usb_audio`: USB Audio speaker sink。Host から Device への speaker PCM 受信が S3 2台構成で通過済み。
+  同じ speaker-sink 経路は P4 1台の `loopback/usb_audio` でも確認する。
 
-Audio の残作業は loopback、microphone path、長時間再生、実音確認です。
+Audio の残作業は microphone path、長時間再生、実音確認です。
