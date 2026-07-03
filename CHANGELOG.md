@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 1.1.0
 - (EN) **Breaking:** remove `EspUsbDeviceConfig::port` / `speed` and the `EspUsbDevicePort` / `EspUsbDeviceSpeed` enums. The device no longer selects its USB port/speed: on ESP32-P4 the Arduino core fixes the device to the high-speed (UTMI) controller and the actual link speed is negotiated with the host. Remove any `config.port` / `config.speed` assignments from sketches.
 - (JA) **破壊的変更:** `EspUsbDeviceConfig::port` / `speed` と `EspUsbDevicePort` / `EspUsbDeviceSpeed` を削除しました。デバイスは USB ポート/速度を選択しません（ESP32-P4 では Arduino core がデバイスを High Speed(UTMI) コントローラに固定し、実速度はホストとのネゴで決まります）。スケッチから `config.port` / `config.speed` の代入を削除してください。
 - (EN) Add the `tests/loopback/hid_keyboard_layout` test, verifying that EN_US / JA_JP symbol keys round-trip through the host on a single ESP32-P4.
