@@ -67,6 +67,24 @@ static void onAudioEvent(const EspUsbDeviceAudioEvent &event)
   }
 }
 
+static int rateLineY = 0;
+static uint32_t shownRate = 0xFFFFFFFFu;
+
+// Draw the current USB Audio sample rate on a fixed screen line, repainting only
+// when it changes (the host can change it at runtime via the sampling-freq
+// control). The fixed-width field overwrites any previous digits.
+static void showSampleRate(uint32_t rate)
+{
+  if (rate == shownRate)
+  {
+    return;
+  }
+  shownRate = rate;
+  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5.Display.setCursor(0, rateLineY);
+  M5.Display.printf("Rate:%6lu Hz", static_cast<unsigned long>(rate));
+}
+
 void setup()
 {
   auto cfg = M5.config();
@@ -109,11 +127,14 @@ void setup()
 
   Serial.println("AudioSpeakerM5 ready");
   M5.Display.println("USB audio ready");
+  rateLineY = M5.Display.getCursorY();
+  showSampleRate(audio.sampleRate());
 }
 
 void loop()
 {
   M5.update();
+  showSampleRate(audio.sampleRate());
 
   const uint32_t now = millis();
   if (now - lastLogMs >= 1000)

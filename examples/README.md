@@ -196,13 +196,18 @@ USB Audio microphone backed by the M5 built-in microphone (device -> host).
 ## AudioHeadsetM5
 
 USB Audio headset backed by M5 hardware: M5 speaker playback (host -> device)
-and M5 microphone capture (device -> host) at the same time.
+and M5 microphone capture (device -> host).
 
 - Plays received PCM on `M5.Speaker` via PCMFlowDevice's `M5SpeakerBufferedPlayer`
-  and streams `M5.Mic` capture back to the host, both mono 16 kHz / 16-bit.
-- Full duplex needs hardware whose speaker and mic are on independent buses
-  (e.g. CoreS3). On shared-I2S devices (M5StickC, Core2) only the last-started
-  direction produces sound.
+  and streams `M5.Mic` capture back to the host, at 48 kHz / 16-bit (stereo
+  speaker, mono microphone); the shared USB sample rate applies to both.
+- **Known limitation:** running the M5 speaker and mic at the same time is not
+  reliably supported. M5Unified drives both through one I2S port installed
+  TX-only / RX-only and each `begin()` uninstalls the other, so full duplex
+  glitches — confirmed on CoreS3 too (a second I2S port did not help). This is a
+  best-effort demo. Use `AudioSpeakerM5` or `AudioMicrophoneM5` for reliable
+  single-direction audio, or the non-M5 `AudioHeadset` for a both-directions
+  demo over USB.
 
 ## MSC
 
