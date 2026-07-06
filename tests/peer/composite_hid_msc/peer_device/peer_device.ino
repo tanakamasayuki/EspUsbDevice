@@ -43,6 +43,34 @@ static int32_t onRead(uint32_t lba, uint32_t offset, void *buffer, uint32_t bufs
   return bufsize;
 }
 
+// EspUsbDeviceMsc::begin() requires both a read and a write callback, so this
+// must be set even for a capacity-only test.
+static int32_t onWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t bufsize)
+{
+  if (lba >= BLOCK_COUNT || offset >= BLOCK_SIZE)
+  {
+    return -1;
+  }
+  uint8_t *in = buffer;
+  uint32_t remaining = bufsize;
+  uint32_t currentLba = lba;
+  uint32_t currentOffset = offset;
+  while (remaining > 0)
+  {
+    if (currentLba >= BLOCK_COUNT)
+    {
+      return -1;
+    }
+    const uint32_t chunk = min<uint32_t>(remaining, BLOCK_SIZE - currentOffset);
+    memcpy(disk[currentLba] + currentOffset, in, chunk);
+    in += chunk;
+    remaining -= chunk;
+    currentLba++;
+    currentOffset = 0;
+  }
+  return bufsize;
+}
+
 static bool tapKeyWithRetry(char c)
 {
   const uint32_t start = millis();
@@ -72,7 +100,9 @@ void setup()
   MSC.productID("MSC_HID");
   MSC.productRevision("1.0");
   MSC.onRead(onRead);
+  MSC.onWrite(onWrite);
   MSC.mediaPresent(true);
+  MSC.isWritable(true);
   MSC.begin(BLOCK_COUNT, BLOCK_SIZE);
 
   EspUsbDeviceConfig config;
