@@ -253,6 +253,16 @@ static uint16_t espUsbDeviceLoadHidDescriptor(uint8_t *dst, uint8_t *itf)
   }
   const uint16_t interfaceLength = totalLength - 9;
   memcpy(dst, config + 9, interfaceLength);
+  // The HID interface number is baked as 0 in configDescriptor_, but the
+  // Arduino-ESP32 core assigns interface numbers dynamically in load order
+  // (MSC/DFU precede HID in the interface enum). Renumber the HID interface
+  // to the core-assigned slot (*itf) so it does not collide with an interface
+  // loaded before it (e.g. MSC becomes interface 0, HID becomes interface 1).
+  // dst[2] is the first interface descriptor's bInterfaceNumber.
+  if (interfaceLength >= 3 && dst[1] == USB_DESC_INTERFACE)
+  {
+    dst[2] = *itf;
+  }
   *itf = static_cast<uint8_t>(*itf + config[4]);
   return interfaceLength;
 }
