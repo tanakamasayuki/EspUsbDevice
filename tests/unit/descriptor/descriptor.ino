@@ -61,7 +61,7 @@ static void testKeyboardDescriptor()
   const uint8_t *epOut = &cfg[27];
   const uint8_t *epIn = &cfg[34];
   check(epOut[0] == 7 && epOut[1] == 0x05 && epOut[2] == 0x01, "keyboard_ep_out_addr");
-  check(epIn[0] == 7 && epIn[1] == 0x05 && epIn[2] == 0x82, "keyboard_ep_in_addr");
+  check(epIn[0] == 7 && epIn[1] == 0x05 && epIn[2] == 0x81, "keyboard_ep_in_addr");
   check(le16(&epOut[4]) == 8 && le16(&epIn[4]) == 8, "keyboard_ep_mps");
 
   check(device.hidReportDescriptor(0) == keyboard.hidReportDescriptor(), "keyboard_report_descriptor_ptr");
@@ -108,7 +108,7 @@ static void testCompositeDescriptor()
   check(cfg[4] == 1, "composite_interface_count");
   check(cfg[9 + 2] == 0, "composite_interface_number");
   check(cfg[9 + 5] == 0x03 && cfg[9 + 6] == 0x00 && cfg[9 + 7] == 0x00, "composite_hid_no_boot_protocol");
-  check(cfg[27 + 2] == 0x01 && cfg[34 + 2] == 0x82, "composite_eps");
+  check(cfg[27 + 2] == 0x01 && cfg[34 + 2] == 0x81, "composite_eps");
   check(le16(&cfg[27 + 4]) == 16 && le16(&cfg[34 + 4]) == 16, "composite_ep_mps");
 
   const uint8_t *report = device.hidReportDescriptor(0);
@@ -170,7 +170,10 @@ static void testCompositeWithVendorDescriptor()
   check(cfg[9 + 2] == 0, "composite_vendor_hid_interface_number");
   check(cfg[41 + 2] == 1, "composite_vendor_interface_number");
   check(cfg[41 + 5] == 0xff, "composite_vendor_class");
-  check(cfg[50 + 2] == 0x03 && cfg[57 + 2] == 0x83, "composite_vendor_eps");
+  // HID (keyboard+mouse merged) now uses a single duplex endpoint on EP1, so
+  // the following bulk vendor interface advances to EP2 (0x02 OUT / 0x82 IN)
+  // instead of EP3. See docs/DESIGN_NOTES.ja.md "複合時の endpoint 採番衝突".
+  check(cfg[50 + 2] == 0x02 && cfg[57 + 2] == 0x82, "composite_vendor_eps");
 }
 
 static void testStringDescriptors()
