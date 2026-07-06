@@ -81,6 +81,12 @@ void setup()
 
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
                         {
+                          // Diagnostic: log every device the host enumerates,
+                          // including the transient USB-Serial/JTAG, so a failed
+                          // composite enumeration is visible in the log.
+                          Serial.printf("HOST_SEEN vid=%04x pid=%04x supported=%u ifcount=%u\n",
+                                        device.vid, device.pid, device.supported ? 1 : 0,
+                                        device.configurationInterfaceCount);
                           if (device.pid != DEVICE_PID)
                           {
                             return;
