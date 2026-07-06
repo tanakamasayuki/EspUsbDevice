@@ -171,50 +171,48 @@ Audio と同根の問題が bulk エンドポイントにもある。
 bulk クラスの loopback テストを消さずに HS/FS 両対応にできる）。影響範囲は CDC / MIDI / MSC / Vendor（bulk）。
 HID 系は interrupt EP（小サイズは HS でも有効）なので影響なし。
 
-### 複合時の endpoint 採番衝突（コード確定・2026-07）
+### 複合時の HID 採番衝突（実機確定・2026-07）
 
-HID + 動的採番クラス（MSC / MIDI / Vendor）の複合で **endpoint 番号が衝突しうる**問題。core まで追って
-コード上で確定した（下記メカニズム）。
+HID + 動的採番クラス（MSC / MIDI / Vendor）の複合で列挙・claim が失敗する。`peer/composite_hid_msc` で
+実機確認し、原因は core まで追って確定した。**独立した 2 つの衝突**があり、両方の修正が必要だった。
 
-> 【誤診の記録】当初 `peer/composite_hid_msc` の `device.begin()`==`ESP_FAIL` を「EP 衝突の実機確定」と
-> 判断したが、これは誤り。実際は **テスト側 device が `MSC.onWrite()` を設定していなかった**ため
-> `EspUsbDeviceMsc::begin()`（`readCallback_ && writeCallback_` を要求）が false を返し、EP 割り当ての
-> **前段**（`EspUsbDevice::begin()` のクラス begin ループ）で失敗していた。EP 衝突には到達していなかった。
-> テストを修正（onWrite 追加）した上で、下記の fix（案A）を適用済み。
+> 【誤診の記録】当初 `device.begin()`==`ESP_FAIL` を「EP 衝突の実機確定」と判断したが誤り。実際は
+> **テスト側 device が `MSC.onWrite()` を未設定**で `EspUsbDeviceMsc::begin()`（`readCallback_ &&
+> writeCallback_` を要求）が false を返し、EP 割り当ての**前段**（クラス begin ループ）で失敗していた。
+> テスト修正（onWrite 追加）後、下記 2 つの真の衝突が顕在化した。
 
-**メカニズム**（`cores/esp32/esp32-hal-tinyusb.c`）:
+**メカニズム**（`cores/esp32/esp32-hal-tinyusb.c`。interface enum 順は `MSC → DFU → HID → VENDOR → CDC → …`）:
 
-- core は使用中 endpoint を `tinyusb_endpoints.in/.out` のビットマスクで一元管理する。
-- 動的採番 `tinyusb_get_free_duplex_endpoint()` / `..._in_endpoint()` / `..._out_endpoint()` は、この
-  ビットマスクの空きを探して採番し、マスクを更新する（MSC / MIDI / Vendor が使用）。
-- ビットマスクへの登録経路は 2 つだけ:
-  1. `tinyusb_enable_interface2(interface, len, cb, reserve_endpoints)` が **HID かつ `reserve_endpoints==true`**
-     のとき EP1（in/out）を予約。**CDC は常に EP3(out)/EP4(in)/EP5(in) を予約**（ハードコード）。
-  2. 上記の動的採番関数自身。
-- ところが `EspUsbDevice::begin()` は HID を **`reserve_endpoints=false` で有効化**している
-  （[EspUsbDevice.cpp](../src/EspUsbDevice.cpp) の `tinyusb_enable_interface2(USB_INTERFACE_HID, …, false)`）。
-  さらに EspUsbDevice の HID descriptor は独自カウンタで **EP1(OUT)+EP2(IN)** を採番する
-  （core の HID 予約が想定する「EP1 duplex」とも一致しない）。
-- 結果、HID の EP1/EP2 は **core のビットマスクに登録されない**。この状態で MSC を有効化すると
-  `tinyusb_get_free_duplex_endpoint()` が空きの **EP1 を返し、HID の EP1(OUT) と重複** → TinyUSB init が
-  破綻して `begin()` が `ESP_FAIL`。
+core は各 class を enum 順に load し、endpoint と interface number を動的採番する。HID の descriptor は
+`EspUsbDevice` が独自に組む（`configDescriptor_`）ため、この動的採番から外れて 2 点で衝突した。
 
-**影響範囲（実機 + コードで確定）**:
+1. **endpoint 番号**: core は使用中 EP を `tinyusb_endpoints.in/.out` ビットマスクで管理し、
+   `tinyusb_get_free_*`（MSC/MIDI/Vendor が使用）がそこから採番する。HID を `reserve_endpoints=false` で
+   有効化し、かつ独自採番で EP1(OUT)+EP2(IN) を使っていたため、HID の EP はマスク未登録。→ MSC の
+   `tinyusb_get_free_duplex_endpoint()` が **EP1 を返し HID EP1(OUT) と重複**。
+2. **interface number**: HID の descriptor は `bInterfaceNumber=0` を焼き込んでおり、`espUsbDeviceLoadHidDescriptor`
+   が core の動的カウンタ `*itf` を無視してそのままコピーしていた。MSC は HID より先に load される（enum 順）ため
+   MSC=interface 0 を取得、続く HID も 0 のまま → **interface number が両方 0 で衝突**（host は
+   `EP with 2 address already allocated` / `Claiming interface error: ESP_ERR_INVALID_STATE` を出し HID claim 失敗）。
 
-- ✗ HID + MSC / HID + MIDI / HID + Vendor … HID の私的 EP がマスク未登録のため、動的採番クラスが衝突。
-- ○ HID + CDC … CDC は固定 EP を core に予約し、HID の EP1/2 と偶然 disjoint（動的採番を使わない）。
-- ○（予測）CDC + MSC/MIDI/Vendor、MSC/MIDI/Vendor 相互 … いずれもビットマスク経由で一貫採番されるため衝突しない。
+HID + CDC が動いていたのは、MSC が不在で HID が最初に load され（EP は固定 EP3/4/5 の CDC と偶然 disjoint、
+interface number も HID=0 / CDC=1,2 で衝突しなかった）ため。
 
-**修正（案A・実装済み 2026-07）**: HID の descriptor を **EP1 duplex（OUT=0x01 / IN=0x81）** に統一し、
-`tinyusb_enable_interface2(USB_INTERFACE_HID, …, reserve_endpoints=true)` で有効化した。これで core が
-HID の EP1（in/out）をビットマスクに登録し、`tinyusb_get_free_*` を使う MSC / MIDI / Vendor は EP2 以降を
-取得するため衝突しない。変更点:
+**影響範囲（実機 + コード確定）**: ✗ HID + {MSC, MIDI, Vendor}（動的採番クラスとの複合全般）。
+○ HID + CDC、CDC/MSC/MIDI/Vendor の非 HID 複合（すべて core の動的採番で一貫するため衝突しない）。
 
-- `EspUsbDevice::begin()` の HID 有効化を `reserve_endpoints=true` に。
-- HID descriptor builder（keyboard / HidVendor / 複合 report-ID 経路）の IN endpoint を `0x80|(N+1)` から
-  `0x80|N`（duplex）に。本ライブラリの HID は全構成が単一 interface（IN×1・OUT×1）なので EP1 duplex で足りる。
-- `unit/descriptor` の HID IN 期待値を `0x82`→`0x81` に更新。
-- 検証: `peer/composite_hid_msc`（HID+MSC）が `begin()`==ESP_OK で列挙し `dup=0 / claimok=1`。
+**修正（実装済み・実機確認済み 2026-07）**: HID を core の動的採番に整合させた。
+
+- (1) endpoint: HID descriptor を **EP1 duplex（OUT=0x01 / IN=0x81）** に統一し、HID を
+  `reserve_endpoints=true` で有効化 → core が EP1 をビットマスク登録し、動的採番クラスは EP2 以降を取得。
+  対象は keyboard / HidVendor / 複合 report-ID 経路の IN endpoint（`0x80|(N+1)`→`0x80|N`）。
+  本ライブラリの HID は全構成が単一 interface（IN×1・OUT×1）なので EP1 duplex で足りる。
+- (2) interface number: `espUsbDeviceLoadHidDescriptor` が copy 後に **HID interface の `bInterfaceNumber` を
+  core 採番値 `*itf` に書き換える** → MSC=0 / HID=1 のように一意化。
+- `unit/descriptor` の HID IN 期待値を `0x82`→`0x81`、`composite_vendor_eps` を `0x03/0x83`→`0x02/0x82` に更新
+  （HID が EP1 duplex になり後続 interface の EP が 1 つ前進）。
+- 検証: `peer/composite_hid_msc` **3/3 pass**（`DEVICE_BEGIN ok`、`HOST_ENUM ... dup=0 hid=1 msc=1 claimok=1`、
+  MSC=interface 0 / HID=interface 1、keyboard・capacity とも機能）。
 
 > **HID + bulk Vendor（`EspUsbDeviceVendor`）は別問題で未対応**。`espUsbDeviceLoadHidDescriptor` が
 > `configurationDescriptor(0)` の「HID 以降すべて」をコピーする実装のため、bulk vendor interface が
