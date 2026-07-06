@@ -171,6 +171,44 @@ Audio と同根の問題が bulk エンドポイントにもある。
 bulk クラスの loopback テストを消さずに HS/FS 両対応にできる）。影響範囲は CDC / MIDI / MSC / Vendor（bulk）。
 HID 系は interrupt EP（小サイズは HS でも有効）なので影響なし。
 
+### 複合時の endpoint 採番衝突（実機確定・2026-07）
+
+`peer/composite_hid_msc` で **HID + MSC の `device.begin()` が `ESP_FAIL` で失敗**することを実機確認した
+（host は device の native USB として一過性の USB-Serial/JTAG `pid=0x1001` のみを見る）。
+一方 `peer/composite_hid_cdc` は 4/4 合格し、HID + CDC は同時動作する。原因を core まで追って確定した。
+
+**メカニズム**（`cores/esp32/esp32-hal-tinyusb.c`）:
+
+- core は使用中 endpoint を `tinyusb_endpoints.in/.out` のビットマスクで一元管理する。
+- 動的採番 `tinyusb_get_free_duplex_endpoint()` / `..._in_endpoint()` / `..._out_endpoint()` は、この
+  ビットマスクの空きを探して採番し、マスクを更新する（MSC / MIDI / Vendor が使用）。
+- ビットマスクへの登録経路は 2 つだけ:
+  1. `tinyusb_enable_interface2(interface, len, cb, reserve_endpoints)` が **HID かつ `reserve_endpoints==true`**
+     のとき EP1（in/out）を予約。**CDC は常に EP3(out)/EP4(in)/EP5(in) を予約**（ハードコード）。
+  2. 上記の動的採番関数自身。
+- ところが `EspUsbDevice::begin()` は HID を **`reserve_endpoints=false` で有効化**している
+  （[EspUsbDevice.cpp](../src/EspUsbDevice.cpp) の `tinyusb_enable_interface2(USB_INTERFACE_HID, …, false)`）。
+  さらに EspUsbDevice の HID descriptor は独自カウンタで **EP1(OUT)+EP2(IN)** を採番する
+  （core の HID 予約が想定する「EP1 duplex」とも一致しない）。
+- 結果、HID の EP1/EP2 は **core のビットマスクに登録されない**。この状態で MSC を有効化すると
+  `tinyusb_get_free_duplex_endpoint()` が空きの **EP1 を返し、HID の EP1(OUT) と重複** → TinyUSB init が
+  破綻して `begin()` が `ESP_FAIL`。
+
+**影響範囲（実機 + コードで確定）**:
+
+- ✗ HID + MSC / HID + MIDI / HID + Vendor … HID の私的 EP がマスク未登録のため、動的採番クラスが衝突。
+- ○ HID + CDC … CDC は固定 EP を core に予約し、HID の EP1/2 と偶然 disjoint（動的採番を使わない）。
+- ○（予測）CDC + MSC/MIDI/Vendor、MSC/MIDI/Vendor 相互 … いずれもビットマスク経由で一貫採番されるため衝突しない。
+
+**修正方針（案・未実装）**: HID の endpoint も core の採番/ビットマスクに載せて全 class で一貫させる。具体案:
+
+- (A) HID の descriptor を **EP1 duplex（OUT=0x01 / IN=0x81）** に変更し、`reserve_endpoints=true` で有効化する。
+  最小変更だが、`unit/descriptor` が HID の IN を `0x82` で byte 固定しているため期待値の更新が必要。
+- (B) HID の EP 番号を `tinyusb_get_free_*` から取得するよう HID descriptor builder を改修する（より汎用）。
+
+いずれも HID の EP レイアウト変更を伴い unit test へ波及するため、独立したマイルストーンで対応する。
+それまでは HID + {MSC, MIDI, Vendor} を **既知の非対応**として扱い、該当 peer テストは `xfail` で固定する。
+
 ### HID keyboard API の限界
 
 Arduino 標準 keyboard API は `write(char)` のような文字入力 API が中心です。
