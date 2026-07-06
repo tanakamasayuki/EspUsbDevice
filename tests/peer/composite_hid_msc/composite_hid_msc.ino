@@ -38,6 +38,10 @@ static void reportEnumeration()
     {
       claimOk = 0;
     }
+    // Diagnostic: per-interface class / claim result.
+    Serial.printf("HOST_IF num=%u class=0x%02x claimed=%u result=0x%x\n",
+                  interfaces[i].number, interfaces[i].interfaceClass,
+                  interfaces[i].claimed ? 1 : 0, interfaces[i].claimResult);
   }
 
   EspUsbHostEndpointInfo endpoints[12];
@@ -46,6 +50,10 @@ static void reportEnumeration()
   uint8_t dup = 0;
   for (size_t i = 0; i < epCount; i++)
   {
+    // Diagnostic: per-endpoint address / owning interface / attributes.
+    Serial.printf("HOST_EP addr=0x%02x itf=%u attr=0x%02x mps=%u\n",
+                  endpoints[i].address, endpoints[i].interfaceNumber,
+                  endpoints[i].attributes, endpoints[i].maxPacketSize);
     for (size_t j = i + 1; j < epCount; j++)
     {
       if (endpoints[i].address == endpoints[j].address)
