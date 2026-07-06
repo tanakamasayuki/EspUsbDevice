@@ -547,7 +547,13 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
       const uint8_t *configDescriptor = configurationDescriptor(0);
       const uint16_t totalLength = static_cast<uint16_t>(configDescriptor[2]) | (static_cast<uint16_t>(configDescriptor[3]) << 8);
       const uint16_t interfaceLength = totalLength >= 9 ? totalLength - 9 : 0;
-      err = tinyusb_enable_interface2(USB_INTERFACE_HID, interfaceLength, espUsbDeviceLoadHidDescriptor, false);
+      // reserve_endpoints=true registers the HID endpoint (EP1, duplex) in the
+      // Arduino-ESP32 core endpoint bitmask, so dynamically-allocated classes
+      // (MSC / MIDI / Vendor via tinyusb_get_free_*) skip it instead of
+      // colliding. Our HID descriptor uses a single duplex endpoint on EP1
+      // (OUT=0x01 / IN=0x81) to match what the core reserves. See
+      // docs/DESIGN_NOTES.ja.md "複合時の endpoint 採番衝突".
+      err = tinyusb_enable_interface2(USB_INTERFACE_HID, interfaceLength, espUsbDeviceLoadHidDescriptor, true);
       if (err != ESP_OK)
       {
         setLastError(err);
@@ -935,8 +941,11 @@ bool EspUsbDevice::buildDescriptors()
       hidReportDescriptorLength_ += srcLen - 6;
     }
 
+    // Single duplex endpoint on EP1 (OUT=0x01 / IN=0x81) so it matches the
+    // core's reserved HID endpoint and never collides with dynamically
+    // allocated classes.
     const uint8_t epOut = endpointNumber;
-    const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
+    const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
     uint8_t descriptor[] = {
         9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_HID, 0x00, 0x00, 0,
         9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(hidReportDescriptorLength_ & 0xff), static_cast<uint8_t>((hidReportDescriptorLength_ >> 8) & 0xff),
@@ -946,7 +955,7 @@ bool EspUsbDevice::buildDescriptors()
     memcpy(&configDescriptor_[offset], descriptor, sizeof(descriptor));
     offset += sizeof(descriptor);
     interfaceNumber += 1;
-    endpointNumber += 2;
+    endpointNumber += 1;
   }
   else
   {
@@ -2424,8 +2433,10 @@ uint8_t EspUsbDeviceHidKeyboard::protocol() const
 
 uint16_t EspUsbDeviceHidKeyboard::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
+  // Duplex endpoint on EP1 (OUT=0x01 / IN=0x81); see the composite HID path
+  // and docs/DESIGN_NOTES.ja.md "複合時の endpoint 採番衝突".
   const uint8_t epOut = endpointNumber;
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint16_t reportLen = hidReportDescriptorLength();
   uint8_t descriptor[] = {
       9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_HID, USB_SUBCLASS_BOOT, USB_PROTOCOL_KEYBOARD, 0,
@@ -2726,8 +2737,10 @@ void EspUsbDeviceHidVendor::onFeatureReport(ReportCallback callback)
 
 uint16_t EspUsbDeviceHidVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
+  // Duplex endpoint on EP1 (OUT=0x01 / IN=0x81); see the composite HID path
+  // and docs/DESIGN_NOTES.ja.md "複合時の endpoint 採番衝突".
   const uint8_t epOut = endpointNumber;
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   uint16_t mps = static_cast<uint16_t>(reportSize_ + 1);
   if (mps < endpointSize)
   {
