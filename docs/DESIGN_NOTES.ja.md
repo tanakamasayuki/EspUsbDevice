@@ -171,11 +171,16 @@ Audio と同根の問題が bulk エンドポイントにもある。
 bulk クラスの loopback テストを消さずに HS/FS 両対応にできる）。影響範囲は CDC / MIDI / MSC / Vendor（bulk）。
 HID 系は interrupt EP（小サイズは HS でも有効）なので影響なし。
 
-### 複合時の endpoint 採番衝突（実機確定・2026-07）
+### 複合時の endpoint 採番衝突（コード確定・2026-07）
 
-`peer/composite_hid_msc` で **HID + MSC の `device.begin()` が `ESP_FAIL` で失敗**することを実機確認した
-（host は device の native USB として一過性の USB-Serial/JTAG `pid=0x1001` のみを見る）。
-一方 `peer/composite_hid_cdc` は 4/4 合格し、HID + CDC は同時動作する。原因を core まで追って確定した。
+HID + 動的採番クラス（MSC / MIDI / Vendor）の複合で **endpoint 番号が衝突しうる**問題。core まで追って
+コード上で確定した（下記メカニズム）。
+
+> 【誤診の記録】当初 `peer/composite_hid_msc` の `device.begin()`==`ESP_FAIL` を「EP 衝突の実機確定」と
+> 判断したが、これは誤り。実際は **テスト側 device が `MSC.onWrite()` を設定していなかった**ため
+> `EspUsbDeviceMsc::begin()`（`readCallback_ && writeCallback_` を要求）が false を返し、EP 割り当ての
+> **前段**（`EspUsbDevice::begin()` のクラス begin ループ）で失敗していた。EP 衝突には到達していなかった。
+> テストを修正（onWrite 追加）した上で、下記の fix（案A）を適用済み。
 
 **メカニズム**（`cores/esp32/esp32-hal-tinyusb.c`）:
 
