@@ -247,12 +247,14 @@ HID を EP1 duplex + `reserve_endpoints=true` にし、HID interface number を 
 **S3 の endpoint 予算**: `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`（FIFO 制約で使える IN は実質 4、CDC 併用時 5）。
 IN 消費は HID=1 / CDC=2 / MIDI=1 / MSC=1 / Vendor=1。同時搭載の上限は約 4 クラス（`MAX_CLASSES=4` とも一致）。
 
-最大構成テスト（全ペアの代替）:
+最大構成テスト（全ペアの代替、いずれも実機 pass）:
 
-- `peer/composite_quad_midi`: HID + CDC + MSC + MIDI（IN=5、CDC 込みで天井）。dup=0 / 全 claim / 4 class 機能で
-  部分集合（HID+MIDI、MIDI+MSC、CDC+MSC 等）を包含。
-- 非 HID の Vendor カバレッジは HID を含まない triple（例 `peer/composite_cdc_msc_vendor`）で確認する
-  （HID blob を読まないので bulk Vendor の二重記述 issue を回避できる）。
+- `peer/composite_hid_cdc_msc`: HID + CDC + MSC（FIFO-IN 3 本＝S3 の収まる最大）。dup=0 / 全 claim /
+  keyboard・serial・msc 機能で部分集合（HID+CDC、HID+MSC、CDC+MSC）を包含。
+- `peer/composite_cdc_msc_vendor`: 非 HID triple（CDC+MSC+Vendor）。Vendor カバレッジ（HID blob を読まないので
+  bulk Vendor の二重記述 issue を回避）。vendor RX はポーリングで駆動（`onRx` は複合で発火しない、下記参照）。
+- HID+CDC+MSC+MIDI（4 クラス）は S3 の endpoint 予算天井を超えて列挙できない（`docs/DESIGN_NOTES.ja.md`
+  「複合時の endpoint 予算の上限」）。4 クラス以上は P4 で。
 
 HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID interface に
 なるため、既に `hid_keyboard_mouse` / `hid_vendor` でカバー済み。ここでは扱わない。

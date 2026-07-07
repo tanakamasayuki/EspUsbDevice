@@ -1,4 +1,4 @@
-def test_composite_quad_midi_enumerates(dut, peers):
+def test_composite_hid_cdc_msc_enumerates(dut, peers):
     device = peers["device"]
 
     # begin() status over UART first (independent of USB enumeration).
@@ -9,14 +9,14 @@ def test_composite_quad_midi_enumerates(dut, peers):
 
     dut.expect_exact("HOST_CONNECTED vid=303a pid=4022")
 
-    # Four classes at the S3 endpoint-budget ceiling: all interface classes
-    # present and claimed, no duplicate endpoint address. If this holds, every
-    # 2-/3-class subset holds too.
+    # Three classes (the max that fits the S3 endpoint budget): all interface
+    # classes present and claimed, no duplicate endpoint address. If this holds,
+    # every 2-class subset holds too.
     dut.write("e")
-    dut.expect(r"HOST_ENUM pid=4022 ifcount=\d+ eps=\d+ dup=0 hid=[1-9]\d* cdc=[1-9]\d* msc=[1-9]\d* midi=[1-9]\d* claimok=1")
+    dut.expect(r"HOST_ENUM pid=4022 ifcount=\d+ eps=\d+ dup=0 hid=[1-9]\d* cdc=[1-9]\d* msc=[1-9]\d* claimok=1")
 
 
-def test_composite_quad_midi_keyboard_works(dut, peers):
+def test_composite_hid_cdc_msc_keyboard_works(dut, peers):
     device = peers["device"]
 
     device.write("k")
@@ -24,7 +24,7 @@ def test_composite_quad_midi_keyboard_works(dut, peers):
     dut.expect_exact("KEY a")
 
 
-def test_composite_quad_midi_serial_works(dut, peers):
+def test_composite_hid_cdc_msc_serial_works(dut, peers):
     device = peers["device"]
 
     device.write("d")
@@ -36,14 +36,6 @@ def test_composite_quad_midi_serial_works(dut, peers):
     device.expect_exact("DEVICE_RX host to serial")
 
 
-def test_composite_quad_midi_msc_works(dut, peers):
+def test_composite_hid_cdc_msc_msc_works(dut, peers):
     dut.write("m")
     dut.expect_exact("MSC_CAPACITY ok=1 blocks=16 block_size=512")
-
-
-def test_composite_quad_midi_midi_works(dut, peers):
-    device = peers["device"]
-
-    device.write("n")
-    device.expect_exact("DEVICE_TX_NOTE_ON")
-    dut.expect_exact("MIDI_RX status=90 data1=64 data2=110")
