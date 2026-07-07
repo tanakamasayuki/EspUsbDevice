@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 1.2.3
 - (EN) `EspUsbDeviceNet` (CDC-NCM) now defaults the host-facing MAC to this chip's per-device Ethernet MAC (`esp_read_mac` / `ESP_MAC_ETH`) instead of a single fixed locally-administered address. The Ethernet MAC is derived from the eFuse base MAC and is always distinct from the Wi-Fi STA/AP and BT MACs, so it never collides with the ESP's own Wi-Fi, and two identical boards no longer share a MAC on one host. `macAddress(mac)` still pins a specific address (and then suppresses the auto-derivation). Both the iMACAddress string descriptor and `esp_netif_set_mac` use this value. (Note: two `dhcpServer(true)` devices still share the `192.168.7.0/24` subnet, so multiple boards on one host remains an advanced case.)
 - (JA) `EspUsbDeviceNet`（CDC-NCM）のホスト向け MAC を、単一の固定ローカル管理アドレスから **チップ固有の Ethernet MAC（`esp_read_mac` / `ESP_MAC_ETH`）** を既定にしました。Ethernet MAC は eFuse ベース MAC 由来で Wi-Fi STA/AP・BT の MAC とは必ず異なるため、自機の Wi-Fi と衝突せず、同一の 2 枚のボードが 1 台のホスト上で MAC を共有することもなくなります。`macAddress(mac)` を呼べば従来どおり任意の MAC に固定できます（その場合は自動導出を抑止）。iMACAddress string descriptor と `esp_netif_set_mac` の両方がこの値を使います。（注：`dhcpServer(true)` の 2 台は依然として `192.168.7.0/24` サブネットを共有するため、1 台のホストへの複数台接続は上級用途のままです。）
 
