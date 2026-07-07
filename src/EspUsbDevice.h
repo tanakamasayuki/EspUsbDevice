@@ -554,6 +554,7 @@ public:
   using FrameCallback = std::function<void(const uint8_t *, size_t)>;
 
   explicit EspUsbDeviceNet(EspUsbDevice &device);
+  ~EspUsbDeviceNet() override;
 
   bool begin() override;
   bool afterDeviceStarted() override;
@@ -600,7 +601,6 @@ public:
 
 private:
   FrameCallback frameCallback_;
-  bool linkUp_ = false;
 
   void *netif_ = nullptr;        // esp_netif_t* (opaque here to avoid leaking IDF types)
   bool netStarted_ = false;

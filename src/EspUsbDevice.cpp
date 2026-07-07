@@ -1604,12 +1604,60 @@ bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, con
 #endif
 }
 
-#if ESP_USB_DEVICE_HAS_ESP_NETIF
-// TX serialization: esp_netif calls espUsbDeviceNetTransmit from the tcpip task,
-// but TinyUSB is not thread-safe, so we gate tud_network_xmit behind a mutex and
-// block until the usbd task has copied the frame out (handleXmit signals done).
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+// Shared TX path used by both the sendFrame() raw API and the esp_netif transmit
+// callback. `tud_network_xmit` only *records* the ref/len; the actual copy runs
+// later in the usbd task via handleXmit() (tud_network_xmit_cb). So we:
+//  (1) serialize with a mutex (TinyUSB net is not reentrant),
+//  (2) copy into a persistent internal buffer that stays valid until handleXmit
+//      runs — the caller's buffer (a stack buffer, or an lwIP pbuf freed the
+//      moment we return / time out) must NOT be handed to tud_network_xmit, and
+//  (3) wait (bounded) for handleXmit to signal completion.
 static SemaphoreHandle_t g_netTxMutex = nullptr;
 static SemaphoreHandle_t g_netTxDone = nullptr;
+static uint8_t g_netTxBuf[1600];
+
+static bool espUsbDeviceNetTxFrame(const uint8_t *data, uint16_t len)
+{
+  if (!data || len == 0 || len > sizeof(g_netTxBuf))
+  {
+    return false;
+  }
+  if (!g_netTxMutex)
+  {
+    g_netTxMutex = xSemaphoreCreateMutex();
+  }
+  if (!g_netTxDone)
+  {
+    g_netTxDone = xSemaphoreCreateBinary();
+  }
+  if (!g_netTxMutex || !g_netTxDone)
+  {
+    return false;
+  }
+  xSemaphoreTake(g_netTxMutex, portMAX_DELAY);
+  bool ok = false;
+  // Wait (bounded) for a free transmit slot. can_xmit stays false while a prior
+  // (possibly timed-out) xmit is still pending, so g_netTxBuf is not overwritten
+  // until that xmit's handleXmit has copied it out — no corruption, no UAF.
+  for (int i = 0; i < 100 && !tud_network_can_xmit(len); i++)
+  {
+    vTaskDelay(1);
+  }
+  if (tud_network_can_xmit(len))
+  {
+    memcpy(g_netTxBuf, data, len);
+    xSemaphoreTake(g_netTxDone, 0); // drop any stale completion
+    tud_network_xmit(g_netTxBuf, len);
+    // handleXmit() (usbd task) copies g_netTxBuf out, then signals g_netTxDone.
+    ok = (xSemaphoreTake(g_netTxDone, pdMS_TO_TICKS(100)) == pdTRUE);
+  }
+  xSemaphoreGive(g_netTxMutex);
+  return ok;
+}
+#endif
+
+#if ESP_USB_DEVICE_HAS_ESP_NETIF
 static esp_netif_driver_base_t g_netDriverBase = {};
 static esp_netif_ip_info_t g_netIpInfo = {};
 
@@ -1626,36 +1674,40 @@ static void espUsbDeviceNetFreeRx(void *h, void *buffer)
   free(buffer);
 }
 
+// esp_netif calls this from the tcpip task to send a frame to the USB host.
 static esp_err_t espUsbDeviceNetTransmit(void *h, void *buffer, size_t len)
 {
   (void)h;
-  if (!buffer || len == 0 || len > 0xffff || !g_activeNet || !g_netTxMutex || !g_netTxDone)
+  if (!g_activeNet || len == 0 || len > 0xffff)
   {
     return ESP_ERR_INVALID_STATE;
   }
-  xSemaphoreTake(g_netTxMutex, portMAX_DELAY);
-  esp_err_t result = ESP_FAIL;
-  for (int i = 0; i < 50 && !tud_network_can_xmit(static_cast<uint16_t>(len)); i++)
-  {
-    vTaskDelay(1);
-  }
-  if (tud_network_can_xmit(static_cast<uint16_t>(len)))
-  {
-    xSemaphoreTake(g_netTxDone, 0); // drop any stale completion
-    tud_network_xmit(buffer, static_cast<uint16_t>(len));
-    // handleXmit() (usbd task) copies `buffer` out, then signals g_netTxDone.
-    if (xSemaphoreTake(g_netTxDone, pdMS_TO_TICKS(100)) == pdTRUE)
-    {
-      result = ESP_OK;
-    }
-  }
-  xSemaphoreGive(g_netTxMutex);
-  return result;
+  return espUsbDeviceNetTxFrame(static_cast<const uint8_t *>(buffer), static_cast<uint16_t>(len)) ? ESP_OK : ESP_FAIL;
 }
 #endif
 
 EspUsbDeviceNet::EspUsbDeviceNet(EspUsbDevice &device) : EspUsbDeviceClass(device)
 {
+}
+
+EspUsbDeviceNet::~EspUsbDeviceNet()
+{
+  // The USB stack keeps running after this object is gone. Clear the global
+  // first so tud_network_* callbacks (which may fire from the usbd/tcpip tasks)
+  // no-op instead of dereferencing freed memory, then tear down the netif.
+  if (g_activeNet == this)
+  {
+    g_activeNet = nullptr;
+#if ESP_USB_DEVICE_HAS_ESP_NETIF
+    if (netif_)
+    {
+      esp_netif_destroy(static_cast<esp_netif_t *>(netif_));
+      netif_ = nullptr;
+      g_netDriverBase.netif = nullptr;
+    }
+#endif
+    netStarted_ = false;
+  }
 }
 
 bool EspUsbDeviceNet::begin()
@@ -1673,7 +1725,6 @@ bool EspUsbDeviceNet::afterDeviceStarted()
 #if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
   // Bring the network link up so the host starts exchanging frames.
   tud_network_link_state(0, true);
-  linkUp_ = true;
 #endif
   return true;
 }
@@ -1714,25 +1765,29 @@ void EspUsbDeviceNet::onFrame(FrameCallback callback)
 
 bool EspUsbDeviceNet::linkUp() const
 {
-  return linkUp_;
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  // Reflect the actual USB attach/detach state rather than latching true after
+  // the first configuration. (The Arduino core owns tud_mount_cb/tud_umount_cb,
+  // so we query the mount state directly instead of hooking those callbacks.)
+  return tud_mounted();
+#else
+  return false;
+#endif
 }
 
 bool EspUsbDeviceNet::sendFrame(const uint8_t *data, size_t length)
 {
 #if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
-  if (!data || length == 0 || length > 0xffff)
+  if (length == 0 || length > 0xffff)
   {
     return false;
   }
-  if (!tud_network_can_xmit(static_cast<uint16_t>(length)))
-  {
-    return false;
-  }
-  // ref/arg is an app-defined handle passed back to handleXmit(); pass the
-  // caller's buffer directly. tud_network_xmit copies it out synchronously via
-  // tud_network_xmit_cb before returning, so the buffer need not outlive it.
-  tud_network_xmit(const_cast<uint8_t *>(data), static_cast<uint16_t>(length));
-  return true;
+  // Copies `data` into an internal buffer and serializes with the same mutex as
+  // the esp_netif TX path, so the caller may pass a stack/temporary buffer and
+  // this is safe to mix with beginNetwork(). tud_network_xmit copies the frame
+  // out asynchronously in the usbd task (see espUsbDeviceNetTxFrame), so passing
+  // the caller's buffer directly would be a use-after-free.
+  return espUsbDeviceNetTxFrame(data, static_cast<uint16_t>(length));
 #else
   (void)data;
   (void)length;
@@ -1781,8 +1836,8 @@ uint16_t EspUsbDeviceNet::handleXmit(uint8_t *dst, void *ref, uint16_t arg)
     return 0;
   }
   memcpy(dst, ref, arg);
-#if ESP_USB_DEVICE_HAS_ESP_NETIF
-  // Unblock espUsbDeviceNetTransmit(): the frame has been copied out.
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  // Unblock espUsbDeviceNetTxFrame(): the frame has been copied out.
   if (g_netTxDone)
   {
     xSemaphoreGive(g_netTxDone);
@@ -1793,7 +1848,7 @@ uint16_t EspUsbDeviceNet::handleXmit(uint8_t *dst, void *ref, uint16_t arg)
 
 void EspUsbDeviceNet::handleInit()
 {
-  linkUp_ = false;
+  // tud_network init hook; link state is derived from tud_mounted() in linkUp().
 }
 
 void EspUsbDeviceNet::ipConfig(IPAddress local, IPAddress gateway, IPAddress subnet)
@@ -1917,6 +1972,10 @@ bool EspUsbDeviceNet::beginNetwork()
   g_netDriverBase.post_attach = espUsbDeviceNetPostAttach;
   if (esp_netif_attach(netif, &g_netDriverBase) != ESP_OK)
   {
+    // Destroy the netif so a retry does not fail permanently on the duplicate
+    // if_key "USB_NCM", and so the netif is not leaked.
+    esp_netif_destroy(netif);
+    netif_ = nullptr;
     return false;
   }
   esp_netif_set_mac(netif, tud_network_mac_address);
@@ -1933,6 +1992,16 @@ bool EspUsbDeviceNet::beginNetwork()
     esp_netif_set_ip_info(netif, &g_netIpInfo);
     if (dhcpServer_)
     {
+      // Do NOT advertise a router (option 3) or DNS (option 6): the device is a
+      // local endpoint, not a forwarding gateway. Advertising itself as the
+      // default route would black-hole the host's off-link traffic, and offering
+      // no DNS while claiming to be a gateway looks like a broken connection.
+      // The host still gets the on-link 192.168.7.0/24 route and reaches the
+      // device by IP; its real internet path is left untouched. (A DHCP client /
+      // PC-bridge setup, dhcpClient(true), does not run the server at all.)
+      uint8_t offer = 0;
+      esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS, &offer, sizeof(offer));
+      esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof(offer));
       esp_netif_dhcps_start(netif);
     }
   }
