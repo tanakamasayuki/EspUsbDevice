@@ -199,6 +199,9 @@ USB ネットワーク（CDC-NCM）:
 - DHCP サーバは既定で gateway/DNS を広告しません（host の実インターネット経路をブラックホール
   化しないため）。実際に転送する/到達可能な DNS がある場合は `dhcpAdvertiseGateway(true)` /
   `dhcpDns(ip)` で opt-in します。
+- USB netif は route priority を低くしてあり、Wi-Fi STA 併用時は Wi-Fi が ESP のデフォルト経路の
+  ままです。`defaultRoute(true)` で USB ホストを ESP の uplink にできます（PC がブリッジ/NAT する
+  構成 + `dhcpClient(true)`）。
 
 複合:
 

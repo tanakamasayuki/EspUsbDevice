@@ -142,6 +142,7 @@ dhcpServer	KEYWORD2
 dhcpClient	KEYWORD2
 dhcpAdvertiseGateway	KEYWORD2
 dhcpDns	KEYWORD2
+defaultRoute	KEYWORD2
 networkUp	KEYWORD2
 localIP	KEYWORD2
 macAddress	KEYWORD2

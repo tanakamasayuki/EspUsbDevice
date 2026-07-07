@@ -594,6 +594,13 @@ public:
   // advertised DNS is reachable. Call before beginNetwork().
   void dhcpAdvertiseGateway(bool enable);  // offer the ipConfig() gateway as the DHCP router (option 3)
   void dhcpDns(IPAddress dns);             // offer this DNS server (option 6); 0.0.0.0 = do not offer
+  // Make this interface the ESP's own default route (esp_netif default netif).
+  // OFF by default: the USB netif uses a low route priority so a coexisting Wi-Fi
+  // STA (priority 100) stays the default and the USB link never hijacks the ESP's
+  // outbound traffic. Enable only when the ESP should reach the internet *through*
+  // the USB host (e.g. a PC that bridges/NATs to it, with dhcpClient(true)). Call
+  // before beginNetwork().
+  void defaultRoute(bool enable);
   // Bring up the esp_netif/lwIP interface bound to this NCM function. Call once
   // after EspUsbDevice::begin(). If never called, the class stays a raw-frame
   // transport (onFrame/sendFrame) with no IP stack — useful for host-side bridging.
@@ -614,6 +621,7 @@ private:
   bool dhcpServer_ = false;
   bool dhcpClient_ = false;
   bool dhcpAdvertiseGateway_ = false;
+  bool defaultRoute_ = false;
   uint32_t dhcpDns_ = 0;         // network byte order; 0 => do not offer DNS
   uint32_t cfgIp_ = 0;           // network byte order; 0 => use defaults in beginNetwork()
   uint32_t cfgGateway_ = 0;
