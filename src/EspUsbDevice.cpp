@@ -29,6 +29,7 @@
 #include "class/midi/midi_device.h"
 #include "class/msc/msc_device.h"
 #include "class/vendor/vendor_device.h"
+#include "class/net/net_device.h"
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 1
 #else
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
@@ -66,6 +67,7 @@ static EspUsbDeviceCdcSerial *g_activeCdcSerial = nullptr;
 static EspUsbDeviceMidi *g_activeMidi = nullptr;
 static EspUsbDeviceMsc *g_activeMsc = nullptr;
 static EspUsbDeviceVendor *g_activeVendor = nullptr;
+static EspUsbDeviceNet *g_activeNet = nullptr;
 // g_activeAudio lives in EspUsbDeviceAudio.cpp (the audio implementation).
 
 static void put16(uint8_t *dst, uint16_t value)
@@ -347,6 +349,54 @@ static uint16_t espUsbDeviceLoadVendorDescriptor(uint8_t *dst, uint8_t *itf)
   return sizeof(descriptor);
 }
 
+// The 6-byte MAC address the TinyUSB net class reports to the host. Defined here
+// (the class references it as `extern`) and defaulted to a locally-administered
+// address; EspUsbDeviceNet::macAddress() overwrites it before begin().
+uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6a, 0x96, 0x00};
+
+// Holds the iMACAddress string (12 upper-hex chars, no separators) that the NCM
+// descriptor points at. tinyusb_add_string_descriptor() stores the pointer (it
+// does not copy), so this must have static lifetime.
+static char g_netMacString[13] = {};
+
+static uint16_t espUsbDeviceLoadNetDescriptor(uint8_t *dst, uint8_t *itf)
+{
+  if (!g_activeNet)
+  {
+    return 0;
+  }
+  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice NCM");
+  static const char *hex = "0123456789ABCDEF";
+  for (int i = 0; i < 6; i++)
+  {
+    g_netMacString[i * 2] = hex[(tud_network_mac_address[i] >> 4) & 0x0f];
+    g_netMacString[i * 2 + 1] = hex[tud_network_mac_address[i] & 0x0f];
+  }
+  g_netMacString[12] = '\0';
+  const uint8_t macStrIndex = tinyusb_add_string_descriptor(g_netMacString);
+
+  // NCM needs one interrupt-IN notification endpoint plus a bulk IN/OUT pair.
+  const uint8_t epNotif = tinyusb_get_free_in_endpoint();
+  const uint8_t epIn = tinyusb_get_free_in_endpoint();
+  const uint8_t epOut = tinyusb_get_free_out_endpoint();
+  if (epNotif == 0 || epIn == 0 || epOut == 0)
+  {
+    return 0;
+  }
+  static constexpr uint16_t NET_ENDPOINT_SIZE = 64;
+  static constexpr uint16_t NET_NOTIF_SIZE = 64;
+  static constexpr uint16_t NET_MAX_SEGMENT_SIZE = 1514;
+  uint8_t descriptor[] = {
+      TUD_CDC_NCM_DESCRIPTOR(*itf, strIndex, macStrIndex,
+                             static_cast<uint8_t>(0x80 | epNotif), NET_NOTIF_SIZE,
+                             epOut, static_cast<uint8_t>(0x80 | epIn), NET_ENDPOINT_SIZE,
+                             NET_MAX_SEGMENT_SIZE, 16, 0),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  *itf = static_cast<uint8_t>(*itf + 2);
+  return sizeof(descriptor);
+}
+
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
   return g_activeDevice ? g_activeDevice->hidReportDescriptor(instance) : nullptr;
@@ -498,6 +548,34 @@ extern "C" bool tinyusb_vendor_control_request_cb(uint8_t rhport, uint8_t stage,
 {
   return g_activeVendor ? g_activeVendor->handleControlRequest(rhport, stage, request) : false;
 }
+
+// TinyUSB net (CDC-NCM) callbacks. Signatures must match class/net/net_device.h
+// (included above) so they get C linkage and override TinyUSB's weak defaults —
+// see the tud_vendor_rx_cb note above for why a mismatch silently fails.
+bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
+{
+  // Return true = we took ownership of this frame and TinyUSB may reuse its
+  // buffer. We copy out synchronously in handleRecv, so always accept.
+  if (g_activeNet)
+  {
+    return g_activeNet->handleRecv(src, size);
+  }
+  tud_network_recv_renew();
+  return true;
+}
+
+uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg)
+{
+  return g_activeNet ? g_activeNet->handleXmit(dst, ref, arg) : 0;
+}
+
+void tud_network_init_cb(void)
+{
+  if (g_activeNet)
+  {
+    g_activeNet->handleInit();
+  }
+}
 #endif
 
 
@@ -627,6 +705,18 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     if (hasVendorClass())
     {
       err = tinyusb_enable_interface(USB_INTERFACE_VENDOR, TUD_VENDOR_DESC_LEN, espUsbDeviceLoadVendorDescriptor);
+      if (err != ESP_OK)
+      {
+        setLastError(err);
+        return false;
+      }
+    }
+    if (hasNetClass())
+    {
+      // No dedicated NET interface enum in the core; register the CDC-NCM
+      // descriptors through the CUSTOM slot. TinyUSB's built-in netd driver
+      // claims them at enumeration.
+      err = tinyusb_enable_interface(USB_INTERFACE_CUSTOM, TUD_CDC_NCM_DESC_LEN, espUsbDeviceLoadNetDescriptor);
       if (err != ESP_OK)
       {
         setLastError(err);
@@ -1136,6 +1226,18 @@ bool EspUsbDevice::hasAudioClass() const
   return false;
 }
 
+bool EspUsbDevice::hasNetClass() const
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isNet())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
 uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
 {
   if (!compositeHid())
@@ -1487,6 +1589,124 @@ bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, con
   (void)request;
   return false;
 #endif
+}
+
+EspUsbDeviceNet::EspUsbDeviceNet(EspUsbDevice &device) : EspUsbDeviceClass(device)
+{
+}
+
+bool EspUsbDeviceNet::begin()
+{
+  if (g_activeNet && g_activeNet != this)
+  {
+    return false;
+  }
+  g_activeNet = this;
+  return true;
+}
+
+bool EspUsbDeviceNet::afterDeviceStarted()
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  // Bring the network link up so the host starts exchanging frames.
+  tud_network_link_state(0, true);
+  linkUp_ = true;
+#endif
+  return true;
+}
+
+uint16_t EspUsbDeviceNet::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
+{
+  // NCM is emitted by espUsbDeviceLoadNetDescriptor through the CUSTOM slot,
+  // not through configDescriptor_ (like CDC/MSC/MIDI).
+  (void)dst;
+  (void)interfaceNumber;
+  (void)endpointNumber;
+  (void)endpointSize;
+  return 0;
+}
+
+void EspUsbDeviceNet::macAddress(const uint8_t mac[6])
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  memcpy(tud_network_mac_address, mac, 6);
+#else
+  (void)mac;
+#endif
+}
+
+const uint8_t *EspUsbDeviceNet::macAddress() const
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  return tud_network_mac_address;
+#else
+  return nullptr;
+#endif
+}
+
+void EspUsbDeviceNet::onFrame(FrameCallback callback)
+{
+  frameCallback_ = callback;
+}
+
+bool EspUsbDeviceNet::linkUp() const
+{
+  return linkUp_;
+}
+
+bool EspUsbDeviceNet::sendFrame(const uint8_t *data, size_t length)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  if (!data || length == 0 || length > 0xffff)
+  {
+    return false;
+  }
+  if (!tud_network_can_xmit(static_cast<uint16_t>(length)))
+  {
+    return false;
+  }
+  // ref/arg is an app-defined handle passed back to handleXmit(); pass the
+  // caller's buffer directly. tud_network_xmit copies it out synchronously via
+  // tud_network_xmit_cb before returning, so the buffer need not outlive it.
+  tud_network_xmit(const_cast<uint8_t *>(data), static_cast<uint16_t>(length));
+  return true;
+#else
+  (void)data;
+  (void)length;
+  return false;
+#endif
+}
+
+bool EspUsbDeviceNet::handleRecv(const uint8_t *src, uint16_t size)
+{
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+  if (frameCallback_ && src && size)
+  {
+    frameCallback_(src, size);
+  }
+  // We consumed the frame synchronously; allow TinyUSB to receive the next one.
+  tud_network_recv_renew();
+  return true;
+#else
+  (void)src;
+  (void)size;
+  return true;
+#endif
+}
+
+uint16_t EspUsbDeviceNet::handleXmit(uint8_t *dst, void *ref, uint16_t arg)
+{
+  if (!dst || !ref || arg == 0)
+  {
+    return 0;
+  }
+  memcpy(dst, ref, arg);
+  return arg;
+}
+
+void EspUsbDeviceNet::handleInit()
+{
+  linkUp_ = false;
 }
 
 EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device) : EspUsbDeviceClass(device)
