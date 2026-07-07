@@ -265,6 +265,20 @@ See [CompositeHidCdcMsc/README.md](CompositeHidCdcMsc/README.md) for details.
   endpoints); a fourth FIFO-IN class needs the ESP32-P4.
 - The USB Audio class is exclusive and cannot be combined with other classes.
 
+## UsbNetwork
+
+USB network device (CDC-NCM) with a built-in DHCP server and web page.
+See [UsbNetwork/README.md](UsbNetwork/README.md) for details.
+
+- Register `EspUsbDeviceNet` and call `beginNetwork()`; the board appears as a
+  USB network adapter with no drivers to install.
+- Run a DHCP server (`dhcpServer(true)`), be a DHCP client on a bridged LAN
+  (`dhcpClient(true)`), or use a static address (`ipConfig(...)`).
+- The PC browses to `http://192.168.7.1/` over USB — the "USB config portal"
+  pattern.
+- For raw Ethernet frames without an IP stack, use `onFrame()` / `sendFrame()`.
+- Device side is CDC-NCM only (CDC-ECM is not enabled in the core).
+
 ## Notes
 
 - Connect the USB-device-capable ESP32-S3 or similar board to a USB host.

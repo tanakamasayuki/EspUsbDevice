@@ -300,6 +300,41 @@ Arduino-ESP32 の TinyUSB（少なくとも 3.3.6〜3.3.10 / S2・S3・P4 の全
 （ポーリング不要）。`composite_cdc_msc_vendor` の device はポーリングを撤去し `onRx` のみで echo を成立させ、
 テストは `onrx>=1` を検証する回帰ガードにした。
 
+### CDC-NCM ネットワークデバイス（`EspUsbDeviceNet`・実機確認・2026-07）
+
+USB ネットワークデバイス（PC から見て USB NIC）を `EspUsbDeviceNet` として追加。実 PC（Windows）で
+DHCP リース取得と `ping 192.168.7.1` 疎通まで確認済み。
+
+**スコープ判断:**
+- **NCM のみ・ECM 非対応**。Arduino-ESP32 core（3.3.10）は `CONFIG_TINYUSB_NCM_ENABLED=y` が既定で
+  S2/S3/P4 全 USB-OTG ターゲットに入っており、**NCM は追加ビルド不要**。一方 `CFG_TUD_ECM_RNDIS=0` で
+  Kconfig も無く、ECM は core 再ビルドが必要なため対象外。NCM は最近の Win/mac/Linux が標準対応。
+- **主ユースケースは PC→device**（USB 設定ポータル / ローカル API）。device→インターネットは PC 側の
+  ブリッジ/NAT が必須でホスト依存のため非目標（ESP 自身の WiFi を使う方が適切）。
+
+**USB クラス登録:** core の interface enum に NET 枠が無いため、**`USB_INTERFACE_CUSTOM` スロットに
+`TUD_CDC_NCM_DESCRIPTOR` を発行**（`espUsbDeviceLoadNetDescriptor`、notif IN + bulk IN/OUT）。lib 内蔵の
+`netd` class driver がこれを claim する。`tud_network_*` コールバックは **`class/net/net_device.h` を include
+して正しい C シグネチャで定義**し weak default を上書き（vendor RX で踏んだマングル罠を回避）。
+`tud_network_mac_address[6]` は lib 未定義なので当ライブラリで定義。
+
+**IP スタック統合は esp_netif を採用**（raw lwIP + 自前 DHCP ではなく）。理由は DHCP サーバ/クライアント/
+静的を **ネイティブに off-able で** 切替でき（`esp_netif_dhcps_start/stop`・`esp_netif_dhcpc_start`・
+`esp_netif_set_ip_info`）、要件（DHCP は設定制・既定 OFF・ブリッジ=クライアントの余地）に一致するため。
+NCM は標準 Ethernet フレームなので **`ESP_NETIF_NETSTACK_DEFAULT_ETH`（lwIP glue）を流用**、inherent config
+は esp_eth のイベントシンボル依存を避けるため手組み。
+
+**スレッド設計（要点）:** `tud_task`（usbd タスク）と lwIP tcpip タスクが別スレッド。
+- RX: `tud_network_recv_cb`（usbd）→ buf に copy → `esp_netif_receive`（スレッド安全）→ lwIP。`recv_renew` で次を許可。
+- TX: esp_netif の transmit（tcpip タスク）→ **mutex + セマフォで直列化**し、`tud_network_xmit` は
+  usbd タスク側でのみ実行（TinyUSB は非スレッドセーフ）。`handleXmit`（= `tud_network_xmit_cb`）が copy 完了で
+  セマフォを give し transmit を解放。
+
+**API:** `onFrame`/`sendFrame`（生フレーム。`beginNetwork()` を呼ばなければ IP スタック無しの transport
+のまま＝PC 側ブリッジ実験用）、`ipConfig`/`dhcpServer`/`dhcpClient`/`beginNetwork`/`localIP`/`macAddress`。
+example は `examples/UsbNetwork`（NCM+DHCP+HTTP ページ）、手動/pytest テストは `tests/manual/usb_ncm`
+（host からの `ping` 判定。WSL でも device serial 不要で通る）。
+
 ### HID keyboard API の限界
 
 Arduino 標準 keyboard API は `write(char)` のような文字入力 API が中心です。
