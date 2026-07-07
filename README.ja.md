@@ -196,6 +196,9 @@ USB ネットワーク（CDC-NCM）:
 - `beginNetwork()` は lwIP/esp_netif インターフェースを起動します。アドレス方式は
   `dhcpServer(true)`（デバイスが gateway、host に配布）、`dhcpClient(true)`（PC ブリッジ
   LAN から取得）、`ipConfig(...)`（静的）から選択。DHCP は opt-in です。
+- DHCP サーバは既定で gateway/DNS を広告しません（host の実インターネット経路をブラックホール
+  化しないため）。実際に転送する/到達可能な DNS がある場合は `dhcpAdvertiseGateway(true)` /
+  `dhcpDns(ip)` で opt-in します。
 
 複合:
 
