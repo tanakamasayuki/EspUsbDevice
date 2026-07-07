@@ -372,6 +372,13 @@ public:
 
   const uint8_t *deviceDescriptor();
   const uint8_t *configurationDescriptor(uint8_t index);
+  // Byte length / interface count of ONLY the HID interface descriptors inside
+  // configDescriptor_ (excludes the 9-byte config header and any trailing
+  // non-HID interfaces such as bulk Vendor). The composite HID loader copies
+  // exactly this slice so a Vendor interface that also lives in configDescriptor_
+  // is not duplicated (it is enabled separately via the core's vendor loader).
+  uint16_t hidInterfacesLength() const;
+  uint8_t hidInterfaceCount() const;
   const uint16_t *stringDescriptor(uint8_t index, uint16_t langid);
   const uint8_t *hidReportDescriptor(uint8_t instance);
   void handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length);
@@ -417,6 +424,8 @@ private:
   uint8_t configDescriptor_[MAX_CONFIG_DESCRIPTOR] = {};
   uint8_t hidReportDescriptor_[MAX_HID_REPORT_DESCRIPTOR] = {};
   uint16_t configDescriptorLength_ = 0;
+  uint16_t hidInterfacesLength_ = 0;
+  uint8_t hidInterfaceCount_ = 0;
   uint16_t hidReportDescriptorLength_ = 0;
   uint16_t stringDescriptor_[MAX_STRING_DESCRIPTOR] = {};
 };

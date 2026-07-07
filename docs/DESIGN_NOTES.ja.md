@@ -214,11 +214,36 @@ interface number も HID=0 / CDC=1,2 で衝突しなかった）ため。
 - 検証: `peer/composite_hid_msc` **3/3 pass**（`DEVICE_BEGIN ok`、`HOST_ENUM ... dup=0 hid=1 msc=1 claimok=1`、
   MSC=interface 0 / HID=interface 1、keyboard・capacity とも機能）。
 
-> **HID + bulk Vendor（`EspUsbDeviceVendor`）は別問題で未対応**。`espUsbDeviceLoadHidDescriptor` が
-> `configurationDescriptor(0)` の「HID 以降すべて」をコピーする実装のため、bulk vendor interface が
-> configDescriptor_ 経由（HID blob 内）と `espUsbDeviceLoadVendorDescriptor` 経由の二重に記述される
-> 疑いがある（HID が無い CDC/MSC/MIDI + Vendor では HID blob を読まないので影響しない）。EP 採番衝突とは
-> 独立した issue として切り出し、HID を含む複合の Vendor は当面スコープ外とする。
+### 複合時の HID + bulk Vendor 二重記述（原因確定・修正済・実機確認・2026-07）
+
+HID + bulk Vendor（`EspUsbDeviceVendor`）は当初「別問題で未対応」としていたが、原因を特定して修正した。
+
+**症状**: HID keyboard + bulk Vendor を複合すると、Vendor interface（と bulk EP）が **USB config に二重に現れ**、
+interface 番号も衝突して列挙が破綻する。
+
+**原因**: `buildDescriptors()` は `configDescriptor_ = [config header][HID interface][Vendor interface]` を組む
+（CDC/MSC/MIDI は各 loader 経由で `configDescriptor_` に入らないが、**Vendor だけは `configDescriptor_` に追記**
+される。公開 API `configurationDescriptor(0)` と `unit/descriptor` の期待値がフル構成を前提とするため）。
+ところが複合の HID 経路では `espUsbDeviceLoadHidDescriptor` が **`configDescriptor_` の「HID 以降すべて」
+（= HID interface + 末尾の Vendor interface）を HID blob として丸ごとコピー**していた。その後 `begin()` は
+`tinyusb_enable_interface(USB_INTERFACE_VENDOR, …)` で **Vendor をもう一度**登録するため、Vendor interface が
+二重に出力される。加えて HID loader が `*itf += config[4]`（Vendor 込みの総 interface 数）で採番を進めるため、
+後続 Vendor の interface 番号もずれて衝突していた。HID を含まない CDC/MSC/MIDI + Vendor では HID blob を
+読まないので影響しなかった（＝これが「HID を含む複合限定」だった理由）。
+
+**修正**（`src/EspUsbDevice.cpp`）:
+- `buildDescriptors()` で Vendor を追記する直前に **HID interface 部分の長さ / interface 数**を記録
+  （`hidInterfacesLength_` / `hidInterfaceCount_`）。
+- `espUsbDeviceLoadHidDescriptor` は **HID interface 部分だけをコピー**し（末尾 Vendor を含めない）、
+  `*itf` は **HID の interface 数だけ**進める（`config[4]` ではなく `hidInterfaceCount()`）。
+- `begin()` の `tinyusb_enable_interface2(USB_INTERFACE_HID, …)` の予約長も `hidInterfacesLength_` に変更。
+- `configDescriptor_` 自体はフル構成のまま（公開 API / 単体テストの契約を維持）。Vendor は従来どおり
+  `espUsbDeviceLoadVendorDescriptor` 経由でのみ 1 回登録される。
+
+**検証**: `peer/composite_hid_vendor` **3/3 pass**（`HOST_ENUM … dup=0 hid=1 vendor=1 ifnumdup=0 claimok=1`、
+keyboard の tapKey → host `KEY a`、bulk Vendor は `onRx` 駆動で echo 往復＝上記 RX callback 修正の恩恵）。
+HID 無し / HID+CDC / HID+MSC / HID+CDC+MSC は Vendor を含まないので `hidInterfacesLength_ == 総長-9` となり挙動不変
+（回帰なし。`unit/descriptor`・既存 composite 実機で確認）。
 
 ### 複合時の endpoint 予算の上限（S3 実機確定・2026-07）
 
