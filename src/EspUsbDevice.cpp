@@ -251,7 +251,15 @@ static uint16_t espUsbDeviceLoadHidDescriptor(uint8_t *dst, uint8_t *itf)
   {
     return 0;
   }
-  const uint16_t interfaceLength = totalLength - 9;
+  // Copy ONLY the HID interface slice, not the whole config body. configDescriptor_
+  // may also contain a trailing bulk Vendor interface, which the core enables
+  // separately via espUsbDeviceLoadVendorDescriptor; copying it here too would
+  // duplicate the Vendor interface (and its endpoints/number). See buildDescriptors().
+  const uint16_t interfaceLength = g_activeDevice->hidInterfacesLength();
+  if (interfaceLength == 0 || static_cast<uint16_t>(interfaceLength + 9) > totalLength)
+  {
+    return 0;
+  }
   memcpy(dst, config + 9, interfaceLength);
   // The HID interface number is baked as 0 in configDescriptor_, but the
   // Arduino-ESP32 core assigns interface numbers dynamically in load order
@@ -263,7 +271,10 @@ static uint16_t espUsbDeviceLoadHidDescriptor(uint8_t *dst, uint8_t *itf)
   {
     dst[2] = *itf;
   }
-  *itf = static_cast<uint8_t>(*itf + config[4]);
+  // Advance by the HID interface count only (not config[4], which also counts
+  // the separately-enabled Vendor interface), so the Vendor interface gets its
+  // own correct, non-overlapping interface number.
+  *itf = static_cast<uint8_t>(*itf + g_activeDevice->hidInterfaceCount());
   return interfaceLength;
 }
 
@@ -568,9 +579,11 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     esp_err_t err = ESP_OK;
     if (hasHidClass())
     {
-      const uint8_t *configDescriptor = configurationDescriptor(0);
-      const uint16_t totalLength = static_cast<uint16_t>(configDescriptor[2]) | (static_cast<uint16_t>(configDescriptor[3]) << 8);
-      const uint16_t interfaceLength = totalLength >= 9 ? totalLength - 9 : 0;
+      // Build descriptors first so hidInterfacesLength_ is populated, then
+      // reserve only the HID interface slice (not any trailing Vendor interface,
+      // which is enabled separately below).
+      (void)configurationDescriptor(0);
+      const uint16_t interfaceLength = hidInterfacesLength_;
       // reserve_endpoints=true registers the HID endpoint (EP1, duplex) in the
       // Arduino-ESP32 core endpoint bitmask, so dynamically-allocated classes
       // (MSC / MIDI / Vendor via tinyusb_get_free_*) skip it instead of
@@ -781,6 +794,16 @@ const uint8_t *EspUsbDevice::configurationDescriptor(uint8_t index)
   }
   buildDescriptors();
   return configDescriptor_;
+}
+
+uint16_t EspUsbDevice::hidInterfacesLength() const
+{
+  return hidInterfacesLength_;
+}
+
+uint8_t EspUsbDevice::hidInterfaceCount() const
+{
+  return hidInterfaceCount_;
 }
 
 const uint16_t *EspUsbDevice::stringDescriptor(uint8_t index, uint16_t langid)
@@ -1000,6 +1023,12 @@ bool EspUsbDevice::buildDescriptors()
       }
     }
   }
+  // Everything written so far is HID (composite merged interface or a single
+  // HID class). Record its extent so the composite HID loader copies only this
+  // slice and does not also emit the trailing Vendor interface (which the core
+  // enables separately) — otherwise the Vendor interface is duplicated.
+  hidInterfacesLength_ = static_cast<uint16_t>(offset - 9);
+  hidInterfaceCount_ = interfaceNumber;
   for (size_t i = 0; i < classCount_; i++)
   {
     if (!classes_[i] || !classes_[i]->isVendor())

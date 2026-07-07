@@ -67,7 +67,7 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 対象外（P4 の Audio は UAC2/HS、loopback は FS 限定） | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5`（P4 HS） |
-| composite（複合デバイス） | ✅ `composite_reject`（Audio 排他 / MAX_CLASSES） | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
+| composite（複合デバイス） | ✅ `composite_reject`（Audio 排他 / MAX_CLASSES） | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
@@ -242,7 +242,7 @@ HID を EP1 duplex + `reserve_endpoints=true` にし、HID interface number を 
 | 3 | HID + MSC | ✅ 実機 OK（`composite_hid_msc` 3/3） | 修正後 MSC=IF0/EP2、HID=IF1/EP1、`dup=0 claimok=1` |
 | 2,4-10 | 上記以外の非 Audio ペア | ○（最大構成で包含） | 単一 core アロケータで一貫採番。下記 quad/triple がカバー |
 | 11 | Audio + 任意 | ✗ NG（仕様） | コードで排他。`unit/composite_reject` で固定 |
-| — | HID + bulk Vendor | ✗ 別 issue・未対応 | descriptor 二重記述疑い。`docs/DESIGN_NOTES.ja.md` 参照、スコープ外 |
+| — | HID + bulk Vendor | ✅ 実機 OK（`composite_hid_vendor` 3/3） | descriptor 二重記述を修正（HID blob に Vendor を含めない）。`docs/DESIGN_NOTES.ja.md`「複合時の HID + bulk Vendor 二重記述」 |
 
 **S3 の endpoint 予算**: `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`（FIFO 制約で使える IN は実質 4、CDC 併用時 5）。
 IN 消費は HID=1 / CDC=2 / MIDI=1 / MSC=1 / Vendor=1。同時搭載の上限は約 4 クラス（`MAX_CLASSES=4` とも一致）。
@@ -338,6 +338,7 @@ core の `tinyusb_init()` 実行時にしか確定しない。よって byte 単
 37. ✅ `peer/composite_hid_msc`（HID 採番衝突の発見 → 修正 → 3/3。`docs/DESIGN_NOTES.ja.md`）
 38. ✅ `peer/composite_hid_cdc_msc`（HID+CDC+MSC、収まる最大構成）
 39. ✅ `peer/composite_cdc_msc_vendor`（非 HID triple、Vendor は `onRx` 駆動 RX）
+40. ✅ `peer/composite_hid_vendor`（HID + bulk Vendor、descriptor 二重記述の修正 → 3/3）
 
 ## 合格条件
 
