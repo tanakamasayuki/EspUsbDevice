@@ -67,7 +67,7 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 対象外（P4 の Audio は UAC2/HS、loopback は FS 限定） | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5`（P4 HS） |
-| composite（2 クラス同時） | ✅ `composite_reject`（Audio 排他 / MAX_CLASSES） | 予定 `composite_*`（10 ペア） | 予定（peer 合格分のみ） | | |
+| composite（複合デバイス） | ✅ `composite_reject`（Audio 排他 / MAX_CLASSES） | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
@@ -334,8 +334,8 @@ core の `tinyusb_init()` 実行時にしか確定しない。よって byte 単
 35. `unit/composite_reject`（Audio 排他 / MAX_CLASSES）
 36. ✅ `peer/composite_hid_cdc`（複合の雛形 + 共通 util、4/4）
 37. ✅ `peer/composite_hid_msc`（HID 採番衝突の発見 → 修正 → 3/3。`docs/DESIGN_NOTES.ja.md`）
-38. `peer/composite_quad_midi`（HID+CDC+MSC+MIDI、予算天井）
-39. `peer/composite_cdc_msc_vendor`（非 HID triple、Vendor カバレッジ）
+38. ✅ `peer/composite_hid_cdc_msc`（HID+CDC+MSC、収まる最大構成）
+39. ✅ `peer/composite_cdc_msc_vendor`（非 HID triple、Vendor はポーリング RX）
 
 ## 合格条件
 
