@@ -32,9 +32,17 @@ def test_composite_cdc_msc_vendor_msc_works(dut, peers):
 
 
 def test_composite_cdc_msc_vendor_vendor_works(dut, peers):
-    # Bulk Vendor round-trip in the composite. The device poll-drains the vendor
-    # RX (the tud_vendor onRx callback does not fire in a composite — see
-    # docs/DESIGN_NOTES.ja.md "複合時の vendor RX callback" — but the data is in
-    # the FIFO and readable), so host write -> device echo -> host read works.
+    # Bulk Vendor round-trip in the composite, driven entirely by the onRx
+    # callback (no polling on the device). This is the regression guard for the
+    # tud_vendor_rx_cb signature/linkage fix: before the fix the library defined
+    # a 1-arg tud_vendor_rx_cb that got a C++-mangled symbol and never overrode
+    # TinyUSB's weak default, so onRx never fired. See src/EspUsbDevice.cpp and
+    # docs/DESIGN_NOTES.ja.md "複合時の vendor RX callback".
+    device = peers["device"]
+
     dut.write("v")
     dut.expect_exact("VENDOR_ECHO ok=1 data=echo:ping")
+
+    # onRx must actually have fired (rxtotal counts bytes received via the callback).
+    device.write("q")
+    device.expect(r"DEVICE_VENDOR_STATE onrx=[1-9]\d* rxtotal=[1-9]\d* avail=\d+")

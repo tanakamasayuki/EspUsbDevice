@@ -460,9 +460,23 @@ bool tud_msc_is_writable_cb(uint8_t lun)
   return g_activeMsc ? g_activeMsc->writable() : false;
 }
 
-void tud_vendor_rx_cb(uint8_t itf)
+// The signature MUST match the arduino-esp32 TinyUSB prototype exactly
+// (class/vendor/vendor_device.h): `void tud_vendor_rx_cb(uint8_t idx,
+// const uint8_t *buffer, uint32_t bufsize)`. That declaration is inside the
+// header's `extern "C"` block, so defining a matching signature here gives this
+// function C linkage and overrides TinyUSB's weak default. Using a mismatched
+// signature (e.g. a single `uint8_t` argument) does NOT conflict at compile time
+// — instead the compiler emits a *C++-mangled* symbol that silently fails to
+// override the weak C default, so vendord_xfer_cb keeps calling the empty stub
+// and onRx() never fires (data still reaches the RX FIFO, which is why polling
+// "works" — but the callback is dead). In buffered mode (CFG_TUD_VENDOR_TXRX_BUFFERED,
+// the default) buffer/bufsize are NULL/0 and the payload is in the RX FIFO, which
+// handleRx() drains via available()/read().
+void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize)
 {
-  (void)itf;
+  (void)idx;
+  (void)buffer;
+  (void)bufsize;
   if (g_activeVendor)
   {
     g_activeVendor->handleRx();

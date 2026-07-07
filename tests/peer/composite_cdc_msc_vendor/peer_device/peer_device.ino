@@ -164,11 +164,10 @@ void loop()
     Serial.println();
   }
 
-  // Poll-drain the vendor RX. In a composite the tud_vendor RX callback (onRx)
-  // does not fire (observed: avail>0 while onrx=0), but the data is in the FIFO
-  // and readable, so we drain by polling. See docs/DESIGN_NOTES.ja.md
-  // "複合時の vendor RX callback".
-  processVendorRx();
-
+  // No poll-drain here on purpose: the vendor echo is driven entirely by the
+  // onRx callback (registered in setup). If onRx fires as it should, the echo
+  // round-trip works without any polling. This is the regression guard for the
+  // tud_vendor_rx_cb signature/linkage fix (see src/EspUsbDevice.cpp and
+  // docs/DESIGN_NOTES.ja.md "複合時の vendor RX callback").
   delay(1);
 }
