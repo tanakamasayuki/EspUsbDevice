@@ -177,5 +177,6 @@ manual 確認に残す範囲:
 7. WebUSB / libusb / WinUSB の Host 側サンプルを追加するか判断する。
 8. USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API を検討する。
 9. FirmwareMSC は FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example として検討する。
-10. CDC + HID + MSC + Vendor などの all-in-one composite example を必要に応じて追加する。
-11. P4 probe の結果を整理し、port / speed / PHY の制約を設計メモへ反映する。
+10. all-in-one composite example は `CompositeHidCdcMsc`（HID+CDC+MSC）を追加済み。4-in-1（+Vendor）は S3 の endpoint 予算超のため P4 対応時に検討する。
+11. CDC-NCM ネットワークデバイス（`EspUsbDeviceNet` + esp_netif/DHCP、`UsbNetwork` example、`tests/manual/usb_ncm`）は実 PC で確認済み。sibling の `EspUsbHost` NCM 実装が出来次第、2 台 peer テストを追加する。
+12. P4 probe の結果を整理し、port / speed / PHY の制約を設計メモへ反映する。

@@ -15,7 +15,8 @@ final boundary of the project.
 ## Release Scope
 
 This release covers HID keyboard / mouse / gamepad / consumer / system / custom /
-vendor HID, CDC ACM, USB MIDI, MSC, USBVendor, and a minimal USB Audio sink.
+vendor HID, CDC ACM, USB MIDI, MSC, USBVendor, USB Audio (speaker / microphone),
+a CDC-NCM network device, and multi-function composite devices.
 
 Typical use cases:
 
@@ -23,7 +24,10 @@ Typical use cases:
 - Communicate with a PC or EspUsbHost over CDC ACM serial or USB MIDI.
 - Expose RAM disks, FAT RAM disks, or SD cards as USB MSC devices.
 - Build non-HID vendor-specific bulk/control interfaces.
-- Receive USB Audio speaker PCM from the host through a callback.
+- Send/receive USB Audio speaker and microphone PCM through callbacks.
+- Present the board as a USB network adapter (CDC-NCM), with optional lwIP/DHCP
+  so a PC can reach a page or API on the device over USB.
+- Combine several of the above as one composite device.
 
 ## Design Goals
 
@@ -53,10 +57,13 @@ available:
 - USB MIDI event packets and note/control-change helpers.
 - USB MSC block device and SCSI callbacks.
 - USBVendor bulk IN/OUT, control requests, and WebUSB landing URL.
-- USB Audio speaker sink callback.
+- USB Audio speaker and microphone PCM callbacks.
+- CDC-NCM network device with raw-frame API and optional lwIP/esp_netif
+  integration (DHCP server / client / static address).
+- Multi-function composite devices (e.g. HID + CDC + MSC on one device).
 - Serial command sketches for pytest-embedded peer and loopback tests.
 
-USB Audio starts with a standalone minimal speaker sink. This library owns the
+USB Audio is a standalone speaker / microphone device. This library owns the
 USB Audio class and PCM callback boundary only. Applications can forward PCM to
 PCMFlow, PCMFlowDevice, or any other processing/output layer.
 
@@ -138,6 +145,10 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
   FAT12 disk.
 - `MSCSdCard`: Mass Storage Class device that exposes an SPI SD card as USB
   storage.
+- `UsbNetwork`: CDC-NCM network device with a DHCP server and a web page at
+  `http://192.168.7.1/` reachable over USB.
+- `CompositeHidCdcMsc`: HID keyboard + CDC serial + MSC FAT RAM disk as one
+  composite device.
 
 ## HID Keyboard / Mouse APIs
 
@@ -187,13 +198,40 @@ MSC:
   Persistent storage should use SD card first, and temporary file handoff should
   use RAM disk plus a FAT helper.
 
+## Network / Composite APIs
+
+USB network (CDC-NCM):
+
+- `EspUsbDeviceNet` presents the board as a USB network adapter. Modern Windows /
+  macOS / Linux bind their native NCM driver with no install.
+- `onFrame()` / `sendFrame()` expose raw Ethernet frames; skip `beginNetwork()`
+  to stay a pure frame transport (useful for PC-side bridging).
+- `beginNetwork()` brings up an lwIP/esp_netif interface. Choose the addressing:
+  `dhcpServer(true)` (device is the gateway, hands the host an address),
+  `dhcpClient(true)` (get an address from a PC-bridged LAN), or `ipConfig(...)`
+  for a static address. DHCP is opt-in.
+
+Composite:
+
+- Register several classes with one `EspUsbDevice` and call `begin()` once; the
+  library assigns interface numbers and endpoints and builds the composite
+  descriptor. See `CompositeHidCdcMsc`.
+
 ## Limitations
 
 - Do not use this library together with Arduino-ESP32's standard `USB.begin()`,
   `USBHIDKeyboard`, `USBHIDMouse`, or other built-in USB device classes.
-- USB Audio is a standalone minimal speaker sink. Composite Audio devices are
-  not supported yet. I2S, codecs, DACs, and other output hardware are outside
-  this library's responsibility.
+- USB Audio (`EspUsbDeviceAudio`) is a standalone speaker / microphone device
+  and is exclusive: it cannot be combined with other classes in a composite.
+  I2S, codecs, DACs, and other audio hardware are outside this library's
+  responsibility.
+- The network device is CDC-NCM only. CDC-ECM is not enabled in the Arduino-ESP32
+  core (it would need a core rebuild); NCM is supported natively by modern hosts.
+  A device reaching the internet through the PC needs host-side bridging/NAT and
+  is out of scope; use the ESP's own Wi-Fi for that.
+- Composite devices are bounded by the ESP32-S3 USB endpoint budget (about three
+  FIFO-consuming IN endpoints); a fourth needs the ESP32-P4. USB Audio cannot be
+  part of a composite.
 - MSC keeps block devices and filesystems separate. Use the FAT RAM disk helper
   or SD card support when the host should mount a normal drive.
 - Direct flash / SPIFFS / LittleFS exposure as USB MSC is not a standard goal.

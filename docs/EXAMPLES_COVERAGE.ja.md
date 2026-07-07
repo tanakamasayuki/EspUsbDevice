@@ -36,7 +36,8 @@
 | `MIDI/ReceiveMidi` | `MIDI` | 対応済み | `readPacket()` の受信ログあり。 |
 | `USBVendor` | `USBVendor` | 一部対応 | HID ではない vendor interface / bulk IN/OUT / control request / WebUSB URL。custom vendor code と Microsoft OS 2.0 descriptor 差し替え API は未実装。 |
 | `AudioCard` | `AudioSpeaker` / `AudioSpeakerM5` | 一部対応 | 最小 speaker sink と M5 speaker 連携例。I2S bridge / codec はこのライブラリの責務外。 |
-| `CompositeDevice` | 複数 example に分割 | 一部対応 | CDC + HID + MSC + Vendor 全部入りは未作成。 |
+| `CompositeDevice` | `CompositeHidCdcMsc` ほか | 一部対応 | HID+CDC+MSC の複合 example あり。4-in-1（+Vendor）は S3 の endpoint 予算超で未作成（P4 が必要）。 |
+| （標準に無し） | `UsbNetwork` | 新規 | Arduino-ESP32 標準に無い CDC-NCM ネットワークデバイス（生フレーム + 任意の lwIP/esp_netif、DHCP サーバ/クライアント/静的）。 |
 
 ## 現在の EspUsbDevice examples
 
@@ -63,6 +64,8 @@
 | `MSC` | raw MSC block I/O | 低 |
 | `MSCFatRamDisk` | FAT RAM disk file handoff | 低 |
 | `MSCSdCard` | SD card as USB storage | 低-中 |
+| `UsbNetwork` | CDC-NCM ネットワークデバイス（DHCP + HTTP、`http://192.168.7.1/`） | 中 |
+| `CompositeHidCdcMsc` | HID + CDC + MSC の複合デバイス | 中 |
 
 MSC は準備コストが高く、利用頻度も HID / CDC / MIDI より低いため、追加強化の優先度は下げます。
 現状は helper と手動確認手順を用意し、実機確認待ちにします。
