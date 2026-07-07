@@ -213,6 +213,9 @@ USB network (CDC-NCM):
 - The DHCP server does not advertise a gateway/DNS by default (so it never
   black-holes the host's real internet path). `dhcpAdvertiseGateway(true)` /
   `dhcpDns(ip)` opt in when the device actually forwards or has a reachable DNS.
+- The USB netif uses a low route priority so a coexisting Wi-Fi STA stays the
+  ESP's default route. `defaultRoute(true)` makes the USB host the ESP's uplink
+  instead (for a PC that bridges/NATs to the device, with `dhcpClient(true)`).
 
 Composite:
 

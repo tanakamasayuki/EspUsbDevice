@@ -1886,6 +1886,11 @@ void EspUsbDeviceNet::dhcpDns(IPAddress dns)
   dhcpDns_ = static_cast<uint32_t>(dns);
 }
 
+void EspUsbDeviceNet::defaultRoute(bool enable)
+{
+  defaultRoute_ = enable;
+}
+
 bool EspUsbDeviceNet::networkUp() const
 {
   return netStarted_;
@@ -1960,7 +1965,10 @@ bool EspUsbDeviceNet::beginNetwork()
   base.ip_info = &g_netIpInfo;
   base.if_key = "USB_NCM";
   base.if_desc = "usbncm";
-  base.route_prio = 10;
+  // Low priority by default so a coexisting Wi-Fi STA (100) stays the ESP's
+  // default netif; raise above it only when the USB host is meant to be our
+  // uplink (defaultRoute(true)). esp_netif auto-selects the default by priority.
+  base.route_prio = defaultRoute_ ? 255 : 10;
 
   esp_netif_driver_ifconfig_t driver = {};
   driver.handle = &g_netDriverBase;
