@@ -396,6 +396,7 @@ private:
   friend class EspUsbDeviceHidSystemControl;
   friend class EspUsbDeviceVendor;
   friend class EspUsbDeviceAudio;
+  friend class EspUsbDeviceNet;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
@@ -409,6 +410,7 @@ private:
   bool hasMscClass() const;
   bool hasVendorClass() const;
   bool hasAudioClass() const;
+  bool hasNetClass() const;
   uint8_t classReportId(uint8_t classInstance) const;
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
   void setLastError(esp_err_t error);
@@ -442,6 +444,7 @@ public:
   virtual bool isMsc() const { return false; }
   virtual bool isVendor() const { return false; }
   virtual bool isAudio() const { return false; }
+  virtual bool isNet() const { return false; }
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
@@ -536,6 +539,49 @@ private:
   uint16_t endpointSize_ = 64;
   RxCallback rxCallback_;
   ControlRequestCallback controlRequestCallback_;
+};
+
+// CDC-NCM (USB network / "USB Ethernet") device function. Presents the device
+// to a USB host as a network adapter. Phase 1 exposes raw Ethernet frames via
+// onFrame() / sendFrame(); lwIP integration (a netif + DHCP server) is layered
+// on top separately. NCM is registered through the core's USB_INTERFACE_CUSTOM
+// slot (the core has no dedicated NET interface enum); TinyUSB's built-in netd
+// class driver claims the emitted CDC-NCM descriptors.
+class EspUsbDeviceNet : public EspUsbDeviceClass
+{
+public:
+  // callback(frame data, length): a complete Ethernet frame arrived from the host.
+  using FrameCallback = std::function<void(const uint8_t *, size_t)>;
+
+  explicit EspUsbDeviceNet(EspUsbDevice &device);
+
+  bool begin() override;
+  bool afterDeviceStarted() override;
+  bool isHid() const override { return false; }
+  bool isNet() const override { return true; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 2; }         // CDC control + data
+  uint8_t endpointCount() const override { return 3; }          // notif IN + bulk IN/OUT
+
+  // Set the device's 6-byte MAC address. Call before EspUsbDevice::begin().
+  // Defaults to a fixed locally-administered address if not set.
+  void macAddress(const uint8_t mac[6]);
+  const uint8_t *macAddress() const;
+
+  void onFrame(FrameCallback callback);
+  // Send one Ethernet frame to the host. Returns false if the link cannot
+  // currently accept a frame of this size (caller may retry).
+  bool sendFrame(const uint8_t *data, size_t length);
+  bool linkUp() const;
+
+  // Internal (called from TinyUSB tud_network_* callbacks).
+  bool handleRecv(const uint8_t *src, uint16_t size);
+  uint16_t handleXmit(uint8_t *dst, void *ref, uint16_t arg);
+  void handleInit();
+
+private:
+  FrameCallback frameCallback_;
+  bool linkUp_ = false;
 };
 
 class EspUsbDeviceMidi : public EspUsbDeviceClass
