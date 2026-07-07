@@ -35,6 +35,19 @@
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
 #endif
 
+// esp_netif / lwIP integration for the NCM class (EspUsbDeviceNet::beginNetwork()).
+// Optional: only referenced when the sketch actually calls beginNetwork().
+#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB && __has_include("esp_netif.h")
+#include "esp_netif.h"
+#include "esp_netif_defaults.h"
+#include "esp_event.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#define ESP_USB_DEVICE_HAS_ESP_NETIF 1
+#else
+#define ESP_USB_DEVICE_HAS_ESP_NETIF 0
+#endif
+
 // The USB Audio class (EspUsbDeviceAudio) is implemented in EspUsbDeviceAudio.cpp.
 // This macro only gates the device-level orchestration below (single-audio-class
 // exclusivity and USB.begin()); it does not reference the audio implementation.
@@ -1591,6 +1604,56 @@ bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, con
 #endif
 }
 
+#if ESP_USB_DEVICE_HAS_ESP_NETIF
+// TX serialization: esp_netif calls espUsbDeviceNetTransmit from the tcpip task,
+// but TinyUSB is not thread-safe, so we gate tud_network_xmit behind a mutex and
+// block until the usbd task has copied the frame out (handleXmit signals done).
+static SemaphoreHandle_t g_netTxMutex = nullptr;
+static SemaphoreHandle_t g_netTxDone = nullptr;
+static esp_netif_driver_base_t g_netDriverBase = {};
+static esp_netif_ip_info_t g_netIpInfo = {};
+
+static esp_err_t espUsbDeviceNetPostAttach(esp_netif_t *netif, esp_netif_iodriver_handle h)
+{
+  esp_netif_driver_base_t *base = static_cast<esp_netif_driver_base_t *>(h);
+  base->netif = netif;
+  return ESP_OK;
+}
+
+static void espUsbDeviceNetFreeRx(void *h, void *buffer)
+{
+  (void)h;
+  free(buffer);
+}
+
+static esp_err_t espUsbDeviceNetTransmit(void *h, void *buffer, size_t len)
+{
+  (void)h;
+  if (!buffer || len == 0 || len > 0xffff || !g_activeNet || !g_netTxMutex || !g_netTxDone)
+  {
+    return ESP_ERR_INVALID_STATE;
+  }
+  xSemaphoreTake(g_netTxMutex, portMAX_DELAY);
+  esp_err_t result = ESP_FAIL;
+  for (int i = 0; i < 50 && !tud_network_can_xmit(static_cast<uint16_t>(len)); i++)
+  {
+    vTaskDelay(1);
+  }
+  if (tud_network_can_xmit(static_cast<uint16_t>(len)))
+  {
+    xSemaphoreTake(g_netTxDone, 0); // drop any stale completion
+    tud_network_xmit(buffer, static_cast<uint16_t>(len));
+    // handleXmit() (usbd task) copies `buffer` out, then signals g_netTxDone.
+    if (xSemaphoreTake(g_netTxDone, pdMS_TO_TICKS(100)) == pdTRUE)
+    {
+      result = ESP_OK;
+    }
+  }
+  xSemaphoreGive(g_netTxMutex);
+  return result;
+}
+#endif
+
 EspUsbDeviceNet::EspUsbDeviceNet(EspUsbDevice &device) : EspUsbDeviceClass(device)
 {
 }
@@ -1680,7 +1743,24 @@ bool EspUsbDeviceNet::sendFrame(const uint8_t *data, size_t length)
 bool EspUsbDeviceNet::handleRecv(const uint8_t *src, uint16_t size)
 {
 #if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
-  if (frameCallback_ && src && size)
+#if ESP_USB_DEVICE_HAS_ESP_NETIF
+  if (netStarted_ && netif_ && src && size)
+  {
+    // Copy out of TinyUSB's buffer into one esp_netif owns; it frees it via
+    // espUsbDeviceNetFreeRx once lwIP is done, so we can renew immediately.
+    uint8_t *buf = static_cast<uint8_t *>(malloc(size));
+    if (buf)
+    {
+      memcpy(buf, src, size);
+      if (esp_netif_receive(static_cast<esp_netif_t *>(netif_), buf, size, buf) != ESP_OK)
+      {
+        free(buf);
+      }
+    }
+  }
+  else
+#endif
+      if (frameCallback_ && src && size)
   {
     frameCallback_(src, size);
   }
@@ -1701,12 +1781,169 @@ uint16_t EspUsbDeviceNet::handleXmit(uint8_t *dst, void *ref, uint16_t arg)
     return 0;
   }
   memcpy(dst, ref, arg);
+#if ESP_USB_DEVICE_HAS_ESP_NETIF
+  // Unblock espUsbDeviceNetTransmit(): the frame has been copied out.
+  if (g_netTxDone)
+  {
+    xSemaphoreGive(g_netTxDone);
+  }
+#endif
   return arg;
 }
 
 void EspUsbDeviceNet::handleInit()
 {
   linkUp_ = false;
+}
+
+void EspUsbDeviceNet::ipConfig(IPAddress local, IPAddress gateway, IPAddress subnet)
+{
+  cfgIp_ = static_cast<uint32_t>(local);
+  cfgGateway_ = static_cast<uint32_t>(gateway);
+  cfgNetmask_ = static_cast<uint32_t>(subnet);
+}
+
+void EspUsbDeviceNet::dhcpServer(bool enable)
+{
+  dhcpServer_ = enable;
+  if (enable)
+  {
+    dhcpClient_ = false;
+  }
+}
+
+void EspUsbDeviceNet::dhcpClient(bool enable)
+{
+  dhcpClient_ = enable;
+  if (enable)
+  {
+    dhcpServer_ = false;
+  }
+}
+
+bool EspUsbDeviceNet::networkUp() const
+{
+  return netStarted_;
+}
+
+IPAddress EspUsbDeviceNet::localIP() const
+{
+#if ESP_USB_DEVICE_HAS_ESP_NETIF
+  if (netif_)
+  {
+    esp_netif_ip_info_t info = {};
+    if (esp_netif_get_ip_info(static_cast<esp_netif_t *>(netif_), &info) == ESP_OK)
+    {
+      return IPAddress(info.ip.addr);
+    }
+  }
+#endif
+  return IPAddress(cfgIp_);
+}
+
+bool EspUsbDeviceNet::beginNetwork()
+{
+#if ESP_USB_DEVICE_HAS_ESP_NETIF
+  if (netStarted_)
+  {
+    return true;
+  }
+
+  // Ensure the TCP/IP stack and default event loop exist. Both are idempotent —
+  // ESP_ERR_INVALID_STATE just means something already initialized them.
+  esp_netif_init();
+  esp_err_t evt = esp_event_loop_create_default();
+  if (evt != ESP_OK && evt != ESP_ERR_INVALID_STATE)
+  {
+    return false;
+  }
+
+  if (!g_netTxMutex)
+  {
+    g_netTxMutex = xSemaphoreCreateMutex();
+  }
+  if (!g_netTxDone)
+  {
+    g_netTxDone = xSemaphoreCreateBinary();
+  }
+  if (!g_netTxMutex || !g_netTxDone)
+  {
+    return false;
+  }
+
+  // Defaults: 192.168.7.1 / gw 192.168.7.1 / mask 255.255.255.0 (network order).
+  const uint32_t defIp = static_cast<uint32_t>(IPAddress(192, 168, 7, 1));
+  const uint32_t defMask = static_cast<uint32_t>(IPAddress(255, 255, 255, 0));
+  g_netIpInfo.ip.addr = cfgIp_ ? cfgIp_ : defIp;
+  g_netIpInfo.gw.addr = cfgGateway_ ? cfgGateway_ : g_netIpInfo.ip.addr;
+  g_netIpInfo.netmask.addr = cfgNetmask_ ? cfgNetmask_ : defMask;
+
+  // Build a custom inherent config (avoids depending on esp_eth's event symbols
+  // that ESP_NETIF_INHERENT_DEFAULT_ETH would pull in). Our frames are standard
+  // Ethernet, so we reuse the ETH lwIP netstack glue.
+  esp_netif_inherent_config_t base = {};
+  uint32_t flags = ESP_NETIF_FLAG_AUTOUP;
+  if (dhcpServer_)
+  {
+    flags |= ESP_NETIF_DHCP_SERVER;
+  }
+  else if (dhcpClient_)
+  {
+    flags |= ESP_NETIF_DHCP_CLIENT;
+  }
+  base.flags = static_cast<esp_netif_flags_t>(flags);
+  base.ip_info = &g_netIpInfo;
+  base.if_key = "USB_NCM";
+  base.if_desc = "usbncm";
+  base.route_prio = 10;
+
+  esp_netif_driver_ifconfig_t driver = {};
+  driver.handle = &g_netDriverBase;
+  driver.transmit = espUsbDeviceNetTransmit;
+  driver.driver_free_rx_buffer = espUsbDeviceNetFreeRx;
+
+  esp_netif_config_t cfg = {};
+  cfg.base = &base;
+  cfg.driver = &driver;
+  cfg.stack = ESP_NETIF_NETSTACK_DEFAULT_ETH;
+
+  esp_netif_t *netif = esp_netif_new(&cfg);
+  if (!netif)
+  {
+    return false;
+  }
+  netif_ = netif;
+
+  g_netDriverBase.post_attach = espUsbDeviceNetPostAttach;
+  if (esp_netif_attach(netif, &g_netDriverBase) != ESP_OK)
+  {
+    return false;
+  }
+  esp_netif_set_mac(netif, tud_network_mac_address);
+
+  // Start the interface, then apply addressing.
+  esp_netif_action_start(netif, nullptr, 0, nullptr);
+  if (dhcpClient_)
+  {
+    esp_netif_dhcpc_start(netif);
+  }
+  else
+  {
+    esp_netif_dhcps_stop(netif);
+    esp_netif_set_ip_info(netif, &g_netIpInfo);
+    if (dhcpServer_)
+    {
+      esp_netif_dhcps_start(netif);
+    }
+  }
+  // Mark the link connected so lwIP brings the interface up.
+  esp_netif_action_connected(netif, nullptr, 0, nullptr);
+
+  netStarted_ = true;
+  return true;
+#else
+  return false;
+#endif
 }
 
 EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device) : EspUsbDeviceClass(device)
