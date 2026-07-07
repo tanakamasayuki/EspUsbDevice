@@ -10,4 +10,6 @@
 - [ ] WebUSB / libusb / WinUSB の手動確認手順とサンプル Host 側コード。
 - [ ] FirmwareMSC。FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example。
 - [x] all-in-one composite example（`examples/CompositeHidCdcMsc`：HID keyboard + CDC serial + MSC FAT RAM disk）。1 つの `EspUsbDevice` に 3 function を登録し `begin()` 1 回で複合起動。S3 の FIFO-IN 3 本上限に収まる最大構成（4 クラス目は P4 が必要な旨を README に明記）。CDC で `type <text>` → keyboard 入力のデモ付き。
+- [x] CDC-NCM USB ネットワークデバイス（`EspUsbDeviceNet`）+ lwIP/esp_netif 統合（実 PC で ping 疎通確認済み）。`USB_INTERFACE_CUSTOM` スロットで NCM descriptor 発行 → 内蔵 netd が claim。esp_netif で DHCP サーバ/クライアント/静的を off-able に切替（要件）。TX は mutex+セマフォで usbd タスクに直列化。NCM のみ（ECM は core 再ビルドが必要で対象外）。example `examples/UsbNetwork`（NCM+DHCP+HTTP）、手動/pytest テスト `tests/manual/usb_ncm`。`docs/DESIGN_NOTES.ja.md`「CDC-NCM ネットワークデバイス」参照。
+- [ ] （follow-up）NCM の 2 台 peer テスト（sibling の EspUsbHost NCM 実装が出来次第）。
 - [ ] Keyboard macro / Serial-to-keyboard / Button mouse などの応用 example。
