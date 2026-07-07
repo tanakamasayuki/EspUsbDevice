@@ -195,13 +195,23 @@ USB ネットワーク（CDC-NCM）:
   呼ばなければ生フレーム transport のままです（PC 側ブリッジ実験に有用）。
 - `beginNetwork()` は lwIP/esp_netif インターフェースを起動します。アドレス方式は
   `dhcpServer(true)`（デバイスが gateway、host に配布）、`dhcpClient(true)`（PC ブリッジ
-  LAN から取得）、`ipConfig(...)`（静的）から選択。DHCP は opt-in です。
+  LAN から取得）、`ipConfig(...)`（静的）から選択。DHCP は opt-in です。サブネットは既定で
+  `192.168.7.0/24`（デバイスは `192.168.7.1`）ですが、`beginNetwork()` の前に
+  `ipConfig(local, gateway, subnet)` を渡せば変更でき、DHCP サーバの配布レンジも設定した
+  IP/mask に自動追従します。
 - DHCP サーバは既定で gateway/DNS を広告しません（host の実インターネット経路をブラックホール
   化しないため）。実際に転送する/到達可能な DNS がある場合は `dhcpAdvertiseGateway(true)` /
   `dhcpDns(ip)` で opt-in します。
 - USB netif は route priority を低くしてあり、Wi-Fi STA 併用時は Wi-Fi が ESP のデフォルト経路の
   ままです。`defaultRoute(true)` で USB ホストを ESP の uplink にできます（PC がブリッジ/NAT する
   構成 + `dhcpClient(true)`）。
+- ホストに見せる MAC は、既定でこのチップ固有の Ethernet MAC（`esp_read_mac` / `ESP_MAC_ETH`）を
+  使います。個体ごとに一意で、Wi-Fi STA/AP・BT の MAC とも重複しないため、NCM と Wi-Fi を同時に
+  使っても自分自身と衝突しません。1 台の PC に 1 台なら常に問題なく、同一の 2 枚のボードを同じ PC に
+  挿しても MAC が異なるので動作します。`begin()` の前に `macAddress(mac)` を呼べば任意の MAC に
+  固定できます（ただし 2 枚を同じ MAC に固定すると同一ホスト上で衝突し、`dhcpServer(true)` の
+  2 台は既定で `192.168.7.0/24` サブネットが重複します。各デバイスに別々の `ipConfig(...)`
+  サブネットを与えれば、1 台のホストに複数台を共存させられます）。
 
 複合:
 

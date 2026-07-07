@@ -209,13 +209,25 @@ USB network (CDC-NCM):
 - `beginNetwork()` brings up an lwIP/esp_netif interface. Choose the addressing:
   `dhcpServer(true)` (device is the gateway, hands the host an address),
   `dhcpClient(true)` (get an address from a PC-bridged LAN), or `ipConfig(...)`
-  for a static address. DHCP is opt-in.
+  for a static address. DHCP is opt-in. The subnet defaults to `192.168.7.0/24`
+  (device at `192.168.7.1`); pass `ipConfig(local, gateway, subnet)` before
+  `beginNetwork()` to change it — the DHCP server pool follows the configured
+  IP/mask automatically.
 - The DHCP server does not advertise a gateway/DNS by default (so it never
   black-holes the host's real internet path). `dhcpAdvertiseGateway(true)` /
   `dhcpDns(ip)` opt in when the device actually forwards or has a reachable DNS.
 - The USB netif uses a low route priority so a coexisting Wi-Fi STA stays the
   ESP's default route. `defaultRoute(true)` makes the USB host the ESP's uplink
   instead (for a PC that bridges/NATs to the device, with `dhcpClient(true)`).
+- The MAC reported to the host defaults to this chip's per-device Ethernet MAC
+  (`esp_read_mac` / `ESP_MAC_ETH`), which is unique per board and distinct from
+  the Wi-Fi STA/AP and BT MACs, so it never collides with the ESP's own Wi-Fi.
+  A single device per host is always fine; connecting two identical boards to the
+  same host works because each has a different MAC. Call `macAddress(mac)` before
+  `begin()` to pin a specific address (note: two boards forced to the same MAC on
+  one host will conflict, and two `dhcpServer(true)` devices default to the same
+  `192.168.7.0/24` subnet — give each a different `ipConfig(...)` subnet to run
+  several on one host).
 
 Composite:
 
