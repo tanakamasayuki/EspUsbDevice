@@ -1,5 +1,12 @@
 #include "EspUsbDevice.h"
 
+// Manual test / demo: USB CDC-NCM network device with a built-in DHCP server.
+// The board appears to the USB host as a network adapter; the host is handed an
+// address on 192.168.7.0/24 and can reach the device at 192.168.7.1.
+//
+// Manual because it needs the device's USB-OTG port cabled to a PC (not the peer
+// rig) and host-side networking. See test_usb_ncm.py and README.md.
+
 EspUsbDevice device;
 EspUsbDeviceNet net(device);
 
@@ -12,9 +19,15 @@ void setup()
   delay(1500);
 
   net.onFrame([](const uint8_t *data, size_t len)
-              { rxFrames++; rxBytes += len; });
+              {
+                (void)data;
+                rxFrames++;
+                rxBytes += len;
+              });
 
-  // Device is the gateway and hands the PC an address via DHCP (192.168.7.x).
+  // Device acts as the gateway (192.168.7.1) and runs a DHCP server so the PC
+  // gets an address automatically. DHCP is opt-in: dhcpClient(true) or a bare
+  // ipConfig() (static, no server) are the alternatives.
   net.ipConfig(IPAddress(192, 168, 7, 1), IPAddress(192, 168, 7, 1), IPAddress(255, 255, 255, 0));
   net.dhcpServer(true);
 

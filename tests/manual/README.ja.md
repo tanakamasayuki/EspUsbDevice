@@ -5,6 +5,48 @@
 手動テストは、pytest だけでは完全に制御できない挙動に限定します。
 例: ホスト OS の列挙表示、LED の目視確認、外部 USB analyzer、物理的な配線変更。
 
+## `usb_ncm`（USB CDC-NCM ネットワークデバイス）
+
+目的:
+
+- Host OS がボードを CDC-NCM ネットワークアダプタとして列挙し、標準 NCM ドライバを
+  バインドする（ドライバインストール不要）ことを確認する。
+- デバイス内蔵の DHCP サーバが host に 192.168.7.0/24 のアドレスを配ることを確認する。
+- 192.168.7.1 への ping で、IP 疎通（lwIP + esp_netif + フレーム TX/RX glue）を end-to-end で確認する。
+
+peer テストと違い、ボードの USB-OTG ポートを（peer host ボードではなく）テスト実行 PC に
+つなぐ必要があるため手動です。スケッチ・`sketch.yaml`（`esp32s3` プロファイル）・pytest は
+[`usb_ncm/`](usb_ncm/) にあります。
+
+手順:
+
+1. `usb_ncm/usb_ncm.ino` を ESP32-S3 に書き込む（または `test_usb_ncm_flash_and_enumerate` を
+   実行。`esp32s3` プロファイルで書き込み、`NCM_NET 1 ip=192.168.7.1` を待つ）。
+2. ボードの USB-OTG ポートを PC につなぐ。
+3. host 側に 192.168.7.x のアドレスを持つ新しいネットワークインターフェースが出ることを確認。
+4. ping 判定を実行:
+   ```
+   cd tests && uv run --env-file .env pytest manual/usb_ncm/test_usb_ncm.py::test_usb_ncm_ping
+   ```
+   ターゲットは `NCM_TEST_IP` で上書き可能。
+
+期待:
+
+- host が NCM/UsbNcm ドライバをバインド。interface class は CDC(0x02 / NCM)+ CDC-Data。
+- host インターフェースが 192.168.7.x のリースを取得。
+- `ping 192.168.7.1` が成功（0% loss）。
+- デバイスシリアルに `NCM_NET 1 ...` が出て `rx_frames` が増える。
+
+注意:
+
+- デバイス側は NCM のみ（CDC-ECM は Arduino-ESP32 core で無効）。最近の Windows / macOS /
+  Linux は NCM を標準対応。
+- DHCP は opt-in:`net.dhcpServer(true)`（デバイスが gateway）、`net.dhcpClient(true)`
+  （ブリッジした LAN からアドレス取得＝PC 側ブリッジの余地）、または `net.ipConfig(...)`
+  のみ（DHCP なしの静的）。
+- WSL ではデバイスのログシリアルが直接見えない場合があるが、ping テストは host の IP 疎通のみを
+  必要とし、それは Windows 側 USB NIC 経由でルーティングされる。
+
 ## `examples/USBVendor`
 
 目的:

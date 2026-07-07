@@ -6,6 +6,53 @@ Manual tests are reserved for behavior that cannot be fully controlled by
 pytest, such as host OS enumeration dialogs, visual LED confirmation, external
 USB analyzers, or physical cabling changes.
 
+## `usb_ncm` (USB CDC-NCM network device)
+
+Purpose:
+
+- Verify that the host OS enumerates the board as a CDC-NCM network adapter and
+  binds its native NCM driver (no driver install).
+- Verify that the device's built-in DHCP server hands the host an address on
+  192.168.7.0/24.
+- Verify end-to-end IP reachability (lwIP + esp_netif + the frame TX/RX glue) by
+  pinging the device at 192.168.7.1.
+
+Unlike the peer tests, this one needs the board's USB-OTG port cabled to the PC
+running the tests (not the peer host board), so it is manual. The sketch, its
+`sketch.yaml` (the `esp32s3` profile), and a pytest test live in
+[`usb_ncm/`](usb_ncm/).
+
+Steps:
+
+1. Flash `usb_ncm/usb_ncm.ino` to the ESP32-S3 (or run
+   `test_usb_ncm_flash_and_enumerate`, which flashes via the `esp32s3` profile
+   and waits for `NCM_NET 1 ip=192.168.7.1`).
+2. Cable the board's USB-OTG port to the PC.
+3. Confirm the host shows a new network interface with a 192.168.7.x address.
+4. Run the ping check:
+   ```
+   cd tests && uv run --env-file .env pytest manual/usb_ncm/test_usb_ncm.py::test_usb_ncm_ping
+   ```
+   Override the target with `NCM_TEST_IP` if needed.
+
+Expected:
+
+- Host binds an NCM/UsbNcm driver; the interface class is CDC (0x02 / NCM) with
+  a CDC-Data interface.
+- The host interface gets a 192.168.7.x lease.
+- `ping 192.168.7.1` succeeds (0% loss).
+- Device serial prints `NCM_NET 1 ...` and `rx_frames` climbs.
+
+Notes:
+
+- The device side is NCM only (CDC-ECM is not enabled in the Arduino-ESP32
+  core). Modern Windows / macOS / Linux all support NCM natively.
+- DHCP is opt-in: `net.dhcpServer(true)` (device is gateway), `net.dhcpClient(true)`
+  (device gets its address from a bridged LAN — leaves room for PC-side
+  bridging), or a bare `net.ipConfig(...)` for a static address with no DHCP.
+- Under WSL the device's log serial may not be directly visible, but the ping
+  test only needs host IP reachability, which routes through the Windows USB NIC.
+
 ## `examples/USBVendor`
 
 Purpose:
