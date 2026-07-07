@@ -1876,6 +1876,16 @@ void EspUsbDeviceNet::dhcpClient(bool enable)
   }
 }
 
+void EspUsbDeviceNet::dhcpAdvertiseGateway(bool enable)
+{
+  dhcpAdvertiseGateway_ = enable;
+}
+
+void EspUsbDeviceNet::dhcpDns(IPAddress dns)
+{
+  dhcpDns_ = static_cast<uint32_t>(dns);
+}
+
 bool EspUsbDeviceNet::networkUp() const
 {
   return netStarted_;
@@ -1992,16 +2002,25 @@ bool EspUsbDeviceNet::beginNetwork()
     esp_netif_set_ip_info(netif, &g_netIpInfo);
     if (dhcpServer_)
     {
-      // Do NOT advertise a router (option 3) or DNS (option 6): the device is a
-      // local endpoint, not a forwarding gateway. Advertising itself as the
-      // default route would black-hole the host's off-link traffic, and offering
-      // no DNS while claiming to be a gateway looks like a broken connection.
-      // The host still gets the on-link 192.168.7.0/24 route and reaches the
-      // device by IP; its real internet path is left untouched. (A DHCP client /
-      // PC-bridge setup, dhcpClient(true), does not run the server at all.)
-      uint8_t offer = 0;
-      esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS, &offer, sizeof(offer));
-      esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof(offer));
+      // By default advertise neither a router (option 3) nor DNS (option 6): the
+      // device is a local endpoint, not a forwarding gateway, so advertising
+      // itself as the host's default route would black-hole its off-link traffic.
+      // The host still gets the on-link route and reaches the device by IP; its
+      // real internet path is untouched. dhcpAdvertiseGateway()/dhcpDns() opt in
+      // when the device really does forward or has a reachable DNS.
+      const uint8_t routerOffer = dhcpAdvertiseGateway_ ? 1 : 0;
+      const uint8_t dnsOffer = dhcpDns_ ? 1 : 0;
+      if (dhcpDns_)
+      {
+        esp_netif_dns_info_t dns = {};
+        dns.ip.type = ESP_IPADDR_TYPE_V4;
+        dns.ip.u_addr.ip4.addr = dhcpDns_;
+        esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns);
+      }
+      esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS,
+                             const_cast<uint8_t *>(&routerOffer), sizeof(routerOffer));
+      esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
+                             const_cast<uint8_t *>(&dnsOffer), sizeof(dnsOffer));
       esp_netif_dhcps_start(netif);
     }
   }

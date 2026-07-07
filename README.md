@@ -210,6 +210,9 @@ USB network (CDC-NCM):
   `dhcpServer(true)` (device is the gateway, hands the host an address),
   `dhcpClient(true)` (get an address from a PC-bridged LAN), or `ipConfig(...)`
   for a static address. DHCP is opt-in.
+- The DHCP server does not advertise a gateway/DNS by default (so it never
+  black-holes the host's real internet path). `dhcpAdvertiseGateway(true)` /
+  `dhcpDns(ip)` opt in when the device actually forwards or has a reachable DNS.
 
 Composite:
 

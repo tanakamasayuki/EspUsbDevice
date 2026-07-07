@@ -587,6 +587,13 @@ public:
   // bridges the USB NIC onto its LAN). OFF by default. Mutually exclusive with
   // dhcpServer. When neither is enabled the static ipConfig() address is used.
   void dhcpClient(bool enable);
+  // By default the DHCP server does NOT advertise itself as a gateway or DNS —
+  // the device is a local endpoint, and advertising a non-forwarding gateway as
+  // the host's default route would black-hole its off-link traffic. Enable these
+  // only if the device actually forwards (e.g. bridged to another uplink) or the
+  // advertised DNS is reachable. Call before beginNetwork().
+  void dhcpAdvertiseGateway(bool enable);  // offer the ipConfig() gateway as the DHCP router (option 3)
+  void dhcpDns(IPAddress dns);             // offer this DNS server (option 6); 0.0.0.0 = do not offer
   // Bring up the esp_netif/lwIP interface bound to this NCM function. Call once
   // after EspUsbDevice::begin(). If never called, the class stays a raw-frame
   // transport (onFrame/sendFrame) with no IP stack — useful for host-side bridging.
@@ -606,6 +613,8 @@ private:
   bool netStarted_ = false;
   bool dhcpServer_ = false;
   bool dhcpClient_ = false;
+  bool dhcpAdvertiseGateway_ = false;
+  uint32_t dhcpDns_ = 0;         // network byte order; 0 => do not offer DNS
   uint32_t cfgIp_ = 0;           // network byte order; 0 => use defaults in beginNetwork()
   uint32_t cfgGateway_ = 0;
   uint32_t cfgNetmask_ = 0;
