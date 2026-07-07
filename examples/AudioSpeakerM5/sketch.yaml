@@ -1,5 +1,5 @@
 profiles:
-  s3:
+  esp32s3:
     fqbn: esp32:esp32:esp32s3:USBMode=default
     platforms:
       - platform: esp32:esp32 (3.3.10)
@@ -11,4 +11,4 @@ profiles:
       - M5Unified (0.2.17)
       - M5GFX (0.2.24)
 
-default_profile: s3
+default_profile: esp32s3

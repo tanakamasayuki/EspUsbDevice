@@ -19,7 +19,7 @@ def test_example_compile(example_dir):
         pytest.skip("arduino-cli is not available")
 
     result = subprocess.run(
-        ["arduino-cli", "compile", "--profile", "s3", str(example_dir)],
+        ["arduino-cli", "compile", "--profile", "esp32s3", str(example_dir)],
         cwd=REPO_ROOT,
         text=True,
         stdout=subprocess.PIPE,
