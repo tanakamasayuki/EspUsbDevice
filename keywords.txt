@@ -15,6 +15,8 @@ EspUsbDeviceMsc	KEYWORD1
 EspUsbDeviceMscRamDisk	KEYWORD1
 EspUsbDeviceMscFatRamDisk	KEYWORD1
 EspUsbDeviceMscSdCard	KEYWORD1
+EspUsbDeviceNet	KEYWORD1
+EspUsbDeviceAudio	KEYWORD1
 EspUsbDeviceHidKeyboard	KEYWORD1
 EspUsbDeviceHidMouse	KEYWORD1
 EspUsbDeviceHidCustom	KEYWORD1
@@ -131,6 +133,16 @@ exists	KEYWORD2
 fileSize	KEYWORD2
 readFile	KEYWORD2
 readOnly	KEYWORD2
+beginNetwork	KEYWORD2
+onFrame	KEYWORD2
+sendFrame	KEYWORD2
+linkUp	KEYWORD2
+ipConfig	KEYWORD2
+dhcpServer	KEYWORD2
+dhcpClient	KEYWORD2
+networkUp	KEYWORD2
+localIP	KEYWORD2
+macAddress	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)
