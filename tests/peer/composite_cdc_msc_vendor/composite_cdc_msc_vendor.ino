@@ -132,8 +132,12 @@ void loop()
     else if (command == 'v')
     {
       const bool opened = deviceAddress && usb.vendorOpen(deviceAddress);
+      Serial.printf("VENDOR_OPEN ok=%u err=%s\n", opened ? 1 : 0, usb.lastErrorName());
       const uint8_t payload[] = "ping";
       const bool wrote = opened && usb.vendorWrite(payload, sizeof(payload) - 1, deviceAddress);
+      // Diagnostic: separate write success from read result to localize the
+      // failure (host write vs device receipt vs host read).
+      Serial.printf("VENDOR_WRITE ok=%u err=%s\n", wrote ? 1 : 0, usb.lastErrorName());
       uint8_t buffer[64] = {};
       size_t length = 0;
       const uint32_t started = millis();
@@ -146,6 +150,7 @@ void loop()
         }
       }
       buffer[length] = '\0';
+      Serial.printf("VENDOR_READ len=%u\n", static_cast<unsigned>(length));
       Serial.printf("VENDOR_ECHO ok=%u data=%s\n", (wrote && length > 0) ? 1 : 0,
                     reinterpret_cast<const char *>(buffer));
     }

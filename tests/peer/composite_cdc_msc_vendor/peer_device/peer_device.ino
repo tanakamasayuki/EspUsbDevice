@@ -66,6 +66,9 @@ static int32_t onWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t 
   return bufsize;
 }
 
+static volatile uint32_t vendorOnRxCount = 0;
+static volatile uint32_t vendorRxTotal = 0;
+
 static void processVendorRx()
 {
   size_t available = Vendor.available();
@@ -77,6 +80,7 @@ static void processVendorRx()
     {
       break;
     }
+    vendorRxTotal += chunk;
     Vendor.write(reinterpret_cast<const uint8_t *>("echo:"), 5);
     Vendor.write(buffer, chunk);
     Vendor.flush();
@@ -104,7 +108,10 @@ void setup()
   MSC.begin(BLOCK_COUNT, BLOCK_SIZE);
 
   Vendor.onRx([](size_t)
-              { processVendorRx(); });
+              {
+                vendorOnRxCount++;
+                processVendorRx();
+              });
 
   EspUsbDeviceConfig config;
   config.vid = 0x303a;
@@ -136,6 +143,15 @@ void loop()
       const uint8_t payload[] = "device to host";
       Serial.printf("DEVICE_TX %u\n", UsbSerial.write(payload, sizeof(payload) - 1) == sizeof(payload) - 1 ? 1 : 0);
     }
+    else if (command == 'q')
+    {
+      // On-demand vendor RX state (independent of async log timing): did the
+      // RX callback fire (onrx) and how many bytes were received (rxtotal)?
+      Serial.printf("DEVICE_VENDOR_STATE onrx=%lu rxtotal=%lu avail=%d\n",
+                    static_cast<unsigned long>(vendorOnRxCount),
+                    static_cast<unsigned long>(vendorRxTotal),
+                    Vendor.available());
+    }
   }
 
   while (UsbSerial.available() > 0)
@@ -147,5 +163,12 @@ void loop()
     }
     Serial.println();
   }
+
+  // Poll-drain the vendor RX. In a composite the tud_vendor RX callback (onRx)
+  // does not fire (observed: avail>0 while onrx=0), but the data is in the FIFO
+  // and readable, so we drain by polling. See docs/DESIGN_NOTES.ja.md
+  // "複合時の vendor RX callback".
+  processVendorRx();
+
   delay(1);
 }

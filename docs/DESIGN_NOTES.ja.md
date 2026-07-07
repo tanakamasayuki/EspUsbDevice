@@ -220,6 +220,46 @@ interface number も HID=0 / CDC=1,2 で衝突しなかった）ため。
 > 疑いがある（HID が無い CDC/MSC/MIDI + Vendor では HID blob を読まないので影響しない）。EP 採番衝突とは
 > 独立した issue として切り出し、HID を含む複合の Vendor は当面スコープ外とする。
 
+### 複合時の endpoint 予算の上限（S3 実機確定・2026-07）
+
+採番衝突を解消しても、**同時に載せられる class 数には S3 の endpoint 予算という物理上限**がある。
+
+- S3 の USB-OTG は `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`。ただし FIFO を消費する IN endpoint の
+  実効上限はさらに小さい。実測では **FIFO 消費 IN が 3 本まで**の複合しか列挙できない
+  （CDC の notification EP は FIFO 非消費でカウント外）。
+- ✅ 列挙可: HID+CDC+MSC（`composite_hid_cdc_msc`。FIFO-IN=HID+CDC data+MSC=3）、
+  CDC+MSC+Vendor（`composite_cdc_msc_vendor`。FIFO-IN=CDC data+MSC+Vendor=3）。
+- ✗ 列挙不可: HID+CDC+MSC+MIDI（FIFO-IN=4）。`device.begin()` は成功するが、host の SET_CONFIGURATION
+  時に **device が EP0 を STALL**（host 側ログ `USBH: Dev N EP 0 STALL` / `ENUM CHECK_CONFIG FAILED`）。
+  core の `tinyusb_get_free_*` は `CFG_TUD_NUM_IN_EPS=5` を基準に採番を許可するため begin では検知できず、
+  実際に endpoint を開く DWC の FIFO 確保段階で失敗する。
+- 実用上の指針: **S3 では FIFO 消費 IN 3 本（おおむね 3 class、CDC 込みなら CDC+2 class）が上限**。
+  4 class 以上が必要なら P4（`CFG_TUD_NUM_IN_EPS=8`）を使う。これは endpoint 数のハード制約であり、
+  ライブラリの回避対象ではない（begin 時点で予測できないため、必要なら将来 begin で FIFO 見積り警告を出す余地はある）。
+
+### 複合時の vendor RX callback（実機切り分け済み・2026-07）
+
+`composite_cdc_msc_vendor`（CDC+MSC+bulk Vendor）で bulk echo が通らなかった件を、host/device 両側に診断を
+入れて層まで切り分けた。**結論: transport は正常、`onRx` コールバックが composite で発火しないだけ**。
+
+診断（`v` コマンドで host が bulk OUT を書き、`q` で device 状態を問い合わせ）:
+
+- `VENDOR_OPEN ok=1` / `VENDOR_WRITE ok=1` … host の claim も **同期 bulk OUT も成功**
+  （`vendorWrite` は `USB_TRANSFER_STATUS_COMPLETED` を待つので ok=1 は device の HW ACK を意味する）。
+- device 側 `DEVICE_VENDOR_STATE onrx=0 rxtotal=0 avail=4` … **データ 4 byte は device の vendor RX FIFO に
+  届いている**（`tud_vendor_n_available(0)==4`）が、**`tud_vendor_rx_cb`（→ `onRx`）が一度も発火していない**
+  （`onrx=0`）ため未読で滞留していた。
+
+つまり host も device の transport も正しい。standalone の `usb_vendor` では onRx が発火するのに、CDC/MSC と
+複合すると発火しない、という **vendor RX callback 限定の不具合**。回避は容易で、`onRx` に頼らず loop() で
+`Vendor.available()` / `read()` を**ポーリング drain**すれば echo は往復する（`composite_cdc_msc_vendor` の
+device はこの方式にして bulk echo を pass させている）。
+
+- device 責務としての結論: **CDC+MSC+Vendor は複合で正しく列挙し、bulk Vendor も送受信できる**（ポーリング前提）。
+- 残課題（follow-up）: 複合時に `tud_vendor_rx_cb` が発火しない理由の特定と修正可否。EspUsbDevice 側で
+  救えるか（callback 経路）、TinyUSB/Arduino-ESP32 core 側の制約かは未確定。当面は **vendor RX はポーリング推奨**を
+  API ドキュメントの注記とする。
+
 ### HID keyboard API の限界
 
 Arduino 標準 keyboard API は `write(char)` のような文字入力 API が中心です。

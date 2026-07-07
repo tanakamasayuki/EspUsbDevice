@@ -1,17 +1,17 @@
 #include <Arduino.h>
 #include "EspUsbDevice.h"
 
-// Maximal composite: HID keyboard + CDC + MSC + MIDI (4 classes = MAX_CLASSES).
-// On S3 this is the endpoint budget ceiling (IN endpoints: HID 1 + CDC 2 +
-// MSC 1 + MIDI 1 = 5 = CFG_TUD_NUM_IN_EPS). If this enumerates with all
-// interfaces claimed and no duplicate endpoint, every 2-/3-class subset does
-// too. Pairs with composite_quad_midi.ino (host). See tests/TEST_PLAN.ja.md.
+// Max composite that fits the S3 endpoint budget: HID keyboard + CDC + MSC
+// (3 FIFO-consuming IN endpoints). If this enumerates with all interfaces
+// claimed and no duplicate endpoint, every 2-class subset does too. Adding a
+// 4th FIFO-consuming class (e.g. MIDI) exceeds the S3 ceiling and the device
+// STALLs EP0 at SET_CONFIGURATION — see docs/DESIGN_NOTES.ja.md
+// "複合時の endpoint 予算の上限". Pairs with composite_hid_cdc_msc.ino (host).
 
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 EspUsbDeviceCdcSerial UsbSerial(device);
 EspUsbDeviceMsc MSC(device);
-EspUsbDeviceMidi MIDI(device);
 
 static bool beginOk = false;
 static const char *beginError = "ESP_OK";
@@ -104,8 +104,8 @@ void setup()
   config.vid = 0x303a;
   config.pid = 0x4022;
   config.manufacturer = "EspUsbDevice";
-  config.product = "EspUsbDevice HID+CDC+MSC+MIDI";
-  config.serialNumber = "espusb-quad";
+  config.product = "EspUsbDevice HID+CDC+MSC";
+  config.serialNumber = "espusb-hid-cdc-msc";
 
   beginOk = device.begin(config);
   beginError = device.lastErrorName();
@@ -133,10 +133,6 @@ void loop()
     {
       const uint8_t payload[] = "device to host";
       Serial.printf("DEVICE_TX %u\n", UsbSerial.write(payload, sizeof(payload) - 1) == sizeof(payload) - 1 ? 1 : 0);
-    }
-    else if (command == 'n')
-    {
-      Serial.println(MIDI.noteOn(0, 64, 110) ? "DEVICE_TX_NOTE_ON" : "DEVICE_TX_FAILED");
     }
   }
 

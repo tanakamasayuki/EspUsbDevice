@@ -1,8 +1,8 @@
 #include "EspUsbHost.h"
 
-// Host side for the maximal HID+CDC+MSC+MIDI composite (endpoint budget
-// ceiling on S3). Verifies all interfaces enumerate/claim with no duplicate
-// endpoint address, and that each class functions.
+// Host side for the HID+CDC+MSC composite (the max that fits the S3 endpoint
+// budget). Verifies all interfaces enumerate/claim with no duplicate endpoint
+// address, and that each class functions.
 
 EspUsbHost usb;
 EspUsbHostCdcSerial CdcSerial(usb);
@@ -15,14 +15,14 @@ static void reportEnumeration()
 {
   if (deviceAddress == 0)
   {
-    Serial.println("HOST_ENUM pid=0000 ifcount=0 eps=0 dup=1 hid=0 cdc=0 msc=0 midi=0 claimok=0");
+    Serial.println("HOST_ENUM pid=0000 ifcount=0 eps=0 dup=1 hid=0 cdc=0 msc=0 claimok=0");
     return;
   }
 
   EspUsbHostInterfaceInfo interfaces[12];
   const size_t ifCount = usb.getInterfaces(deviceAddress, interfaces, 12);
 
-  uint8_t hidCount = 0, cdcCount = 0, mscCount = 0, midiCount = 0, claimOk = 1;
+  uint8_t hidCount = 0, cdcCount = 0, mscCount = 0, claimOk = 1;
   for (size_t i = 0; i < ifCount; i++)
   {
     switch (interfaces[i].interfaceClass)
@@ -37,9 +37,6 @@ static void reportEnumeration()
     case 0x08:
       mscCount++;
       break;
-    case 0x01:
-      midiCount++;
-      break; // audio/MIDIStreaming
     }
     if (interfaces[i].claimAttempted && interfaces[i].claimResult != ESP_OK)
     {
@@ -68,9 +65,9 @@ static void reportEnumeration()
     }
   }
 
-  Serial.printf("HOST_ENUM pid=%04x ifcount=%u eps=%u dup=%u hid=%u cdc=%u msc=%u midi=%u claimok=%u\n",
+  Serial.printf("HOST_ENUM pid=%04x ifcount=%u eps=%u dup=%u hid=%u cdc=%u msc=%u claimok=%u\n",
                 devicePid, static_cast<unsigned>(ifCount), static_cast<unsigned>(epCount),
-                dup, hidCount, cdcCount, mscCount, midiCount, claimOk);
+                dup, hidCount, cdcCount, mscCount, claimOk);
 }
 
 static void waitForMsc()
@@ -109,12 +106,6 @@ void setup()
                      Serial.printf("KEY %c\n", static_cast<char>(event.ascii));
                    }
                  });
-
-  usb.onMidiMessage([](const EspUsbHostMidiMessage &message)
-                    {
-                      Serial.printf("MIDI_RX status=%02x data1=%u data2=%u\n",
-                                    message.status, message.data1, message.data2);
-                    });
 
   CdcSerial.begin(115200);
 

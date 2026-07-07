@@ -32,5 +32,9 @@ def test_composite_cdc_msc_vendor_msc_works(dut, peers):
 
 
 def test_composite_cdc_msc_vendor_vendor_works(dut, peers):
+    # Bulk Vendor round-trip in the composite. The device poll-drains the vendor
+    # RX (the tud_vendor onRx callback does not fire in a composite — see
+    # docs/DESIGN_NOTES.ja.md "複合時の vendor RX callback" — but the data is in
+    # the FIFO and readable), so host write -> device echo -> host read works.
     dut.write("v")
     dut.expect_exact("VENDOR_ECHO ok=1 data=echo:ping")
