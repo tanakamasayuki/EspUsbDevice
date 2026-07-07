@@ -9,5 +9,5 @@
 - [ ] USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API。
 - [ ] WebUSB / libusb / WinUSB の手動確認手順とサンプル Host 側コード。
 - [ ] FirmwareMSC。FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example。
-- [ ] CDC + HID + MSC + Vendor などの all-in-one composite example。
+- [x] all-in-one composite example（`examples/CompositeHidCdcMsc`：HID keyboard + CDC serial + MSC FAT RAM disk）。1 つの `EspUsbDevice` に 3 function を登録し `begin()` 1 回で複合起動。S3 の FIFO-IN 3 本上限に収まる最大構成（4 クラス目は P4 が必要な旨を README に明記）。CDC で `type <text>` → keyboard 入力のデモ付き。
 - [ ] Keyboard macro / Serial-to-keyboard / Button mouse などの応用 example。
