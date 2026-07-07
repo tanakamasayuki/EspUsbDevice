@@ -574,6 +574,25 @@ public:
   bool sendFrame(const uint8_t *data, size_t length);
   bool linkUp() const;
 
+  // --- Optional lwIP / esp_netif integration (Phase 2) ---
+  // Configure the interface's IPv4 address, gateway, and subnet mask. Used for a
+  // static address and as the DHCP server's own address/pool base. Defaults to
+  // 192.168.7.1 / 192.168.7.1 / 255.255.255.0. Call before beginNetwork().
+  void ipConfig(IPAddress local, IPAddress gateway, IPAddress subnet);
+  // Run a DHCP server so the USB host is handed an address automatically. OFF by
+  // default (never enabled unless requested). Mutually exclusive with dhcpClient.
+  void dhcpServer(bool enable);
+  // Act as a DHCP client (get our address from the network, e.g. when the PC
+  // bridges the USB NIC onto its LAN). OFF by default. Mutually exclusive with
+  // dhcpServer. When neither is enabled the static ipConfig() address is used.
+  void dhcpClient(bool enable);
+  // Bring up the esp_netif/lwIP interface bound to this NCM function. Call once
+  // after EspUsbDevice::begin(). If never called, the class stays a raw-frame
+  // transport (onFrame/sendFrame) with no IP stack — useful for host-side bridging.
+  bool beginNetwork();
+  bool networkUp() const;
+  IPAddress localIP() const;
+
   // Internal (called from TinyUSB tud_network_* callbacks).
   bool handleRecv(const uint8_t *src, uint16_t size);
   uint16_t handleXmit(uint8_t *dst, void *ref, uint16_t arg);
@@ -582,6 +601,14 @@ public:
 private:
   FrameCallback frameCallback_;
   bool linkUp_ = false;
+
+  void *netif_ = nullptr;        // esp_netif_t* (opaque here to avoid leaking IDF types)
+  bool netStarted_ = false;
+  bool dhcpServer_ = false;
+  bool dhcpClient_ = false;
+  uint32_t cfgIp_ = 0;           // network byte order; 0 => use defaults in beginNetwork()
+  uint32_t cfgGateway_ = 0;
+  uint32_t cfgNetmask_ = 0;
 };
 
 class EspUsbDeviceMidi : public EspUsbDeviceClass
