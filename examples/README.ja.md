@@ -213,6 +213,19 @@ SPI 接続の SD card を MSC block device として公開する例です。
 - Host が SD を所有している間、ESP32 側では `SD.open()` などの file API を使わない設計にします。
 - 実用的な永続ストレージ example の基本形です。
 
+## CompositeHidCdcMsc
+
+HID keyboard + CDC serial + MSC FAT RAM disk を 1 つの `EspUsbDevice` に載せた
+全部入り複合デバイスの例です。
+詳しくは [CompositeHidCdcMsc/README.ja.md](CompositeHidCdcMsc/README.ja.md) を参照してください。
+
+- 複数の function を同じ `EspUsbDevice` に登録し `begin()` を 1 回呼ぶだけで、ライブラリが
+  複合 descriptor を構成し interface と endpoint を割り当てます。
+- CDC で `type <text>` を送ると、その文字列を HID keyboard で入力します。
+- ESP32-S3 の endpoint 予算に収まる最大の複合（FIFO-IN 3 本）です。4 本目の FIFO-IN class は
+  ESP32-P4 が必要です。
+- USB Audio class は排他で、他 class と複合できません。
+
 ## 注意
 
 - USB device として使う側の ESP32-S3 などを USB host に接続してください。

@@ -251,6 +251,20 @@ See [MSCSdCard/README.md](MSCSdCard/README.md) for details.
   card.
 - This is the basic practical persistent-storage example.
 
+## CompositeHidCdcMsc
+
+All-in-one composite device: HID keyboard + CDC serial + MSC FAT RAM disk on one
+`EspUsbDevice`.
+See [CompositeHidCdcMsc/README.md](CompositeHidCdcMsc/README.md) for details.
+
+- Register several functions with the same `EspUsbDevice` and call `begin()`
+  once; the library builds the composite descriptor and assigns interfaces and
+  endpoints.
+- Send `type <text>` over the CDC port to type it on the HID keyboard.
+- The richest composite that fits the ESP32-S3 endpoint budget (three FIFO-IN
+  endpoints); a fourth FIFO-IN class needs the ESP32-P4.
+- The USB Audio class is exclusive and cannot be combined with other classes.
+
 ## Notes
 
 - Connect the USB-device-capable ESP32-S3 or similar board to a USB host.
