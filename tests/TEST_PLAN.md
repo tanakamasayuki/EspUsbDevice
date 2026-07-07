@@ -75,6 +75,7 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | N/A (P4 audio is UAC2/HS; loopback is FS-only) | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` (P4 HS) |
+| Composite (multi-function) | ✅ `composite_reject` (Audio-exclusive / MAX_CLASSES) | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -219,6 +220,105 @@ is covered by the `tests/manual` procedure.
 `arduino-cli compile --profile esp32s3`. Examples are the user-facing API entry
 points, so they must compile independently of peer / loopback hardware tests.
 
+### Composite Device Tests
+
+Verify that a composite device with two (or more) classes `addClass`-ed at once
+actually enumerates and that every class functions. The goal is to determine, by
+machine assertion, which combinations work together, and for the ones that do
+not, to record the cause (USB spec / Arduino-ESP32 / TinyUSB runtime constraint)
+rather than paper over it.
+
+#### Structural constraints (test-design premises)
+
+A composite registers each class individually with the core's
+`tinyusb_enable_interface()` (`begin()` in [EspUsbDevice.cpp](../src/EspUsbDevice.cpp)).
+Two constraints follow:
+
+1. **Audio is exclusive.** With an Audio class present, `begin()` fails with
+   `ESP_ERR_NOT_SUPPORTED` if `classCount_ != 1` or any other class is combined
+   (explicitly forbidden in code). So Audio × any-class is NG by design; the
+   `composite_reject` unit test pins that NG.
+2. **Endpoint numbering originally split across three schemes** that did not know
+   about each other — the prime suspect for composite breakage. This has since
+   been fixed for HID (see below).
+
+   | Class | Interfaces | EP numbering | EP numbers used |
+   |-------|-----------|--------------|-----------------|
+   | HID (merged, 1) | 1 | library counter (from 1) | EP1 duplex (after fix) |
+   | CDC | 2 | hardcoded | EP3(OUT), EP4(IN), EP5(notif) |
+   | MIDI | 2 | core `tinyusb_get_free_*` | dynamic IN+OUT |
+   | MSC | 1 | core `tinyusb_get_free_duplex` | dynamic duplex ×1 |
+   | Vendor | 1 | core `tinyusb_get_free_duplex` | dynamic duplex ×1 |
+
+#### Target matrix
+
+The HID composite collision (endpoints not registered in the bitmask + interface
+number baked to 0) is **fixed and hardware-verified**: HID now uses EP1 duplex
+with `reserve_endpoints=true` and its interface number is rewritten to the
+core-assigned slot (`docs/DESIGN_NOTES.ja.md`). After the fix every class uses
+the core's dynamic allocator consistently, so **the pairs need not all be tested
+individually — a maximal configuration up to the endpoint budget subsumes them**
+(if the top configuration works with `dup=0 / claimok=1`, each of its subset
+pairs does too).
+
+| # | Combination | Result | Basis |
+|---|-------------|--------|-------|
+| 1 | HID + CDC | ✅ hardware OK (`composite_hid_cdc` 4/4) | HID=IF0/EP1, CDC=IF1,2/EP3,4,5 |
+| 3 | HID + MSC | ✅ hardware OK (`composite_hid_msc` 3/3) | after fix MSC=IF0/EP2, HID=IF1/EP1, `dup=0 claimok=1` |
+| 2,4-10 | other non-Audio pairs | ○ (subsumed by the maximal config) | one core allocator, consistent numbering; covered by the triple below |
+| 11 | Audio + any | ✗ NG (by spec) | exclusive in code; pinned by `unit/composite_reject` |
+| — | HID + bulk Vendor | ✅ hardware OK (`composite_hid_vendor` 3/3) | fixed the descriptor duplication (HID blob no longer includes Vendor). `docs/DESIGN_NOTES.ja.md` |
+
+**S3 endpoint budget:** `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5` (FIFO limits
+usable IN to ~3). IN consumption: HID=1 / CDC=2 / MIDI=1 / MSC=1 / Vendor=1. The
+practical ceiling is about 4 classes (matching `MAX_CLASSES=4`).
+
+Maximal-configuration tests (stand in for all pairs; all pass on hardware):
+
+- `peer/composite_hid_cdc_msc`: HID + CDC + MSC (3 FIFO-IN = the S3 ceiling).
+  `dup=0` / all claimed / keyboard + serial + msc functional; subsumes the
+  subset pairs (HID+CDC, HID+MSC, CDC+MSC).
+- `peer/composite_cdc_msc_vendor`: non-HID triple (CDC+MSC+Vendor). Covers Vendor
+  (no HID blob, so it avoids the bulk-Vendor duplication issue). Vendor RX is
+  driven by the `onRx` callback and the test asserts `onrx>=1` (regression guard
+  for the `tud_vendor_rx_cb` signature fix; `docs/DESIGN_NOTES.ja.md`).
+- HID+CDC+MSC+MIDI (4 classes) exceeds the S3 endpoint budget and cannot
+  enumerate (`docs/DESIGN_NOTES.ja.md`). 4+ classes need the P4.
+
+HID + HID (keyboard + mouse, vendor, etc.) collapses into a single HID interface
+via report IDs and is already covered by `hid_keyboard_mouse` / `hid_vendor`; not
+repeated here.
+
+#### Layer split (important constraint)
+
+The merged descriptor and EP numbering for CDC/MIDI/MSC/Vendor are only finalized
+when the core runs `tinyusb_init()`, not under `startTinyUsb=false`. So byte-level
+unit checks are limited to the HID-merged part; the rest is verified by
+enumerating on real hardware.
+
+- **unit (S3 standalone, no host)**
+  - `composite_reject`: Audio + each class, and exceeding `MAX_CLASSES` (5
+    classes), assert `begin()==false` and `lastError()==ESP_ERR_NOT_SUPPORTED`
+    (#11). The reject logic runs under `startTinyUsb=false`, so no host is needed.
+- **peer (two S3 boards; host=EspUsbHost / device=EspUsbDevice)** ← primary
+  - Each `peer/composite_<a>_<b>/`, judged in two stages:
+    1. **Enumerates + no duplicate EP:** host dumps the config descriptor and
+       asserts no duplicate endpoint address and sequential interface numbers.
+    2. **Both classes function:** one minimal round-trip per class (HID→report,
+       CDC→bidirectional, MSC→capacity, MIDI→packet, Vendor→bulk echo).
+  - Device `.ino` prints the shared `DEVICE_BEGIN ok|ng <errname>` line.
+- **loopback (one P4 board):** regress only the pairs that passed on peer; EP
+  collisions are speed-independent, so peer is usually sufficient.
+
+#### Execution order (staged)
+
+1. `unit/composite_reject` (pins Audio-exclusive / MAX_CLASSES; host-free).
+2. `peer/composite_hid_cdc` (establishes the template and shared utilities).
+3. `peer/composite_hid_msc` / `hid_vendor` (breakage suspects). Enumeration or EP
+   collisions get recorded in `docs/DESIGN_NOTES.ja.md`.
+4. Remaining CDC / allocator combinations, then the maximal triples.
+5. Reflect results here and in `docs/DEVELOPMENT_PLAN.ja.md`.
+
 ## Initial Migration Order
 
 1. `unit/compile_smoke`
@@ -255,6 +355,12 @@ points, so they must compile independently of peer / loopback hardware tests.
 32. (no `loopback/usb_audio`: P4 audio is UAC2/HS, loopback is FS-only)
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
+35. `unit/composite_reject` (Audio-exclusive / MAX_CLASSES)
+36. ✅ `peer/composite_hid_cdc` (composite template + shared util, 4/4)
+37. ✅ `peer/composite_hid_msc` (found → fixed the HID numbering collision → 3/3; `docs/DESIGN_NOTES.ja.md`)
+38. ✅ `peer/composite_hid_cdc_msc` (HID+CDC+MSC, the maximal config that fits)
+39. ✅ `peer/composite_cdc_msc_vendor` (non-HID triple, Vendor via `onRx`-driven RX)
+40. ✅ `peer/composite_hid_vendor` (HID + bulk Vendor, descriptor-duplication fix → 3/3)
 
 ## Acceptance Rules
 
