@@ -216,7 +216,7 @@ SPIFFS / LittleFS exposure is not part of the standard test scope.
 is covered by the `tests/manual` procedure.
 
 `examples_compile` enumerates `examples/*/*.ino` and builds each sketch with
-`arduino-cli compile --profile s3`. Examples are the user-facing API entry
+`arduino-cli compile --profile esp32s3`. Examples are the user-facing API entry
 points, so they must compile independently of peer / loopback hardware tests.
 
 ## Initial Migration Order
