@@ -31,8 +31,15 @@
 #include "class/vendor/vendor_device.h"
 #include "class/net/net_device.h"
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 1
+#if __has_include("esp_mac.h")
+#include "esp_mac.h"
+#define ESP_USB_DEVICE_HAS_ESP_MAC 1
+#else
+#define ESP_USB_DEVICE_HAS_ESP_MAC 0
+#endif
 #else
 #define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
+#define ESP_USB_DEVICE_HAS_ESP_MAC 0
 #endif
 
 // esp_netif / lwIP integration for the NCM class (EspUsbDeviceNet::beginNetwork()).
@@ -363,9 +370,15 @@ static uint16_t espUsbDeviceLoadVendorDescriptor(uint8_t *dst, uint8_t *itf)
 }
 
 // The 6-byte MAC address the TinyUSB net class reports to the host. Defined here
-// (the class references it as `extern`) and defaulted to a locally-administered
-// address; EspUsbDeviceNet::macAddress() overwrites it before begin().
+// (the class references it as `extern`). It seeds a fixed locally-administered
+// fallback, but unless the sketch calls EspUsbDeviceNet::macAddress() the
+// descriptor loader replaces it with this chip's per-device Ethernet MAC
+// (esp_read_mac / ESP_MAC_ETH) so two identical boards on one host do not clash.
 uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6a, 0x96, 0x00};
+
+// Set true once the sketch calls macAddress(), which pins the MAC and suppresses
+// the automatic per-chip ESP_MAC_ETH derivation below.
+static bool g_netMacUserSet = false;
 
 // Holds the iMACAddress string (12 upper-hex chars, no separators) that the NCM
 // descriptor points at. tinyusb_add_string_descriptor() stores the pointer (it
@@ -379,6 +392,15 @@ static uint16_t espUsbDeviceLoadNetDescriptor(uint8_t *dst, uint8_t *itf)
     return 0;
   }
   const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice NCM");
+#if ESP_USB_DEVICE_HAS_ESP_MAC
+  // Give each chip a unique NIC MAC by default. ESP_MAC_ETH is derived from the
+  // eFuse base MAC and is guaranteed distinct from the Wi-Fi STA/AP and BT MACs,
+  // so enabling Wi-Fi alongside NCM never collides with our own interface.
+  if (!g_netMacUserSet)
+  {
+    esp_read_mac(tud_network_mac_address, ESP_MAC_ETH);
+  }
+#endif
   static const char *hex = "0123456789ABCDEF";
   for (int i = 0; i < 6; i++)
   {
@@ -1744,6 +1766,7 @@ void EspUsbDeviceNet::macAddress(const uint8_t mac[6])
 {
 #if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
   memcpy(tud_network_mac_address, mac, 6);
+  g_netMacUserSet = true;
 #else
   (void)mac;
 #endif
