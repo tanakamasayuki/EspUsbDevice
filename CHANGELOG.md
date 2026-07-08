@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 1.2.4
 - (EN) Fix `EspUsbDeviceNet` (CDC-NCM) to give its own esp_netif a MAC distinct from the advertised iMACAddress. The iMACAddress descriptor is the MAC assigned to the *host* end of the point-to-point USB link; the previous code set the device's own netif to the same value, putting an identical MAC on both ends of one L2 segment (ARP would resolve the peer to the host's own address). The netif MAC is now the advertised MAC with the low bit of the last byte toggled, matching TinyUSB's net_lwip_webserver. The USB link is an isolated segment, so the derived address never leaks onto a real network.
 - (JA) `EspUsbDeviceNet`（CDC-NCM）が自身の esp_netif に、広告する iMACAddress とは別の MAC を使うよう修正しました。iMACAddress descriptor は point-to-point な USB リンクの *ホスト側* に割り当てる MAC ですが、従来は自 netif にも同じ値を設定しており、1 つの L2 セグメントの両端が同一 MAC になっていました（ARP が peer をホスト自身のアドレスとして解決してしまう）。自 netif の MAC を、広告 MAC の最下位バイト bit0 を反転した値にしました（TinyUSB の net_lwip_webserver と同じ回避策）。USB リンクは隔離セグメントのため、派生アドレスが実ネットワークに漏れることはありません。
 
