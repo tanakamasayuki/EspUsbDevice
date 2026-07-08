@@ -2019,7 +2019,16 @@ bool EspUsbDeviceNet::beginNetwork()
     netif_ = nullptr;
     return false;
   }
-  esp_netif_set_mac(netif, tud_network_mac_address);
+  // The iMACAddress descriptor (tud_network_mac_address) is the MAC assigned to
+  // the *host* end of the USB link, so our own netif must use a *different* MAC
+  // on this point-to-point segment — otherwise both ends share one MAC and ARP
+  // resolves the peer to the host's own address. Toggle the low bit of the last
+  // byte, exactly like TinyUSB's net_lwip_webserver. The USB link is an isolated
+  // segment, so this derived address never leaks onto a real network.
+  uint8_t devMac[6];
+  memcpy(devMac, tud_network_mac_address, 6);
+  devMac[5] ^= 0x01;
+  esp_netif_set_mac(netif, devMac);
 
   // Start the interface, then apply addressing.
   esp_netif_action_start(netif, nullptr, 0, nullptr);

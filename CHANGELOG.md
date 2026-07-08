@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Fix `EspUsbDeviceNet` (CDC-NCM) to give its own esp_netif a MAC distinct from the advertised iMACAddress. The iMACAddress descriptor is the MAC assigned to the *host* end of the point-to-point USB link; the previous code set the device's own netif to the same value, putting an identical MAC on both ends of one L2 segment (ARP would resolve the peer to the host's own address). The netif MAC is now the advertised MAC with the low bit of the last byte toggled, matching TinyUSB's net_lwip_webserver. The USB link is an isolated segment, so the derived address never leaks onto a real network.
+- (JA) `EspUsbDeviceNet`（CDC-NCM）が自身の esp_netif に、広告する iMACAddress とは別の MAC を使うよう修正しました。iMACAddress descriptor は point-to-point な USB リンクの *ホスト側* に割り当てる MAC ですが、従来は自 netif にも同じ値を設定しており、1 つの L2 セグメントの両端が同一 MAC になっていました（ARP が peer をホスト自身のアドレスとして解決してしまう）。自 netif の MAC を、広告 MAC の最下位バイト bit0 を反転した値にしました（TinyUSB の net_lwip_webserver と同じ回避策）。USB リンクは隔離セグメントのため、派生アドレスが実ネットワークに漏れることはありません。
 
 ## 1.2.3
 - (EN) `EspUsbDeviceNet` (CDC-NCM) now defaults the host-facing MAC to this chip's per-device Ethernet MAC (`esp_read_mac` / `ESP_MAC_ETH`) instead of a single fixed locally-administered address. The Ethernet MAC is derived from the eFuse base MAC and is always distinct from the Wi-Fi STA/AP and BT MACs, so it never collides with the ESP's own Wi-Fi, and two identical boards no longer share a MAC on one host. `macAddress(mac)` still pins a specific address (and then suppresses the auto-derivation). Both the iMACAddress string descriptor and `esp_netif_set_mac` use this value. (Note: two `dhcpServer(true)` devices still share the `192.168.7.0/24` subnet, so multiple boards on one host remains an advanced case.)
