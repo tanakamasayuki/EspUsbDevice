@@ -451,6 +451,10 @@ public:
   virtual uint8_t hidReportId() const { return 0; }
   virtual const uint8_t *hidReportDescriptor() const { return nullptr; }
   virtual uint16_t hidReportDescriptorLength() const { return 0; }
+  // Preferred IN endpoint wMaxPacketSize for this HID class, or 0 for "no
+  // preference" (use the default). NKRO keyboards return a larger size so their
+  // multi-byte bitmap report fits one packet. Bounded by CFG_TUD_HID_EP_BUFSIZE.
+  virtual uint16_t hidInEndpointSize() const { return 0; }
   virtual void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) {}
   virtual void onHidSetProtocol(uint8_t protocol) { (void)protocol; }
 
@@ -872,21 +876,35 @@ public:
   void onProtocol(ProtocolCallback callback);
   uint8_t protocol() const;
 
+  // Opt-in N-key rollover. Call before EspUsbDevice::begin(). When enabled the
+  // interface reports a bitmap covering usages 0x00-0xDF (all standard keys plus
+  // International/LANG keys, so JIS layouts work), and press/release track any
+  // number of simultaneous keys. The boot 6-key format is still sent when the
+  // host selects boot protocol (BIOS). Default off (unchanged 6KRO behaviour).
+  void enableNkro(bool enable = true);
+  bool nkroEnabled() const;
+
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 2; }
   uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD; }
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;
+  uint16_t hidInEndpointSize() const override;
   void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) override;
   void onHidSetProtocol(uint8_t protocol) override;
 
 private:
   bool asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const;
+  void setKeyBit(uint8_t usage, bool pressed);
+  bool sendNkroReport(uint32_t timeoutMs = 100);
 
   EspUsbDeviceBootKeyboardReport report_;
   EspUsbDeviceKeyboardLayout layout_ = ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US;
   uint8_t protocol_ = 1;
+  bool nkroEnabled_ = false;
+  uint8_t nkroModifiers_ = 0;
+  uint8_t nkroBitmap_[28] = {};  // usages 0x00-0xDF, 1 bit each
   OutputReportCallback outputCallback_;
   ProtocolCallback protocolCallback_;
 };

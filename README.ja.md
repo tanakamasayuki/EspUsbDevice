@@ -125,6 +125,7 @@ void loop()
 ユーザー向けの基本 sketch は [examples/README.ja.md](examples/README.ja.md) にまとめています。
 
 - `Keyboard`: layout 付き ASCII 文字列と HID usage ID を送信する boot keyboard。
+- `KeyboardNKRO`: 任意数のキーを同時押下できる N-key rollover keyboard。
 - `Mouse`: 移動、wheel、button を送信する boot mouse。
 - `KeyboardMouse`: keyboard + mouse の composite HID。
 - `Gamepad`: axes、hat、button を送信する HID gamepad。
@@ -153,6 +154,10 @@ Keyboard:
 - `keyboard.tapUsage()`、`pressUsage()`、`releaseUsage()`、`releaseAll()`、
   `sendReport()` で raw HID usage / report 制御もできます。
 - `keyboard.onOutputReport(callback)` は Host からの LED output report を受け取ります。
+- `keyboard.enableNkro()`（`begin()` の前）で N-key rollover に切り替えます。usages
+  `0x00`-`0xDF` をカバーする bitmap レポート（International/LANG キーも含むので JIS
+  レイアウトも通る）で任意数のキーを同時押下でき、BIOS 向けに6キー boot へ自動 fallback
+  します。既定は無効です。
 
 Mouse:
 

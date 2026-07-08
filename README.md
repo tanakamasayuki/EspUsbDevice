@@ -129,6 +129,7 @@ void loop()
 User-facing sketches are documented in [examples/README.md](examples/README.md).
 
 - `Keyboard`: boot keyboard that sends layout-aware ASCII strings and HID usage IDs.
+- `KeyboardNKRO`: N-key rollover keyboard that holds any number of keys at once.
 - `Mouse`: boot mouse that sends movement, wheel, and buttons.
 - `KeyboardMouse`: composite keyboard + mouse HID.
 - `Gamepad`: HID gamepad that sends axes, hat, and buttons.
@@ -161,6 +162,10 @@ Keyboard:
 - `keyboard.tapUsage()`, `pressUsage()`, `releaseUsage()`, `releaseAll()`, and
   `sendReport()` keep raw HID usage/report control available.
 - `keyboard.onOutputReport(callback)` receives host LED output reports.
+- `keyboard.enableNkro()` (before `begin()`) switches to N-key rollover: a bitmap
+  report covering usages `0x00`-`0xDF` (International/LANG keys included, so JIS
+  layouts work) that holds any number of keys at once, with automatic 6-key boot
+  fallback for BIOS. Off by default.
 
 Mouse:
 

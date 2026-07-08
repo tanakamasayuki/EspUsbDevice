@@ -141,6 +141,45 @@ static constexpr uint8_t KEYBOARD_REPORT_DESCRIPTOR[] = {
     0xc0,             // End Collection
 };
 
+// N-key rollover keyboard. Input report = 1 modifier byte (usages 0xE0-0xE7) +
+// a 224-bit bitmap for usages 0x00-0xDF (one bit per key), so any number of keys
+// can be held at once, including International1-9 (0x87-0x8F) and LANG1-9
+// (0x90-0x98) used by JIS / other non-US layouts. The LED output report is kept
+// identical to the boot descriptor. The leading 6 bytes (Usage Page / Usage /
+// Collection) match KEYBOARD_REPORT_DESCRIPTOR so the composite report-ID
+// injection in buildDescriptors() works unchanged.
+static constexpr uint8_t NKRO_KEYBOARD_REPORT_DESCRIPTOR[] = {
+    0x05, 0x01,       // Usage Page (Generic Desktop)
+    0x09, 0x06,       // Usage (Keyboard)
+    0xa1, 0x01,       // Collection (Application)
+    0x05, 0x07,       //   Usage Page (Keyboard/Keypad)
+    0x19, 0xe0,       //   Usage Minimum (Keyboard LeftControl)
+    0x29, 0xe7,       //   Usage Maximum (Keyboard Right GUI)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x08,       //   Report Count (8)
+    0x81, 0x02,       //   Input (Data,Var,Abs) -- modifier byte
+    0x05, 0x08,       //   Usage Page (LEDs)
+    0x19, 0x01,       //   Usage Minimum (Num Lock)
+    0x29, 0x05,       //   Usage Maximum (Kana)
+    0x95, 0x05,       //   Report Count (5)
+    0x75, 0x01,       //   Report Size (1)
+    0x91, 0x02,       //   Output (Data,Var,Abs)
+    0x95, 0x01,       //   Report Count (1)
+    0x75, 0x03,       //   Report Size (3)
+    0x91, 0x01,       //   Output (Const,Array,Abs) -- LED padding
+    0x05, 0x07,       //   Usage Page (Keyboard/Keypad)
+    0x19, 0x00,       //   Usage Minimum (0)
+    0x29, 0xdf,       //   Usage Maximum (0xDF)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0xe0,       //   Report Count (224)
+    0x81, 0x02,       //   Input (Data,Var,Abs) -- NKRO key bitmap
+    0xc0,             // End Collection
+};
+
 static constexpr uint8_t MOUSE_REPORT_DESCRIPTOR[] = {
     0x05, 0x01,       // Usage Page (Generic Desktop)
     0x09, 0x02,       // Usage (Mouse)
@@ -1089,9 +1128,22 @@ bool EspUsbDevice::buildDescriptors()
   uint16_t offset = 9;
   uint8_t interfaceNumber = 0;
   uint8_t endpointNumber = 1;
-  const uint16_t endpointSize = composite ? 16 : hidEndpointSize();
+  uint16_t endpointSize = composite ? 16 : hidEndpointSize();
   if (composite)
   {
+    // Raise the shared HID endpoint if any merged class needs more room (e.g. an
+    // NKRO keyboard's bitmap report). Bounded by CFG_TUD_HID_EP_BUFSIZE (64).
+    for (size_t i = 0; i < classCount_; i++)
+    {
+      if (classes_[i] && classes_[i]->isHid())
+      {
+        const uint16_t hint = classes_[i]->hidInEndpointSize();
+        if (hint > endpointSize)
+        {
+          endpointSize = hint;
+        }
+      }
+    }
     for (size_t i = 0; i < classCount_; i++)
     {
       if (!classes_[i] || !classes_[i]->isHid())
@@ -2960,6 +3012,21 @@ bool EspUsbDeviceHidKeyboard::begin()
 
 bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceBootKeyboardReport &report, uint32_t timeoutMs)
 {
+  if (nkroEnabled_)
+  {
+    // Adopt the supplied 6-key report as the full held-key state, then emit it in
+    // whatever format the active protocol needs (NKRO bitmap or boot fallback).
+    nkroModifiers_ = report.modifiers;
+    memset(nkroBitmap_, 0, sizeof(nkroBitmap_));
+    for (size_t i = 0; i < sizeof(report.keys); i++)
+    {
+      if (report.keys[i])
+      {
+        setKeyBit(report.keys[i], true);
+      }
+    }
+    return sendNkroReport(timeoutMs);
+  }
   report_ = report;
   return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.classReportId(hidInstance_), &report_, sizeof(report_), timeoutMs);
 }
@@ -2967,6 +3034,12 @@ bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceBootKeyboardReport &r
 bool EspUsbDeviceHidKeyboard::pressUsage(uint8_t usage, uint8_t modifiers, uint32_t holdMs)
 {
   (void)holdMs;
+  if (nkroEnabled_)
+  {
+    nkroModifiers_ |= modifiers;
+    setKeyBit(usage, true);
+    return sendNkroReport();
+  }
   report_.modifiers = modifiers;
   report_.keys[0] = usage;
   return sendReport(report_);
@@ -3028,6 +3101,11 @@ bool EspUsbDeviceHidKeyboard::write(const char *text, uint32_t interKeyDelayMs)
 
 bool EspUsbDeviceHidKeyboard::releaseUsage(uint8_t usage, uint32_t timeoutMs)
 {
+  if (nkroEnabled_)
+  {
+    setKeyBit(usage, false);
+    return sendNkroReport(timeoutMs);
+  }
   for (size_t i = 0; i < sizeof(report_.keys); i++)
   {
     if (report_.keys[i] == usage)
@@ -3040,6 +3118,12 @@ bool EspUsbDeviceHidKeyboard::releaseUsage(uint8_t usage, uint32_t timeoutMs)
 
 bool EspUsbDeviceHidKeyboard::releaseAll(uint32_t timeoutMs)
 {
+  if (nkroEnabled_)
+  {
+    nkroModifiers_ = 0;
+    memset(nkroBitmap_, 0, sizeof(nkroBitmap_));
+    return sendNkroReport(timeoutMs);
+  }
   report_ = EspUsbDeviceBootKeyboardReport();
   return sendReport(report_, timeoutMs);
 }
@@ -3075,6 +3159,13 @@ uint16_t EspUsbDeviceHidKeyboard::configurationDescriptor(uint8_t *dst, uint8_t 
   // and docs/DESIGN_NOTES.ja.md "複合時の endpoint 採番衝突".
   const uint8_t epOut = endpointNumber;
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
+  // NKRO needs a packet big enough for its bitmap report; honour that over the
+  // caller-supplied default when set.
+  const uint16_t hint = hidInEndpointSize();
+  if (hint > endpointSize)
+  {
+    endpointSize = hint;
+  }
   const uint16_t reportLen = hidReportDescriptorLength();
   uint8_t descriptor[] = {
       9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_HID, USB_SUBCLASS_BOOT, USB_PROTOCOL_KEYBOARD, 0,
@@ -3088,12 +3179,75 @@ uint16_t EspUsbDeviceHidKeyboard::configurationDescriptor(uint8_t *dst, uint8_t 
 
 const uint8_t *EspUsbDeviceHidKeyboard::hidReportDescriptor() const
 {
-  return KEYBOARD_REPORT_DESCRIPTOR;
+  return nkroEnabled_ ? NKRO_KEYBOARD_REPORT_DESCRIPTOR : KEYBOARD_REPORT_DESCRIPTOR;
 }
 
 uint16_t EspUsbDeviceHidKeyboard::hidReportDescriptorLength() const
 {
-  return sizeof(KEYBOARD_REPORT_DESCRIPTOR);
+  return nkroEnabled_ ? sizeof(NKRO_KEYBOARD_REPORT_DESCRIPTOR) : sizeof(KEYBOARD_REPORT_DESCRIPTOR);
+}
+
+uint16_t EspUsbDeviceHidKeyboard::hidInEndpointSize() const
+{
+  // 1 modifier byte + 28 bitmap bytes = 29 (+1 report-ID byte in composite mode).
+  // Round up to 32; well within CFG_TUD_HID_EP_BUFSIZE (64).
+  return nkroEnabled_ ? 32 : 0;
+}
+
+void EspUsbDeviceHidKeyboard::enableNkro(bool enable)
+{
+  nkroEnabled_ = enable;
+}
+
+bool EspUsbDeviceHidKeyboard::nkroEnabled() const
+{
+  return nkroEnabled_;
+}
+
+void EspUsbDeviceHidKeyboard::setKeyBit(uint8_t usage, bool pressed)
+{
+  // Usages 0xE0-0xE7 are modifiers (their own byte); the bitmap covers 0x00-0xDF.
+  if (usage > 0xdf)
+  {
+    return;
+  }
+  const uint8_t byteIndex = static_cast<uint8_t>(usage >> 3);
+  const uint8_t bitMask = static_cast<uint8_t>(1u << (usage & 0x07));
+  if (pressed)
+  {
+    nkroBitmap_[byteIndex] |= bitMask;
+  }
+  else
+  {
+    nkroBitmap_[byteIndex] = static_cast<uint8_t>(nkroBitmap_[byteIndex] & ~bitMask);
+  }
+}
+
+bool EspUsbDeviceHidKeyboard::sendNkroReport(uint32_t timeoutMs)
+{
+  const uint8_t runtime = device_.classRuntimeInstance(hidInstance_);
+  const uint8_t reportId = device_.classReportId(hidInstance_);
+  // Boot protocol (BIOS) ignores the report descriptor and requires the fixed
+  // 6-key boot report, so fold the bitmap down to the first 6 held usages.
+  if (protocol_ == 0)
+  {
+    EspUsbDeviceBootKeyboardReport boot;
+    boot.modifiers = nkroModifiers_;
+    size_t slot = 0;
+    for (uint16_t usage = 0; usage <= 0xdf && slot < sizeof(boot.keys); usage++)
+    {
+      if (nkroBitmap_[usage >> 3] & (1u << (usage & 0x07)))
+      {
+        boot.keys[slot++] = static_cast<uint8_t>(usage);
+      }
+    }
+    report_ = boot;
+    return device_.sendHidReport(runtime, reportId, &report_, sizeof(report_), timeoutMs);
+  }
+  uint8_t buffer[1 + sizeof(nkroBitmap_)];
+  buffer[0] = nkroModifiers_;
+  memcpy(&buffer[1], nkroBitmap_, sizeof(nkroBitmap_));
+  return device_.sendHidReport(runtime, reportId, buffer, sizeof(buffer), timeoutMs);
 }
 
 void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)

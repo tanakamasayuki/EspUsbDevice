@@ -16,6 +16,17 @@ HID boot keyboard device の例です。詳しくは [Keyboard/README.ja.md](Key
 
 文字列 wrapper は Host 側と同じ keymap table を逆引きし、Host 側と同じ layout ID を使います。
 
+## KeyboardNKRO
+
+N-key rollover 対応の HID keyboard の例です。
+詳しくは [KeyboardNKRO/README.ja.md](KeyboardNKRO/README.ja.md) を参照してください。
+
+- `begin()` の前に `EspUsbDeviceHidKeyboard::enableNkro()` を呼ぶと、6キー boot report
+  からキー bitmap に切り替わります。
+- `pressUsage()` / `releaseUsage()` で任意数のキーを同時押下できます。
+- bitmap は usages `0x00`-`0xDF`（International/LANG キー含む）をカバーするので JIS
+  レイアウトも通り、Host が boot protocol（BIOS）を要求すれば6キー形式で応答します。
+
 ## Mouse
 
 HID boot mouse device の例です。

@@ -61,6 +61,8 @@ pressKey	KEYWORD2
 tapKey	KEYWORD2
 setLayout	KEYWORD2
 layout	KEYWORD2
+enableNkro	KEYWORD2
+nkroEnabled	KEYWORD2
 onOutputReport	KEYWORD2
 onFeatureReport	KEYWORD2
 onProtocol	KEYWORD2
