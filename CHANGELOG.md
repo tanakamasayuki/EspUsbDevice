@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 1.2.5
 - (EN) Add opt-in N-key rollover (NKRO) to `EspUsbDeviceHidKeyboard` via `enableNkro()` / `nkroEnabled()`. When enabled the keyboard reports a bitmap covering usages `0x00`-`0xDF` (1 modifier byte + 224-bit key bitmap), so any number of keys can be held at once instead of the boot report's 6-key limit. The bitmap range includes International1-9 (`0x87`-`0x8F`) and LANG1-9 (`0x90`-`0x98`), so JIS / non-US layout keys work. The device still folds down to the 6-key boot report when the host selects boot protocol (BIOS). The HID IN endpoint packet size is raised (to 32, within `CFG_TUD_HID_EP_BUFSIZE`=64) — for standalone and composite — so the bitmap report fits one transfer. Default is off, so existing 6KRO behaviour is unchanged. Adds the `KeyboardNKRO` example.
 - (JA) `EspUsbDeviceHidKeyboard` に opt-in の N-key rollover（NKRO）を `enableNkro()` / `nkroEnabled()` で追加しました。有効時は usages `0x00`-`0xDF` をカバーする bitmap（modifier 1バイト + 224bit のキービットマップ）で報告するため、boot report の6キー制限なく任意数のキーを同時に押下できます。bitmap 範囲は International1-9（`0x87`-`0x8F`）と LANG1-9（`0x90`-`0x98`）を含むので JIS など US 以外のレイアウト固有キーも通ります。Host が boot protocol（BIOS）を選んだ場合は6キー boot report に畳んで送ります。bitmap レポートが1転送に収まるよう、HID IN エンドポイントの packet size を（単独・複合とも）32 に引き上げました（`CFG_TUD_HID_EP_BUFSIZE`=64 以内）。既定は無効で、従来の 6KRO 挙動は変わりません。`KeyboardNKRO` example を追加しました。
 
