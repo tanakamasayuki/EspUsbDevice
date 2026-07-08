@@ -22,6 +22,18 @@ See [Keyboard/README.md](Keyboard/README.md) for details.
 The string wrapper uses the same keymap tables as EspUsbHost in reverse and uses
 the same layout IDs.
 
+## KeyboardNKRO
+
+HID keyboard with N-key rollover.
+See [KeyboardNKRO/README.md](KeyboardNKRO/README.md) for details.
+
+- Call `EspUsbDeviceHidKeyboard::enableNkro()` before `begin()` to switch from the
+  6-key boot report to a key bitmap.
+- Hold any number of keys at once with `pressUsage()` / `releaseUsage()`.
+- The bitmap covers usages `0x00`-`0xDF`, including International/LANG keys, so
+  JIS layouts work; the device still answers boot protocol (BIOS) with the 6-key
+  format.
+
 ## Mouse
 
 HID boot mouse device example.

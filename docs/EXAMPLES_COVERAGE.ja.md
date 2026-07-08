@@ -44,6 +44,7 @@
 | Example | 目的 | 優先度 |
 |---------|------|--------|
 | `Keyboard` | HID keyboard、layout、raw usage、LED output report | 高 |
+| `KeyboardNKRO` | N-key rollover keyboard（bitmap レポート、任意数同時押下、boot fallback） | 中 |
 | `Mouse` | HID mouse、movement、wheel、buttons | 高 |
 | `KeyboardMouse` | keyboard + mouse composite HID | 高 |
 | `Gamepad` | axes / hat / buttons | 中 |
