@@ -40,6 +40,11 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   and forward pass through the mouse callback on the two-board S3 setup.
 - `hid_keyboard_mouse`: composite keyboard + mouse device. Passing on the
   two-board S3 setup.
+- `hid_keyboard_nkro`: NKRO keyboard driven against an EspUsbHost host.
+  Different angle from the EspUsbHost-repo copy: it checks the exact set of held
+  keycodes (identity, not just the count) and that high-usage International /
+  LANG (JIS) keys at 0x87-0x91 all arrive, proving the bitmap spans the full
+  0x00-0xDF range.
 - `custom_hid`: fixed custom report descriptor and raw input.
 - `hid_vendor`: interrupt IN/OUT and feature report.
 - `usb_serial`: CDC ACM serial. Device -> Host, Host -> Device, and line
