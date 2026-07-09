@@ -37,6 +37,7 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `hid_keyboard`: raw boot keyboard report と LED output report。S3 2台構成で通過済み。
 - `hid_mouse`: raw boot mouse report。move / wheel / left / right / middle / back / forward が mouse callback として S3 2台構成で通過済み。
 - `hid_keyboard_mouse`: keyboard + mouse composite device。S3 2台構成で通過済み。
+- `hid_keyboard_nkro`: NKRO keyboard を EspUsbHost host で駆動。EspUsbHost リポジトリ側コピーとは観点を変え、押下キーの「数」ではなく「同一性(どのキーか)」を厳密検証し、高usage の International / LANG(JIS)キー(0x87-0x91)がすべて届くこと=ビットマップが 0x00-0xDF 全域を張ることを確認する。
 - `custom_hid`: 固定 custom report descriptor と raw input。
 - `hid_vendor`: interrupt IN/OUT と feature report。
 - `usb_serial`: CDC ACM serial。Device -> Host、Host -> Device、line coding callback が S3 2台構成で通過済み。
