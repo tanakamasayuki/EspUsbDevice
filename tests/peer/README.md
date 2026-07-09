@@ -51,6 +51,13 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `usb_vendor`: vendor-specific interface. Interface / bulk endpoint
   enumeration, bulk echo, application vendor control IN/OUT, and WebUSB landing
   URL reads pass on the two-board S3 setup.
+- `usb_ncm`: USB CDC-NCM network device (device) driven by an EspUsbHost host
+  (DUT). Deliberately a different angle from the EspUsbHost-repo copy: it checks
+  the enumerated descriptor detail (separate control/data interfaces, active
+  alt, three endpoints with correct directions), the transport-layer frame
+  counters (a transfer moves frames in both directions with zero TX failures,
+  and the DHCP lease is a real client address), and the device-side view (the
+  device's own web server reports it served the host's request).
 - `usb_audio_speaker`: USB Audio speaker sink (host -> device). Host -> Device
   speaker PCM reception passes on the two-board S3 setup (UAC1 / full speed).
   `test_usb_audio_speaker_volume_flood`
