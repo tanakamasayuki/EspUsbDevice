@@ -8,7 +8,7 @@ profiles:
       - dir: ../../
       - PCMFlow (0.2.1)
       - PCMFlowDevice (1.0.1)
-      - M5Unified (0.2.17)
-      - M5GFX (0.2.24)
+      - M5Unified (0.2.18)
+      - M5GFX (0.2.25)
 
 default_profile: esp32s3
