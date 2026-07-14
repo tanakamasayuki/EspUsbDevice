@@ -516,6 +516,7 @@ public:
   using ControlRequestCallback = std::function<bool(const EspUsbDeviceVendorControlRequest &)>;
 
   explicit EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize = 64);
+  ~EspUsbDeviceVendor() override;
 
   bool begin() override;
   bool isHid() const override { return false; }
