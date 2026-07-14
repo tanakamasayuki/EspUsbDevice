@@ -1513,6 +1513,17 @@ EspUsbDeviceVendor::EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSi
   endpointSize_ = endpointSize == 0 ? 64 : endpointSize;
 }
 
+EspUsbDeviceVendor::~EspUsbDeviceVendor()
+{
+  // TinyUSB callbacks use this singleton to reach the active Vendor instance.
+  // Do not leave it pointing at an object that has gone out of scope; doing so
+  // also prevents a later EspUsbDeviceVendor instance from being started.
+  if (g_activeVendor == this)
+  {
+    g_activeVendor = nullptr;
+  }
+}
+
 bool EspUsbDeviceVendor::begin()
 {
   if (g_activeVendor && g_activeVendor != this)
