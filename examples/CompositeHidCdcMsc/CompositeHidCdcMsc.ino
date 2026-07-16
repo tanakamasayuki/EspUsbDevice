@@ -16,7 +16,10 @@ EspUsbDeviceHidKeyboard keyboard(device);
 EspUsbDeviceCdcSerial UsbSerial(device);
 EspUsbDeviceMsc msc(device);
 
-static uint8_t storage[96 * 1024];
+// 48 KB RAM disk: kept small enough that the composite's .bss also fits the
+// ESP32-S2 DRAM budget (a 96 KB disk overflows S2 by ~27 KB at link time; S3/P4
+// have more DRAM). FAT12 still formats fine at this size.
+static uint8_t storage[48 * 1024];
 EspUsbDeviceMscFatRamDisk disk(storage, sizeof(storage));
 
 static char lineBuffer[128];

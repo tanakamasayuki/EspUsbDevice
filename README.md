@@ -12,6 +12,16 @@ those tests give concrete hardware coverage and expose the low-level behavior
 the library must control. Test-oriented features are the starting point, not the
 final boundary of the project.
 
+## Requirements
+
+Minimum Arduino-ESP32 core (board package) version:
+
+| Target | Minimum arduino-esp32 |
+| --- | --- |
+| ESP32-S2 / ESP32-S3 / ESP32-P4 | 3.3.9 |
+
+Older cores are not supported: 3.3.8 and earlier fail to build. Per-library-version build results across core versions are published under [`docs/`](docs/) as `COMPATIBILITY.<version>.md`.
+
 ## Release Scope
 
 This release covers HID keyboard / mouse / gamepad / consumer / system / custom /
