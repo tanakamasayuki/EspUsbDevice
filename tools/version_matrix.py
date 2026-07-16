@@ -63,6 +63,15 @@ DEFAULT_EXAMPLES = [
 
 DEFAULT_TARGETS = ["esp32s3", "esp32s2", "esp32p4"]
 
+# FQBN for each target profile. Used to synthesise a profile that a released tag's
+# sketch.yaml predates (see ensure_target_profiles). Keep in sync with the profiles
+# committed under examples/*/sketch.yaml.
+TARGET_FQBN = {
+    "esp32s3": "esp32:esp32:esp32s3:USBMode=default",
+    "esp32s2": "esp32:esp32:esp32s2",
+    "esp32p4": "esp32:esp32:esp32p4",
+}
+
 # Result cell states.
 PASS, FAIL, ABSENT, NO_PROFILE, NA_BOARD = "pass", "fail", "absent", "no-profile", "na-board"
 CELL_GLYPH = {PASS: "✅", FAIL: "❌", ABSENT: "—", NO_PROFILE: "·", NA_BOARD: "·"}
@@ -98,6 +107,64 @@ def profiles_in(sketch_yaml: pathlib.Path) -> list[str]:
             if m:
                 names.append(m.group(1))
     return names
+
+
+def _extract_profile_block(text: str, name: str) -> str:
+    """Return the raw text of the `  <name>:` profile block (incl. its own lines).
+
+    A block runs from its `  <name>:` header through every following blank or
+    4+-space-indented line, stopping at the next line indented 2 spaces or less.
+    """
+    out = []
+    capturing = False
+    for line in text.splitlines(keepends=True):
+        if not capturing:
+            if re.match(rf"^  {re.escape(name)}:\s*$", line):
+                capturing = True
+                out.append(line)
+            continue
+        if line.strip() == "" or line.startswith("    "):
+            out.append(line)
+            continue
+        break
+    return "".join(out)
+
+
+def ensure_target_profiles(sketch_yaml: pathlib.Path, targets: list[str]) -> list[str]:
+    """Synthesise any missing target profile by cloning an existing one.
+
+    Released tags whose examples predate the s2/p4 profiles would otherwise record
+    `no-profile` for those targets, so an old library version could never be
+    build-checked on them. A profile is only build configuration (not library code),
+    so cloning the first existing profile and swapping its name + FQBN lets any tag
+    be built on every target — exactly the compatibility question we want answered.
+
+    Operates on the throwaway worktree copy (or, in WORKTREE mode, the working tree,
+    same as set_platform_version); never mutates a file that already has the profile.
+    Returns the names that were synthesised.
+    """
+    text = sketch_yaml.read_text()
+    existing = profiles_in(sketch_yaml)
+    missing = [t for t in targets if t in TARGET_FQBN and t not in existing]
+    if not existing or not missing:
+        return []
+    template = _extract_profile_block(text, existing[0])
+    if not template:
+        return []
+    insert = ""
+    for t in missing:
+        block = re.sub(rf"^  {re.escape(existing[0])}:\s*$", f"  {t}:", template,
+                       count=1, flags=re.MULTILINE)
+        block = re.sub(r"^(\s*fqbn:\s*).*$", lambda m: m.group(1) + TARGET_FQBN[t], block,
+                       count=1, flags=re.MULTILINE)
+        insert += block.rstrip("\n") + "\n\n"
+    m = re.search(r"^default_profile:", text, flags=re.MULTILINE)
+    if m:
+        text = text[:m.start()] + insert + text[m.start():]
+    else:
+        text = text.rstrip("\n") + "\n\n" + insert
+    sketch_yaml.write_text(text)
+    return missing
 
 
 def set_platform_version(sketch_yaml: pathlib.Path, version: str) -> None:
@@ -388,6 +455,10 @@ def main() -> int:
                     for target in targets:
                         results[(cat, path, target, core)] = (ABSENT, CELL_NOTE[ABSENT])
                     continue
+                # Synthesise missing target profiles first (so a tag that predates
+                # the s2/p4 profiles is still build-checked on them), then rewrite
+                # the platform pin across all profiles, including the new ones.
+                ensure_target_profiles(sk, targets)
                 set_platform_version(sk, core)
                 use_local_library(sk, root)
                 profs = profiles_in(sk)
