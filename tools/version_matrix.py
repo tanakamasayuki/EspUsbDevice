@@ -20,7 +20,7 @@ Examples:
   # current working tree, a couple of cores, default representative examples
   python tools/version_matrix.py --core-versions 3.2.1,3.3.10
 
-  # a released tag, auto-discovered core versions from the package index (>= 3.2.0)
+  # a released tag, auto-discovered core versions from the package index (>= 3.3.9)
   python tools/version_matrix.py --lib-version v1.2.5 --core-versions auto
 
   # dry run: show what would build, no compiles
@@ -41,10 +41,11 @@ import urllib.request
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE_INDEX_URL = "https://espressif.github.io/arduino-esp32/package_esp32_index.json"
-# Floor for `auto` core discovery. Supported baseline is arduino-esp32 3.2.0
-# (S2/S3); 3.1.x and older are not supported. Pass --core-versions explicitly to
-# probe below this floor.
-CORE_VERSION_FLOOR = (3, 2, 0)
+# Floor for `auto` core discovery. Supported baseline is arduino-esp32 3.3.9;
+# older cores do not build this library, so `auto` skips them. To document the
+# boundary (or re-check the floor), pass an explicit --core-versions list that
+# reaches below it, e.g. 3.3.0,3.3.8,3.3.9,3.3.10.
+CORE_VERSION_FLOOR = (3, 3, 9)
 
 # One representative example per feature category. Paths are relative to examples/.
 # Chosen to avoid external-library dependencies so a clean build reflects the core
@@ -314,7 +315,7 @@ def main() -> int:
     parser.add_argument("--lib-version", default="WORKTREE",
                         help="git tag/ref of the library to test, or WORKTREE (default) for the current tree")
     parser.add_argument("--core-versions", default="auto",
-                        help="comma-separated core versions, or 'auto' for released cores >= 3.2.0")
+                        help="comma-separated core versions, or 'auto' for released cores >= 3.3.9")
     parser.add_argument("--targets", default=",".join(DEFAULT_TARGETS),
                         help=f"comma-separated profile names (default: {','.join(DEFAULT_TARGETS)})")
     parser.add_argument("--examples", default="",
