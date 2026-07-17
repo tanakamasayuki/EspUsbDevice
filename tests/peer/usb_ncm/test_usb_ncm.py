@@ -16,6 +16,7 @@ Here the angle is finer / different:
 """
 
 import re
+import time
 
 ENUM_RE = re.compile(
     r"NCM_ENUM count=[1-9][0-9]* protocol=CDC-NCM complete=1 "
@@ -55,6 +56,27 @@ def _read_stats(dut):
     }
 
 
+def _wait_device_link(device, timeout=15):
+    """Wait for TinyUSB to observe the host's SET_CONFIGURATION request.
+
+    The peer is intentionally uploaded and started after the host. Its serial
+    console can therefore become ready slightly before USB enumeration reaches
+    the configured state; a one-shot link check would race that transition.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        device.write("?")
+        m = device.expect(
+            r"DEVICE_READY ip=192\.168\.7\.1 link=(\d)",
+            timeout=min(2, max(0.1, deadline - time.monotonic())),
+        )
+        if int(m.group(1)) == 1:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"USB NCM device link did not come up within {timeout}s")
+        time.sleep(0.1)
+
+
 def _ensure_attached(dut, device):
     """Bring the DHCP-client netif up regardless of prior test state.
 
@@ -78,8 +100,7 @@ def test_usb_ncm_enumeration_endpoints(dut, peers):
     """Finer than the protocol-only enumeration check: the host must have parsed
     a structurally valid CDC-NCM function."""
     device = peers["device"]
-    device.write("?")
-    device.expect(r"DEVICE_READY ip=192\.168\.7\.1 link=1")
+    _wait_device_link(device)
 
     dut.expect_exact("HOST_CONNECTED")
     dut.write("i")
