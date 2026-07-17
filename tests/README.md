@@ -57,4 +57,11 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
 ```
 
+After each test, the host `dut.log` and peer `peer-*.log` files are audited
+automatically. Suspicious ESP-IDF errors, `ESP_ERR_*` values, panics, asserts,
+and watchdog messages are summarized under `serial log audit` without failing
+the test. When the HTML report is enabled, findings are also appended to that
+test's expandable log. Complete serial logs remain available under
+`/tmp/pytest-embedded/`.
+
 See [TEST_PLAN.md](TEST_PLAN.md) for current coverage and planned additions.
