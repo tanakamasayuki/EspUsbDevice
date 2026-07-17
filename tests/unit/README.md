@@ -26,6 +26,18 @@ for both FS and HS. Keyboard + mouse composite uses one HID interface with
 report IDs and 16-byte endpoint MPS so the report-ID-prefixed keyboard report
 fits in one interrupt packet.
 
+## `keymap`
+
+This is a pure host g++ test (no board required). It extracts the layout enum,
+the `ESP_USB_DEVICE_MOD_*` constants, the keymap includes, and the pure
+`espUsbDeviceAsciiToUsage` reverse-lookup function verbatim from the real
+`src/EspUsbDevice.{h,cpp}` at run time, compiles them with `keymap_test.cpp`, and
+checks the character -> HID usage+modifier round-trip: base/Shift levels, the
+AltGr (Right Alt) fallback (`@` on de_DE, `{ [ ] }` etc.), and the pt_BR 0x90
+tableSize fix (`/` and `?` on International1, usage 0x87). The keymap tables in
+`src/keymap/*.h` are byte-identical to EspUsbHost's, whose forward direction is
+covered by that library's own keymap test.
+
 ## `fat_ramdisk`
 
 This verifies host-independent `EspUsbDeviceMscFatRamDisk` logic:
