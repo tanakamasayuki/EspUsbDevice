@@ -47,6 +47,16 @@ void loop()
       keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP);
       Serial.println("DEVICE_LAYOUT JA_JP");
     }
+    else if (command == 'D')
+    {
+      keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_DE_DE);
+      Serial.println("DEVICE_LAYOUT DE_DE");
+    }
+    else if (command == 'B')
+    {
+      keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_PT_BR);
+      Serial.println("DEVICE_LAYOUT PT_BR");
+    }
     else if (command == '?')
     {
       Serial.println("DEVICE_READY");

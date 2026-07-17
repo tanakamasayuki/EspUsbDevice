@@ -68,6 +68,16 @@ void loop()
       usb.setKeyboardLayout(ESP_USB_HOST_KEYBOARD_LAYOUT_JA_JP);
       Serial.println("HOST_LAYOUT JA_JP");
     }
+    else if (command == 'D')
+    {
+      usb.setKeyboardLayout(ESP_USB_HOST_KEYBOARD_LAYOUT_DE_DE);
+      Serial.println("HOST_LAYOUT DE_DE");
+    }
+    else if (command == 'B')
+    {
+      usb.setKeyboardLayout(ESP_USB_HOST_KEYBOARD_LAYOUT_PT_BR);
+      Serial.println("HOST_LAYOUT PT_BR");
+    }
   }
   delay(1);
 }
