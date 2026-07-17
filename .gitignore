@@ -35,6 +35,9 @@ report.html
 # Arduino CLI build outputs inside sketch directories
 tests/**/build/
 examples/**/build/
+
+# Host-side unit test build artifacts (g++ output + generated headers)
+tests/unit/**/output/
 *.elf
 *.bin
 *.hex

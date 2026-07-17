@@ -34,9 +34,17 @@ def _serial_error_lines(log_path: Path) -> list[str]:
 
 
 @pytest.fixture(autouse=True)
-def serial_log_audit(request, test_case_tempdir):
+def serial_log_audit(request):
     """Collect suspicious DUT and peer serial output without failing the test."""
     yield
+
+    # Host-only tests (e.g. the keymap reverse-lookup unit test) have no board
+    # and thus no serial logs; pytest-embedded's test_case_tempdir is absent for
+    # them, so there is nothing to audit.
+    try:
+        test_case_tempdir = request.getfixturevalue("test_case_tempdir")
+    except pytest.FixtureLookupError:
+        return
 
     log_dir = Path(test_case_tempdir)
     log_paths = sorted(log_dir.glob("*.log"))

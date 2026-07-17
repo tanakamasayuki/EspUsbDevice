@@ -3291,57 +3291,73 @@ void EspUsbDeviceHidKeyboard::onHidSetProtocol(uint8_t protocol)
   protocolCallback_(event);
 }
 
-bool EspUsbDeviceHidKeyboard::asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const
+namespace
 {
-  const uint8_t(*table)[2] = KEYCODE_TO_ASCII_EN_US;
+// Reverse lookup from an 8-bit character to a HID usage + modifier for the given
+// layout. Pure and layout-parameterized (rather than a member using layout_) so
+// the host unit test in tests/unit/keymap can exercise the real code without an
+// Arduino build. Kept in sync, by construction, with EspUsbHost's forward
+// keymap tables (src/keymap/*.h are byte-identical between the two libraries).
+//
+// The tables are uint16_t[N][4]: columns [0]=unshifted, [1]=Shift, [2]=AltGr
+// (Right Alt), [3]=AltGr+Shift, holding Unicode code points. Latin-1 characters
+// occupy the first 256 code points, so an 8-bit input can match columns whose
+// value is < 0x100; higher code points (e.g. EUR = U+20AC) are simply never
+// matched by a single-byte input (see KEYMAP_FIX_REQUEST.ja.md §5).
+bool espUsbDeviceAsciiToUsage(char key, EspUsbDeviceKeyboardLayout layout, uint8_t &usage, uint8_t &modifiers)
+{
+  const uint16_t(*table)[4] = KEYCODE_TO_UNICODE_EN_US;
   size_t tableSize = 128;
-  switch (layout_)
+  switch (layout)
   {
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_DA_DK:
-    table = KEYCODE_TO_ASCII_DA_DK;
+    table = KEYCODE_TO_UNICODE_DA_DK;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_DE_DE:
-    table = KEYCODE_TO_ASCII_DE_DE;
+    table = KEYCODE_TO_UNICODE_DE_DE;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_GB:
-    table = KEYCODE_TO_ASCII_EN_GB;
+    table = KEYCODE_TO_UNICODE_EN_GB;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_ES_ES:
-    table = KEYCODE_TO_ASCII_ES_ES;
+    table = KEYCODE_TO_UNICODE_ES_ES;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_FI_FI:
-    table = KEYCODE_TO_ASCII_FI_FI;
+    table = KEYCODE_TO_UNICODE_FI_FI;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_FR_CH:
-    table = KEYCODE_TO_ASCII_FR_CH;
+    table = KEYCODE_TO_UNICODE_FR_CH;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_FR_FR:
-    table = KEYCODE_TO_ASCII_FR_FR;
+    table = KEYCODE_TO_UNICODE_FR_FR;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_HU_HU:
-    table = KEYCODE_TO_ASCII_HU_HU;
+    table = KEYCODE_TO_UNICODE_HU_HU;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_IT_IT:
-    table = KEYCODE_TO_ASCII_IT_IT;
+    table = KEYCODE_TO_UNICODE_IT_IT;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP:
-    table = KEYCODE_TO_ASCII_JA_JP;
+    table = KEYCODE_TO_UNICODE_JA_JP;
     tableSize = 0x90;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_NB_NO:
-    table = KEYCODE_TO_ASCII_NB_NO;
+    table = KEYCODE_TO_UNICODE_NB_NO;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_NL_NL:
-    table = KEYCODE_TO_ASCII_NL_NL;
+    table = KEYCODE_TO_UNICODE_NL_NL;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_PT_BR:
-    table = KEYCODE_TO_ASCII_PT_BR;
+    table = KEYCODE_TO_UNICODE_PT_BR;
+    // pt_BR carries International1 (/ and ?) at 0x87 and the numpad comma at
+    // 0x85, so the reverse lookup must scan the extended 0x90-entry table.
+    tableSize = 0x90;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_PT_PT:
-    table = KEYCODE_TO_ASCII_PT_PT;
+    table = KEYCODE_TO_UNICODE_PT_PT;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_SV_SE:
-    table = KEYCODE_TO_ASCII_SV_SE;
+    table = KEYCODE_TO_UNICODE_SV_SE;
     break;
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_KO_KR:
   case ESP_USB_DEVICE_KEYBOARD_LAYOUT_ZH_CN:
@@ -3353,21 +3369,51 @@ bool EspUsbDeviceHidKeyboard::asciiToUsage(char key, uint8_t &usage, uint8_t &mo
 
   usage = 0;
   modifiers = 0;
+  const uint16_t c = static_cast<uint8_t>(key);
+
+  // Pass 1: base / Shift. This preserves the pre-AltGr behaviour exactly (same
+  // per-keycode base-then-Shift precedence), so existing single-level layouts
+  // are unaffected.
   for (size_t keycode = 0; keycode < tableSize; keycode++)
   {
-    if (table[keycode][0] == static_cast<uint8_t>(key))
+    if (table[keycode][0] == c)
     {
       usage = static_cast<uint8_t>(keycode);
       return true;
     }
-    if (table[keycode][1] == static_cast<uint8_t>(key))
+    if (table[keycode][1] == c)
     {
       usage = static_cast<uint8_t>(keycode);
       modifiers = ESP_USB_DEVICE_MOD_LEFT_SHIFT;
       return true;
     }
   }
+
+  // Pass 2: AltGr (Right Alt) fallback, only for characters not reachable on
+  // the base / Shift levels. This is what makes e.g. '@' typeable on de_DE
+  // (AltGr+Q) or '/' on pt_BR without breaking any base-level mapping.
+  for (size_t keycode = 0; keycode < tableSize; keycode++)
+  {
+    if (table[keycode][2] == c)
+    {
+      usage = static_cast<uint8_t>(keycode);
+      modifiers = ESP_USB_DEVICE_MOD_RIGHT_ALT;
+      return true;
+    }
+    if (table[keycode][3] == c)
+    {
+      usage = static_cast<uint8_t>(keycode);
+      modifiers = ESP_USB_DEVICE_MOD_RIGHT_ALT | ESP_USB_DEVICE_MOD_LEFT_SHIFT;
+      return true;
+    }
+  }
   return false;
+}
+} // namespace
+
+bool EspUsbDeviceHidKeyboard::asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const
+{
+  return espUsbDeviceAsciiToUsage(key, layout_, usage, modifiers);
 }
 
 EspUsbDeviceHidMouse::EspUsbDeviceHidMouse(EspUsbDevice &device) : EspUsbDeviceClass(device)
