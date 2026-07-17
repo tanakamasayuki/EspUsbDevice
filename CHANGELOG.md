@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 1.2.6
 - (EN) Migrate the keyboard keymap tables to the Unicode 4-plane representation shared byte-identically with EspUsbHost: `KEYCODE_TO_ASCII_XX[N][2]` (`uint8_t`) becomes `KEYCODE_TO_UNICODE_XX[N][4]` (`uint16_t`), with columns `[0]=unshifted, [1]=Shift, [2]=AltGr, [3]=AltGr+Shift`. This also picks up the upstream nl_NL (Windows KBDNE), pt_BR (ABNT2), and ja_jp table/comment fixes.
 - (JA) キーボードの keymap テーブルを、EspUsbHost と byte-identical に共有する Unicode 4-plane 表現へ移行しました：`KEYCODE_TO_ASCII_XX[N][2]`（`uint8_t`）を `KEYCODE_TO_UNICODE_XX[N][4]`（`uint16_t`）にし、列は `[0]=unshifted, [1]=Shift, [2]=AltGr, [3]=AltGr+Shift` です。これに伴い上流の nl_NL（Windows KBDNE）・pt_BR（ABNT2）・ja_jp のテーブル/コメント修正も取り込みました。
 - (EN) `EspUsbDeviceHidKeyboard` character input (`print()` / `write()` / `pressKey()` / `tapKey()`) now supports the AltGr (Right Alt) layer. `asciiToUsage()` looks up base/Shift first (unchanged precedence, so existing single-level layouts are unaffected), then falls back to the AltGr / AltGr+Shift columns and emits the Right Alt (`0x40`) modifier. AltGr-only characters are now typeable — e.g. `print('@')` on de_DE sends AltGr+Q. Characters outside Latin-1 (e.g. `€` = U+20AC) still cannot be produced from the single-byte `char` API.
