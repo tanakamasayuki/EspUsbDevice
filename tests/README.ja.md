@@ -55,4 +55,10 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
 ```
 
+各テスト終了時に、Host 側の `dut.log` と peer 側の `peer-*.log` が自動的に監査されます。
+ESP-IDF のエラーログ、`ESP_ERR_*`、panic、assert、watchdog などの疑わしい行は、テストを
+失敗させずに端末の `serial log audit` サマリーへ集計されます。HTML レポートを有効にしている
+場合は、該当テストの展開ログにも追加されます。完全なシリアルログは
+`/tmp/pytest-embedded/` 以下に保存されます。
+
 現在のカバレッジと追加予定は [TEST_PLAN.ja.md](TEST_PLAN.ja.md) を参照してください。
