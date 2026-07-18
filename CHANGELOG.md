@@ -1,6 +1,10 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Add the Arduino-ESP32 core compatibility matrix for EspUsbDevice 1.2.6. All representative HID, Serial, MIDI, Storage, Audio, Vendor, Network, and Composite examples build successfully for ESP32-S3, ESP32-S2, and ESP32-P4 with core versions 3.3.9 and 3.3.10.
+- (JA) EspUsbDevice 1.2.6 の Arduino-ESP32 core 互換性マトリクスを追加しました。core 3.3.9 / 3.3.10 の両方で、ESP32-S3・ESP32-S2・ESP32-P4 向けの代表的な HID、Serial、MIDI、Storage、Audio、Vendor、Network、Composite example がすべてビルドに成功しています。
+- (EN) Improve the pytest serial-log audit to separate known allowed findings from unexpected suspicious lines. Known, test-specific messages are matched by test/log/pattern with an occurrence limit and reported with their reason, while excess or unmatched errors remain clearly visible as unexpected without failing the test.
+- (JA) pytest のシリアルログ監査を改善し、既知の許容ログと予期しない疑わしい行を区別するようにしました。既知のテスト固有メッセージはテスト・ログ・パターン・許容回数で照合して理由とともに報告し、許容回数を超えたものや未登録のエラーは、テストを失敗させずに予期しない異常として明確に表示します。
 
 ## 1.2.6
 - (EN) Migrate the keyboard keymap tables to the Unicode 4-plane representation shared byte-identically with EspUsbHost: `KEYCODE_TO_ASCII_XX[N][2]` (`uint8_t`) becomes `KEYCODE_TO_UNICODE_XX[N][4]` (`uint16_t`), with columns `[0]=unshifted, [1]=Shift, [2]=AltGr, [3]=AltGr+Shift`. This also picks up the upstream nl_NL (Windows KBDNE), pt_BR (ABNT2), and ja_jp table/comment fixes.
