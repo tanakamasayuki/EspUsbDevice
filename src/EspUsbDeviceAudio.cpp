@@ -44,6 +44,35 @@
 // dispatched to the user onEvent() callback on a dedicated event loop.
 ESP_EVENT_DEFINE_BASE(ESP_USB_DEVICE_AUDIO_EVENTS);
 
+// UAC2 class-specific control-request layout.
+//
+// TinyUSB used to expose this as `audio20_control_request_t`, but the struct was
+// removed from audio.h in the Arduino-ESP32 3.3.11 core (only the type name went
+// away; the AUDIO20_* constants and audio20_control_cur_*/range_* types remain).
+// The layout is fixed by the USB Audio 2.0 spec (section 5.2.2) and is byte-for-
+// byte a reinterpretation of the standard 8-byte setup packet, so we define our
+// own copy here and cast tusb_control_request_t to it. This keeps the code
+// building on both the old cores (that still ship the type) and the new ones.
+typedef struct TU_ATTR_PACKED {
+  union {
+    struct TU_ATTR_PACKED {
+      uint8_t recipient : 5;  ///< Recipient type tusb_request_recipient_t.
+      uint8_t type : 2;       ///< Request type tusb_request_type_t.
+      uint8_t direction : 1;  ///< Direction type. tusb_dir_t
+    } bmRequestType_bit;
+    uint8_t bmRequestType;
+  };
+  uint8_t bRequest;  ///< Request type audio_cs_req_t
+  uint8_t bChannelNumber;
+  uint8_t bControlSelector;
+  union {
+    uint8_t bInterface;
+    uint8_t bEndpoint;
+  };
+  uint8_t bEntityID;
+  uint16_t wLength;
+} esp_usb_audio20_control_request_t;
+
 // The single active audio instance. TinyUSB calls the tud_audio_* callbacks by
 // name (C linkage, no user context), so they reach the instance through this.
 static EspUsbDeviceAudio *g_activeAudio = nullptr;
@@ -346,7 +375,7 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
 {
   dump_control_request(p_request);
 #if TUD_OPT_HIGH_SPEED
-  audio20_control_request_t const *request = (audio20_control_request_t const *)p_request;
+  esp_usb_audio20_control_request_t const *request = (esp_usb_audio20_control_request_t const *)p_request;
   if (request->bEntityID == UAC2_ENTITY_CLOCK)
   {
     if (request->bControlSelector == AUDIO20_CS_CTRL_SAM_FREQ)
@@ -478,7 +507,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
   (void)rhport;
   dump_control_request(p_request);
 #if TUD_OPT_HIGH_SPEED
-  audio20_control_request_t const *request = (audio20_control_request_t const *)p_request;
+  esp_usb_audio20_control_request_t const *request = (esp_usb_audio20_control_request_t const *)p_request;
   if (request->bEntityID == UAC2_ENTITY_SPK_FEATURE_UNIT && request->bRequest == AUDIO20_CS_REQ_CUR)
   {
     if (request->bChannelNumber >= (sizeof(_mute) / sizeof(_mute[0])))
