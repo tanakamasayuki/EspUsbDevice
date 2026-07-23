@@ -388,7 +388,8 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
       }
       else if (request->bRequest == AUDIO20_CS_REQ_RANGE)
       {
-        audio20_control_range_4_n_t(1) rangef = {.wNumSubRanges = tu_htole16(1)};
+        audio20_control_range_4_n_t(1) rangef = {};
+        rangef.wNumSubRanges = tu_htole16(1);
         rangef.subrange[0].bMin = (int32_t)tu_htole32(_sample_rate);
         rangef.subrange[0].bMax = (int32_t)tu_htole32(_sample_rate);
         rangef.subrange[0].bRes = (int32_t)tu_htole32(0);
