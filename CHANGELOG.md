@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 1.2.7
 - (EN) Fix the UAC2 audio build on Arduino-ESP32 core 3.3.11, which removed the `audio20_control_request_t` struct from TinyUSB's `audio.h` (the `AUDIO20_*` constants and `audio20_control_cur_*`/`range_*` types remain). Its layout is fixed by the USB Audio 2.0 spec (§5.2.2) and is a byte-for-byte reinterpretation of the 8-byte setup packet, so `EspUsbDeviceAudio` now defines its own `esp_usb_audio20_control_request_t` and casts `tusb_control_request_t` to it. No version `#if` is needed — the private type name never collides, so it builds on both the older cores that still ship the struct and 3.3.11.
 - (JA) Arduino-ESP32 core 3.3.11 で TinyUSB の `audio.h` から `audio20_control_request_t` 構造体が削除された件に対応し、UAC2 オーディオがビルドできるよう修正しました（`AUDIO20_*` 定数や `audio20_control_cur_*`/`range_*` 型は残存）。この構造体は USB Audio 2.0 仕様（§5.2.2）でレイアウトが固定されており、8 バイトの setup パケットをそのまま読み替えたものなので、`EspUsbDeviceAudio` 内で同一レイアウトの独自型 `esp_usb_audio20_control_request_t` を定義し、`tusb_control_request_t` をこれにキャストするようにしました。独自の型名なので名前衝突せず、バージョン `#if` 分岐も不要で、構造体が残る旧 core と 3.3.11 の両方でビルドできます。
 
