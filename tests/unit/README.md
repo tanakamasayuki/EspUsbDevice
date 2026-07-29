@@ -60,9 +60,10 @@ wire formats.
 ## `audio_v2_descriptor`
 
 Builds the new public `EspUsbAudioFunction` API on S3 hardware and checks the
-speaker, microphone, and duplex configuration descriptors plus FS/HS packet
-sizes. It leaves the USB runtime stopped, so this specifically tests public API
-and device-descriptor integration.
+speaker, microphone, and duplex configuration descriptors, FS/HS packet sizes,
+polling of mute, volume, and stream-state events, and the stream-stats reset
+lifecycle. It leaves the USB runtime stopped, so this specifically tests public
+API, device-descriptor, and control state integration.
 
 ## `keymap`
 

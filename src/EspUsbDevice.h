@@ -7,6 +7,7 @@
 #include "espusbdevice_version.h"
 #include "internal/EspUsbAudioControl.h"
 #include "internal/EspUsbAudioDescriptor.h"
+#include "internal/EspUsbAudioEvent.h"
 
 #if __has_include(<SD.h>)
 #include <SD.h>
@@ -742,6 +743,42 @@ struct EspUsbAudioFormat
   uint8_t validBits = 16;
 };
 
+enum class EspUsbAudioEventType : uint8_t
+{
+  SampleRateChanged,
+  MuteChanged,
+  VolumeChanged,
+  StreamStateChanged,
+};
+
+enum class EspUsbAudioEventTarget : uint8_t
+{
+  Function,
+  Playback,
+  Capture,
+};
+
+struct EspUsbAudioEvent
+{
+  EspUsbAudioEventType type = EspUsbAudioEventType::SampleRateChanged;
+  EspUsbAudioEventTarget target = EspUsbAudioEventTarget::Function;
+  uint8_t channel = 0;
+  uint8_t alternateSetting = 0;
+  uint32_t sampleRate = 0;
+  int16_t volumeDb256 = 0;
+  bool muted = false;
+  bool enabled = false;
+};
+
+struct EspUsbAudioStreamStats
+{
+  uint32_t transferredBytes = 0;
+  uint32_t overrunCount = 0;
+  uint32_t overrunBytes = 0;
+  uint32_t underrunCount = 0;
+  uint32_t underrunBytes = 0;
+};
+
 class EspUsbAudioFunction;
 
 class EspUsbAudioPlaybackStream
@@ -752,6 +789,9 @@ public:
   bool addFormat(const EspUsbAudioFormat &format);
   int available() const;
   size_t read(void *data, size_t length);
+  bool clearBuffer();
+  EspUsbAudioStreamStats stats() const;
+  void resetStats();
 
 private:
   friend class EspUsbAudioFunction;
@@ -760,6 +800,9 @@ private:
 
   EspUsbAudioFunction &function_;
   uint8_t channels_ = 2;
+  std::atomic<uint32_t> transferredBytes_{0};
+  std::atomic<uint32_t> overrunCount_{0};
+  std::atomic<uint32_t> overrunBytes_{0};
 };
 
 class EspUsbAudioCaptureStream
@@ -769,6 +812,9 @@ public:
   uint8_t channels() const { return channels_; }
   bool addFormat(const EspUsbAudioFormat &format);
   size_t write(const void *data, size_t length);
+  bool clearBuffer();
+  EspUsbAudioStreamStats stats() const;
+  void resetStats();
 
 private:
   friend class EspUsbAudioFunction;
@@ -777,6 +823,11 @@ private:
 
   EspUsbAudioFunction &function_;
   uint8_t channels_ = 1;
+  std::atomic<uint32_t> transferredBytes_{0};
+  std::atomic<uint32_t> overrunCount_{0};
+  std::atomic<uint32_t> overrunBytes_{0};
+  std::atomic<uint32_t> underrunCount_{0};
+  std::atomic<uint32_t> underrunBytes_{0};
 };
 
 class EspUsbAudioFunction : public EspUsbDeviceClass
@@ -807,7 +858,14 @@ public:
 
   bool handleGetEntityRequest(uint8_t rhport, const void *request);
   bool handleSetEntityRequest(const void *request, const uint8_t *data);
+  bool handleSetInterface(const void *request);
+  bool handlePlaybackTransfer(uint16_t bytes, uint8_t alternateSetting);
+  bool handleCaptureTransfer(uint16_t bytes, uint8_t alternateSetting);
   uint32_t currentSampleRate() const;
+  bool pollEvent(EspUsbAudioEvent &event);
+  size_t pendingEvents() const;
+  uint32_t droppedEvents() const;
+  void clearEvents();
 
 private:
   friend class EspUsbAudioPlaybackStream;
@@ -816,6 +874,9 @@ private:
   bool addFormat(espusb::internal::AudioDirection direction,
                  uint8_t channels, const EspUsbAudioFormat &format);
   bool buildGraph(uint8_t interfaceNumber, uint8_t endpointNumber);
+  EspUsbAudioEventTarget eventTarget(uint8_t entityId) const;
+  void pushControlEvent(espusb::internal::AudioControlSelector selector,
+                        uint8_t entityId, uint8_t channel, int32_t value);
 
   EspUsbAudioProtocol protocol_ = EspUsbAudioProtocol::Uac2;
   bool playbackEnabled_ = false;
@@ -825,6 +886,9 @@ private:
   espusb::internal::AudioFunctionModel model_;
   espusb::internal::AudioFunctionGraph graph_;
   espusb::internal::AudioControlState controls_;
+  espusb::internal::AudioEventQueue events_;
+  uint8_t playbackAlternate_ = 0;
+  uint8_t captureAlternate_ = 0;
 };
 
 class EspUsbDeviceMsc : public EspUsbDeviceClass

@@ -32,6 +32,23 @@ toEntityRequest(const tusb_control_request_t *request)
   result.length = request->wLength;
   return result;
 }
+
+uint16_t correctAudioFifoOverflow(tu_fifo_t *fifo)
+{
+  if (!fifo)
+  {
+    return 0;
+  }
+  const uint16_t count =
+      tu_ff_overflow_count(fifo->depth, fifo->wr_idx, fifo->rd_idx);
+  if (count <= fifo->depth)
+  {
+    return 0;
+  }
+  const uint16_t overflow = static_cast<uint16_t>(count - fifo->depth);
+  tu_fifo_correct_read_pointer(fifo);
+  return overflow;
+}
 #endif
 
 } // namespace
@@ -181,6 +198,11 @@ bool EspUsbAudioFunction::begin()
   {
     return false;
   }
+  events_.clear();
+  playbackAlternate_ = 0;
+  captureAlternate_ = 0;
+  playback_.resetStats();
+  capture_.resetStats();
   g_activeAudio = this;
   return true;
 }
@@ -191,6 +213,11 @@ void EspUsbAudioFunction::end()
   {
     g_activeAudio = nullptr;
   }
+  playbackAlternate_ = 0;
+  captureAlternate_ = 0;
+  events_.clear();
+  playback_.resetStats();
+  capture_.resetStats();
 }
 
 uint8_t EspUsbAudioFunction::interfaceCount() const
@@ -261,6 +288,32 @@ size_t EspUsbAudioPlaybackStream::read(void *data, size_t length)
 #endif
 }
 
+bool EspUsbAudioPlaybackStream::clearBuffer()
+{
+#if ESP_USB_AUDIO_HAS_TINYUSB
+  return tud_audio_clear_ep_out_ff();
+#else
+  return false;
+#endif
+}
+
+EspUsbAudioStreamStats EspUsbAudioPlaybackStream::stats() const
+{
+  EspUsbAudioStreamStats result;
+  result.transferredBytes =
+      transferredBytes_.load(std::memory_order_relaxed);
+  result.overrunCount = overrunCount_.load(std::memory_order_relaxed);
+  result.overrunBytes = overrunBytes_.load(std::memory_order_relaxed);
+  return result;
+}
+
+void EspUsbAudioPlaybackStream::resetStats()
+{
+  transferredBytes_.store(0, std::memory_order_relaxed);
+  overrunCount_.store(0, std::memory_order_relaxed);
+  overrunBytes_.store(0, std::memory_order_relaxed);
+}
+
 size_t EspUsbAudioCaptureStream::write(const void *data, size_t length)
 {
 #if ESP_USB_AUDIO_HAS_TINYUSB
@@ -268,8 +321,27 @@ size_t EspUsbAudioCaptureStream::write(const void *data, size_t length)
   {
     return 0;
   }
-  return tud_audio_write(data, static_cast<uint16_t>(
-                                   length > 0xffffU ? 0xffffU : length));
+  const uint16_t requested = static_cast<uint16_t>(
+      length > 0xffffU ? 0xffffU : length);
+  tu_fifo_t *fifo = tud_audio_get_ep_in_ff();
+  uint32_t overwritten = 0;
+  if (fifo)
+  {
+    const uint16_t count = tu_fifo_count(fifo);
+    const uint16_t remaining =
+        static_cast<uint16_t>(fifo->depth - count);
+    overwritten =
+        requested >= fifo->depth
+            ? static_cast<uint32_t>(count) + requested - fifo->depth
+            : (requested > remaining ? requested - remaining : 0);
+  }
+  const uint16_t written = tud_audio_write(data, requested);
+  if (overwritten)
+  {
+    overrunCount_.fetch_add(1, std::memory_order_relaxed);
+    overrunBytes_.fetch_add(overwritten, std::memory_order_relaxed);
+  }
+  return written;
 #else
   (void)data;
   (void)length;
@@ -277,9 +349,145 @@ size_t EspUsbAudioCaptureStream::write(const void *data, size_t length)
 #endif
 }
 
+bool EspUsbAudioCaptureStream::clearBuffer()
+{
+#if ESP_USB_AUDIO_HAS_TINYUSB
+  return tud_audio_clear_ep_in_ff();
+#else
+  return false;
+#endif
+}
+
+EspUsbAudioStreamStats EspUsbAudioCaptureStream::stats() const
+{
+  EspUsbAudioStreamStats result;
+  result.transferredBytes =
+      transferredBytes_.load(std::memory_order_relaxed);
+  result.overrunCount = overrunCount_.load(std::memory_order_relaxed);
+  result.overrunBytes = overrunBytes_.load(std::memory_order_relaxed);
+  result.underrunCount = underrunCount_.load(std::memory_order_relaxed);
+  result.underrunBytes = underrunBytes_.load(std::memory_order_relaxed);
+  return result;
+}
+
+void EspUsbAudioCaptureStream::resetStats()
+{
+  transferredBytes_.store(0, std::memory_order_relaxed);
+  overrunCount_.store(0, std::memory_order_relaxed);
+  overrunBytes_.store(0, std::memory_order_relaxed);
+  underrunCount_.store(0, std::memory_order_relaxed);
+  underrunBytes_.store(0, std::memory_order_relaxed);
+}
+
 uint32_t EspUsbAudioFunction::currentSampleRate() const
 {
   return controls_.currentSampleRate();
+}
+
+EspUsbAudioEventTarget
+EspUsbAudioFunction::eventTarget(uint8_t entityId) const
+{
+  if (entityId == graph_.clockSourceId)
+  {
+    return EspUsbAudioEventTarget::Function;
+  }
+  for (size_t i = 0; i < graph_.entityCount; ++i)
+  {
+    if (graph_.entities[i].id != entityId)
+    {
+      continue;
+    }
+    return graph_.entities[i].direction ==
+                   espusb::internal::AudioDirection::Playback
+               ? EspUsbAudioEventTarget::Playback
+               : EspUsbAudioEventTarget::Capture;
+  }
+  return EspUsbAudioEventTarget::Function;
+}
+
+void EspUsbAudioFunction::pushControlEvent(
+    espusb::internal::AudioControlSelector selector, uint8_t entityId,
+    uint8_t channel, int32_t value)
+{
+  espusb::internal::AudioRuntimeEvent event;
+  const EspUsbAudioEventTarget target = eventTarget(entityId);
+  event.target =
+      target == EspUsbAudioEventTarget::Playback
+          ? espusb::internal::AudioRuntimeEventTarget::Playback
+          : (target == EspUsbAudioEventTarget::Capture
+                 ? espusb::internal::AudioRuntimeEventTarget::Capture
+                 : espusb::internal::AudioRuntimeEventTarget::Function);
+  event.channel = channel;
+  event.value = value;
+  switch (selector)
+  {
+  case espusb::internal::AudioControlSelector::SampleRate:
+    event.type = espusb::internal::AudioRuntimeEventType::SampleRate;
+    break;
+  case espusb::internal::AudioControlSelector::Mute:
+    event.type = espusb::internal::AudioRuntimeEventType::Mute;
+    break;
+  case espusb::internal::AudioControlSelector::Volume:
+    event.type = espusb::internal::AudioRuntimeEventType::Volume;
+    break;
+  case espusb::internal::AudioControlSelector::ClockValid:
+    return;
+  }
+  events_.push(event);
+}
+
+bool EspUsbAudioFunction::pollEvent(EspUsbAudioEvent &event)
+{
+  espusb::internal::AudioRuntimeEvent queued;
+  if (!events_.pop(queued))
+  {
+    return false;
+  }
+  event = EspUsbAudioEvent{};
+  event.target =
+      queued.target == espusb::internal::AudioRuntimeEventTarget::Playback
+          ? EspUsbAudioEventTarget::Playback
+          : (queued.target ==
+                     espusb::internal::AudioRuntimeEventTarget::Capture
+                 ? EspUsbAudioEventTarget::Capture
+                 : EspUsbAudioEventTarget::Function);
+  event.channel = queued.channel;
+  event.alternateSetting = queued.alternateSetting;
+  switch (queued.type)
+  {
+  case espusb::internal::AudioRuntimeEventType::SampleRate:
+    event.type = EspUsbAudioEventType::SampleRateChanged;
+    event.sampleRate = static_cast<uint32_t>(queued.value);
+    break;
+  case espusb::internal::AudioRuntimeEventType::Mute:
+    event.type = EspUsbAudioEventType::MuteChanged;
+    event.muted = queued.value != 0;
+    break;
+  case espusb::internal::AudioRuntimeEventType::Volume:
+    event.type = EspUsbAudioEventType::VolumeChanged;
+    event.volumeDb256 = static_cast<int16_t>(queued.value);
+    break;
+  case espusb::internal::AudioRuntimeEventType::StreamState:
+    event.type = EspUsbAudioEventType::StreamStateChanged;
+    event.enabled = queued.value != 0;
+    break;
+  }
+  return true;
+}
+
+size_t EspUsbAudioFunction::pendingEvents() const
+{
+  return events_.pending();
+}
+
+uint32_t EspUsbAudioFunction::droppedEvents() const
+{
+  return events_.dropped();
+}
+
+void EspUsbAudioFunction::clearEvents()
+{
+  events_.clear();
 }
 
 bool EspUsbAudioFunction::handleGetEntityRequest(uint8_t rhport,
@@ -313,12 +521,129 @@ bool EspUsbAudioFunction::handleSetEntityRequest(const void *rawRequest,
 #if ESP_USB_AUDIO_HAS_TINYUSB
   const auto *request =
       static_cast<const tusb_control_request_t *>(rawRequest);
-  return espusb::internal::applyUac2EntityRequest(
+  espusb::internal::AudioControlChange change;
+  const bool applied = espusb::internal::applyUac2EntityRequest(
       controls_, graph_.controlInterface, toEntityRequest(request), data,
-      request->wLength);
+      request->wLength, nullptr, &change);
+  if (applied && change.changed)
+  {
+    pushControlEvent(change.selector, change.entityId, change.channel,
+                     change.value);
+  }
+  return applied;
 #else
   (void)rawRequest;
   (void)data;
+  return false;
+#endif
+}
+
+bool EspUsbAudioFunction::handleSetInterface(const void *rawRequest)
+{
+#if ESP_USB_AUDIO_HAS_TINYUSB
+  if (!rawRequest)
+  {
+    return false;
+  }
+  const auto *request =
+      static_cast<const tusb_control_request_t *>(rawRequest);
+  const uint8_t interfaceNumber =
+      static_cast<uint8_t>(request->wIndex & 0xff);
+  const uint8_t alternateSetting =
+      static_cast<uint8_t>(request->wValue & 0xff);
+  uint8_t *current = nullptr;
+  espusb::internal::AudioRuntimeEventTarget target;
+  if (graph_.playback.present &&
+      interfaceNumber == graph_.playback.interfaceNumber)
+  {
+    current = &playbackAlternate_;
+    target = espusb::internal::AudioRuntimeEventTarget::Playback;
+  }
+  else if (graph_.capture.present &&
+           interfaceNumber == graph_.capture.interfaceNumber)
+  {
+    current = &captureAlternate_;
+    target = espusb::internal::AudioRuntimeEventTarget::Capture;
+  }
+  else
+  {
+    return true;
+  }
+  if (*current == alternateSetting)
+  {
+    return true;
+  }
+  *current = alternateSetting;
+  espusb::internal::AudioRuntimeEvent event;
+  event.type = espusb::internal::AudioRuntimeEventType::StreamState;
+  event.target = target;
+  event.alternateSetting = alternateSetting;
+  event.value = alternateSetting != 0 ? 1 : 0;
+  events_.push(event);
+  return true;
+#else
+  (void)rawRequest;
+  return false;
+#endif
+}
+
+bool EspUsbAudioFunction::handlePlaybackTransfer(
+    uint16_t bytes, uint8_t alternateSetting)
+{
+#if ESP_USB_AUDIO_HAS_TINYUSB
+  if (alternateSetting == 0 || !playbackEnabled_)
+  {
+    return true;
+  }
+  playback_.transferredBytes_.fetch_add(bytes,
+                                        std::memory_order_relaxed);
+  const uint16_t overflow =
+      correctAudioFifoOverflow(tud_audio_get_ep_out_ff());
+  if (overflow)
+  {
+    playback_.overrunCount_.fetch_add(1, std::memory_order_relaxed);
+    playback_.overrunBytes_.fetch_add(overflow,
+                                      std::memory_order_relaxed);
+  }
+  return true;
+#else
+  (void)bytes;
+  (void)alternateSetting;
+  return false;
+#endif
+}
+
+bool EspUsbAudioFunction::handleCaptureTransfer(
+    uint16_t bytes, uint8_t alternateSetting)
+{
+#if ESP_USB_AUDIO_HAS_TINYUSB
+  if (alternateSetting == 0 || !captureEnabled_)
+  {
+    return true;
+  }
+  capture_.transferredBytes_.fetch_add(bytes,
+                                       std::memory_order_relaxed);
+  const espusb::internal::AudioPcmFormat *format =
+      model_.capture().format(0);
+  if (!format)
+  {
+    return true;
+  }
+  const uint32_t bytesPerSecond =
+      format->sampleRate * format->channels * format->subslotBytes;
+  const uint32_t serviceIntervals =
+      tud_speed_get() == TUSB_SPEED_HIGH ? 8000U : 1000U;
+  const uint32_t minimumBytes = bytesPerSecond / serviceIntervals;
+  if (bytes < minimumBytes)
+  {
+    capture_.underrunCount_.fetch_add(1, std::memory_order_relaxed);
+    capture_.underrunBytes_.fetch_add(minimumBytes - bytes,
+                                      std::memory_order_relaxed);
+  }
+  return true;
+#else
+  (void)bytes;
+  (void)alternateSetting;
   return false;
 #endif
 }
@@ -363,9 +688,10 @@ extern "C" bool tud_audio_set_req_itf_cb(
 }
 
 extern "C" bool tud_audio_set_itf_cb(
-    uint8_t, const tusb_control_request_t *)
+    uint8_t, const tusb_control_request_t *request)
 {
-  return g_activeAudio != nullptr;
+  return g_activeAudio &&
+         g_activeAudio->handleSetInterface(request);
 }
 
 extern "C" bool tud_audio_set_itf_close_ep_cb(
@@ -375,15 +701,21 @@ extern "C" bool tud_audio_set_itf_close_ep_cb(
 }
 
 extern "C" bool tud_audio_rx_done_isr(
-    uint8_t, uint16_t, uint8_t, uint8_t, uint8_t)
+    uint8_t, uint16_t bytes, uint8_t, uint8_t,
+    uint8_t alternateSetting)
 {
-  return g_activeAudio != nullptr;
+  return g_activeAudio &&
+         g_activeAudio->handlePlaybackTransfer(bytes,
+                                               alternateSetting);
 }
 
 extern "C" bool tud_audio_tx_done_isr(
-    uint8_t, uint16_t, uint8_t, uint8_t, uint8_t)
+    uint8_t, uint16_t bytes, uint8_t, uint8_t,
+    uint8_t alternateSetting)
 {
-  return g_activeAudio != nullptr;
+  return g_activeAudio &&
+         g_activeAudio->handleCaptureTransfer(bytes,
+                                              alternateSetting);
 }
 
 extern "C" void tud_audio_feedback_params_cb(

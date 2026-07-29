@@ -23,6 +23,7 @@ def test_audio_model():
             str(ROOT / "src/internal/EspUsbAudioModel.cpp"),
             str(ROOT / "src/internal/EspUsbAudioDescriptor.cpp"),
             str(ROOT / "src/internal/EspUsbAudioControl.cpp"),
+            str(ROOT / "src/internal/EspUsbAudioEvent.cpp"),
             str(ROOT / "src/internal/EspUsbAudioRequest.cpp"),
             str(ROOT / "src/internal/EspUsbDescriptorModel.cpp"),
             "-o",

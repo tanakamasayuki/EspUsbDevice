@@ -325,10 +325,12 @@ Gate 5:
 4. [x] UAC2 class request
 5. [x] playback data plane（polling API、実転送Gate待ち）
 6. [x] capture data plane（polling API、実転送Gate待ち）
-7. duplex/headset
-8. UAC1 descriptorとclass request
-9. 複数alternate setting / sample rate
-10. Audio + 他classのcomposite
+7. [x] control/stream state event queue（固定長、polling、drop count）
+8. [x] FIFO clear lifecycleとoverrun/underrun counter
+9. duplex/headset
+10. UAC1 descriptorとclass request
+11. 複数alternate setting / sample rate
+12. Audio + 他classのcomposite
 
 実装規則:
 

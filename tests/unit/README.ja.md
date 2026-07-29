@@ -53,8 +53,9 @@ Clock/Feature control stateとCUR/RANGE wire formatを確認します。
 ## `audio_v2_descriptor`
 
 新公開APIの`EspUsbAudioFunction`をS3実機上で構築し、speaker、microphone、duplexの
-configuration descriptorとFS/HS packet sizeを確認します。USB runtimeは開始しないため、
-純粋な公開API・device descriptor統合テストです。
+configuration descriptor、FS/HS packet size、mute / volume / stream state eventの
+polling、stream statsのreset lifecycleを確認します。USB runtimeは開始しないため、
+純粋な公開API・device descriptor・control state統合テストです。
 
 ## `keymap`
 
