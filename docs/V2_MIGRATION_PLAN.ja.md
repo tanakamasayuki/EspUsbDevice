@@ -251,6 +251,13 @@ Gate 3:
 - 100回のbegin/endまたはattach/detach試験でresource leakがない。
 - coreの`USB.begin()`、`tinyusb_init()`が呼ばれていないことをlink mapとlogで確認できる。
 
+結果:
+
+- [x] S3 PeerでHID入力reportを確認。
+- [x] 実TinyUSB runtime、PHY、taskを同一deviceで100回begin/endし、265 checks PASS。
+- [x] class途中失敗のrollback後、同じdevice instanceの再beginを確認。
+- [x] link auditでcore側初期化symbolが取り込まれないことを確認。
+
 ### Phase 4: 非Audio classを新descriptor/runtimeへ移す
 
 移行順:

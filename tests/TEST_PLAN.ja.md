@@ -52,6 +52,7 @@ tests/
 | 機能 | unit | peer | loopback | probe | manual |
 |------|------|------|----------|-------|--------|
 | device descriptor config | ✅ `descriptor` | | | 予定 | |
+| runtime lifecycle | ✅ `descriptor`（100回begin/end + 途中失敗からの復帰） | | | | |
 | FS/HS endpoint MPS | ✅ `descriptor` | 予定 | 予定 | 予定 | |
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | build済み `hid_keyboard` | | |
 | HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard` | build済み `hid_keyboard` | | 任意 |
