@@ -161,6 +161,11 @@ See [MIDIInterface/README.md](MIDIInterface/README.md) for details.
 USB Audio speaker sink device example.
 See [AudioSpeaker/README.md](AudioSpeaker/README.md) for details.
 
+The Audio examples use UAC1 by default. UAC1 speaker, microphone, and duplex
+streaming are covered by EspUsbHost peer tests. UAC2 can be selected explicitly,
+but only its Device descriptors and class requests are currently claimed as
+validated; end-to-end streaming waits for EspUsbHost UAC2 support.
+
 - Read host PCM with `EspUsbAudioPlaybackStream::read()`.
 - Configure formats as `{sampleRate, channels, bytesPerSample, bitsPerSample}`.
 - Poll volume, mute, sample-rate, and interface-enable changes with

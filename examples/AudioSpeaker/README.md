@@ -34,4 +34,5 @@ audio.getVolume(rightVolume, EspUsbAudioDirection::Playback, 2);
 Channels are `0` Master, `1` Left, and `2` Right. Volume uses 1/256 dB units.
 
 UAC1 enumeration, streaming, mute, volume, and rapid control changes are
-covered by the S3 peer tests.
+covered by the S3 peer tests. UAC2 descriptors and class requests are tested,
+but UAC2 streaming is deferred until EspUsbHost has matching UAC2 support.

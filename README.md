@@ -22,6 +22,34 @@ Minimum Arduino-ESP32 core (board package) version:
 
 Older cores are not supported: 3.3.8 and earlier fail to build. Per-library-version build results across core versions are published under [`docs/`](docs/) as `COMPATIBILITY.<version>.md`.
 
+## Library-owned TinyUSB stack
+
+Version 2 no longer uses Arduino-ESP32's prebuilt TinyUSB configuration,
+initializer, task, endpoint allocator, or descriptor loader. EspUsbDevice builds
+a pinned, selected TinyUSB source set with its own `tusb_config.h`, initializes
+the ESP-IDF PHY/controller directly, runs the device task, and serves its own
+device, configuration, string, BOS, and class descriptors.
+
+Arduino-ESP32 remains the platform dependency for ESP-IDF SoC, PHY, FreeRTOS,
+and board support. This removes the Arduino USB Device integration dependency;
+it does not fork the whole core. The selected files, pin, license, update policy,
+and byte-for-byte verification procedure are documented in
+[TinyUSB provenance](third_party/tinyusb/PROVENANCE.md).
+
+Owning this boundary makes the following possible:
+
+- Select the ESP32-P4 FullSpeed or HighSpeed controller at runtime.
+- Return negotiated-speed descriptors with correct FS/HS endpoint packet sizes,
+  device qualifier, and other-speed configuration.
+- Allocate composite interfaces/endpoints consistently and reject impossible
+  controller-specific endpoint combinations before starting the PHY.
+- Generate WebUSB and Microsoft OS 2.0 descriptors for the actual allocated
+  vendor interface.
+- Configure enabled classes and TinyUSB buffers independently of
+  Arduino-ESP32's prebuilt `CFG_TUD_*` values.
+- Tear down and reinitialize the runtime without falling back to `USB.begin()`
+  or `esp32-hal-tinyusb`.
+
 ## Release Scope
 
 This release covers HID keyboard / mouse / gamepad / consumer / system / custom /
@@ -34,7 +62,9 @@ Typical use cases:
 - Communicate with a PC or EspUsbHost over CDC ACM serial or USB MIDI.
 - Expose RAM disks, FAT RAM disks, or SD cards as USB MSC devices.
 - Build non-HID vendor-specific bulk/control interfaces.
-- Read and write UAC1/UAC2 Playback/Capture PCM through bounded FIFOs.
+- Read and write validated UAC1 Playback/Capture PCM through bounded FIFOs.
+  UAC2 descriptor/control support is selectable; peer streaming validation is
+  deferred until the matching EspUsbHost UAC2 implementation is ready.
 - Present the board as a USB network adapter (CDC-NCM), with optional lwIP/DHCP
   so a PC can reach a page or API on the device over USB.
 - Combine several of the above as one composite device.
@@ -70,8 +100,8 @@ available:
 - USB MSC block device and SCSI callbacks.
 - USBVendor bulk IN/OUT, control requests, and WebUSB landing URL.
 - UAC1-default Audio Playback/Capture polling I/O, per-channel mute/volume
-  state, control events, and stream stats, with UAC2 available by explicit
-  selection.
+  state, control events, and stream stats. UAC2 descriptor/control support is
+  available by explicit selection; UAC2 streaming validation is still pending.
 - CDC-NCM network device with raw-frame API and optional lwIP/esp_netif
   integration (DHCP server / client / static address).
 - Multi-function composite devices (e.g. HID + CDC + MSC on one device).
@@ -220,6 +250,50 @@ MSC:
   Persistent storage should use SD card first, and temporary file handoff should
   use RAM disk plus a FAT helper.
 
+## USB Audio APIs
+
+The former card-shaped `EspUsbDeviceAudio` implementation has been removed.
+Audio is now one function with independent Playback (host to device) and Capture
+(device to host) streams:
+
+```cpp
+EspUsbDevice device;
+EspUsbAudioFunction audio(device); // UAC1 by default
+
+auto &playback = audio.addPlaybackStream();
+playback.addFormat({48000, 2, 2, 16});
+
+auto &capture = audio.addCaptureStream();
+capture.addFormat({48000, 1, 2, 16});
+```
+
+- `EspUsbAudioPlaybackStream::available()` / `read()` consume speaker PCM.
+- `EspUsbAudioCaptureStream::write()` supplies microphone PCM.
+- Format fields are `sampleRate`, `channels`, `bytesPerSample`, and
+  `bitsPerSample`, matching EspUsbHost terminology.
+- `pollEvent()` delivers stream-state, sample-rate, mute, and volume changes
+  from a bounded queue. PCM uses polling so high-rate application work, I2S
+  writes, and user callbacks never run on or block the TinyUSB task.
+- `stats()`, `resetStats()`, and `clearBuffer()` expose transfer, overrun, and
+  underrun behavior instead of hiding it inside an audio-card receive task.
+- Master/Left/Right state is shared with USB Feature Unit requests through the
+  mute/volume APIs. Volume uses signed 1/256 dB wire units.
+- The library never applies mute, volume, downmixing, or other DSP implicitly.
+  I2S, codecs, microphones, speakers, and DSP remain application or optional
+  PCMFlow/PCMFlowDevice responsibilities.
+
+UAC1 is the default and is covered by S3 speaker, microphone, and duplex peer
+streaming tests, including control changes and 16/24/32-bit
+descriptor/transfer coverage. UAC2 is selected with
+`EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`; its descriptors and
+class requests are tested, but end-to-end UAC2 streaming is intentionally not
+claimed yet.
+
+The new Audio source was independently designed from USB Audio specifications
+and TinyUSB's public driver API. The old Espressif USBAudioCard-derived source
+was deleted rather than carried forward. See
+[Audio source provenance](docs/V2_AUDIO_PROVENANCE.ja.md).
+
 ## Network / Composite APIs
 
 USB network (CDC-NCM):
@@ -263,8 +337,9 @@ Composite:
   `USBHIDKeyboard`, `USBHIDMouse`, or other built-in USB device classes.
 - USB Audio uses `EspUsbAudioFunction` for Playback/Capture. UAC1 is the
   compatibility-oriented default; select UAC2 explicitly with
-  `EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`. I2S, codecs, DACs,
-  and other audio hardware are outside this library's responsibility.
+  `EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`. UAC2 end-to-end
+  streaming is not validated yet. I2S, codecs, DACs, and other audio hardware
+  are outside this library's responsibility.
 - The network device is CDC-NCM only. CDC-ECM is not enabled in the Arduino-ESP32
   core (it would need a core rebuild); NCM is supported natively by modern hosts.
   A device reaching the internet through the PC needs host-side bridging/NAT and

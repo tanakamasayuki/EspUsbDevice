@@ -21,6 +21,28 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 
 これより古いコアは非対応です（3.3.8 以前はビルドに失敗します）。ライブラリ各バージョンのコア別ビルド結果は [`docs/`](docs/) に `COMPATIBILITY.<version>.md` として公開しています。
 
+## ライブラリ所有のTinyUSB stack
+
+v2ではArduino-ESP32がprebuildしたTinyUSB configuration、initializer、task、endpoint
+allocator、descriptor loaderを使用しません。EspUsbDevice自身の`tusb_config.h`で固定・
+選択したTinyUSB sourceをbuildし、ESP-IDFのPHY/controllerを直接初期化してdevice taskを
+実行し、device/configuration/string/BOS/class descriptorを返します。
+
+Arduino-ESP32はESP-IDFのSoC、PHY、FreeRTOS、board supportを得るplatform dependencyとして
+引き続き使用します。切ったのはArduino USB Device integrationへの依存であり、Core全体を
+forkしたわけではありません。選択したfile、pin、license、更新方針、byte-for-byte検証は
+[TinyUSBの由来と管理方法](third_party/tinyusb/PROVENANCE.ja.md)に記録しています。
+
+この境界をライブラリで所有した結果、次が可能になりました。
+
+- ESP32-P4のFullSpeed/HighSpeed controllerをruntimeに選ぶ。
+- negotiated speedに合わせたFS/HS endpoint packet size、device qualifier、
+  other-speed configurationを返す。
+- compositeのinterface/endpointを一括採番し、controllerごとに不可能な構成をPHY開始前に拒否する。
+- 実際に割り当てたvendor interface用のWebUSB / Microsoft OS 2.0 descriptorを生成する。
+- enableするclassとTinyUSB bufferをArduino-ESP32 prebuiltの`CFG_TUD_*`値から独立して設定する。
+- `USB.begin()`や`esp32-hal-tinyusb`へfallbackせずruntimeを終了・再初期化する。
+
 ## リリース範囲
 
 このリリースでは、HID keyboard / mouse / gamepad / consumer / system / custom / vendor HID、
@@ -33,7 +55,8 @@ CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC
 - PC や `EspUsbHost` と CDC ACM serial / USB MIDI で通信する。
 - RAM disk、FAT RAM disk、SD card を USB MSC として公開する。
 - HID ではない vendor-specific bulk/control interface を作る。
-- UAC1/UAC2 AudioのPlayback/Capture PCMをbounded FIFO経由で読み書きする。
+- 実転送を検証済みのUAC1 Audio Playback/Capture PCMをbounded FIFO経由で読み書きする。
+  UAC2 descriptor/controlは明示選択でき、peer streaming検証はEspUsbHost側のUAC2対応後に行う。
 - ボードを USB ネットワークアダプタ（CDC-NCM）として見せ、任意で lwIP/DHCP を有効にして
   PC が USB 経由でデバイス上のページや API にアクセスできるようにする。
 - 上記を組み合わせて 1 つの複合デバイスにする。
@@ -66,7 +89,8 @@ loopback テストで確認できる範囲を広げています。
 - USB MSC block device と SCSI callback。
 - USBVendor bulk IN/OUT、control request、WebUSB landing URL。
 - UAC1 defaultのAudio Playback/Capture polling I/O、チャンネル別mute/volume state、
-  control event、stream stats。UAC2は明示選択できます。
+  control event、stream stats。UAC2 descriptor/controlは明示選択でき、UAC2
+  streaming検証は未完了です。
 - CDC-NCM ネットワークデバイス（生フレーム API と、任意の lwIP/esp_netif 統合＝DHCP
   サーバ / クライアント / 静的アドレス）。
 - 多機能な複合デバイス（例: HID + CDC + MSC を 1 台に）。
@@ -205,6 +229,45 @@ MSC:
 - flash / SPIFFS / LittleFS の直接公開は標準方針にしません。永続ストレージは SD card、
   一時ファイル受け渡しは RAM disk + FAT helper を優先します。
 
+## USB Audio APIs
+
+旧card型の`EspUsbDeviceAudio`実装は削除しました。新Audioは1つのfunctionへ、
+Playback（Host→Device）とCapture（Device→Host）のstreamを独立して追加します。
+
+```cpp
+EspUsbDevice device;
+EspUsbAudioFunction audio(device); // defaultはUAC1
+
+auto &playback = audio.addPlaybackStream();
+playback.addFormat({48000, 2, 2, 16});
+
+auto &capture = audio.addCaptureStream();
+capture.addFormat({48000, 1, 2, 16});
+```
+
+- `EspUsbAudioPlaybackStream::available()` / `read()`でspeaker PCMを消費する。
+- `EspUsbAudioCaptureStream::write()`でmicrophone PCMを供給する。
+- format fieldは`sampleRate`、`channels`、`bytesPerSample`、`bitsPerSample`で、
+  EspUsbHostと語彙を揃える。
+- `pollEvent()`はbounded queueからstream state、sample rate、mute、volume変更を返す。
+  高頻度のアプリ処理、I2S write、user callbackでTinyUSB taskをblockしないためPCMは
+  polling APIにしている。
+- `stats()`、`resetStats()`、`clearBuffer()`でtransfer、overrun、underrunを観測でき、
+  Audio Card固有のreceive task内部へ隠さない。
+- Master/Left/RightのstateはUSB Feature Unit requestとmute/volume APIで共有する。
+  volumeはsigned 1/256 dB wire単位。
+- mute、volume、downmixなどのDSPを暗黙適用しない。I2S、codec、microphone、speaker、
+  DSPはapplicationまたは任意のPCMFlow/PCMFlowDevice側の責務とする。
+
+UAC1はdefaultで、S3のspeaker、microphone、duplex Peer streaming、control変更、
+16/24/32-bit descriptor/transferを検証済みです。UAC2は
+`EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`で選択でき、descriptorと
+class requestをtest済みですが、end-to-end UAC2 streamingはまだ対応済みと扱いません。
+
+新Audio sourceはUSB Audio仕様とTinyUSB公開driver APIから独立設計しました。旧
+Espressif USBAudioCard由来sourceを継続改変せず削除しています。詳細は
+[Audio source provenance](docs/V2_AUDIO_PROVENANCE.ja.md)を参照してください。
+
 ## Network / Composite APIs
 
 USB ネットワーク（CDC-NCM）:
@@ -244,7 +307,8 @@ USB ネットワーク（CDC-NCM）:
 - USB Audioは`EspUsbAudioFunction`によるPlayback/Capture実装です。互換性重視の
   UAC1がdefaultで、UAC2は
   `EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`で明示選択します。
-  I2S、codec、DACなどのデバイス接続はこのライブラリの責務外です。
+  UAC2のend-to-end streamingは未検証です。I2S、codec、DACなどのデバイス接続は
+  このライブラリの責務外です。
 - ネットワークデバイスは CDC-NCM のみです。CDC-ECM は Arduino-ESP32 core で無効（有効化には core 再ビルドが必要）で、NCM は最近のホスト OS が標準対応します。デバイスが PC 経由でインターネットに抜けるにはホスト側のブリッジ/NAT が必要でスコープ外です（その用途は ESP 自身の Wi-Fi を使用）。
 - 複合デバイスはESP32-S3のUSB endpoint予算とconfiguration descriptor容量で制限されます。
   Audioを含む複合構成はDevice側descriptor制約の確認中です。

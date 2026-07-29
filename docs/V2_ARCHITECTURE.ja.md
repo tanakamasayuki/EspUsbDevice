@@ -21,9 +21,9 @@ Arduino core が prebuild した TinyUSB configuration に依存しない。
 
 ## Source provenance
 
-v2のAudio実装は、現行の`EspUsbDeviceAudio.cpp`および
-`EspUsbDeviceAudioDescriptors.h`を改変して作らない。両ファイルはEspressifの
-USBAudioCard実装に由来するため、v1 baseline固定後にv2 branchから削除する。
+v2のAudio実装は、旧`EspUsbDeviceAudio.cpp`および
+`EspUsbDeviceAudioDescriptors.h`を改変して作っていない。両ファイルはEspressifの
+USBAudioCard実装に由来するため、v1 baseline固定後に削除した。
 
 新しいAudioのfirst-party sourceは、USB Audio Class仕様で定義されたwire formatと、
 TinyUSBが公開するclass driver APIを入力として独立に実装する。旧ファイルから次を移植しない。

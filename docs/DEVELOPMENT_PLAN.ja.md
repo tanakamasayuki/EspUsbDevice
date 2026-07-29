@@ -6,8 +6,8 @@
 ## 基本方針
 
 `EspUsbDevice` は、Arduino-ESP32 標準 USB Device API との互換を目標にしません。
-`EspUsbHost` と同じように、明示的な設定、descriptor 所有、callback ベース API、raw report /
-raw transfer 制御を重視します。
+`EspUsbHost` と同じように、明示的な設定、descriptor 所有、用途に応じたcallback /
+bounded polling API、raw report / raw transfer 制御を重視します。
 
 開発は実ハードウェアで検証できる peer / loopback テストから進めます。これは、USB descriptor、
 endpoint MPS、report ID、control transfer、Host 側 callback の挙動を再現性高く固定できるためです。
@@ -67,14 +67,21 @@ uv run --env-file .env pytest --clean
 - MSC raw block device と SCSI callback。
 - MSC RAM disk、FAT RAM disk、SD card helper。
 - HID ではない USBVendor bulk IN/OUT、control request、WebUSB landing URL。
-- 最小 USB Audio speaker sink。
+- library所有TinyUSB source/config/runtime、S2/S3/P4 PHY/controller初期化、
+  FS/HS descriptor callback。
+- USB Audio Playback/Capture/duplex、bounded PCM FIFO、polling event、stream stats、
+  Master/Left/Right mute/volume control。
 
-USB Audio は単独 device の最小 speaker sink から開始しています。Arduino Core の Audio descriptor /
-isochronous endpoint 実装をベースにし、Host からの PCM を `onPcm()` callback で受ける API を提供します。
-このライブラリの責務は USB Audio class と PCM callback 境界までです。I2S、codec、DAC などの
-出力デバイス接続は PCMFlowDevice など出力側ライブラリの責務とします。PCMFlow 連携は有力な
-連携先ですが必須依存にはしません。M5 speaker 連携は `examples/AudioSpeakerM5` で扱い、
-stereo downmix と speaker 用短期 buffer は PCMFlowDevice の `M5SpeakerBufferedPlayer::writePcm()` に任せます。
+USB AudioはArduino CoreのAudio descriptor/isochronous実装や旧`USBAudioCard`を使用しません。
+`EspUsbAudioFunction`へPlayback（Host→Device）/Capture（Device→Host）streamを追加し、
+`read()` / `write()`でPCMを扱います。control/stream変更は`pollEvent()`で取得し、
+TinyUSB taskからuser callback、I2S、DSPを実行しません。UAC1をdefaultとして
+speaker/microphone/duplex Peer streamingを確認済みです。UAC2はdescriptor/class requestまで
+実装・自動確認済みで、実streamingは対応するEspUsbHost UAC2実装との共同Gateへ残します。
+
+このライブラリの責務はUSB Audio classとPCM FIFO境界までです。I2S、codec、DAC、
+microphone、DSPはapplicationまたはPCMFlowDeviceなど出力/入力側libraryの責務とします。
+PCMFlow連携は任意であり必須依存にはしません。
 
 ## 確定した設計判断
 
@@ -82,6 +89,11 @@ stereo downmix と speaker 用短期 buffer は PCMFlowDevice の `M5SpeakerBuff
 
 descriptor はライブラリ側で所有します。Arduino-ESP32 標準 USB class の descriptor に依存しません。
 FS / HS の endpoint MPS は unit test で byte 列として固定します。
+
+TinyUSBもArduino Core prebuilt binary/configurationではなく、固定commitから選択したsourceと
+library所有`tusb_config.h`をbuildします。Coreから利用するのはESP-IDFのSoC/PHY/FreeRTOS/
+board supportです。この分離によりP4 controllerのruntime選択、per-speed descriptor、
+WebUSB/MS OS 2.0 BOS、再初期化可能なruntimeを同じownership modelで扱います。
 
 HID keyboard / mouse 単体は boot protocol を意識した descriptor を提供します。
 keyboard + mouse composite は、複数 HID interface ではなく、単一 HID interface + report ID 構成を採用します。

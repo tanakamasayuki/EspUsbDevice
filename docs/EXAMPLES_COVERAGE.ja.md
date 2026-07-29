@@ -61,7 +61,7 @@
 | `AudioSpeakerM5` | USB Audio -> PCMFlowDevice -> M5 speaker 連携 | 中 |
 | `AudioMicrophoneM5` | M5 内蔵マイク -> USB Audio microphone（Device → Host） | 中 |
 | `AudioHeadsetM5` | M5 speaker + M5 mic の headset（同時使用は M5Unified の I2S 制約で非対応＝ベストエフォート） | 低 |
-| `AudioMicrophone` | USB Audio source / microphone（Device → Host、`writeMic()`） | 中 |
+| `AudioMicrophone` | USB Audio source / microphone（Device → Host、capture stream `write()`） | 中 |
 | `AudioHeadset` | USB Audio headset（speaker + microphone 同時、IN/OUT 両方向） | 中 |
 | `MSC` | raw MSC block I/O | 低 |
 | `MSCFatRamDisk` | FAT RAM disk file handoff | 低 |
@@ -116,19 +116,21 @@ HID report サイズや HID driver の制約を避けたい場合、PC app / bro
 
 ### USB Audio
 
-公式 `AudioCard` は I2S bridge を含む本格 example です。このライブラリでは USB Audio と
-PCM callback 境界だけを扱い、I2S bridge / codec / DAC 接続は PCMFlowDevice など出力側に任せます。
+公式`AudioCard`はI2S bridgeを含むcard型exampleです。このライブラリではUSB Audioと
+bounded PCM FIFO境界だけを扱い、I2S bridge / codec / DAC接続はapplicationまたは
+PCMFlowDeviceなど出力側に任せます。
 
-- USB Audio descriptor
-- isochronous endpoint
-- speaker output callback
-- microphone input write
-- volume / mute / sample rate / alternate setting
-- `onPcm()` callback boundary
+- UAC1 default / UAC2明示選択のdescriptorとclass request
+- Playback/Captureのisochronous endpoint
+- Playback `available()` / `read()`とCapture `write()`
+- volume / mute / sample rate / alternate settingのpolling event
+- stream transfer / overrun / underrun stats
+- Master/Left/Right feature-unit state
 
-`AudioSpeaker` で単独 device の最小 speaker sink を追加済みです。複合 Audio device は未対応です。
-`onPcm()` で PCM buffer と sample rate / channel count / sample width をまとめて受け取れます。
-PCMFlow 連携は有力な利用形ですが、汎用 callback I/F を維持して特定ライブラリへの必須依存にはしません。
+`AudioSpeaker`、`AudioMicrophone`、`AudioHeadset`でspeaker/microphone/duplexを追加済みです。
+S3 UAC1では実streamingまで、HID+Audio compositeでもinterface claimとPCM転送まで確認済みです。
+UAC2はdescriptor/class requestまでを確認し、実streamingはEspUsbHost側のUAC2対応後に行います。
+PCMFlow連携は有力な利用形ですが、汎用stream APIを維持して特定libraryへの必須依存にはしません。
 `AudioSpeakerM5` は example 側だけで PCMFlow / PCMFlowDevice / M5Unified に依存し、PC から受け取った
 PCM を `M5SpeakerBufferedPlayer::writePcm()` へ渡す連携例です。stereo 入力の mono downmix と
 `M5.Speaker` 用の短期 buffer は PCMFlowDevice 側で扱います。

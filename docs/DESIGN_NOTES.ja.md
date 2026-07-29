@@ -118,27 +118,26 @@ SDK に HS Host では USB Hub が使えない制約がある場合、HS host �
 
 - P4 は **OTG コントローラが2個、UTMI(HS) PHY は1個だけ**（`SOC_USB_OTG_PERIPH_NUM=2`, `SOC_USB_UTMI_PHY_NUM=1`）。
 - **速度とコントローラ/PHY は別概念。** HS 対応コントローラ(UTMI)でも、接続相手が FS なら FS にネゴして動く。
-- `EspUsbDevice` のデバイスは Arduino core により **HS(UTMI) PHY 固定**。`EspUsbDeviceConfig.port` / `speed` は
-  `tinyusb_init` に渡っておらず（[EspUsbDevice.cpp](../src/EspUsbDevice.cpp) の `tinyusb_device_config_t` に該当欄が無い）、
-  デバイス側からポート/速度は選べない。`config_.port` / `config_.speed` は現状ほぼ未使用。
-- したがってデバイスは「**HS PHY 上で FS 動作**」が可能で、FS host には問題なく enumerate できる（過去の「接続できない」は誤り）。
-- 1台 loopback では UTMI PHY が1個しかなく、デバイスがそれを握る。**ホスト側は FS 側ポート（`ESP_USB_HOST_PORT_FULL_SPEED`）に限定**される。
-  ホストを HS にすると同じ UTMI PHY を奪い合い、`usb_phy: selected PHY is in use` で失敗する。
+- 旧Arduino Core依存経路ではDeviceがHS(UTMI) PHY固定だった。v2はこの初期化を使わず、
+  `EspUsbController::FullSpeed`をrhport 0/internal FS、
+  `EspUsbController::HighSpeed`をrhport 1/UTMIへmapしてruntimeに選択する。
+- HS controllerでも相手がFSなら「HS PHY上のFS link」としてenumerateできる。
+- 1台loopbackでは片方だけがUTMI PHYを使える。Device HS + Host FSと、
+  Device FS + Host HSの両割当を同じtestで順番に検証できる。
 - 帰結: **1台 P4 loopback で HS リンクは作れない**（HS PHY を host / device で共有できない）。HS device + HS host の loopback は不可で、HS リンクの検証には2台構成が要る。
 
-| 役割 | 載る PHY/コントローラ | 動作速度 | 備考 |
-|------|----------------------|----------|------|
-| Device | HS(UTMI) 固定 | 相手依存（FS host なら FS に落ちる） | core が P4 で決め打ち。ライブラリからは変更不可 |
-| Host | port で選択（FS=別 PHY / HS=UTMI） | port 依存 | 1台 loopback では FS 必須 |
+| 1台loopback割当 | Device | Host | 実link |
+|---|---|---|---|
+| 通常 | HS/rhport 1/UTMI | FS/rhport 0 | FS |
+| 逆 | FS/rhport 0 | HS/rhport 1/UTMI | FS |
 
 #### USB Audio への影響と現在の決定
 
 > この節の前半は旧Arduino Core依存実装を調査した記録です。現在の
 > `EspUsbAudioFunction`はdescriptor構築をライブラリ内に持ち、下記の旧制約を解消しています。
 
-1台 loopback のリンクは FS だが、audio descriptor は**コンパイル時マクロ** `TUD_OPT_HIGH_SPEED`（P4 は 1）で
-UAC2 として生成される（[EspUsbDeviceAudio.cpp](../src/EspUsbDeviceAudio.cpp)）。UAC2 は実質 HS 向けで、`EspUsbHost` の audio
-パーサも UAC1(Audio 1.0) のみ対応。よって FS リンクの loopback では P4 Audio を正しく流せない。
+旧実装では1台loopbackのリンクがFSでも、audio descriptorはbuild targetの
+`TUD_OPT_HIGH_SPEED`でUAC2に固定され、EspUsbHostのUAC1 parserと接続できなかった。
 
 「実リンク速度に追従して UAC1/UAC2 を出し分ける」ことは、このスタックでは現実的に不可能と確認した:
 
@@ -154,26 +153,13 @@ speaker/microphone/duplexはS3 Peerで実転送まで自動確認する。UAC2 s
 対応するHost実装が揃った後に確認する。1台P4のAudio loopback testは現在未実装だが、
 P4 AudioをUAC2/HSへ固定することは理由にしない。
 
-#### bulk エンドポイントサイズと HS 準拠（現状の既知制約）
+#### bulk endpoint sizeとHS準拠（v2で解消）
 
-Audio と同根の問題が bulk エンドポイントにもある。
-
-- 現状、EspUsbDevice の endpoint サイズは全クラス **FS 値で固定**：HID interrupt=8（`hidEndpointSize()` が 8 を返す）、
-  CDC / MIDI / MSC / Vendor の bulk=64（各 loader にベタ書き）。
-- これは S3(FS) と P4 1台 loopback(FS) では正しいが、**P4 を実 HS ホスト(PC)に接続すると bulk EP が非準拠**になる。
-  USB2.0 では HS の bulk は `wMaxPacketSize=512` 必須なのに 64 を出すため。寛容なホストでは動くこともあるが規格違反。
-- 逆に P4 で bulk=512 に決め打ちすると、今度は **FS（loopback や FS ホスト）で 512 が無効**になり、FS ホストが
-  EP を割り当てられず enumerate に失敗する（＝標準 `USBHIDKeyboard` が P4 loopback で落ちたのと同じ現象）。
-  つまり片側決め打ちでは HS/FS の一方が必ず非準拠になる。
-- 完全な正解は **per-speed descriptor**：`tud_descriptor_configuration_cb` を自前所有し、`tud_speed_get()` で
-  FS=64 / HS=512 を出し分け、`device_qualifier` / `other_speed_configuration` も用意する。ただし core は config
-  descriptor を接続前に一度だけ組み（`tinyusb_load_enabled_interfaces()`）、audio は esp_tinyusb が別途組むため、
-  これは descriptor 経路の自前引き取り＝相応の作業量＋P4 実機反復が必要。
-
-**現段階の方針（決定）**：FS loopback を主対象とするため **bulk=64 を許容**し、HS 非準拠は既知の制約として受け入れる。
-実 PC/HS 対応を正式ターゲットにするマイルストーンで、per-speed descriptor 化とセットで対応する（その際は
-bulk クラスの loopback テストを消さずに HS/FS 両対応にできる）。影響範囲は CDC / MIDI / MSC / Vendor（bulk）。
-HID 系は interrupt EP（小サイズは HS でも有効）なので影響なし。
+v2はTinyUSB descriptor callbackを所有し、FS/HS configurationを接続速度に応じて返す。
+CDC/MIDI/MSC/Vendorのbulk MPSはFS=64 / HS=512とし、device qualifierと
+other-speed configurationも生成する。旧実装の「P4でbulk=64固定」という既知制約は
+解消済みである。P4 HS controllerをFS hostへ接続した場合も、negotiated FS descriptorを
+返すため512を誤って広告しない。
 
 ### 複合時の HID 採番衝突（実機確定・2026-07）
 
@@ -379,8 +365,8 @@ example は `examples/UsbNetwork`（NCM+DHCP+HTTP ページ）、手動/pytest �
   任意のサブネットへ変更できる（`cfgIp_==0` のときだけ `192.168.7.1/255.255.255.0` が入る）。DHCP サーバの
   配布レンジは esp_netif が `set_ip_info` の IP/mask から自動導出するので追従する。各デバイスに別サブネットを
   与えれば、MAC が個体別になったことと合わせて 1 台のホストに複数台を共存させられる。
-- 既知の未対応：bulk EP は FS 固定 64B（HS は 512 推奨）。これは全 bulk クラス共通の per-speed descriptor
-  課題で、NCM 固有ではない（`TODO.ja.md` / 「bulk エンドポイントサイズと HS 準拠」参照）。
+- bulk EPはlibrary所有のper-speed descriptorでFS=64 / HS=512を選ぶ。旧FS固定の
+  制約はNCMを含む全bulk classで解消済み。
 
 ### HID keyboard API の限界
 
@@ -634,15 +620,14 @@ MSC は実装量が大きいので、HID/CDC/MIDI の後に着手してよいで
 
 ### USB Audio
 
-必要機能:
+旧`onPcm()` / `onData()` callback型Audio Card APIは廃止した。現在は
+`EspUsbAudioFunction`へPlayback/Capture streamを追加し、bounded FIFOを
+`read()` / `write()`でpollする。control/stream変更も固定長queueから`pollEvent()`で読む。
+TinyUSB taskはbounded copyとstate更新だけを行い、user code、I2S、codec、DSPを実行しない。
 
-- 最初は Audio output sink として、host からの speaker stream を受ける。
-- sample rate、format、channel count を限定してよい。
-- `onPcm()` callback で PCM と sample rate / channel count / sample width を受け取る。
-- `onData()` は buffer と length だけを扱う低レベル callback として残す。
-- このライブラリの責務は USB Audio class と PCM callback 境界までに限定する。
-- 受け取った PCM はアプリケーション、PCMFlow、PCMFlowDevice などへ渡す。I2S、codec、DAC などの
-  出力デバイス接続はこのライブラリでは扱わない。
+このライブラリの責務はUSB Audio classとPCM FIFO境界までに限定する。受け取ったPCMは
+application、PCMFlow、PCMFlowDeviceなどへ渡し、I2S、codec、DAC、microphone等の
+hardware接続はこのライブラリでは扱わない。volume/mute DSPも暗黙適用しない。
 
 既存 Host 側テストとの対応:
 
@@ -931,13 +916,10 @@ USB MSC は sector-level block device であり、SPIFFS / LittleFS は ESP32 �
 
 ### TinyUSB 統合
 
-実装方式は以下のどちらかを検討します。
-
-1. Arduino-ESP32 bundled TinyUSB を直接使う。
-2. 必要なら IDF/TinyUSB の低レベル初期化を独自に行い、Arduino core の `USB.begin()` 経路を使わない。
-
-重要なのは、Arduino core の `esp32-hal-tinyusb.c` にある P4 HS 固定初期化に乗らないことです。
-FS device 起動を実現するには、PHY speed、TinyUSB rhport、TinyUSB speed、descriptor MPS をすべて一貫させる必要があります。
+固定commitから選択したTinyUSB source、library所有`tusb_config.h`、ESP-IDF PHY APIを
+使用し、Arduino coreの`USB.begin()` / `esp32-hal-tinyusb.c`経路は使わない。
+PHY speed、TinyUSB rhport、controller capability、descriptor MPSを1つのruntimeが
+一貫して所有する。pinと更新手順は`third_party/tinyusb/PROVENANCE.ja.md`に記録する。
 
 ### descriptor と runtime speed
 
@@ -951,8 +933,9 @@ TinyUSB の callback と speed 判定、または separate descriptor table の�
 ### P4 の HS/FS port
 
 P4 は host 側では HS peripheral と FS peripheral を `peripheral_map` で選べます。
-Device 側でも同等の制御が可能か、ESP-IDF の PHY / TinyUSB port 初期化を確認してください。
-Arduino-ESP32 標準 API はこの選択を公開していません。
+Device側は`EspUsbController::{Auto, FullSpeed, HighSpeed}`で選択する。P4ではFullSpeedを
+rhport 0/internal PHY、HighSpeedをrhport 1/UTMIへmapする。S2/S3はFullSpeedのみで、
+未対応controller指定を暗黙fallbackせず失敗させる。
 
 ### エラーログ
 

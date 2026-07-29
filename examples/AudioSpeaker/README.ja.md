@@ -33,3 +33,5 @@ audio.getVolume(rightVolume, EspUsbAudioDirection::Playback, 2);
 channelは`0` Master、`1` Left、`2` Rightです。volumeは1/256 dB単位です。
 
 UAC1の列挙、streaming、mute、volume、control連打はS3 peer testで確認済みです。
+UAC2 descriptor/class requestはtest済みですが、UAC2 streamingはEspUsbHost側の
+UAC2対応後に確認します。
