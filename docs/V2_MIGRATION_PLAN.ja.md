@@ -79,9 +79,10 @@ v2で切るdependency:
 - Arduino core同梱TinyUSB binary/configuration
 - `esp_tinyusb`のdescriptor builder
 
-TinyUSBはversionを固定したsource snapshotとしてライブラリに含める。必要なdevice stack、
-class driver、ESP32 DWC2 portable driverだけをbuild対象にし、由来のcommit、license、
-local patchをmanifestに記録する。
+TinyUSBはfull commit SHAを固定し、必要なdevice stack、class driver、ESP32 DWC2 portable
+driverだけをlibrary sourceとして含める。完全snapshotはtrackedにせず、検証時だけignored
+cacheへ取得する。repository、commit、version、確認Core、選定理由は`UPSTREAM.json`、
+build対象は`BUILD_FILES.txt`、license/provenanceは日英文書で管理する。
 
 ### Espressif由来Audio sourceの扱い
 
@@ -211,6 +212,7 @@ Gate 1:
 - [x] ESP32 S2/S3/P4 DWC2 driverに必要なsourceだけをbuildする。
 - [x] DMA/cache alignment設定をtarget別に定義する。
 - [x] upstream更新用の検証scriptを追加する。
+- [x] 新pinとの差分previewと選択済みsource反映用のupdate scriptを追加する。
 
 リンク検査:
 
@@ -331,14 +333,14 @@ Gate 5:
 2. [x] Audio entity/stream graph
 3. [x] UAC2 descriptor writer
 4. [x] UAC2 class request
-5. [x] playback data plane（polling API、実転送Gate待ち）
-6. [x] capture data plane（polling API、実転送Gate待ち）
+5. [x] playback data plane（polling API、UAC1実転送確認済み）
+6. [x] capture data plane（polling API、UAC1実転送確認済み）
 7. [x] control/stream state event queue（固定長、polling、drop count）
 8. [x] FIFO clear lifecycleとoverrun/underrun counter
-9. [x] duplex/headset（Device firmwareとdescriptor、実転送Gate待ち）
+9. [x] duplex/headset（UAC1実転送確認済み）
 10. [x] UAC1 descriptorとclass request（default）
 11. 複数alternate setting / sample rate
-12. Audio + 他classのcomposite
+12. [x] Audio + 他classのcomposite（S3 UAC1 HID+Audio Peerまで）
 
 実装規則:
 
@@ -458,7 +460,8 @@ Gate 8:
 | HID | 必須 | 必須 | 必須 | 必須 | 必須 |
 | Vendor/CDC/MIDI/MSC | 必須 | 必須 | 必須 | 必須 | 必須 |
 | NCM | 必須 | 必須 | 任意 | 必須 | 任意 |
-| UAC2 playback/capture | 必須 | 必須 | 必須 | 必須 | 必須 |
+| UAC2 descriptor/control | 必須 | compile | compile | compile | compile |
+| UAC2 playback/capture streaming | 必須 | Host対応後 | Host対応後 | Host対応後 | Host対応後 |
 | UAC1 playback/capture | 必須 | 必須 | 必須 | 任意 | 必須 |
 | begin/end/resource | 一部 | 必須 | 必須 | 必須 | 必須 |
 
@@ -523,7 +526,7 @@ Gate 8:
 
 - [x] この移行計画のフェーズ分割と順序を承認
 - [x] v2初期対応coreを3.3.11に固定する
-- [x] TinyUSB source snapshotを同梱する
+- [x] TinyUSBの選択済みsource、pin metadata、license、provenanceを同梱する
 - [x] 既存APIは自然な場合だけ維持し、単純化を優先する
 - [x] Audioのv1互換shimを作らない
 - [x] Audio v2初期上限を承認

@@ -147,9 +147,15 @@ UART MIDI 1.0 と USB MIDI 1.0 を相互変換する bridge example です。
 USB Audio speaker sink device の例です。
 詳しくは [AudioSpeaker/README.ja.md](AudioSpeaker/README.ja.md) を参照してください。
 
+Audio exampleはdefaultでUAC1を使います。UAC1のspeaker、microphone、duplex streamingは
+EspUsbHost Peer testで確認済みです。UAC2は明示選択できますが、現時点で検証済みとするのは
+Device descriptor/class requestまでで、end-to-end streamingはEspUsbHostのUAC2対応後に行います。
+
 - `EspUsbAudioPlaybackStream::read()`でHostからのPCMを読みます。
 - formatは`{sampleRate, channels, bytesPerSample, bitsPerSample}`で設定します。
 - `pollEvent()`でvolume、mute、sample rate、interface enableを取得します。
+- `hasMute()` / `getMute()` / `setMute()`と対応するvolume APIで
+  Master/Left/RightのFeature Unit stateを取得・変更します。
 - I2S bridge や codec 初期化はこのライブラリの責務外です。受信した PCM はアプリケーション、
   PCMFlow、PCMFlowDevice などへ渡せます。
 

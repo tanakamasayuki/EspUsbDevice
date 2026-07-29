@@ -1,6 +1,6 @@
 # EspUsbDevice v2 実装状況
 
-更新日: 2026-07-29
+更新日: 2026-07-30
 
 ## 到達点
 
@@ -8,8 +8,9 @@
 - Phase 0.5: 完了。旧Audio実装2ファイルを削除し、provenance境界を記録。
 - Phase 1: 基盤完了。host非依存のdescriptor modelとHID writerを追加。
 - Phase 2: 完了。TinyUSB `53f8c53c2`を固定し、選択したdevice sourceを
-  ライブラリ自身の設定でbuild。完全snapshotは`third_party`に保持し、Arduinoが見る
-  `src`はS2/S3/P4の実コンパイラ依存から得た12 source + 31 headerに限定。
+  ライブラリ自身の設定でbuild。tracked fileはS2/S3/P4の実コンパイラ依存から得た
+  12 source + 31 header、manifest、license、provenanceだけに限定する。完全snapshotは
+  保持せず、検証時だけ固定commitをignored cacheへ取得する。
 - Phase 3: runtimeとclass lifecycle実装済み、S3 peer Gate通過。PHY、rhport、
   TinyUSB task、基本descriptor callbackをライブラリ所有へ移した。`begin()`失敗時は
   開始済みclassを逆順rollbackし、`end()`でcallback registryを解放する。
@@ -26,6 +27,7 @@
 - HID単体・複合HID
 - Vendor bulk/control、WebUSB URL
 - CDC、MIDI、MSC、NCM
+- UAC1 Audio speaker / microphone / duplex
 - S2/S3 FullSpeed controller
 - P4 `EspUsbController::{Auto, FullSpeed, HighSpeed}`のruntime選択
 
@@ -43,7 +45,8 @@ other-speed configurationもライブラリ側から返す。
 旧`EspUsbDeviceAudio` APIは実装を削除済みで、互換shimやArduino Coreへのfallbackは
 作らない。新Audioは`EspUsbAudioFunction`を使う。
 
-旧宣言とexampleは移行中の一時的なcompile failureを許容する。旧runtimeへは戻さない。
+旧classの互換shimや旧runtimeへのfallbackは追加しない。Audio exampleは
+`EspUsbAudioFunction` + Playback/Capture stream APIへ移行済み。
 
 ## 検証結果
 
@@ -94,7 +97,7 @@ S3 Keyboard ELF/mapでは次を確認した。
 
 ## 次の作業
 
-1. P4 rhport 0のFS class実機試験と、rhport 1をPCへ接続したHS実測。
+1. P4 rhport 1をPCへ接続したHS linkのclass別連続転送実測。
 2. 必要に応じてUAC1 Audio + CDC/Vendor compositeのPeer coverageを追加。
 3. UAC2対応Hostの準備後、speaker、microphone、duplexの実streamingとcounterを
    共同Peer testで実測。

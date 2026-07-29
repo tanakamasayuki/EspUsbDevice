@@ -51,3 +51,19 @@ macro構造、命名、分岐、コメントを再利用しない。
 この記録はlicense noticeを機械的に削除する根拠ではない。由来コードを再利用する場合は
 そのlicense条件とnoticeを保持する。v2では由来コードを削除し、独立した設計・実装へ
 置き換えることでfirst-party Audio sourceの境界を作る。
+
+## 置き換え後の公開境界
+
+- `EspUsbAudioFunction`がprotocol、descriptor、entity/control、event queueを所有する。
+- `EspUsbAudioPlaybackStream`がHost→Device PCMのbounded FIFOと`read()`を提供する。
+- `EspUsbAudioCaptureStream`がDevice→Host PCMのbounded FIFOと`write()`を提供する。
+- callback内ではbounded copy/state更新だけを行い、applicationは`pollEvent()`とPCM
+  polling APIを`loop()`またはworker taskから処理する。
+- Masterとlogical channelごとのmute/volume state、volume range、stream statsを
+  public APIとして観測・設定できる。
+- UAC1はspeaker/microphone/duplexの実streamingまで検証済み。UAC2は
+  descriptor/class requestを検証済みで、実streamingはEspUsbHost側のUAC2対応後に行う。
+
+この境界により、旧Audio Cardが暗黙に持っていたglobal format/state、専用receive task、
+event loop、software volume処理をUSB classから分離できた。Audio hardwareやDSPを
+差し替えてもUSB descriptor/control/data-plane modelは変わらない。
