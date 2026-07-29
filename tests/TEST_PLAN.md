@@ -60,6 +60,7 @@ tests/
 | Feature | Unit | Peer | Loopback | Probe | Manual |
 |---------|------|------|----------|-------|--------|
 | Device descriptor config | ✅ `descriptor` | | | planned | |
+| Runtime lifecycle | ✅ `descriptor` (100 begin/end + partial failure recovery) | | | | |
 | FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | planned | |
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | builds `hid_keyboard` | | |
 | HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | builds `hid_keyboard` | | optional |

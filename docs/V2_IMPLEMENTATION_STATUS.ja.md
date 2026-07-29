@@ -47,8 +47,9 @@ other-speed configurationもライブラリ側から返す。
 
 - host unit: `tinyusb_vendor`、`tinyusb_config`、`descriptor_model`、`keymap`、
   `audio_model`の5件PASS。
-- descriptor実機unit: 61 checks PASS。`end()`後の別device開始と、class途中失敗時の
-  callback registry rollbackを含む。
+- descriptor/runtime実機unit: 265 checks PASS。TinyUSB task、PHY、callback registryを
+  同一deviceで100回begin/endし、二重begin/endの冪等性を確認。HID開始後のCDC失敗を
+  rollbackし、同じdevice instanceで再beginできることも含む。
 - 新Audio公開APIのdescriptor実機unit: speaker / microphone / duplexと、
   mute / volume / stream state eventのpolling、stream stats lifecycleをPASS。
 - S3 UAC1 peer: speaker、microphone、headsetの列挙・stream開始・PCM転送をPASS。
@@ -84,8 +85,7 @@ S3 Keyboard ELF/mapでは次を確認した。
 
 ## 次の作業
 
-1. begin/end反復とpartial failure cleanupを追加実機検証。
-2. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
-3. Audio + 他class compositeのtarget別descriptor容量とendpoint制約をPeerで確認。
-4. UAC2対応Hostの準備後、speaker、microphone、duplexの実streamingとcounterを
+1. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
+2. Audio + 他class compositeのtarget別descriptor容量とendpoint制約をPeerで確認。
+3. UAC2対応Hostの準備後、speaker、microphone、duplexの実streamingとcounterを
    共同Peer testで実測。

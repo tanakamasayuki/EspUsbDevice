@@ -228,6 +228,45 @@ static void testClassLifecycle()
   recovered.end();
 }
 
+static void testRuntimeLifecycle()
+{
+  EspUsbDeviceConfig config;
+  config.startTinyUsb = true;
+
+  EspUsbDevice active;
+  EspUsbDeviceCdcSerial activeCdc(active);
+  check(active.begin(config), "runtime_active_begin");
+  delay(20);
+
+  // HID begins first, then CDC is rejected because activeCdc owns the global
+  // callback target. The failed begin must roll HID back without disturbing
+  // the currently running device.
+  EspUsbDevice blocked;
+  EspUsbDeviceHidKeyboard blockedKeyboard(blocked);
+  EspUsbDeviceCdcSerial blockedCdc(blocked);
+  check(!blocked.begin(config), "runtime_partial_begin_fails");
+  check(blocked.lastError() == ESP_FAIL, "runtime_partial_begin_error");
+
+  active.end();
+  delay(20);
+
+  // The same instance that failed above must be reusable after the owner ends.
+  check(blocked.begin(config), "runtime_partial_begin_recovers");
+  delay(20);
+  blocked.end();
+
+  // Exercise TinyUSB task, controller, PHY, and callback teardown repeatedly
+  // on the same object rather than relying on its destructor.
+  for (uint8_t cycle = 0; cycle < 100; ++cycle)
+  {
+    check(blocked.begin(config), "runtime_repeated_begin");
+    check(blocked.begin(config), "runtime_begin_idempotent");
+    delay(20);
+    blocked.end();
+    blocked.end();
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -241,6 +280,7 @@ void setup()
   testCompositeWithVendorDescriptor();
   testStringDescriptors();
   testClassLifecycle();
+  testRuntimeLifecycle();
   Serial.printf("TEST_END pass=%d fail=%d\n", passCount, failCount);
   Serial.println(failCount == 0 ? "OK" : "NG");
   Serial.flush();
