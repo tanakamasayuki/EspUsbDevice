@@ -283,76 +283,9 @@ struct EspUsbDeviceMidiPacket
   uint8_t byte3 = 0;
 };
 
-enum EspUsbDeviceAudioBitsPerSample : uint8_t
-{
-  ESP_USB_DEVICE_AUDIO_BITS_16 = 16,
-  ESP_USB_DEVICE_AUDIO_BITS_24 = 24,
-  ESP_USB_DEVICE_AUDIO_BITS_32 = 32,
-};
-
-enum EspUsbDeviceAudioSpeakerChannels : uint8_t
-{
-  ESP_USB_DEVICE_AUDIO_SPK_NONE = 0,
-  ESP_USB_DEVICE_AUDIO_SPK_MONO = 1,
-  ESP_USB_DEVICE_AUDIO_SPK_STEREO = 2,
-};
-
-enum EspUsbDeviceAudioMicChannels : uint8_t
-{
-  ESP_USB_DEVICE_AUDIO_MIC_NONE = 0,
-  ESP_USB_DEVICE_AUDIO_MIC_MONO = 1,
-  ESP_USB_DEVICE_AUDIO_MIC_STEREO = 2,
-};
-
-enum EspUsbDeviceAudioChannel : uint8_t
-{
-  ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER = 0,
-  ESP_USB_DEVICE_AUDIO_CHANNEL_LEFT = 1,
-  ESP_USB_DEVICE_AUDIO_CHANNEL_RIGHT = 2,
-};
-
-enum EspUsbDeviceAudioInterface : uint8_t
-{
-  ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER = 0,
-  ESP_USB_DEVICE_AUDIO_INTERFACE_MIC = 1,
-};
-
-enum EspUsbDeviceAudioEventType : uint8_t
-{
-  ESP_USB_DEVICE_AUDIO_EVENT_VOLUME,
-  ESP_USB_DEVICE_AUDIO_EVENT_MUTE,
-  ESP_USB_DEVICE_AUDIO_EVENT_SAMPLE_RATE,
-  ESP_USB_DEVICE_AUDIO_EVENT_INTERFACE,
-};
-
-struct EspUsbDeviceAudioEvent
-{
-  EspUsbDeviceAudioEventType type = ESP_USB_DEVICE_AUDIO_EVENT_SAMPLE_RATE;
-  EspUsbDeviceAudioChannel channel = ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER;
-  EspUsbDeviceAudioInterface interface = ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER;
-  int8_t volumeDb = 0;
-  bool muted = false;
-  uint32_t sampleRate = 0;
-  bool enabled = false;
-};
-
-struct EspUsbDeviceAudioPcm
-{
-  void *data = nullptr;
-  uint16_t length = 0;
-  uint32_t sampleRate = 0;
-  uint8_t channels = 0;
-  uint8_t bytesPerSample = 0;
-  EspUsbDeviceAudioBitsPerSample bitsPerSample = ESP_USB_DEVICE_AUDIO_BITS_16;
-  EspUsbDeviceAudioInterface interface = ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER;
-};
-
 using EspUsbDeviceMscReadCallback = std::function<int32_t(uint32_t lba, uint32_t offset, void *buffer, uint32_t size)>;
 using EspUsbDeviceMscWriteCallback = std::function<int32_t(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)>;
 using EspUsbDeviceMscStartStopCallback = std::function<bool(uint8_t powerCondition, bool start, bool loadEject)>;
-using EspUsbDeviceAudioDataCallback = std::function<void(void *data, uint16_t length)>;
-using EspUsbDeviceAudioPcmCallback = std::function<void(const EspUsbDeviceAudioPcm &)>;
-using EspUsbDeviceAudioEventCallback = std::function<void(const EspUsbDeviceAudioEvent &)>;
 
 class EspUsbDeviceClass;
 
@@ -401,7 +334,6 @@ private:
   friend class EspUsbDeviceHidConsumerControl;
   friend class EspUsbDeviceHidSystemControl;
   friend class EspUsbDeviceVendor;
-  friend class EspUsbDeviceAudio;
   friend class EspUsbAudioFunction;
   friend class EspUsbDeviceNet;
   static constexpr size_t MAX_CLASSES = 4;
@@ -684,63 +616,18 @@ private:
   static uint8_t clamp7(uint8_t value);
 };
 
-class EspUsbDeviceAudio : public EspUsbDeviceClass
-{
-public:
-  EspUsbDeviceAudio(EspUsbDevice &device,
-                        uint32_t sampleRate = 48000,
-                        EspUsbDeviceAudioBitsPerSample bitsPerSample = ESP_USB_DEVICE_AUDIO_BITS_16,
-                        EspUsbDeviceAudioSpeakerChannels speakerChannels = ESP_USB_DEVICE_AUDIO_SPK_STEREO,
-                        EspUsbDeviceAudioMicChannels micChannels = ESP_USB_DEVICE_AUDIO_MIC_NONE);
-  ~EspUsbDeviceAudio() override;
-
-  bool begin() override;
-  bool afterDeviceStarted() override;
-  bool isHid() const override { return false; }
-  bool isAudio() const override { return true; }
-  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
-  uint8_t interfaceCount() const override { return 0; }
-  uint8_t endpointCount() const override { return 0; }
-
-  void onData(EspUsbDeviceAudioDataCallback callback);
-  void onPcm(EspUsbDeviceAudioPcmCallback callback);
-  void onEvent(EspUsbDeviceAudioEventCallback callback);
-  uint16_t writeMic(const void *data, uint16_t length);
-  void applyVolume(void *data, uint16_t length);
-  bool mute(EspUsbDeviceAudioChannel channel) const;
-  bool mute(EspUsbDeviceAudioChannel channel, bool muted);
-  int8_t volume(EspUsbDeviceAudioChannel channel) const;
-  bool volume(EspUsbDeviceAudioChannel channel, int8_t volumeDb);
-  uint32_t sampleRate() const;
-  uint8_t bytesPerSample() const;
-  EspUsbDeviceAudioBitsPerSample bitsPerSample() const;
-  EspUsbDeviceAudioSpeakerChannels speakerChannels() const;
-  EspUsbDeviceAudioMicChannels micChannels() const;
-
-  void handleData(void *data, uint16_t length);
-  void handleEvent(const EspUsbDeviceAudioEvent &event);
-
-private:
-  uint32_t sampleRate_ = 48000;
-  EspUsbDeviceAudioBitsPerSample bitsPerSample_ = ESP_USB_DEVICE_AUDIO_BITS_16;
-  EspUsbDeviceAudioSpeakerChannels speakerChannels_ = ESP_USB_DEVICE_AUDIO_SPK_STEREO;
-  EspUsbDeviceAudioMicChannels micChannels_ = ESP_USB_DEVICE_AUDIO_MIC_NONE;
-  EspUsbDeviceAudioDataCallback dataCallback_;
-  EspUsbDeviceAudioPcmCallback pcmCallback_;
-  EspUsbDeviceAudioEventCallback eventCallback_;
-};
-
-enum class EspUsbAudioProtocol : uint8_t
-{
-  Uac1,
-  Uac2,
-};
-
 struct EspUsbAudioFormat
 {
   uint32_t sampleRate = 48000;
-  uint8_t subslotBytes = 2;
-  uint8_t validBits = 16;
+  uint8_t channels = 2;
+  uint8_t bytesPerSample = 2;
+  uint8_t bitsPerSample = 16;
+};
+
+enum class EspUsbAudioDirection : uint8_t
+{
+  Playback,
+  Capture,
 };
 
 enum class EspUsbAudioEventType : uint8_t
@@ -784,8 +671,10 @@ class EspUsbAudioFunction;
 class EspUsbAudioPlaybackStream
 {
 public:
-  bool channels(uint8_t count);
-  uint8_t channels() const { return channels_; }
+  static constexpr EspUsbAudioDirection direction()
+  {
+    return EspUsbAudioDirection::Playback;
+  }
   bool addFormat(const EspUsbAudioFormat &format);
   int available() const;
   size_t read(void *data, size_t length);
@@ -799,7 +688,6 @@ private:
       : function_(function) {}
 
   EspUsbAudioFunction &function_;
-  uint8_t channels_ = 2;
   std::atomic<uint32_t> transferredBytes_{0};
   std::atomic<uint32_t> overrunCount_{0};
   std::atomic<uint32_t> overrunBytes_{0};
@@ -808,8 +696,10 @@ private:
 class EspUsbAudioCaptureStream
 {
 public:
-  bool channels(uint8_t count);
-  uint8_t channels() const { return channels_; }
+  static constexpr EspUsbAudioDirection direction()
+  {
+    return EspUsbAudioDirection::Capture;
+  }
   bool addFormat(const EspUsbAudioFormat &format);
   size_t write(const void *data, size_t length);
   bool clearBuffer();
@@ -822,7 +712,6 @@ private:
       : function_(function) {}
 
   EspUsbAudioFunction &function_;
-  uint8_t channels_ = 1;
   std::atomic<uint32_t> transferredBytes_{0};
   std::atomic<uint32_t> overrunCount_{0};
   std::atomic<uint32_t> overrunBytes_{0};
@@ -836,8 +725,6 @@ public:
   explicit EspUsbAudioFunction(EspUsbDevice &device);
   ~EspUsbAudioFunction() override;
 
-  bool protocol(EspUsbAudioProtocol protocol);
-  EspUsbAudioProtocol protocol() const { return protocol_; }
   EspUsbAudioPlaybackStream &addPlaybackStream();
   EspUsbAudioCaptureStream &addCaptureStream();
   bool hasPlaybackStream() const { return playbackEnabled_; }
@@ -872,13 +759,12 @@ private:
   friend class EspUsbAudioCaptureStream;
 
   bool addFormat(espusb::internal::AudioDirection direction,
-                 uint8_t channels, const EspUsbAudioFormat &format);
+                 const EspUsbAudioFormat &format);
   bool buildGraph(uint8_t interfaceNumber, uint8_t endpointNumber);
   EspUsbAudioEventTarget eventTarget(uint8_t entityId) const;
   void pushControlEvent(espusb::internal::AudioControlSelector selector,
                         uint8_t entityId, uint8_t channel, int32_t value);
 
-  EspUsbAudioProtocol protocol_ = EspUsbAudioProtocol::Uac2;
   bool playbackEnabled_ = false;
   bool captureEnabled_ = false;
   EspUsbAudioPlaybackStream playback_{*this};

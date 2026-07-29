@@ -141,20 +141,15 @@ TinyUSB callback 内では次だけを行う。
 
 ## Audio
 
-### UAC version と bus speed を分離する
+### UAC2 と bus speed を分離する
 
 「FS = UAC1」「HS = UAC2」という分岐は行わない。UAC version はhost互換性の選択、
 bus speed はbandwidth/MPS/intervalの選択であり、別の軸である。
 
-```cpp
-enum class EspUsbAudioProtocol {
-  Uac1,
-  Uac2,
-};
-```
-
-同じ Audio function は FS/HS の両descriptorで同じ protocol/topology を公開する。
-formatが選択したcontrollerのbandwidthに収まらない場合は `begin()` を失敗させる。
+初期公開APIはUAC2固定とし、実装されていないUAC1 selectorは公開しない。同じUAC2
+Audio functionはFS/HSの両descriptorで同じtopologyを公開する。formatが選択した
+controllerのbandwidthに収まらない場合は`begin()`を失敗させる。将来UAC1を追加する
+場合も、bus speedによる暗黙切替ではなく明示的な別実装として追加する。
 
 ### topology
 
@@ -162,35 +157,48 @@ formatが選択したcontrollerのbandwidthに収まらない場合は `begin()`
 
 ```cpp
 EspUsbAudioFunction audio(device);
-audio.protocol(EspUsbAudioProtocol::Uac2);
 
 auto &playback = audio.addPlaybackStream();
-playback.channels(2);
-playback.addFormat({48000, 2, 16});
+playback.addFormat({48000, 2, 2, 16});
 
 auto &capture = audio.addCaptureStream();
-capture.channels(1);
-capture.addFormat({48000, 2, 16});
+capture.addFormat({48000, 1, 2, 16});
 ```
+
+`EspUsbAudioFormat`のfield順は`sampleRate / channels / bytesPerSample /
+bitsPerSample`とする。EspUsbHostの`EspUsbHostAudioStreamInfo`と同じ語彙を使い、
+Hostが解析したstream formatとDeviceが広告するformatを直接比較できる形にする。
+
+方向はmedia function基準の`Playback`（Host -> Device）と`Capture`
+（Device -> Host）で統一する。EspUsbHostとの対応は次のとおり。
+
+| 共通方向 | EspUsbDevice | EspUsbHost |
+|---|---|---|
+| Playback | `EspUsbAudioPlaybackStream::read()` | `audioOutputStart()` / `audioSend()` |
+| Capture | `EspUsbAudioCaptureStream::write()` | `audioInputStart()` / `onAudioData()` |
+
+転送の実行方式は役割が異なるため同一にしない。format、方向、volume単位、statsの
+意味を共通化し、HostのUSB client task callbackとDeviceのpollingはそれぞれ保持する。
 
 Audio function は次を独立して持つ。
 
-- 0..N playback stream (Host -> Device)
-- 0..N capture stream (Device -> Host)
+- 0..1 playback stream (Host -> Device)
+- 0..1 capture stream (Device -> Host)
 - clock source
 - streamごとのformat/alternate setting
 - 任意のmute/volume feature unit
 - terminal typeとchannel map
 
-最初の実装上限は固定長配列で定義し、heapや`std::vector`をdescriptor buildに要求しない。
+最初の公開APIは各方向1 stream、各stream 1 formatに限定する。複数alternate
+settingを実装するときも、heapや`std::vector`をdescriptor buildに要求しない。
 
 ### data plane
 
 control plane と PCM data plane を分ける。
 
 - `EspUsbAudioFunction`: descriptor、entity、class request
-- `EspUsbAudioPlaybackStream`: OUT FIFO、受信queue、read/callback
-- `EspUsbAudioCaptureStream`: IN FIFO、write/available
+- `EspUsbAudioPlaybackStream`: OUT FIFO、受信queue、`available()` / `read()`
+- `EspUsbAudioCaptureStream`: IN FIFO、`write()`
 - `EspUsbAudioControl`: clock、mute、volume state
 
 controlとalternate settingの変更通知はcallbackではなく、固定長queueをpollする。

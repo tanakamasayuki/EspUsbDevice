@@ -82,7 +82,7 @@ static EspUsbDeviceMidi *g_activeMidi = nullptr;
 static EspUsbDeviceMsc *g_activeMsc = nullptr;
 static EspUsbDeviceVendor *g_activeVendor = nullptr;
 static EspUsbDeviceNet *g_activeNet = nullptr;
-// g_activeAudio lives in EspUsbDeviceAudio.cpp (the audio implementation).
+// The active Audio function registry lives in EspUsbAudio.cpp.
 
 static void put16(uint8_t *dst, uint16_t value)
 {

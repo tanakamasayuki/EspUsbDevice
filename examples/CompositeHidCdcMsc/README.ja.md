@@ -48,7 +48,8 @@ endpoint をこのライブラリ側で構成します。
   （例: MIDI や bulk Vendor）を足すと S3 の FIFO 予算を超え、enumerate に失敗します。
   [../../docs/DESIGN_NOTES.ja.md](../../docs/DESIGN_NOTES.ja.md)「複合時の endpoint 予算の上限」
   参照。ESP32-P4 ではより多くの endpoint が使えます。
-- USB Audio class（`EspUsbDeviceAudio`）は排他で、他 class と複合できません。
+- UAC2 Audioも同じcomposite descriptor builderを使いますが、descriptor容量と
+  targetのendpoint予算に制約されます。
 - USB CDC とログ用 Serial monitor は別の経路です。
 - 既存 Arduino USB class と同時に使う設計ではありません。
 

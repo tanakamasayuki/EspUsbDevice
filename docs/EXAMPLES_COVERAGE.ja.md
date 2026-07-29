@@ -163,7 +163,7 @@ MSC 経由 firmware update は、`EspUsbDeviceMscFatRamDisk` と組み合わせ�
 | Helper | 理由 | 優先度 |
 |--------|------|--------|
 | `EspUsbDeviceVendor` | bulk IN/OUT + control request + WebUSB URL は追加済み。custom vendor code / Microsoft OS 2.0 descriptor 差し替え API が残項目。 | 中 |
-| `EspUsbDeviceAudio` | 最小 sink と `onPcm()` は追加済み。実機確認を通じた metadata / buffer ownership の調整が残項目。 | 中 |
+| `EspUsbAudioFunction` | UAC2 Playback/Captureのbounded FIFO、polling I/O、control event、stream statsを追加済み。詳細なstreaming検証はEspUsbHostのUAC2対応後に行う。 | 中 |
 | MIDI serial parser helper | `MIDIInterface` の SysEx / running status / realtime 対応。 | 低-中 |
 | Firmware handoff helper | FAT RAM disk 上の `firmware.bin` を安全に扱う。 | 低 |
 | Keyboard macro helper | shortcut / modifier sequence を読みやすくする。 | 低 |

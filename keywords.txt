@@ -16,7 +16,10 @@ EspUsbDeviceMscRamDisk	KEYWORD1
 EspUsbDeviceMscFatRamDisk	KEYWORD1
 EspUsbDeviceMscSdCard	KEYWORD1
 EspUsbDeviceNet	KEYWORD1
-EspUsbDeviceAudio	KEYWORD1
+EspUsbAudioFunction	KEYWORD1
+EspUsbAudioPlaybackStream	KEYWORD1
+EspUsbAudioCaptureStream	KEYWORD1
+EspUsbAudioFormat	KEYWORD1
 EspUsbDeviceHidKeyboard	KEYWORD1
 EspUsbDeviceHidMouse	KEYWORD1
 EspUsbDeviceHidCustom	KEYWORD1

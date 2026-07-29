@@ -137,9 +137,9 @@ UART MIDI 1.0 と USB MIDI 1.0 を相互変換する bridge example です。
 USB Audio speaker sink device の例です。
 詳しくは [AudioSpeaker/README.ja.md](AudioSpeaker/README.ja.md) を参照してください。
 
-- `EspUsbDeviceAudio` で Host からの speaker PCM を受け取ります。
-- `onPcm()` callback で PCM chunk と format 情報を受信します。
-- `onEvent()` callback で volume、mute、sample rate、interface enable を受け取ります。
+- `EspUsbAudioPlaybackStream::read()`でHostからのPCMを読みます。
+- formatは`{sampleRate, channels, bytesPerSample, bitsPerSample}`で設定します。
+- `pollEvent()`でvolume、mute、sample rate、interface enableを取得します。
 - I2S bridge や codec 初期化はこのライブラリの責務外です。受信した PCM はアプリケーション、
   PCMFlow、PCMFlowDevice などへ渡せます。
 
@@ -147,20 +147,17 @@ USB Audio speaker sink device の例です。
 
 USB Audio source（マイク）device の例です。device から Host へ PCM を送ります。
 
-- `EspUsbDeviceAudio` を speaker `NONE` + microphone `MONO` で構成し、mono 48 kHz / 16-bit の
-  録音デバイスとして見せます。
-- `writeMic()` で Host へ PCM を送出します（ここでは 440 Hz の正弦波を生成）。
-- 同じクラスで両方向を扱います（speaker=Host→device、microphone=device→Host）。音声取り込みや
-  codec 入力はアプリケーションの責務です。
+- `EspUsbAudioCaptureStream`へmono 48 kHz / 16-bit formatを追加します。
+- `capture.write()`でHostへPCMを送出します（ここでは440 Hzの正弦波を生成）。
+- 音声取り込みやcodec入力はアプリケーションの責務です。
 
 ## AudioHeadset
 
 USB Audio headset の例です。1台で speaker（Host→device）と microphone（device→Host）を同時に担います。
 
-- `EspUsbDeviceAudio` を speaker + microphone の両チャンネル構成（ここでは mono 48 kHz / 16-bit）で作り、
-  Host からは再生デバイスと録音デバイスの両方に見えます。
-- loopback headset：`onData()` で受け取った speaker PCM を `writeMic()` でそのまま microphone へ返します。
-- 単一の `EspUsbDeviceAudio` インスタンスが両方向を同時に扱えることを示します。
+- 1つの`EspUsbAudioFunction`へPlaybackとCapture streamを追加します。
+- loopback headsetとして`playback.read()`したPCMを`capture.write()`へ渡します。
+- Hostからは再生デバイスと録音デバイスの両方に見えます。
 
 ## AudioSpeakerM5
 
@@ -168,7 +165,7 @@ USB Audio speaker sink と PCMFlowDevice の M5 speaker helper をつなぐ例�
 詳しくは [AudioSpeakerM5/README.ja.md](AudioSpeakerM5/README.ja.md) を参照してください。
 
 - PC から 48 kHz / 16-bit / stereo の USB Audio speaker として PCM を受け取ります。
-- `audio.applyVolume()` で Host 側の mute / volume を反映します。
+- USB volume/muteはeventとして通知し、PCMへのDSP適用はアプリケーション側で行います。
 - PCMFlowDevice の `M5SpeakerBufferedPlayer::writePcm()` で stereo 入力の downmix と
   `M5.Speaker` への安定した受け渡しを行います。
 - EspUsbDevice 本体は PCMFlow / PCMFlowDevice へ依存せず、この example だけが任意連携します。
@@ -177,7 +174,7 @@ USB Audio speaker sink と PCMFlowDevice の M5 speaker helper をつなぐ例�
 
 M5 内蔵マイクを使う USB Audio microphone（device → Host）の例です。
 
-- `M5.Mic` から mono 16 kHz / 16-bit の PCM を取り込み、`writeMic()` で Host へストリームします（PC からは録音デバイスに見えます）。
+- `M5.Mic`からmono 16 kHz / 16-bit PCMを取り込み、`capture.write()`でHostへ送ります。
 - `M5.Mic.record()`（非同期・ダブルバッファ）を小さいリングで使い、完了済みの最古ブロックを送ります。
 - 取り込みは M5Unified のみに依存し、USB 側は EspUsbDevice が担います。
 
@@ -235,7 +232,8 @@ HID keyboard + CDC serial + MSC FAT RAM disk を 1 つの `EspUsbDevice` に載�
 - CDC で `type <text>` を送ると、その文字列を HID keyboard で入力します。
 - ESP32-S3 の endpoint 予算に収まる最大の複合（FIFO-IN 3 本）です。4 本目の FIFO-IN class は
   ESP32-P4 が必要です。
-- USB Audio class は排他で、他 class と複合できません。
+- UAC2 Audioも同じcomposite descriptor builderを使います。実際に組み合わせられる
+  functionはconfiguration descriptor容量とtargetのendpoint予算に制約されます。
 
 ## UsbNetwork
 

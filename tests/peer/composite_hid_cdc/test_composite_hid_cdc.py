@@ -6,8 +6,8 @@ def test_composite_hid_cdc_enumerates(dut, peers):
     # regardless of how long EspUsbDevice takes to take over the OTG port.
     dut.expect_exact("HOST_CONNECTED vid=303a pid=4020")
 
-    # Device brings up both classes without hitting the Audio-exclusive /
-    # MAX_CLASSES guards. Queried on demand ('b') rather than relying on the
+    # Device brings up both classes without hitting the MAX_CLASSES guard.
+    # Queried on demand ('b') rather than relying on the
     # boot-time line, which can scroll past before capture starts.
     device.write("b")
     device.expect_exact("DEVICE_BEGIN ok ESP_OK")

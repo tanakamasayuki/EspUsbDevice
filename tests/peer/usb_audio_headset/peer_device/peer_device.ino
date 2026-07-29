@@ -7,46 +7,23 @@
 // own, regardless of the other's timing.
 
 EspUsbDevice device;
-EspUsbDeviceAudio audio(device,
-                        48000,
-                        ESP_USB_DEVICE_AUDIO_BITS_16,
-                        ESP_USB_DEVICE_AUDIO_SPK_MONO,
-                        ESP_USB_DEVICE_AUDIO_MIC_MONO);
+EspUsbAudioFunction audio(device);
+EspUsbAudioPlaybackStream &playback = audio.addPlaybackStream();
+EspUsbAudioCaptureStream &capture = audio.addCaptureStream();
 
-static volatile uint32_t rxBytes = 0;
+static uint32_t rxBytes = 0;
 static bool rxReported = false;
-static volatile uint32_t micTxBytes = 0;
+static uint32_t micTxBytes = 0;
 static int16_t genValue = 0;
-
-static void audioEventCallback(const EspUsbDeviceAudioEvent &event)
-{
-  if (event.type == ESP_USB_DEVICE_AUDIO_EVENT_INTERFACE)
-  {
-    Serial.printf("AUDIO_INTERFACE %s %u\n",
-                  event.interface == ESP_USB_DEVICE_AUDIO_INTERFACE_MIC ? "MIC" : "SPK",
-                  event.enabled ? 1 : 0);
-  }
-}
-
-static void audioDataCallback(void *data, uint16_t length)
-{
-  // Host -> device (speaker) path.
-  audio.applyVolume(data, length);
-  rxBytes += length;
-  if (!rxReported && rxBytes >= 96)
-  {
-    rxReported = true;
-    Serial.printf("DEVICE_RX_AUDIO %lu\n", static_cast<unsigned long>(rxBytes));
-  }
-}
+static bool captureEnabled = false;
 
 void setup()
 {
   Serial.begin(115200);
   delay(5000);
 
-  audio.onEvent(audioEventCallback);
-  audio.onData(audioDataCallback);
+  playback.addFormat({48000, 1, 2, 16});
+  capture.addFormat({48000, 1, 2, 16});
 
   EspUsbDeviceConfig config;
   config.vid = 0x303a;
@@ -61,19 +38,41 @@ void setup()
 
 void loop()
 {
-  // Device -> host (microphone) path: generate ~1 ms of a sawtooth and push it
-  // toward the host. writeMic() returns 0 while the host is not recording, which
-  // throttles generation to the streaming rate.
-  int16_t samples[48];
-  for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); i++)
+  uint8_t received[192];
+  const size_t receivedLength =
+      playback.read(received, sizeof(received));
+  rxBytes += receivedLength;
+  if (!rxReported && rxBytes >= 96)
   {
-    samples[i] = genValue;
-    genValue = static_cast<int16_t>(genValue + 1024);
+    rxReported = true;
+    Serial.printf("DEVICE_RX_AUDIO %lu\n",
+                  static_cast<unsigned long>(rxBytes));
   }
-  const uint16_t written = audio.writeMic(samples, sizeof(samples));
-  if (written > 0)
+
+  EspUsbAudioEvent event;
+  while (audio.pollEvent(event))
   {
-    micTxBytes += written;
+    if (event.type == EspUsbAudioEventType::StreamStateChanged)
+    {
+      if (event.target == EspUsbAudioEventTarget::Capture)
+      {
+        captureEnabled = event.enabled;
+      }
+      Serial.printf("AUDIO_INTERFACE target=%u enabled=%u alt=%u\n",
+                    static_cast<unsigned>(event.target),
+                    event.enabled ? 1 : 0, event.alternateSetting);
+    }
+  }
+
+  if (captureEnabled)
+  {
+    int16_t samples[48];
+    for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); i++)
+    {
+      samples[i] = genValue;
+      genValue = static_cast<int16_t>(genValue + 1024);
+    }
+    micTxBytes += capture.write(samples, sizeof(samples));
   }
 
   while (Serial.available() > 0)
@@ -83,13 +82,28 @@ void loop()
     {
       rxBytes = 0;
       rxReported = false;
+      playback.resetStats();
+      capture.resetStats();
       Serial.println("HEADSET_RESET");
     }
     else if (command == '?')
     {
-      Serial.printf("HEADSET_ALIVE rx=%lu tx=%lu\n",
+      const EspUsbAudioStreamStats playbackStats = playback.stats();
+      const EspUsbAudioStreamStats captureStats = capture.stats();
+      Serial.printf(
+          "HEADSET_ALIVE rx=%lu tx=%lu usb_rx=%lu usb_tx=%lu "
+          "play_overruns=%lu cap_underruns=%lu events=%lu\n",
                     static_cast<unsigned long>(rxBytes),
-                    static_cast<unsigned long>(micTxBytes));
+                    static_cast<unsigned long>(micTxBytes),
+                    static_cast<unsigned long>(
+                        playbackStats.transferredBytes),
+                    static_cast<unsigned long>(
+                        captureStats.transferredBytes),
+                    static_cast<unsigned long>(
+                        playbackStats.overrunCount),
+                    static_cast<unsigned long>(
+                        captureStats.underrunCount),
+                    static_cast<unsigned long>(audio.droppedEvents()));
     }
   }
   delay(1);

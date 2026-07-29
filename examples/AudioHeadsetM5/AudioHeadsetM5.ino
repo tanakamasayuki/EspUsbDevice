@@ -26,52 +26,16 @@ static constexpr size_t kBlockSamples = 480;  // 10 ms at 48 kHz mono
 static constexpr size_t kRingBlocks = 3;       // >= 3 so the oldest block is complete
 
 EspUsbDevice device;
-EspUsbDeviceAudio audio(device,
-                        kSampleRate,
-                        ESP_USB_DEVICE_AUDIO_BITS_16,
-                        ESP_USB_DEVICE_AUDIO_SPK_STEREO,
-                        ESP_USB_DEVICE_AUDIO_MIC_MONO);
+EspUsbAudioFunction audio(device);
+EspUsbAudioPlaybackStream &playback = audio.addPlaybackStream();
+EspUsbAudioCaptureStream &capture = audio.addCaptureStream();
 
 M5SpeakerBufferedPlayer<kMaxPlayFrames> player;
 
 static int16_t micRing[kRingBlocks][kBlockSamples];
 static size_t recIdx = 0;
-static volatile bool micEnabled = false;
-static volatile bool speakerEnabled = false;
-
-static void onSpeakerPcm(const EspUsbDeviceAudioPcm &pcm)
-{
-  // Host -> device: play the received PCM on the M5 speaker.
-  if (!pcm.data || pcm.length == 0)
-  {
-    return;
-  }
-  audio.applyVolume(pcm.data, pcm.length);
-  const PCMFormat format{pcm.sampleRate, pcm.channels, static_cast<uint8_t>(pcm.bytesPerSample * 8u)};
-  player.writePcm(pcm.data, pcm.length, format);
-}
-
-static void onAudioEvent(const EspUsbDeviceAudioEvent &event)
-{
-  if (event.type != ESP_USB_DEVICE_AUDIO_EVENT_INTERFACE)
-  {
-    return;
-  }
-  if (event.interface == ESP_USB_DEVICE_AUDIO_INTERFACE_SPEAKER)
-  {
-    speakerEnabled = event.enabled;
-    if (!event.enabled)
-    {
-      player.stop();
-    }
-    Serial.printf("AUDIO_INTERFACE speaker %u\n", event.enabled ? 1 : 0);
-  }
-  else
-  {
-    micEnabled = event.enabled;
-    Serial.printf("AUDIO_INTERFACE mic %u\n", event.enabled ? 1 : 0);
-  }
-}
+static bool micEnabled = false;
+static bool speakerEnabled = false;
 
 static int rateLineY = 0;
 static uint32_t shownRate = 0xFFFFFFFFu;
@@ -116,8 +80,8 @@ void setup()
     return;
   }
 
-  audio.onPcm(onSpeakerPcm);
-  audio.onEvent(onAudioEvent);
+  playback.addFormat({kSampleRate, 2, 2, 16});
+  capture.addFormat({kSampleRate, 1, 2, 16});
 
   EspUsbDeviceConfig usb;
   usb.vid = 0x303a;
@@ -136,20 +100,53 @@ void setup()
   Serial.println("AudioHeadsetM5 ready");
   M5.Display.println("USB headset ready");
   rateLineY = M5.Display.getCursorY();
-  showSampleRate(audio.sampleRate());
+  showSampleRate(audio.currentSampleRate());
 }
 
 void loop()
 {
   M5.update();
-  showSampleRate(audio.sampleRate());
+  showSampleRate(audio.currentSampleRate());
+
+  uint8_t pcm[384];
+  const size_t received = playback.read(pcm, sizeof(pcm));
+  if (received)
+  {
+    player.writePcm(pcm, received, {kSampleRate, 2, 16});
+  }
+
+  EspUsbAudioEvent event;
+  while (audio.pollEvent(event))
+  {
+    if (event.type != EspUsbAudioEventType::StreamStateChanged)
+    {
+      continue;
+    }
+    if (event.target == EspUsbAudioEventTarget::Playback)
+    {
+      speakerEnabled = event.enabled;
+      if (!event.enabled)
+      {
+        player.stop();
+      }
+      Serial.printf("AUDIO_INTERFACE speaker %u\n",
+                    event.enabled ? 1 : 0);
+    }
+    else if (event.target == EspUsbAudioEventTarget::Capture)
+    {
+      micEnabled = event.enabled;
+      Serial.printf("AUDIO_INTERFACE mic %u\n",
+                    event.enabled ? 1 : 0);
+    }
+  }
 
   // Device -> host: enqueue a mic capture block and, when accepted, push the
   // oldest (completed) block to the host.
   if (micEnabled && M5.Mic.isEnabled() && M5.Mic.record(micRing[recIdx], kBlockSamples, kSampleRate))
   {
     const size_t doneIdx = (recIdx + 1) % kRingBlocks;
-    audio.writeMic(micRing[doneIdx], kBlockSamples * sizeof(int16_t));
+    capture.write(micRing[doneIdx],
+                  kBlockSamples * sizeof(int16_t));
     recIdx = (recIdx + 1) % kRingBlocks;
   }
   delay(1);

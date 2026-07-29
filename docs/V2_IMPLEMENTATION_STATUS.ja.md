@@ -53,7 +53,12 @@ other-speed configurationもライブラリ側から返す。
   mute / volume / stream state eventのpolling、stream stats lifecycleをPASS。
 - S3 peer: spec準拠UAC2のAudio OUT 98-byte endpointと4-byte feedback endpointの
   列挙PASS。EspUsbHost 2.5.0はUAC1 Type-I parserのみのため、UAC2 format解釈と
-  streaming開始はhost parser対応待ち。
+  streaming開始はHost側UAC2対応後の共同Peer Gateへ延期。
+- Audio speaker / microphone / headsetの通常example、M5 example、Peer device
+  firmwareを新しいUAC2 polling APIへ移行し、S3 compileをPASS。duplexの
+  `AudioHeadset`はS2/P4 compileもPASS。
+- Audio + HID/CDC/Vendorのcomposite descriptor buildと`MAX_CLASSES`制約を
+  `unit/composite_constraints`のS3実機testでPASS。
 - Arduino compile: KeyboardをS2/S3/P4でPASS。
 - Arduino compile: 更新後のdescriptor suiteをS3/P4でPASS。
 - Arduino compile: Vendor/HID、CDC、MIDI、MSC、NCM、compositeをS3でPASS。
@@ -78,5 +83,6 @@ S3 Keyboard ELF/mapでは次を確認した。
 2. begin/end反復とpartial failure cleanupを検証。
 3. S3のCDC、MIDI、MSC、Vendor、NCM、composite peer testを再実行。
 4. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
-5. UAC2-aware hostまたはPCでspeaker streamingを実測。
-6. UAC2-aware hostでspeaker、microphone、duplexの実streamingとcounterを実測。
+5. Audio + 他class compositeのtarget別descriptor容量とendpoint制約をPeerで確認。
+6. EspUsbHostのUAC2対応後、speaker、microphone、duplexの実streamingとcounterを
+   共同Peer testで実測。

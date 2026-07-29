@@ -34,14 +34,16 @@ Typical use cases:
 - Communicate with a PC or EspUsbHost over CDC ACM serial or USB MIDI.
 - Expose RAM disks, FAT RAM disks, or SD cards as USB MSC devices.
 - Build non-HID vendor-specific bulk/control interfaces.
-- Send/receive USB Audio speaker and microphone PCM through callbacks.
+- Read and write UAC2 Playback/Capture PCM through bounded FIFOs.
 - Present the board as a USB network adapter (CDC-NCM), with optional lwIP/DHCP
   so a PC can reach a page or API on the device over USB.
 - Combine several of the above as one composite device.
 
 ## Design Goals
 
-- Use EspUsbHost-style explicit configuration and callback APIs.
+- Share direction, PCM-format, and control-value terminology with EspUsbHost
+  and use explicit configuration. High-rate I/O uses bounded polling when a
+  callback execution context would be unsafe.
 - Own USB descriptors in this library instead of relying on Arduino USB class
   descriptors.
 - Treat HID usage IDs and raw reports as the primary API.
@@ -67,15 +69,15 @@ available:
 - USB MIDI event packets and note/control-change helpers.
 - USB MSC block device and SCSI callbacks.
 - USBVendor bulk IN/OUT, control requests, and WebUSB landing URL.
-- USB Audio speaker and microphone PCM callbacks.
+- UAC2 Audio Playback/Capture polling I/O, control events, and stream stats.
 - CDC-NCM network device with raw-frame API and optional lwIP/esp_netif
   integration (DHCP server / client / static address).
 - Multi-function composite devices (e.g. HID + CDC + MSC on one device).
 - Serial command sketches for pytest-embedded peer and loopback tests.
 
-USB Audio is a standalone speaker / microphone device. This library owns the
-USB Audio class and PCM callback boundary only. Applications can forward PCM to
-PCMFlow, PCMFlowDevice, or any other processing/output layer.
+This library owns the UAC2 class and PCM FIFO boundary only. Applications can
+forward PCM to PCMFlow, PCMFlowDevice, or another processing/output layer.
+Volume and mute are not applied to PCM implicitly.
 
 - PCMFlow: https://github.com/tanakamasayuki/PCMFlow
 - PCMFlowDevice: https://github.com/tanakamasayuki/PCMFlowDevice
@@ -254,17 +256,16 @@ Composite:
 
 - Do not use this library together with Arduino-ESP32's standard `USB.begin()`,
   `USBHIDKeyboard`, `USBHIDMouse`, or other built-in USB device classes.
-- USB Audio (`EspUsbDeviceAudio`) is a standalone speaker / microphone device
-  and is exclusive: it cannot be combined with other classes in a composite.
-  I2S, codecs, DACs, and other audio hardware are outside this library's
-  responsibility.
+- USB Audio uses `EspUsbAudioFunction` for UAC2 Playback/Capture. I2S, codecs,
+  DACs, and other audio hardware are outside this library's responsibility.
+  Detailed streaming validation is deferred until EspUsbHost supports UAC2.
 - The network device is CDC-NCM only. CDC-ECM is not enabled in the Arduino-ESP32
   core (it would need a core rebuild); NCM is supported natively by modern hosts.
   A device reaching the internet through the PC needs host-side bridging/NAT and
   is out of scope; use the ESP's own Wi-Fi for that.
-- Composite devices are bounded by the ESP32-S3 USB endpoint budget (about three
-  FIFO-consuming IN endpoints); a fourth needs the ESP32-P4. USB Audio cannot be
-  part of a composite.
+- Composite devices are bounded by the ESP32-S3 endpoint budget and the
+  configuration-descriptor capacity. Audio composite constraints are still
+  being validated on the Device side.
 - MSC keeps block devices and filesystems separate. Use the FAT RAM disk helper
   or SD card support when the host should mount a normal drive.
 - Direct flash / SPIFFS / LittleFS exposure as USB MSC is not a standard goal.

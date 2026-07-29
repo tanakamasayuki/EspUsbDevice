@@ -4,31 +4,19 @@
 // sawtooth so the host can confirm it received real, non-silent audio.
 
 EspUsbDevice device;
-EspUsbDeviceAudio audio(device,
-                            48000,
-                            ESP_USB_DEVICE_AUDIO_BITS_16,
-                            ESP_USB_DEVICE_AUDIO_SPK_NONE,
-                            ESP_USB_DEVICE_AUDIO_MIC_MONO);
+EspUsbAudioFunction audio(device);
+EspUsbAudioCaptureStream &capture = audio.addCaptureStream();
 
-static volatile uint32_t micTxBytes = 0;
+static uint32_t micTxBytes = 0;
 static int16_t genValue = 0;
-
-static void audioEventCallback(const EspUsbDeviceAudioEvent &event)
-{
-  if (event.type == ESP_USB_DEVICE_AUDIO_EVENT_INTERFACE)
-  {
-    Serial.printf("AUDIO_INTERFACE %s %u\n",
-                  event.interface == ESP_USB_DEVICE_AUDIO_INTERFACE_MIC ? "MIC" : "SPK",
-                  event.enabled ? 1 : 0);
-  }
-}
+static bool captureEnabled = false;
 
 void setup()
 {
   Serial.begin(115200);
   delay(5000);
 
-  audio.onEvent(audioEventCallback);
+  capture.addFormat({48000, 1, 2, 16});
 
   EspUsbDeviceConfig config;
   config.vid = 0x303a;
@@ -43,19 +31,27 @@ void setup()
 
 void loop()
 {
-  // Generate ~1 ms of a sawtooth and push it toward the host. writeMic() accepts
-  // as many bytes as the USB IN FIFO has room for (0 while the host is not
-  // recording), which throttles generation to the streaming rate.
-  int16_t samples[48];
-  for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); i++)
+  EspUsbAudioEvent event;
+  while (audio.pollEvent(event))
   {
-    samples[i] = genValue;
-    genValue = static_cast<int16_t>(genValue + 1024);
+    if (event.type == EspUsbAudioEventType::StreamStateChanged &&
+        event.target == EspUsbAudioEventTarget::Capture)
+    {
+      captureEnabled = event.enabled;
+      Serial.printf("AUDIO_INTERFACE MIC %u\n",
+                    captureEnabled ? 1 : 0);
+    }
   }
-  const uint16_t written = audio.writeMic(samples, sizeof(samples));
-  if (written > 0)
+
+  if (captureEnabled)
   {
-    micTxBytes += written;
+    int16_t samples[48];
+    for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); i++)
+    {
+      samples[i] = genValue;
+      genValue = static_cast<int16_t>(genValue + 1024);
+    }
+    micTxBytes += capture.write(samples, sizeof(samples));
   }
 
   while (Serial.available() > 0)
@@ -63,7 +59,14 @@ void loop()
     const char command = static_cast<char>(Serial.read());
     if (command == '?')
     {
-      Serial.printf("MIC_ALIVE tx=%lu\n", static_cast<unsigned long>(micTxBytes));
+      const EspUsbAudioStreamStats stats = capture.stats();
+      Serial.printf(
+          "MIC_ALIVE tx=%lu usb=%lu underruns=%lu overruns=%lu events=%lu\n",
+          static_cast<unsigned long>(micTxBytes),
+          static_cast<unsigned long>(stats.transferredBytes),
+          static_cast<unsigned long>(stats.underrunCount),
+          static_cast<unsigned long>(stats.overrunCount),
+          static_cast<unsigned long>(audio.droppedEvents()));
     }
   }
   delay(1);
