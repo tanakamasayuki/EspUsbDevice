@@ -16,8 +16,10 @@
 - Phase 4: 非Audio classの実装済み、S3 peer Gate再確認待ち。
 - Phase 5: controller選択とper-speed descriptor実装済み、P4 HS PC実測待ち。
 - Phase 6: Audio format/bandwidth model、entity/stream graph、UAC2 descriptor writer、
-  Clock/Feature control request、polling data planeを独立実装済み。新公開prototypeは
-  `EspUsbAudioFunction` + playback/capture stream。実streaming Gateとevent queueは未完了。
+  Clock/Feature control request、polling data plane、固定長control/stream event queueを
+  独立実装済み。FIFO clear lifecycleと、playback/captureの転送byte・overrun・
+  underrun counterも追加。新公開prototypeは`EspUsbAudioFunction` +
+  playback/capture stream。実streaming Gateは未完了。
 
 ## 現在使える経路
 
@@ -47,7 +49,8 @@ other-speed configurationもライブラリ側から返す。
   `audio_model`の5件PASS。
 - descriptor実機unit: 61 checks PASS。`end()`後の別device開始と、class途中失敗時の
   callback registry rollbackを含む。
-- 新Audio公開APIのdescriptor実機unit: speaker / microphone / duplex PASS。
+- 新Audio公開APIのdescriptor実機unit: speaker / microphone / duplexと、
+  mute / volume / stream state eventのpolling、stream stats lifecycleをPASS。
 - S3 peer: spec準拠UAC2のAudio OUT 98-byte endpointと4-byte feedback endpointの
   列挙PASS。EspUsbHost 2.5.0はUAC1 Type-I parserのみのため、UAC2 format解釈と
   streaming開始はhost parser対応待ち。
@@ -76,4 +79,4 @@ S3 Keyboard ELF/mapでは次を確認した。
 3. S3のCDC、MIDI、MSC、Vendor、NCM、composite peer testを再実行。
 4. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
 5. UAC2-aware hostまたはPCでspeaker streamingを実測。
-6. control/event queueを追加し、callbackからuser codeを分離したまま状態変更を通知。
+6. UAC2-aware hostでspeaker、microphone、duplexの実streamingとcounterを実測。

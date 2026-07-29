@@ -211,9 +211,14 @@ bool applyUac2EntityRequest(AudioControlState &state,
                             const Uac2EntityRequest &request,
                             const uint8_t *data,
                             size_t length,
-                            AudioRequestError *error)
+                            AudioRequestError *error,
+                            AudioControlChange *change)
 {
   setError(error, AudioRequestError::None);
+  if (change)
+  {
+    *change = AudioControlChange{};
+  }
   AudioControlSelector selector;
   if (!validateTarget(state, controlInterface, request, selector, error))
   {
@@ -256,10 +261,24 @@ bool applyUac2EntityRequest(AudioControlState &state,
     setError(error, AudioRequestError::InvalidLength);
     return false;
   }
+  int32_t previous = 0;
+  if (!state.current(request.entityId, selector, request.channel, previous))
+  {
+    setError(error, AudioRequestError::InvalidValue);
+    return false;
+  }
   if (!state.setCurrent(request.entityId, selector, request.channel, value))
   {
     setError(error, AudioRequestError::InvalidValue);
     return false;
+  }
+  if (change)
+  {
+    change->selector = selector;
+    change->entityId = request.entityId;
+    change->channel = request.channel;
+    change->value = value;
+    change->changed = previous != value;
   }
   return true;
 }

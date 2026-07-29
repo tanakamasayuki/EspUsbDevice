@@ -25,6 +25,14 @@ enum class AudioRequestError : uint8_t {
   BufferOverflow,
 };
 
+struct AudioControlChange {
+  AudioControlSelector selector = AudioControlSelector::SampleRate;
+  uint8_t entityId = 0;
+  uint8_t channel = 0;
+  int32_t value = 0;
+  bool changed = false;
+};
+
 bool writeUac2EntityResponse(AudioControlState &state,
                              uint8_t controlInterface,
                              const Uac2EntityRequest &request,
@@ -36,7 +44,8 @@ bool applyUac2EntityRequest(AudioControlState &state,
                             const Uac2EntityRequest &request,
                             const uint8_t *data,
                             size_t length,
-                            AudioRequestError *error = nullptr);
+                            AudioRequestError *error = nullptr,
+                            AudioControlChange *change = nullptr);
 
 } // namespace internal
 } // namespace espusb

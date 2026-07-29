@@ -1,6 +1,7 @@
 #include "internal/EspUsbAudioModel.h"
 #include "internal/EspUsbAudioDescriptor.h"
 #include "internal/EspUsbAudioControl.h"
+#include "internal/EspUsbAudioEvent.h"
 #include "internal/EspUsbAudioRequest.h"
 
 #include <iostream>
@@ -401,13 +402,24 @@ int main()
   request.request = 0x01;
   request.length = 2;
   const uint8_t minusTwelveDb[] = {0x00, 0xf4};
+  AudioControlChange change;
   check(applyUac2EntityRequest(controls, duplexGraph.controlInterface,
                                request, minusTwelveDb,
-                               sizeof(minusTwelveDb)) &&
+                               sizeof(minusTwelveDb), nullptr, &change) &&
+            change.changed &&
+            change.selector == AudioControlSelector::Volume &&
+            change.entityId == captureFeature &&
+            change.value == -12 * 256 &&
             controls.current(captureFeature, AudioControlSelector::Volume,
                              0, current) &&
             current == -12 * 256,
-        "uac2_volume_set_request");
+        "uac2_volume_set_change");
+
+  check(applyUac2EntityRequest(controls, duplexGraph.controlInterface,
+                               request, minusTwelveDb,
+                               sizeof(minusTwelveDb), nullptr, &change) &&
+            !change.changed,
+        "uac2_unchanged_control_not_event");
 
   request.entityId = playbackFeature;
   request.selector = 0x01;
@@ -434,6 +446,47 @@ int main()
                                 &requestError) &&
             requestError == AudioRequestError::InvalidLength,
         "uac2_wrong_length_rejected");
+
+  AudioEventQueue queue;
+  for (uint8_t i = 0; i < AudioEventQueue::CAPACITY; ++i)
+  {
+    AudioRuntimeEvent event;
+    event.type = AudioRuntimeEventType::Volume;
+    event.target = AudioRuntimeEventTarget::Capture;
+    event.channel = i;
+    event.value = -static_cast<int32_t>(i) * 256;
+    check(queue.push(event), "event_queue_fill");
+  }
+  AudioRuntimeEvent overflow;
+  check(!queue.push(overflow) &&
+            queue.pending() == AudioEventQueue::CAPACITY &&
+            queue.dropped() == 1,
+        "event_queue_overflow_counted");
+  for (uint8_t i = 0; i < AudioEventQueue::CAPACITY; ++i)
+  {
+    AudioRuntimeEvent event;
+    check(queue.pop(event) &&
+              event.type == AudioRuntimeEventType::Volume &&
+              event.target == AudioRuntimeEventTarget::Capture &&
+              event.channel == i &&
+              event.value == -static_cast<int32_t>(i) * 256,
+          "event_queue_fifo");
+  }
+  check(!queue.pop(overflow) && queue.pending() == 0,
+        "event_queue_empty");
+
+  AudioRuntimeEvent streamEvent;
+  streamEvent.type = AudioRuntimeEventType::StreamState;
+  streamEvent.target = AudioRuntimeEventTarget::Playback;
+  streamEvent.alternateSetting = 1;
+  streamEvent.value = 1;
+  check(queue.push(streamEvent) && queue.pop(overflow) &&
+            overflow.type == AudioRuntimeEventType::StreamState &&
+            overflow.alternateSetting == 1,
+        "event_queue_wrap");
+  queue.clear();
+  check(queue.pending() == 0 && queue.dropped() == 0,
+        "event_queue_clear");
 
   if (failures)
   {

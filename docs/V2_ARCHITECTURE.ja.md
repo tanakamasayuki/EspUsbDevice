@@ -193,6 +193,36 @@ control plane と PCM data plane を分ける。
 - `EspUsbAudioCaptureStream`: IN FIFO、write/available
 - `EspUsbAudioControl`: clock、mute、volume state
 
+controlとalternate settingの変更通知はcallbackではなく、固定長queueをpollする。
+
+```cpp
+EspUsbAudioEvent event;
+while (audio.pollEvent(event)) {
+  if (event.type == EspUsbAudioEventType::StreamStateChanged &&
+      event.target == EspUsbAudioEventTarget::Playback) {
+    // event.enabled / event.alternateSetting
+  }
+}
+```
+
+queueは8件で、満杯の場合は既存イベントを保持して新規イベントをdropする。
+`droppedEvents()`でdrop累計、`pendingEvents()`で未読件数を取得し、
+`clearEvents()`で両方をclearする。volume値はUAC wire formatと同じ
+`volumeDb256`（1/256 dB単位）で返す。
+
+各streamは`stats()`、`resetStats()`、`clearBuffer()`を持つ。
+
+- playbackの`transferredBytes`はhostから受信したbyte数。
+- playbackのoverrunはOUT FIFOが古い未読データを破棄した回数とbyte数。
+- captureの`transferredBytes`はhostへ完了したIN転送のbyte数。
+- captureのoverrunは`write()`が満杯のIN FIFO内の古いデータを上書きした回数とbyte数。
+- captureのunderrunは有効なalternate settingで、最低必要packet byte数に満たない
+  IN転送が完了した回数と不足byte数。
+
+fractional sample rateでは誤検出を避けるため、underrunの基準はservice intervalあたりの
+`floor(bytes_per_second / intervals_per_second)`とする。counterは`begin()`と`end()`で
+resetする。`clearBuffer()`はcounterを変更しない。
+
 PCMの音量適用はUSB classの責務にしない。必要なら独立したDSP/helperとして提供する。
 旧実装のglobal `_sample_rate`、`_spk_channels`、`_mic_channels`、`_spk_buf`、
 専用event loopは廃止する。
