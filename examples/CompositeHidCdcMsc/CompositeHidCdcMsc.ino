@@ -5,10 +5,10 @@
 // EspUsbDevice instance and call begin() once; the library assigns interface
 // numbers and endpoints and builds the composite configuration descriptor.
 //
-// This is the richest composite that fits the ESP32-S3 USB endpoint budget
-// (three FIFO-consuming IN endpoints: keyboard, CDC data-in, MSC bulk-in).
-// Adding a fourth FIFO-IN class (e.g. MIDI or bulk Vendor) exceeds the S3 FIFO
-// budget and the device fails to enumerate. See docs/DESIGN_NOTES.ja.md
+// This reaches the ESP32-S3 non-control IN endpoint limit: keyboard, CDC
+// notification, CDC data-in, and MSC bulk-in. Duplex data endpoints share their
+// IN/OUT endpoint number. Adding MIDI or bulk Vendor exceeds the S3 IN limit.
+// See docs/DESIGN_NOTES.ja.md
 // "複合時の endpoint 予算の上限".
 
 EspUsbDevice device;

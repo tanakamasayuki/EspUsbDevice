@@ -230,8 +230,8 @@ HID keyboard + CDC serial + MSC FAT RAM disk を 1 つの `EspUsbDevice` に載�
 - 複数の function を同じ `EspUsbDevice` に登録し `begin()` を 1 回呼ぶだけで、ライブラリが
   複合 descriptor を構成し interface と endpoint を割り当てます。
 - CDC で `type <text>` を送ると、その文字列を HID keyboard で入力します。
-- ESP32-S3 の endpoint 予算に収まる最大の複合（FIFO-IN 3 本）です。4 本目の FIFO-IN class は
-  ESP32-P4 が必要です。
+- CDC notificationを含む非control IN 4本でESP32-S3の上限に達します。さらにIN endpointを
+  追加する構成にはESP32-P4が必要です。
 - UAC2 Audioも同じcomposite descriptor builderを使います。実際に組み合わせられる
   functionはconfiguration descriptor容量とtargetのendpoint予算に制約されます。
 

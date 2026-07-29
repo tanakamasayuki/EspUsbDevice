@@ -268,8 +268,8 @@ See [CompositeHidCdcMsc/README.md](CompositeHidCdcMsc/README.md) for details.
   once; the library builds the composite descriptor and assigns interfaces and
   endpoints.
 - Send `type <text>` over the CDC port to type it on the HID keyboard.
-- The richest composite that fits the ESP32-S3 endpoint budget (three FIFO-IN
-  endpoints); a fourth FIFO-IN class needs the ESP32-P4.
+- Reaches the ESP32-S3 limit of four non-control IN endpoints (including CDC
+  notification); adding another IN endpoint requires the ESP32-P4.
 - UAC2 Audio uses the same composite descriptor builder. The usable combination
   is bounded by configuration-descriptor capacity and the target's endpoint
   budget.

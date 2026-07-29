@@ -4,8 +4,8 @@
 // Non-HID triple: CDC + MSC + bulk Vendor. Covers the Vendor class in a
 // composite without HID (so espUsbDeviceLoadHidDescriptor is never invoked and
 // the HID+bulk-Vendor descriptor-duplication issue does not apply). All three
-// draw endpoints from the core allocator, so this also exercises consistent
-// dynamic numbering. Pairs with composite_cdc_msc_vendor.ino (host).
+// use the library-owned allocator, so this also exercises consistent duplex
+// numbering. Pairs with composite_cdc_msc_vendor.ino (host).
 
 EspUsbDevice device;
 EspUsbDeviceCdcSerial UsbSerial(device);

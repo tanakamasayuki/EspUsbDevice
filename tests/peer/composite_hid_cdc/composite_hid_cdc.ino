@@ -84,6 +84,11 @@ void setup()
                           }
                           deviceAddress = device.address;
                           devicePid = device.pid;
+                          CdcSerial.setAddress(device.address);
+                          while (CdcSerial.available() > 0)
+                          {
+                            CdcSerial.read();
+                          }
                           Serial.printf("HOST_CONNECTED vid=%04x pid=%04x ifcount=%u\n",
                                         device.vid, device.pid, device.configurationInterfaceCount);
                         });

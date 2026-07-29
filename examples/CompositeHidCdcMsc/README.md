@@ -46,10 +46,10 @@ endpoints.
 
 ## Notes
 
-- This is the richest composite that fits the ESP32-S3 USB endpoint budget:
-  three FIFO-consuming IN endpoints (keyboard, CDC data-in, MSC bulk-in). Adding
-  a fourth FIFO-IN class (for example MIDI or bulk Vendor) exceeds the S3 FIFO
-  budget and the device fails to enumerate. See
+- This reaches the ESP32-S3 limit of four non-control IN endpoints: keyboard,
+  CDC notification, CDC data-in, and MSC bulk-in. Duplex data endpoints share
+  one endpoint number between OUT and IN. Adding MIDI or bulk Vendor exceeds
+  the S3 IN limit. See
   [../../docs/DESIGN_NOTES.ja.md](../../docs/DESIGN_NOTES.ja.md) ("複合時の
   endpoint 予算の上限"). More endpoints are available on the ESP32-P4.
 - UAC2 Audio uses the same composite descriptor builder, subject to descriptor

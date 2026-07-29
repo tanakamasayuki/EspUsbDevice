@@ -1,12 +1,11 @@
 #include <Arduino.h>
 #include "EspUsbDevice.h"
 
-// Max composite that fits the S3 endpoint budget: HID keyboard + CDC + MSC
-// (3 FIFO-consuming IN endpoints). If this enumerates with all interfaces
-// claimed and no duplicate endpoint, every 2-class subset does too. Adding a
-// 4th FIFO-consuming class (e.g. MIDI) exceeds the S3 ceiling and the device
-// STALLs EP0 at SET_CONFIGURATION — see docs/DESIGN_NOTES.ja.md
-// "複合時の endpoint 予算の上限". Pairs with composite_hid_cdc_msc.ino (host).
+// Max composite that fits the S3 endpoint budget: HID keyboard + CDC + MSC.
+// The data endpoints use duplex numbers, but the three data IN endpoints plus
+// CDC notification consume all usable S3 IN endpoints. Adding a fourth class
+// that needs IN fails at SET_CONFIGURATION. Pairs with
+// composite_hid_cdc_msc.ino (host).
 
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);

@@ -57,7 +57,7 @@ static bool sendKey(char c)
 void setup()
 {
   Serial.begin(115200);
-  delay(1000);
+  delay(3000);
 
   Serial.println("TEST_BEGIN loopback_hid_keyboard_layout");
 

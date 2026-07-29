@@ -1429,13 +1429,13 @@ void EspUsbDeviceCdcSerial::end()
 
 uint16_t EspUsbDeviceCdcSerial::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  if (!dst || endpointNumber > 13)
+  if (!dst || endpointNumber == 0 || endpointNumber > 14)
   {
     return 0;
   }
   const uint8_t epNotification = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint8_t epOut = static_cast<uint8_t>(endpointNumber + 1);
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber + 2);
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
   const uint8_t descriptor[] = {
       TUD_CDC_DESCRIPTOR(interfaceNumber, 0, epNotification, 8,
                          epOut, epIn, endpointSize),
@@ -1885,7 +1885,7 @@ void EspUsbDeviceNet::end()
 
 uint16_t EspUsbDeviceNet::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  if (!dst || endpointNumber > 13)
+  if (!dst || endpointNumber == 0 || endpointNumber > 14)
   {
     return 0;
   }
@@ -1905,7 +1905,7 @@ uint16_t EspUsbDeviceNet::configurationDescriptor(uint8_t *dst, uint8_t interfac
 
   const uint8_t epNotification = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint8_t epOut = static_cast<uint8_t>(endpointNumber + 1);
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber + 2);
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
   const uint8_t descriptor[] = {
       TUD_CDC_NCM_DESCRIPTOR(interfaceNumber, 0, 4,
                              epNotification, 64, epOut, epIn, endpointSize,
@@ -2255,12 +2255,12 @@ void EspUsbDeviceMidi::end()
 
 uint16_t EspUsbDeviceMidi::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  if (!dst || endpointNumber > 14)
+  if (!dst || endpointNumber == 0)
   {
     return 0;
   }
   const uint8_t epOut = endpointNumber;
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber + 1);
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint8_t descriptor[] = {
       TUD_MIDI_DESCRIPTOR(interfaceNumber, 0, epOut, epIn, endpointSize),
   };
@@ -2393,12 +2393,12 @@ void EspUsbDeviceMsc::end()
 
 uint16_t EspUsbDeviceMsc::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  if (!dst || endpointNumber > 14)
+  if (!dst || endpointNumber == 0)
   {
     return 0;
   }
   const uint8_t epOut = endpointNumber;
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber + 1);
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint8_t descriptor[] = {
       TUD_MSC_DESCRIPTOR(interfaceNumber, 0, epOut, epIn, endpointSize),
   };
