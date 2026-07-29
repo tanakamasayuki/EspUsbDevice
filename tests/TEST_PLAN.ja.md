@@ -67,7 +67,7 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 対象外（P4 の Audio は UAC2/HS、loopback は FS 限定） | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5`（P4 HS） |
-| composite（複合デバイス） | ✅ `composite_reject`（Audio 排他 / MAX_CLASSES） | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
+| composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
@@ -226,7 +226,7 @@ peer / loopback の実機テストとは別に、全 example が常にコンパ�
    `tinyusb_get_free_*` が同じ EP 番号を再配布すると衝突しうる。加えて S3(FS) の物理 EP は
    6 本程度、`MAX_CLASSES = 4`。
 
-#### 対象マトリクス（Audio 除く 5 グループ = C(5,2) = 10 ペア + Audio 排他）
+#### 対象マトリクス（Audioを含むfunctionの組み合わせ）
 
 破綻予測は上の EP 採番分析による仮説。テストで確定する。
 
@@ -241,7 +241,7 @@ HID を EP1 duplex + `reserve_endpoints=true` にし、HID interface number を 
 | 1 | HID + CDC | ✅ 実機 OK（`composite_hid_cdc` 4/4） | HID=IF0/EP1、CDC=IF1,2/EP3,4,5 |
 | 3 | HID + MSC | ✅ 実機 OK（`composite_hid_msc` 3/3） | 修正後 MSC=IF0/EP2、HID=IF1/EP1、`dup=0 claimok=1` |
 | 2,4-10 | 上記以外の非 Audio ペア | ○（最大構成で包含） | 単一 core アロケータで一貫採番。下記 quad/triple がカバー |
-| 11 | Audio + 任意 | ✗ NG（仕様） | コードで排他。`unit/composite_reject` で固定 |
+| 11 | Audio + 他function | △ target依存 | Audio + HID/CDC/Vendorのdescriptor buildは`unit/composite_constraints`でPASS。Peer列挙はEspUsbHost UAC2対応後 |
 | — | HID + bulk Vendor | ✅ 実機 OK（`composite_hid_vendor` 3/3） | descriptor 二重記述を修正（HID blob に Vendor を含めない）。`docs/DESIGN_NOTES.ja.md`「複合時の HID + bulk Vendor 二重記述」 |
 
 **S3 の endpoint 予算**: `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`（FIFO 制約で使える IN は実質 4、CDC 併用時 5）。
@@ -268,9 +268,8 @@ core の `tinyusb_init()` 実行時にしか確定しない。よって byte 単
 限られ、それ以外の合成は実機で列挙して確認する。
 
 - **unit（S3 単体・host 不要）**
-  - `unit/composite_reject`: Audio + 各クラス、および `MAX_CLASSES` 超過（5 クラス）で
-    `begin()==false` かつ `lastError()==ESP_ERR_NOT_SUPPORTED` を確認（#11）。
-    判定ロジックは `startTinyUsb=false` でも通るため host 不要。
+  - `unit/composite_constraints`: `startTinyUsb=false`でAudio + HID/CDC/Vendorの
+    descriptor build成功と、5個目のclass登録が`MAX_CLASSES`で拒否されることを確認。
 - **peer（S3 2 台・host=EspUsbHost / device=EspUsbDevice）** ← 本命
   - 各ペア `peer/composite_<a>_<b>/` を作成。2 段階で判定:
     1. **列挙成功 + EP 重複なし**: host 側で config descriptor をダンプし、全 endpoint
@@ -289,7 +288,7 @@ core の `tinyusb_init()` 実行時にしか確定しない。よって byte 単
 
 #### 実行順（段階的）
 
-1. `unit/composite_reject`（Audio 排他 / MAX_CLASSES を回帰固定。host 不要ですぐ走る）。
+1. `unit/composite_constraints`（Audio複合build / MAX_CLASSESを回帰固定。host不要）。
 2. `peer/composite_hid_cdc`（#1、動く見込みの複合で雛形と共通 util を確立）。
 3. `peer/composite_hid_msc` / `hid_midi` / `hid_vendor`（#2-4、破綻本命）。列挙失敗や
    EP 重複が出たら `docs/DESIGN_NOTES.ja.md` に「複合時の EP 採番衝突」として記録し、
@@ -333,7 +332,7 @@ core の `tinyusb_init()` 実行時にしか確定しない。よって byte 単
 32. （`loopback/usb_audio` は無し：P4 の Audio は UAC2/HS、loopback は FS 限定のため）
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
-35. `unit/composite_reject`（Audio 排他 / MAX_CLASSES）
+35. ✅ `unit/composite_constraints`（Audio複合build / MAX_CLASSES）
 36. ✅ `peer/composite_hid_cdc`（複合の雛形 + 共通 util、4/4）
 37. ✅ `peer/composite_hid_msc`（HID 採番衝突の発見 → 修正 → 3/3。`docs/DESIGN_NOTES.ja.md`）
 38. ✅ `peer/composite_hid_cdc_msc`（HID+CDC+MSC、収まる最大構成）

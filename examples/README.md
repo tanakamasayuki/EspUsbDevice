@@ -151,10 +151,10 @@ See [MIDIInterface/README.md](MIDIInterface/README.md) for details.
 USB Audio speaker sink device example.
 See [AudioSpeaker/README.md](AudioSpeaker/README.md) for details.
 
-- Receive speaker PCM from the host with `EspUsbDeviceAudio`.
-- Receive PCM chunks and format metadata through the `onPcm()` callback.
-- Receive volume, mute, sample-rate, and interface-enable changes through
-  `onEvent()`.
+- Read host PCM with `EspUsbAudioPlaybackStream::read()`.
+- Configure formats as `{sampleRate, channels, bytesPerSample, bitsPerSample}`.
+- Poll volume, mute, sample-rate, and interface-enable changes with
+  `pollEvent()`.
 - I2S bridging and codec setup are outside this library's responsibility. The
   received PCM can be forwarded to the application, PCMFlow, PCMFlowDevice, or
   another output layer.
@@ -163,24 +163,19 @@ See [AudioSpeaker/README.md](AudioSpeaker/README.md) for details.
 
 USB Audio source (microphone) device example: the device sends PCM to the host.
 
-- Expose a mono 48 kHz / 16-bit recording device with `EspUsbDeviceAudio`
-  configured as speaker `NONE` + microphone `MONO`.
-- Push PCM toward the host with `writeMic()`; here a generated 440 Hz sine tone.
-- The same class covers both directions (speaker for host -> device, microphone
-  for device -> host); audio capture/codec input is the application's job.
+- Add a mono 48 kHz / 16-bit format to `EspUsbAudioCaptureStream`.
+- Push PCM toward the host with `capture.write()`; this example generates a
+  440 Hz sine tone.
+- Audio capture and codec input remain the application's job.
 
 ## AudioHeadset
 
 USB Audio headset example: one device that is both a speaker (host -> device)
 and a microphone (device -> host) at the same time.
 
-- Configure `EspUsbDeviceAudio` with both a speaker and a microphone channel
-  layout (mono 48 kHz / 16-bit here); the host sees one playback and one
-  recording device.
-- Loopback headset: received speaker PCM is echoed straight back to the
-  microphone with `writeMic()` from the `onData()` callback.
-- Shows that a single `EspUsbDeviceAudio` instance carries both directions
-  simultaneously.
+- Add Playback and Capture streams to one `EspUsbAudioFunction`.
+- Echo PCM from `playback.read()` to `capture.write()`.
+- The host sees one playback and one recording device.
 
 ## AudioSpeakerM5
 
@@ -189,7 +184,7 @@ helper.
 See [AudioSpeakerM5/README.md](AudioSpeakerM5/README.md) for details.
 
 - Receives PCM from the PC as a 48 kHz / 16-bit / stereo USB Audio speaker.
-- Applies host mute / volume with `audio.applyVolume()`.
+- Reports host mute/volume as events; application DSP may apply them to PCM.
 - Uses PCMFlowDevice's `M5SpeakerBufferedPlayer::writePcm()` to downmix stereo
   input and feed `M5.Speaker` safely.
 - EspUsbDevice itself does not depend on PCMFlow or PCMFlowDevice; only this
@@ -199,8 +194,8 @@ See [AudioSpeakerM5/README.md](AudioSpeakerM5/README.md) for details.
 
 USB Audio microphone backed by the M5 built-in microphone (device -> host).
 
-- Captures mono 16 kHz / 16-bit PCM from `M5.Mic` and streams it to the host
-  with `writeMic()`; the PC sees a recording device.
+- Captures mono 16 kHz / 16-bit PCM from `M5.Mic` and streams it with
+  `capture.write()`; the PC sees a recording device.
 - Uses `M5.Mic.record()` (asynchronous, double-buffered) with a small ring, and
   sends the oldest completed block.
 - Only depends on M5Unified for capture; EspUsbDevice provides the USB side.
@@ -275,7 +270,9 @@ See [CompositeHidCdcMsc/README.md](CompositeHidCdcMsc/README.md) for details.
 - Send `type <text>` over the CDC port to type it on the HID keyboard.
 - The richest composite that fits the ESP32-S3 endpoint budget (three FIFO-IN
   endpoints); a fourth FIFO-IN class needs the ESP32-P4.
-- The USB Audio class is exclusive and cannot be combined with other classes.
+- UAC2 Audio uses the same composite descriptor builder. The usable combination
+  is bounded by configuration-descriptor capacity and the target's endpoint
+  budget.
 
 ## UsbNetwork
 

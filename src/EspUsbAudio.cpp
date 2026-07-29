@@ -64,20 +64,6 @@ EspUsbAudioFunction::~EspUsbAudioFunction()
   end();
 }
 
-bool EspUsbAudioFunction::protocol(EspUsbAudioProtocol protocol)
-{
-  if (playbackEnabled_ || captureEnabled_)
-  {
-    return false;
-  }
-  protocol_ = protocol;
-  model_ = espusb::internal::AudioFunctionModel(
-      protocol == EspUsbAudioProtocol::Uac2
-          ? espusb::internal::AudioProtocol::Uac2
-          : espusb::internal::AudioProtocol::Uac1);
-  return true;
-}
-
 EspUsbAudioPlaybackStream &EspUsbAudioFunction::addPlaybackStream()
 {
   playbackEnabled_ = true;
@@ -90,50 +76,29 @@ EspUsbAudioCaptureStream &EspUsbAudioFunction::addCaptureStream()
   return capture_;
 }
 
-bool EspUsbAudioPlaybackStream::channels(uint8_t count)
-{
-  if (function_.model_.playback().formatCount() != 0 ||
-      count == 0 || count > 2)
-  {
-    return false;
-  }
-  channels_ = count;
-  return true;
-}
-
 bool EspUsbAudioPlaybackStream::addFormat(const EspUsbAudioFormat &format)
 {
   return function_.addFormat(espusb::internal::AudioDirection::Playback,
-                             channels_, format);
-}
-
-bool EspUsbAudioCaptureStream::channels(uint8_t count)
-{
-  if (function_.model_.capture().formatCount() != 0 ||
-      count == 0 || count > 2)
-  {
-    return false;
-  }
-  channels_ = count;
-  return true;
+                             format);
 }
 
 bool EspUsbAudioCaptureStream::addFormat(const EspUsbAudioFormat &format)
 {
   return function_.addFormat(espusb::internal::AudioDirection::Capture,
-                             channels_, format);
+                             format);
 }
 
 bool EspUsbAudioFunction::addFormat(
-    espusb::internal::AudioDirection direction, uint8_t channels,
+    espusb::internal::AudioDirection direction,
     const EspUsbAudioFormat &format)
 {
-  if (format.sampleRate == 0)
+  if (format.sampleRate == 0 || format.channels == 0)
   {
     return false;
   }
   const espusb::internal::AudioPcmFormat internalFormat{
-      format.sampleRate, channels, format.subslotBytes, format.validBits};
+      format.sampleRate, format.channels, format.bytesPerSample,
+      format.bitsPerSample};
   espusb::internal::AudioStreamModel &stream =
       direction == espusb::internal::AudioDirection::Playback
           ? model_.playback()
@@ -179,8 +144,7 @@ bool EspUsbAudioFunction::buildGraph(uint8_t interfaceNumber,
 
 bool EspUsbAudioFunction::begin()
 {
-  if (protocol_ != EspUsbAudioProtocol::Uac2 ||
-      (!playbackEnabled_ && !captureEnabled_) ||
+  if ((!playbackEnabled_ && !captureEnabled_) ||
       (playbackEnabled_ && model_.playback().formatCount() != 1) ||
       (captureEnabled_ && model_.capture().formatCount() != 1))
   {

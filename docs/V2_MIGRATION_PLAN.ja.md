@@ -327,8 +327,8 @@ Gate 5:
 6. [x] capture data plane（polling API、実転送Gate待ち）
 7. [x] control/stream state event queue（固定長、polling、drop count）
 8. [x] FIFO clear lifecycleとoverrun/underrun counter
-9. duplex/headset
-10. UAC1 descriptorとclass request
+9. [x] duplex/headset（Device firmwareとdescriptor、実転送Gate待ち）
+10. UAC1 descriptorとclass request（初期v2公開範囲外）
 11. 複数alternate setting / sample rate
 12. Audio + 他classのcomposite
 
@@ -362,14 +362,17 @@ data planeの受入条件:
 
 Gate 6A (UAC2):
 
-- S3 FSでUAC2のspeaker、microphone、duplexが列挙・streamingする。
-- P4 HSで同じfunction modelがHS descriptorを使ってstreamingする。
+- Device側ではS3/P4 compile、FS/HS descriptor、class request、FIFO/event、
+  speaker/microphone/duplex Peer firmwareまでを完成条件とする。
+- S3 FSとP4 HSの実streaming、control flood、counter実測はEspUsbHostのUAC2対応後に
+  Peer testとして実施する。この外部GateはDevice側cutoverを妨げない。
 - protocolを変えず、速度によってMPS/intervalだけが変わる。
 
 Gate 6B (UAC1):
 
-- S3 FSでUAC1 speaker、microphone、duplexが既存host testを通る。
-- UAC1/UAC2が同じstream APIを使う。
+- 初期v2ではUAC1を公開しない。
+- 将来追加する場合は、未実装selectorを先に公開せず、descriptor/class requestと
+  streaming testを同時に追加する。
 
 ### Phase 7: WebUSB / Microsoft OS descriptorを独立実装する
 
@@ -427,7 +430,7 @@ Gate 8:
 | `EspUsbDeviceConfig::startTinyUsb` | 削除。v2 runtimeのみ |
 | device側port/speed指定なし | `EspUsbController`を指定 |
 | `EspUsbDeviceAudio(device, rate, bits, spk, mic)` | `EspUsbAudioFunction` + playback/capture stream |
-| `onData()` / `onPcm()` | playback streamの`read()`またはqueue callback |
+| `onData()` / `onPcm()` | playback streamの`available()` / `read()` |
 | `writeMic()` | capture streamの`write()` |
 | Audio内`applyVolume()` | 独立DSP/helperへ分離 |
 | Audio内`onEvent()` | control state/event queue |

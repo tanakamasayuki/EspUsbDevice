@@ -11,8 +11,7 @@ void setup()
   Serial.begin(115200);
   delay(5000);
 
-  playback.channels(1);
-  playback.addFormat({48000, 2, 16});
+  playback.addFormat({48000, 1, 2, 16});
 
   EspUsbDeviceConfig config;
   config.vid = 0x303a;
@@ -34,6 +33,8 @@ void loop()
     {
       receivedAudioBytes = 0;
       receivedAudioReported = false;
+      playback.resetStats();
+      audio.clearEvents();
       Serial.println("DEVICE_AUDIO_RESET");
     }
     else if (command == '?')
@@ -41,7 +42,23 @@ void loop()
       // Liveness probe. If the device rebooted during a volume flood, setup()
       // reruns and prints AUDIO_DEVICE_READY again; a healthy device answers
       // here with its accumulated event counts and never reset.
-      Serial.println("DEVICE_ALIVE");
+      const EspUsbAudioStreamStats stats = playback.stats();
+      Serial.printf(
+          "DEVICE_ALIVE rx=%lu usb=%lu overruns=%lu events=%lu\n",
+          static_cast<unsigned long>(receivedAudioBytes),
+          static_cast<unsigned long>(stats.transferredBytes),
+          static_cast<unsigned long>(stats.overrunCount),
+          static_cast<unsigned long>(audio.droppedEvents()));
+    }
+  }
+
+  EspUsbAudioEvent event;
+  while (audio.pollEvent(event))
+  {
+    if (event.type == EspUsbAudioEventType::StreamStateChanged)
+    {
+      Serial.printf("AUDIO_INTERFACE PLAYBACK %u alt=%u\n",
+                    event.enabled ? 1 : 0, event.alternateSetting);
     }
   }
 

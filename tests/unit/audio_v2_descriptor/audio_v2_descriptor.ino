@@ -29,8 +29,7 @@ static void testPlayback()
   EspUsbDevice device;
   EspUsbAudioFunction audio(device);
   auto &playback = audio.addPlaybackStream();
-  check(playback.channels(2), "playback_channels");
-  check(playback.addFormat({48000, 2, 16}), "playback_format");
+  check(playback.addFormat({48000, 2, 2, 16}), "playback_format");
 
   EspUsbDeviceConfig config;
   config.startTinyUsb = false;
@@ -107,8 +106,7 @@ static void testCapture()
   EspUsbDevice device;
   EspUsbAudioFunction audio(device);
   auto &capture = audio.addCaptureStream();
-  check(capture.channels(1), "capture_channels");
-  check(capture.addFormat({48000, 2, 16}), "capture_format");
+  check(capture.addFormat({48000, 1, 2, 16}), "capture_format");
 
   EspUsbDeviceConfig config;
   config.startTinyUsb = false;
@@ -133,10 +131,8 @@ static void testDuplex()
   EspUsbAudioFunction audio(device);
   auto &playback = audio.addPlaybackStream();
   auto &capture = audio.addCaptureStream();
-  check(playback.channels(2) &&
-            playback.addFormat({48000, 2, 16}) &&
-            capture.channels(1) &&
-            capture.addFormat({48000, 2, 16}),
+  check(playback.addFormat({48000, 2, 2, 16}) &&
+            capture.addFormat({48000, 1, 2, 16}),
         "duplex_streams");
 
   EspUsbDeviceConfig config;

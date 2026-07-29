@@ -6,11 +6,6 @@ static void compileApiSmoke()
   EspUsbDeviceHidKeyboard keyboard(device);
   EspUsbDeviceHidMouse mouse(device);
   EspUsbDeviceVendor vendor(device);
-  EspUsbDeviceAudio audio(device,
-                              48000,
-                              ESP_USB_DEVICE_AUDIO_BITS_16,
-                              ESP_USB_DEVICE_AUDIO_SPK_STEREO,
-                              ESP_USB_DEVICE_AUDIO_MIC_NONE);
   const uint8_t customDescriptor[] = {
       0x05, 0x01,
       0x09, 0x04,
@@ -83,27 +78,41 @@ static void compileApiSmoke()
                           });
   const uint8_t customReport[8] = {};
   (void)customHid.sendReport(customReport, sizeof(customReport));
-  audio.onData([](void *data, uint16_t length)
-               {
-                 (void)data;
-                 (void)length;
-               });
-  audio.onEvent([](const EspUsbDeviceAudioEvent &event)
-                {
-                  (void)event;
-                });
+}
+
+static void compileAudioApiSmoke()
+{
+  EspUsbDevice device;
+  EspUsbAudioFunction audio(device);
+  EspUsbAudioPlaybackStream &playback = audio.addPlaybackStream();
+  EspUsbAudioCaptureStream &capture = audio.addCaptureStream();
+  const EspUsbAudioFormat playbackFormat{48000, 2, 2, 16};
+  const EspUsbAudioFormat captureFormat{48000, 1, 2, 16};
+  (void)playback.addFormat(playbackFormat);
+  (void)capture.addFormat(captureFormat);
+  static_assert(EspUsbAudioPlaybackStream::direction() ==
+                EspUsbAudioDirection::Playback);
+  static_assert(EspUsbAudioCaptureStream::direction() ==
+                EspUsbAudioDirection::Capture);
+
   uint8_t audioBuffer[16] = {};
-  audio.applyVolume(audioBuffer, sizeof(audioBuffer));
-  (void)audio.writeMic(audioBuffer, sizeof(audioBuffer));
-  (void)audio.sampleRate();
-  (void)audio.bytesPerSample();
-  (void)audio.bitsPerSample();
-  (void)audio.speakerChannels();
-  (void)audio.micChannels();
-  (void)audio.mute(ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER);
-  (void)audio.mute(ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER, false);
-  (void)audio.volume(ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER);
-  (void)audio.volume(ESP_USB_DEVICE_AUDIO_CHANNEL_MASTER, -6);
+  (void)playback.available();
+  (void)playback.read(audioBuffer, sizeof(audioBuffer));
+  (void)playback.clearBuffer();
+  (void)playback.stats();
+  playback.resetStats();
+  (void)capture.write(audioBuffer, sizeof(audioBuffer));
+  (void)capture.clearBuffer();
+  (void)capture.stats();
+  capture.resetStats();
+  (void)audio.hasPlaybackStream();
+  (void)audio.hasCaptureStream();
+  (void)audio.currentSampleRate();
+  EspUsbAudioEvent event;
+  (void)audio.pollEvent(event);
+  (void)audio.pendingEvents();
+  (void)audio.droppedEvents();
+  audio.clearEvents();
 }
 
 void setup()

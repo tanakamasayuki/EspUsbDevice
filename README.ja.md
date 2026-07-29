@@ -33,14 +33,15 @@ CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC
 - PC や `EspUsbHost` と CDC ACM serial / USB MIDI で通信する。
 - RAM disk、FAT RAM disk、SD card を USB MSC として公開する。
 - HID ではない vendor-specific bulk/control interface を作る。
-- USB Audio の speaker / microphone PCM を callback で送受信する。
+- UAC2 Audio のPlayback/Capture PCMをbounded FIFO経由で読み書きする。
 - ボードを USB ネットワークアダプタ（CDC-NCM）として見せ、任意で lwIP/DHCP を有効にして
   PC が USB 経由でデバイス上のページや API にアクセスできるようにする。
 - 上記を組み合わせて 1 つの複合デバイスにする。
 
 ## 設計目標
 
-- `EspUsbHost` と同じように、明示設定と callback ベースの API にする。
+- `EspUsbHost` と方向・PCM format・control値の語彙を揃え、明示設定を基本にする。
+  callbackの実行contextが適切でない高頻度I/Oはbounded polling APIにする。
 - Arduino USB class descriptor に依存せず、descriptor はこのライブラリで所有する。
 - HID は文字入力ではなく usage ID と raw report を第一級 API にする。
 - ESP32-S3 2台構成の peer テストと、ESP32-P4 1台構成の loopback テストを
@@ -64,14 +65,14 @@ loopback テストで確認できる範囲を広げています。
 - USB MIDI event packet と note / control change helper。
 - USB MSC block device と SCSI callback。
 - USBVendor bulk IN/OUT、control request、WebUSB landing URL。
-- USB Audio speaker / microphone PCM callback。
+- UAC2 Audio Playback/Captureのpolling I/O、control event、stream stats。
 - CDC-NCM ネットワークデバイス（生フレーム API と、任意の lwIP/esp_netif 統合＝DHCP
   サーバ / クライアント / 静的アドレス）。
 - 多機能な複合デバイス（例: HID + CDC + MSC を 1 台に）。
 - pytest-embedded peer / loopback テスト用の serial command sketch。
 
-USB Audio の PCM はこのライブラリの責務（USB Audio class と PCM callback）までで、受け取った
-PCM はアプリケーション、PCMFlow、PCMFlowDevice など任意の処理系へ渡します。
+USB Audioの責務はUAC2 classとPCM FIFO境界までです。受け取ったPCMはアプリケーション、
+PCMFlow、PCMFlowDeviceなど任意の処理系へ渡します。volume/muteをPCMへ暗黙適用しません。
 
 - PCMFlow: https://github.com/tanakamasayuki/PCMFlow
 - PCMFlowDevice: https://github.com/tanakamasayuki/PCMFlowDevice
@@ -236,9 +237,12 @@ USB ネットワーク（CDC-NCM）:
 ## 制限事項
 
 - Arduino-ESP32 標準の `USB.begin()`、`USBHIDKeyboard`、`USBHIDMouse` などとは併用しません。
-- USB Audio（`EspUsbDeviceAudio`）は単独 device の speaker / microphone 実装で、排他です（他 class と複合できません）。I2S、codec、DAC などのデバイス接続はこのライブラリの責務外です。
+- USB Audioは`EspUsbAudioFunction`によるUAC2 Playback/Capture実装です。I2S、codec、
+  DACなどのデバイス接続はこのライブラリの責務外です。UAC2実streamingの詳細確認は
+  EspUsbHostのUAC2対応後にPeer testで行います。
 - ネットワークデバイスは CDC-NCM のみです。CDC-ECM は Arduino-ESP32 core で無効（有効化には core 再ビルドが必要）で、NCM は最近のホスト OS が標準対応します。デバイスが PC 経由でインターネットに抜けるにはホスト側のブリッジ/NAT が必要でスコープ外です（その用途は ESP 自身の Wi-Fi を使用）。
-- 複合デバイスは ESP32-S3 の USB endpoint 予算（FIFO 消費 IN が約 3 本）で制限されます。4 本目は ESP32-P4 が必要です。USB Audio は複合に含められません。
+- 複合デバイスはESP32-S3のUSB endpoint予算とconfiguration descriptor容量で制限されます。
+  Audioを含む複合構成はDevice側descriptor制約の確認中です。
 - MSC は block device と filesystem を分けて扱います。Host から通常の drive として mount
   するには FAT RAM disk helper または SD card などを使います。
 - flash / SPIFFS / LittleFS を USB MSC として直接公開することは標準方針にしません。

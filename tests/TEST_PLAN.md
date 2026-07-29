@@ -75,7 +75,7 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | N/A (P4 audio is UAC2/HS; loopback is FS-only) | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` (P4 HS) |
-| Composite (multi-function) | ✅ `composite_reject` (Audio-exclusive / MAX_CLASSES) | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
+| Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -230,14 +230,13 @@ rather than paper over it.
 
 #### Structural constraints (test-design premises)
 
-A composite registers each class individually with the core's
-`tinyusb_enable_interface()` (`begin()` in [EspUsbDevice.cpp](../src/EspUsbDevice.cpp)).
-Two constraints follow:
+A composite registers each function with the library-owned descriptor builder
+and runtime. Two constraints follow:
 
-1. **Audio is exclusive.** With an Audio class present, `begin()` fails with
-   `ESP_ERR_NOT_SUPPORTED` if `classCount_ != 1` or any other class is combined
-   (explicitly forbidden in code). So Audio × any-class is NG by design; the
-   `composite_reject` unit test pins that NG.
+1. **Audio is a normal composite function.** Audio + HID, CDC, and Vendor
+   descriptor builds are pinned by `composite_constraints`. A concrete
+   combination can still exceed configuration-descriptor capacity or the
+   target's endpoint budget.
 2. **Endpoint numbering originally split across three schemes** that did not know
    about each other — the prime suspect for composite breakage. This has since
    been fixed for HID (see below).
@@ -266,7 +265,7 @@ pairs does too).
 | 1 | HID + CDC | ✅ hardware OK (`composite_hid_cdc` 4/4) | HID=IF0/EP1, CDC=IF1,2/EP3,4,5 |
 | 3 | HID + MSC | ✅ hardware OK (`composite_hid_msc` 3/3) | after fix MSC=IF0/EP2, HID=IF1/EP1, `dup=0 claimok=1` |
 | 2,4-10 | other non-Audio pairs | ○ (subsumed by the maximal config) | one core allocator, consistent numbering; covered by the triple below |
-| 11 | Audio + any | ✗ NG (by spec) | exclusive in code; pinned by `unit/composite_reject` |
+| 11 | Audio + another function | △ target-dependent | Audio + HID/CDC/Vendor descriptor builds pass in `unit/composite_constraints`; Peer enumeration remains after EspUsbHost UAC2 support |
 | — | HID + bulk Vendor | ✅ hardware OK (`composite_hid_vendor` 3/3) | fixed the descriptor duplication (HID blob no longer includes Vendor). `docs/DESIGN_NOTES.ja.md` |
 
 **S3 endpoint budget:** `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5` (FIFO limits
@@ -297,9 +296,9 @@ unit checks are limited to the HID-merged part; the rest is verified by
 enumerating on real hardware.
 
 - **unit (S3 standalone, no host)**
-  - `composite_reject`: Audio + each class, and exceeding `MAX_CLASSES` (5
-    classes), assert `begin()==false` and `lastError()==ESP_ERR_NOT_SUPPORTED`
-    (#11). The reject logic runs under `startTinyUsb=false`, so no host is needed.
+  - `composite_constraints`: Audio + HID/CDC/Vendor descriptor builds succeed
+    under `startTinyUsb=false`; registering a fifth class still fails at
+    `MAX_CLASSES`.
 - **peer (two S3 boards; host=EspUsbHost / device=EspUsbDevice)** ← primary
   - Each `peer/composite_<a>_<b>/`, judged in two stages:
     1. **Enumerates + no duplicate EP:** host dumps the config descriptor and
@@ -312,7 +311,7 @@ enumerating on real hardware.
 
 #### Execution order (staged)
 
-1. `unit/composite_reject` (pins Audio-exclusive / MAX_CLASSES; host-free).
+1. `unit/composite_constraints` (pins Audio composite builds / MAX_CLASSES; host-free).
 2. `peer/composite_hid_cdc` (establishes the template and shared utilities).
 3. `peer/composite_hid_msc` / `hid_vendor` (breakage suspects). Enumeration or EP
    collisions get recorded in `docs/DESIGN_NOTES.ja.md`.
@@ -355,7 +354,7 @@ enumerating on real hardware.
 32. (no `loopback/usb_audio`: P4 audio is UAC2/HS, loopback is FS-only)
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
-35. `unit/composite_reject` (Audio-exclusive / MAX_CLASSES)
+35. ✅ `unit/composite_constraints` (Audio composite builds / MAX_CLASSES)
 36. ✅ `peer/composite_hid_cdc` (composite template + shared util, 4/4)
 37. ✅ `peer/composite_hid_msc` (found → fixed the HID numbering collision → 3/3; `docs/DESIGN_NOTES.ja.md`)
 38. ✅ `peer/composite_hid_cdc_msc` (HID+CDC+MSC, the maximal config that fits)
