@@ -32,6 +32,7 @@ Use `--clean` after library upgrades or profile switches to avoid stale build
 cache.
 
 ```sh
+python3 tools/verify_tinyusb_vendor.py
 cd tests
 uv run --env-file .env pytest --clean
 ```
@@ -56,7 +57,8 @@ These are not required for the first release, but can be run from
 
 ## Release
 
-- Run the bump script to update version and changelog files.
+- Run the bump script to update version and changelog files. Use a major bump
+  for the first release of the independent TinyUSB/audio architecture (`2.0.0`).
 - After the bump, verify `library.properties`, `src/espusbdevice_version.h`, and
   `CHANGELOG.md` are consistent.
 - Check the final diff for unintended build artifacts, cache files, or

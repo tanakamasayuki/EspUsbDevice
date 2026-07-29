@@ -36,6 +36,9 @@ report.html
 tests/**/build/
 examples/**/build/
 
+# Downloaded only when auditing the selected vendored TinyUSB files
+third_party/tinyusb/.upstream-cache/
+
 # Host-side unit test build artifacts (g++ output + generated headers)
 tests/unit/**/output/
 *.elf
