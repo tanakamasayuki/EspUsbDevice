@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Move WebUSB and Microsoft OS 2.0 descriptor ownership into `EspUsbDevice`. WebUSB-enabled vendor devices now advertise both BOS platform capabilities and answer the Microsoft descriptor-set vendor request with the fixed WinUSB compatible ID and device-interface GUID previously supplied by Arduino-ESP32. The function subset uses the vendor interface number actually allocated in a composite device; WebUSB without a vendor function does not advertise a misleading WinUSB binding. Descriptor unit tests and a P4 control-transfer loopback test cover the complete 178-byte response.
+- (JA) WebUSB / Microsoft OS 2.0 descriptor の所有を `EspUsbDevice` 側へ移しました。WebUSB を有効にした vendor device は両方の BOS platform capability を広告し、従来 Arduino-ESP32 が提供していた固定 WinUSB compatible ID / device-interface GUID の Microsoft descriptor-set vendor request に応答します。function subset には Composite で実際に割り当てた vendor interface 番号を使用し、vendor function がない WebUSB 構成では誤った WinUSB binding を広告しません。descriptor unit test と P4 control-transfer loopback test で 178 byte の応答全体を検証します。
 
 ## 1.2.7
 - (EN) Fix the UAC2 audio build on Arduino-ESP32 core 3.3.11, which removed the `audio20_control_request_t` struct from TinyUSB's `audio.h` (the `AUDIO20_*` constants and `audio20_control_cur_*`/`range_*` types remain). Its layout is fixed by the USB Audio 2.0 spec (§5.2.2) and is a byte-for-byte reinterpretation of the 8-byte setup packet, so `EspUsbDeviceAudio` now defines its own `esp_usb_audio20_control_request_t` and casts `tusb_control_request_t` to it. No version `#if` is needed — the private type name never collides, so it builds on both the older cores that still ship the struct and 3.3.11.

@@ -273,9 +273,11 @@ Composite:
 - Direct flash / SPIFFS / LittleFS exposure as USB MSC is not a standard goal.
 - When an SD card is exposed to the host as MSC, do not use ESP32-side file APIs
   for the same card while the host owns it.
-- WebUSB / Microsoft OS 2.0 descriptor basics are provided by the Arduino-ESP32
-  TinyUSB core. Custom vendor code, GUID, and Microsoft OS 2.0 descriptor
-  replacement APIs are not implemented yet.
+- WebUSB and Microsoft OS 2.0 descriptors are owned by this library. When
+  WebUSB is enabled with `USBVendor`, Windows receives a fixed WinUSB
+  compatible-ID and device-interface GUID for the allocated vendor interface.
+  Custom vendor-code, GUID, and descriptor replacement APIs are not implemented
+  yet.
 
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.

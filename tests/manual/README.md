@@ -95,12 +95,11 @@ Notes:
 
 - Depending on the host OS, kernel driver detach, permissions, udev rules, or
   WinUSB driver binding may be required.
-- `EspUsbDevice` can configure the WebUSB URL, but it does not yet expose APIs
-  to replace the vendor code or Microsoft OS 2.0 descriptor contents.
-- The Arduino-ESP32 TinyUSB core also returns a Microsoft OS 2.0 descriptor when
-  WebUSB is enabled. GUIDs and other contents are the core defaults.
-- This belongs in manual testing because it depends on the host OS, browser, and
-  driver state.
+- `EspUsbDevice` generates the WebUSB and Microsoft OS 2.0 descriptors, but
+  does not yet expose APIs to replace their vendor codes, GUID, or contents.
+- Descriptor bytes and the vendor control response are automated. Actual
+  browser behavior and Windows driver binding remain manual because they depend
+  on host OS, browser, and driver state.
 
 ## `examples/MSCFatRamDisk`
 

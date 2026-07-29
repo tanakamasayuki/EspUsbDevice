@@ -113,8 +113,9 @@ flash / SPIFFS / LittleFS の直接 MSC 公開は標準方針にしません。�
 `EspUsbDeviceVendor` は HID vendor とは別の、HID ではない vendor-specific interface です。
 bulk IN/OUT、stream-like API、EP0 vendor control request callback、WebUSB landing URL を扱います。
 
-WebUSB / Microsoft OS 2.0 descriptor の基礎部分は Arduino-ESP32 TinyUSB core の仕組みを利用します。
-`EspUsbDevice` 側で custom vendor code、GUID、Microsoft OS 2.0 descriptor 内容を差し替える API は未実装です。
+WebUSB / Microsoft OS 2.0 descriptor はライブラリ側で生成し、割り当て済みの vendor
+interface 番号へ WinUSB compatible ID を関連付けます。custom vendor code、GUID、
+Microsoft OS 2.0 descriptor 内容を差し替える API は未実装です。
 browser / libusb / WinUSB の挙動は Host OS や driver 状態に依存するため、まず `tests/manual` の確認対象にします。
 
 ## 現在の検証範囲

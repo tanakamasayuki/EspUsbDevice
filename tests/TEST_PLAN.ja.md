@@ -170,9 +170,12 @@ read / write / multi-block / chunked transfer / out-of-range / failed write を�
 `EspUsbDeviceVendor` は HID ではない vendor-specific interface として、descriptor unit test、
 `examples/USBVendor` の build-only 確認、`peer/usb_vendor` の interface / bulk endpoint 列挙、
 bulk OUT -> Device -> bulk IN echo、application vendor control IN/OUT、WebUSB landing URL 読み出しを
-確認します。default profile は released Host を使い、`s3_peer_local` は Host 側未リリース修正の
-任意確認にだけ使います。Microsoft OS 2.0 descriptor は Host OS / browser / driver の影響が
-大きいため、まず `tests/manual` の手順で確認します。
+確認します。descriptor unit testではWebUSB / Microsoft OS 2.0 BOS capability、descriptor set
+の長さ、WinUSB compatible ID、registry property、割り当てたvendor interface番号を検証します。
+`loopback/usb_vendor`ではvendor requestからMicrosoft OS 2.0 descriptor set全体を読み出します。
+default profile は released Host を使い、`s3_peer_local` は Host 側未リリース修正の任意確認に
+だけ使います。実際のWindows driver bindingとbrowser動作はHost OS / browser / driver状態に
+依存するため、`tests/manual`で確認します。
 
 MSC の transport テストとファイル受け渡しテストは分けます。`peer/usb_msc` /
 `loopback/usb_msc` は raw block I/O、SCSI、error path を確認するテストとして維持します。

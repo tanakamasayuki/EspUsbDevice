@@ -90,6 +90,32 @@ static void put16(uint8_t *dst, uint16_t value)
   dst[1] = static_cast<uint8_t>((value >> 8) & 0xff);
 }
 
+static void put32(uint8_t *dst, uint32_t value)
+{
+  dst[0] = static_cast<uint8_t>(value & 0xff);
+  dst[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+  dst[2] = static_cast<uint8_t>((value >> 16) & 0xff);
+  dst[3] = static_cast<uint8_t>((value >> 24) & 0xff);
+}
+
+static size_t putUtf16Le(uint8_t *dst, const char *text, bool doubleTerminated)
+{
+  size_t offset = 0;
+  while (*text)
+  {
+    dst[offset++] = static_cast<uint8_t>(*text++);
+    dst[offset++] = 0;
+  }
+  dst[offset++] = 0;
+  dst[offset++] = 0;
+  if (doubleTerminated)
+  {
+    dst[offset++] = 0;
+    dst[offset++] = 0;
+  }
+  return offset;
+}
+
 static uint8_t powerToDescriptor(uint16_t milliamps)
 {
   uint16_t units = (milliamps + 1) / 2;
@@ -334,13 +360,9 @@ static bool g_netMacUserSet = false;
 static char g_netMacString[13] = {};
 static uint8_t g_webUsbUrlDescriptor[128] = {};
 
-static constexpr uint8_t WEBUSB_BOS_DESCRIPTOR[] = {
-    5, USB_DESC_BOS, 29, 0, 1,
-    24, USB_DESC_DEVICE_CAPABILITY, 0x05, 0x00,
-    0x38, 0xb6, 0x08, 0x34, 0xa9, 0x09, 0xa0, 0x47,
-    0x8b, 0xfd, 0xa0, 0x76, 0x88, 0x15, 0xb6, 0x65,
-    0x00, 0x01, 0x01, 0x01,
-};
+static constexpr uint8_t WEBUSB_VENDOR_CODE = 0x01;
+static constexpr uint8_t MICROSOFT_OS_20_VENDOR_CODE = 0x02;
+static constexpr uint16_t MICROSOFT_OS_20_DESCRIPTOR_INDEX = 0x0007;
 
 #if ESP_USB_DEVICE_HAS_TINYUSB
 extern "C" uint8_t const *tud_descriptor_device_cb(void)
@@ -363,11 +385,7 @@ extern "C" uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t lang
 
 extern "C" uint8_t const *tud_descriptor_bos_cb(void)
 {
-  if (!g_activeDevice || !g_activeDevice->config().webusbEnabled)
-  {
-    return nullptr;
-  }
-  return WEBUSB_BOS_DESCRIPTOR;
+  return g_activeDevice ? g_activeDevice->bosDescriptor() : nullptr;
 }
 
 extern "C" uint8_t const *tud_descriptor_device_qualifier_cb(void)
@@ -532,7 +550,8 @@ void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize)
 
 extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
 {
-  if (g_activeDevice && request && request->bRequest == 0x01 &&
+  if (g_activeDevice && request &&
+      request->bRequest == WEBUSB_VENDOR_CODE &&
       g_activeDevice->config().webusbEnabled)
   {
     if (stage != CONTROL_STAGE_SETUP)
@@ -570,6 +589,20 @@ extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_c
     memcpy(&g_webUsbUrlDescriptor[3], url, length);
     return tud_control_xfer(rhport, request, g_webUsbUrlDescriptor,
                             g_webUsbUrlDescriptor[0]);
+  }
+  if (g_activeDevice && request &&
+      request->bRequest == MICROSOFT_OS_20_VENDOR_CODE &&
+      request->wIndex == MICROSOFT_OS_20_DESCRIPTOR_INDEX &&
+      g_activeDevice->microsoftOs20Descriptor())
+  {
+    if (stage != CONTROL_STAGE_SETUP)
+    {
+      return true;
+    }
+    return tud_control_xfer(
+        rhport, request,
+        const_cast<uint8_t *>(g_activeDevice->microsoftOs20Descriptor()),
+        g_activeDevice->microsoftOs20DescriptorLength());
   }
   return g_activeVendor ? g_activeVendor->handleControlRequest(rhport, stage, request) : false;
 }
@@ -922,6 +955,26 @@ const uint8_t *EspUsbDevice::otherSpeedConfigurationDescriptor(uint8_t index, bo
 #endif
 }
 
+const uint8_t *EspUsbDevice::bosDescriptor() const
+{
+  return bosDescriptorLength_ ? bosDescriptor_ : nullptr;
+}
+
+uint16_t EspUsbDevice::bosDescriptorLength() const
+{
+  return bosDescriptorLength_;
+}
+
+const uint8_t *EspUsbDevice::microsoftOs20Descriptor() const
+{
+  return microsoftOs20DescriptorLength_ ? microsoftOs20Descriptor_ : nullptr;
+}
+
+uint16_t EspUsbDevice::microsoftOs20DescriptorLength() const
+{
+  return microsoftOs20DescriptorLength_;
+}
+
 uint16_t EspUsbDevice::hidInterfacesLength() const
 {
   return hidInterfacesLength_;
@@ -1044,6 +1097,7 @@ void EspUsbDevice::handleHidSetProtocol(uint8_t instance, uint8_t protocol)
 
 bool EspUsbDevice::buildDescriptors()
 {
+  vendorInterfaceNumber_ = 0xff;
   const bool composite = compositeHid();
   uint8_t interfaceCount = composite ? 1 : 0;
   if (!composite)
@@ -1204,6 +1258,10 @@ bool EspUsbDevice::buildDescriptors()
       audioInterfaceNumber = classInterface;
       audioEndpointNumber = classEndpoint;
     }
+    if (classes_[i]->isVendor())
+    {
+      vendorInterfaceNumber_ = classInterface;
+    }
     interfaceNumber += classes_[i]->interfaceCount();
     endpointNumber += classes_[i]->endpointCount();
     if (offset > MAX_CONFIG_DESCRIPTOR)
@@ -1265,8 +1323,133 @@ bool EspUsbDevice::buildDescriptors()
   deviceQualifierDescriptor_[6] = deviceDescriptor_[6];
   deviceQualifierDescriptor_[7] = deviceDescriptor_[7];
   deviceQualifierDescriptor_[8] = 1;
+  buildWebUsbDescriptors();
   setLastError(ESP_OK);
   return true;
+}
+
+void EspUsbDevice::buildWebUsbDescriptors()
+{
+  memset(bosDescriptor_, 0, sizeof(bosDescriptor_));
+  memset(microsoftOs20Descriptor_, 0, sizeof(microsoftOs20Descriptor_));
+  bosDescriptorLength_ = 0;
+  microsoftOs20DescriptorLength_ = 0;
+  if (!config_.webusbEnabled)
+  {
+    return;
+  }
+
+  static constexpr uint8_t webUsbUuid[] = {
+      0x38, 0xb6, 0x08, 0x34, 0xa9, 0x09, 0xa0, 0x47,
+      0x8b, 0xfd, 0xa0, 0x76, 0x88, 0x15, 0xb6, 0x65,
+  };
+  static constexpr uint8_t microsoftOs20Uuid[] = {
+      0xdf, 0x60, 0xdd, 0xd8, 0x89, 0x45, 0xc7, 0x4c,
+      0x9c, 0xd2, 0x65, 0x9d, 0x9e, 0x64, 0x8a, 0x9f,
+  };
+
+  size_t bosOffset = 5;
+  bosDescriptor_[bosOffset++] = 24;
+  bosDescriptor_[bosOffset++] = USB_DESC_DEVICE_CAPABILITY;
+  bosDescriptor_[bosOffset++] = 0x05;
+  bosDescriptor_[bosOffset++] = 0x00;
+  memcpy(&bosDescriptor_[bosOffset], webUsbUuid, sizeof(webUsbUuid));
+  bosOffset += sizeof(webUsbUuid);
+  put16(&bosDescriptor_[bosOffset], 0x0100);
+  bosOffset += 2;
+  bosDescriptor_[bosOffset++] = WEBUSB_VENDOR_CODE;
+  bosDescriptor_[bosOffset++] = 1;
+
+  if (vendorInterfaceNumber_ != 0xff)
+  {
+    bosDescriptor_[bosOffset++] = 28;
+    bosDescriptor_[bosOffset++] = USB_DESC_DEVICE_CAPABILITY;
+    bosDescriptor_[bosOffset++] = 0x05;
+    bosDescriptor_[bosOffset++] = 0x00;
+    memcpy(&bosDescriptor_[bosOffset], microsoftOs20Uuid,
+           sizeof(microsoftOs20Uuid));
+    bosOffset += sizeof(microsoftOs20Uuid);
+    put32(&bosDescriptor_[bosOffset], 0x06030000);
+    bosOffset += 4;
+    put16(&bosDescriptor_[bosOffset], MS_OS_20_DESCRIPTOR_SIZE);
+    bosOffset += 2;
+    bosDescriptor_[bosOffset++] = MICROSOFT_OS_20_VENDOR_CODE;
+    bosDescriptor_[bosOffset++] = 0;
+
+    size_t offset = 0;
+    put16(&microsoftOs20Descriptor_[offset], 10);
+    offset += 2;
+    put16(&microsoftOs20Descriptor_[offset], 0);
+    offset += 2;
+    put32(&microsoftOs20Descriptor_[offset], 0x06030000);
+    offset += 4;
+    put16(&microsoftOs20Descriptor_[offset], MS_OS_20_DESCRIPTOR_SIZE);
+    offset += 2;
+
+    put16(&microsoftOs20Descriptor_[offset], 8);
+    offset += 2;
+    put16(&microsoftOs20Descriptor_[offset], 1);
+    offset += 2;
+    microsoftOs20Descriptor_[offset++] = 0;
+    microsoftOs20Descriptor_[offset++] = 0;
+    put16(&microsoftOs20Descriptor_[offset], MS_OS_20_DESCRIPTOR_SIZE - 10);
+    offset += 2;
+
+    put16(&microsoftOs20Descriptor_[offset], 8);
+    offset += 2;
+    put16(&microsoftOs20Descriptor_[offset], 2);
+    offset += 2;
+    microsoftOs20Descriptor_[offset++] = vendorInterfaceNumber_;
+    microsoftOs20Descriptor_[offset++] = 0;
+    put16(&microsoftOs20Descriptor_[offset],
+          MS_OS_20_DESCRIPTOR_SIZE - 10 - 8);
+    offset += 2;
+
+    put16(&microsoftOs20Descriptor_[offset], 20);
+    offset += 2;
+    put16(&microsoftOs20Descriptor_[offset], 3);
+    offset += 2;
+    static constexpr uint8_t winUsbId[16] = {
+        'W', 'I', 'N', 'U', 'S', 'B', 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+    };
+    memcpy(&microsoftOs20Descriptor_[offset], winUsbId, sizeof(winUsbId));
+    offset += sizeof(winUsbId);
+
+    put16(&microsoftOs20Descriptor_[offset], 132);
+    offset += 2;
+    put16(&microsoftOs20Descriptor_[offset], 4);
+    offset += 2;
+    put16(&microsoftOs20Descriptor_[offset], 7);
+    offset += 2;
+    put16(&microsoftOs20Descriptor_[offset], 42);
+    offset += 2;
+    offset += putUtf16Le(&microsoftOs20Descriptor_[offset],
+                         "DeviceInterfaceGUIDs", false);
+    put16(&microsoftOs20Descriptor_[offset], 80);
+    offset += 2;
+    offset += putUtf16Le(
+        &microsoftOs20Descriptor_[offset],
+        "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9D}", true);
+    if (offset == sizeof(microsoftOs20Descriptor_))
+    {
+      microsoftOs20DescriptorLength_ = static_cast<uint16_t>(offset);
+    }
+    else
+    {
+      // Keep WebUSB usable without advertising a malformed Microsoft
+      // capability if this fixed descriptor is edited inconsistently.
+      memset(microsoftOs20Descriptor_, 0,
+             sizeof(microsoftOs20Descriptor_));
+      bosOffset = 29;
+    }
+  }
+
+  bosDescriptor_[0] = 5;
+  bosDescriptor_[1] = USB_DESC_BOS;
+  put16(&bosDescriptor_[2], static_cast<uint16_t>(bosOffset));
+  bosDescriptor_[4] = microsoftOs20DescriptorLength_ ? 2 : 1;
+  bosDescriptorLength_ = static_cast<uint16_t>(bosOffset);
 }
 
 bool EspUsbDevice::validateControllerEndpoints(const uint8_t *descriptor,
