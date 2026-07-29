@@ -26,6 +26,44 @@ for both FS and HS. Keyboard + mouse composite uses one HID interface with
 report IDs and 16-byte endpoint MPS so the report-ID-prefixed keyboard report
 fits in one interrupt packet.
 
+## `descriptor_model`
+
+Exercises the v2 descriptor foundation using host g++ only, without Arduino or
+TinyUSB headers. It checks buffer bounds, interface/string allocation,
+directional and duplex endpoint allocation, conflict/capacity errors, and
+FS/HS endpoint MPS selection, other-speed configuration, the device qualifier,
+and the HID function writer. It remains runnable while the Arduino sketch is
+temporarily unbuildable during the v2 rewrite.
+
+## `tinyusb_config`
+
+Host-compiles the library-owned TinyUSB configuration for the S2, S3, and P4
+target macros. It verifies that all device classes are enabled without Arduino
+Core Kconfig, S2/S3 compile for full-speed capacity, and P4 compiles for
+full/high-speed capacity. The controller/root-hub port and actual bus speed are
+left to runtime initialization.
+
+## `tinyusb_vendor`
+
+Checks that the TinyUSB headers and selected device sources in the Arduino build
+tree remain byte-identical to the pinned archive, and that no unintended `.c`
+file has entered the build.
+
+## `audio_model`
+
+Exercises the v2 PCM format and bandwidth model without the removed Audio
+implementation. It covers mono/stereo, 16/24/32-bit samples, subslots, FS/HS
+frame rates, clock tolerance, isochronous packet and software-buffer limits,
+the entity graph, UAC2 descriptors, Clock/Feature control state, and CUR/RANGE
+wire formats.
+
+## `audio_v2_descriptor`
+
+Builds the new public `EspUsbAudioFunction` API on S3 hardware and checks the
+speaker, microphone, and duplex configuration descriptors plus FS/HS packet
+sizes. It leaves the USB runtime stopped, so this specifically tests public API
+and device-descriptor integration.
+
 ## `keymap`
 
 This is a pure host g++ test (no board required). It extracts the layout enum,

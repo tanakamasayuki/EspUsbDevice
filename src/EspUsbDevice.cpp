@@ -1,4 +1,6 @@
 #include "EspUsbDevice.h"
+#include "internal/EspUsbHidDescriptor.h"
+#include "internal/EspUsbTinyUsbRuntime.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -23,14 +25,14 @@
 #include "soc/soc_caps.h"
 #endif
 
-#if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED && __has_include("esp32-hal-tinyusb.h")
-#include "esp32-hal-tinyusb.h"
+#if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
+#include "tusb.h"
 #include "class/cdc/cdc_device.h"
 #include "class/midi/midi_device.h"
 #include "class/msc/msc_device.h"
 #include "class/vendor/vendor_device.h"
 #include "class/net/net_device.h"
-#define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 1
+#define ESP_USB_DEVICE_HAS_TINYUSB 1
 #if __has_include("esp_mac.h")
 #include "esp_mac.h"
 #define ESP_USB_DEVICE_HAS_ESP_MAC 1
@@ -38,13 +40,13 @@
 #define ESP_USB_DEVICE_HAS_ESP_MAC 0
 #endif
 #else
-#define ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB 0
+#define ESP_USB_DEVICE_HAS_TINYUSB 0
 #define ESP_USB_DEVICE_HAS_ESP_MAC 0
 #endif
 
 // esp_netif / lwIP integration for the NCM class (EspUsbDeviceNet::beginNetwork()).
 // Optional: only referenced when the sketch actually calls beginNetwork().
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB && __has_include("esp_netif.h")
+#if ESP_USB_DEVICE_HAS_TINYUSB && __has_include("esp_netif.h")
 #include "esp_netif.h"
 #include "esp_netif_defaults.h"
 #include "esp_event.h"
@@ -55,21 +57,13 @@
 #define ESP_USB_DEVICE_HAS_ESP_NETIF 0
 #endif
 
-// The USB Audio class (EspUsbDeviceAudio) is implemented in EspUsbDeviceAudio.cpp.
-// This macro only gates the device-level orchestration below (single-audio-class
-// exclusivity and USB.begin()); it does not reference the audio implementation.
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB && defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
-#include "USB.h"
-#define ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO 1
-#else
-#define ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO 0
-#endif
-
 static constexpr uint8_t USB_DESC_DEVICE = 0x01;
 static constexpr uint8_t USB_DESC_CONFIGURATION = 0x02;
 static constexpr uint8_t USB_DESC_STRING = 0x03;
 static constexpr uint8_t USB_DESC_INTERFACE = 0x04;
 static constexpr uint8_t USB_DESC_ENDPOINT = 0x05;
+static constexpr uint8_t USB_DESC_BOS = 0x0f;
+static constexpr uint8_t USB_DESC_DEVICE_CAPABILITY = 0x10;
 static constexpr uint8_t USB_DESC_HID = 0x21;
 
 static constexpr uint8_t USB_CLASS_HID = 0x03;
@@ -104,6 +98,46 @@ static uint8_t powerToDescriptor(uint16_t milliamps)
     units = 250;
   }
   return static_cast<uint8_t>(units);
+}
+
+static uint16_t writeHidConfigurationDescriptor(uint8_t *dst,
+                                                uint8_t interfaceNumber,
+                                                uint8_t endpointNumber,
+                                                uint16_t endpointSize,
+                                                uint8_t subclass,
+                                                uint8_t protocol,
+                                                uint16_t reportDescriptorLength,
+                                                bool hasOutEndpoint)
+{
+  using espusb::internal::DescriptorBuildContext;
+  using espusb::internal::HidFunctionConfig;
+  using espusb::internal::HidFunctionLayout;
+  using espusb::internal::UsbSpeed;
+  using espusb::internal::writeHidFunction;
+
+  if (dst == nullptr || endpointNumber == 0 || endpointNumber > 15 ||
+      endpointSize == 0 || reportDescriptorLength == 0)
+  {
+    return 0;
+  }
+
+  const size_t capacity = hasOutEndpoint ? 32U : 25U;
+  espusb::internal::DescriptorBuffer buffer(dst, capacity);
+  DescriptorBuildContext context(UsbSpeed::Full, buffer);
+  HidFunctionLayout layout;
+  layout.interfaceNumber = interfaceNumber;
+  layout.endpoint.out = endpointNumber;
+  layout.endpoint.in = static_cast<uint8_t>(0x80U | endpointNumber);
+  HidFunctionConfig config;
+  config.subclass = subclass;
+  config.protocol = protocol;
+  config.reportDescriptorLength = reportDescriptorLength;
+  config.fullSpeedPacketSize = endpointSize;
+  config.highSpeedPacketSize = endpointSize;
+  config.hasOutEndpoint = hasOutEndpoint;
+  return writeHidFunction(context, layout, config)
+             ? static_cast<uint16_t>(buffer.size())
+             : 0;
 }
 
 static constexpr uint8_t KEYBOARD_REPORT_DESCRIPTOR[] = {
@@ -295,180 +329,58 @@ static constexpr uint8_t SYSTEM_CONTROL_REPORT_DESCRIPTOR[] = {
     0xc0,             // End Collection
 };
 
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
-static uint16_t espUsbDeviceLoadHidDescriptor(uint8_t *dst, uint8_t *itf)
-{
-  if (!g_activeDevice)
-  {
-    return 0;
-  }
-  const uint8_t *config = g_activeDevice->configurationDescriptor(0);
-  if (!config)
-  {
-    return 0;
-  }
-  const uint16_t totalLength = static_cast<uint16_t>(config[2]) | (static_cast<uint16_t>(config[3]) << 8);
-  if (totalLength < 9)
-  {
-    return 0;
-  }
-  // Copy ONLY the HID interface slice, not the whole config body. configDescriptor_
-  // may also contain a trailing bulk Vendor interface, which the core enables
-  // separately via espUsbDeviceLoadVendorDescriptor; copying it here too would
-  // duplicate the Vendor interface (and its endpoints/number). See buildDescriptors().
-  const uint16_t interfaceLength = g_activeDevice->hidInterfacesLength();
-  if (interfaceLength == 0 || static_cast<uint16_t>(interfaceLength + 9) > totalLength)
-  {
-    return 0;
-  }
-  memcpy(dst, config + 9, interfaceLength);
-  // The HID interface number is baked as 0 in configDescriptor_, but the
-  // Arduino-ESP32 core assigns interface numbers dynamically in load order
-  // (MSC/DFU precede HID in the interface enum). Renumber the HID interface
-  // to the core-assigned slot (*itf) so it does not collide with an interface
-  // loaded before it (e.g. MSC becomes interface 0, HID becomes interface 1).
-  // dst[2] is the first interface descriptor's bInterfaceNumber.
-  if (interfaceLength >= 3 && dst[1] == USB_DESC_INTERFACE)
-  {
-    dst[2] = *itf;
-  }
-  // Advance by the HID interface count only (not config[4], which also counts
-  // the separately-enabled Vendor interface), so the Vendor interface gets its
-  // own correct, non-overlapping interface number.
-  *itf = static_cast<uint8_t>(*itf + g_activeDevice->hidInterfaceCount());
-  return interfaceLength;
-}
-
-static uint16_t espUsbDeviceLoadCdcDescriptor(uint8_t *dst, uint8_t *itf)
-{
-  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice CDC");
-  static constexpr uint16_t CDC_NOTIFICATION_ENDPOINT_SIZE = 8;
-  static constexpr uint16_t CDC_DATA_ENDPOINT_SIZE = 64;
-  uint8_t descriptor[] = {
-      TUD_CDC_DESCRIPTOR(*itf, strIndex, 0x85, CDC_NOTIFICATION_ENDPOINT_SIZE, 0x03, 0x84, CDC_DATA_ENDPOINT_SIZE),
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  *itf = static_cast<uint8_t>(*itf + 2);
-  return sizeof(descriptor);
-}
-
-static uint16_t espUsbDeviceLoadMidiDescriptor(uint8_t *dst, uint8_t *itf)
-{
-  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice MIDI");
-  const uint8_t epIn = tinyusb_get_free_in_endpoint();
-  const uint8_t epOut = tinyusb_get_free_out_endpoint();
-  if (epIn == 0 || epOut == 0)
-  {
-    return 0;
-  }
-  static constexpr uint16_t MIDI_ENDPOINT_SIZE = 64;
-  uint8_t descriptor[] = {
-      TUD_MIDI_DESCRIPTOR(*itf, strIndex, epOut, static_cast<uint8_t>(0x80 | epIn), MIDI_ENDPOINT_SIZE),
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  *itf = static_cast<uint8_t>(*itf + 2);
-  return sizeof(descriptor);
-}
-
-static uint16_t espUsbDeviceLoadMscDescriptor(uint8_t *dst, uint8_t *itf)
-{
-  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice MSC");
-  const uint8_t epNum = tinyusb_get_free_duplex_endpoint();
-  if (epNum == 0)
-  {
-    return 0;
-  }
-  static constexpr uint16_t MSC_ENDPOINT_SIZE = 64;
-  uint8_t descriptor[] = {
-      TUD_MSC_DESCRIPTOR(*itf, strIndex, epNum, static_cast<uint8_t>(0x80 | epNum), MSC_ENDPOINT_SIZE),
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  *itf = static_cast<uint8_t>(*itf + 1);
-  return sizeof(descriptor);
-}
-
-static uint16_t espUsbDeviceLoadVendorDescriptor(uint8_t *dst, uint8_t *itf)
-{
-  if (!g_activeVendor)
-  {
-    return 0;
-  }
-  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice Vendor");
-  const uint8_t epNum = tinyusb_get_free_duplex_endpoint();
-  if (epNum == 0)
-  {
-    return 0;
-  }
-  const uint16_t endpointSize = g_activeVendor->endpointSize();
-  uint8_t descriptor[] = {
-      TUD_VENDOR_DESCRIPTOR(*itf, strIndex, epNum, static_cast<uint8_t>(0x80 | epNum), endpointSize),
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  *itf = static_cast<uint8_t>(*itf + 1);
-  return sizeof(descriptor);
-}
-
-// The 6-byte MAC address the TinyUSB net class reports to the host. Defined here
-// (the class references it as `extern`). It seeds a fixed locally-administered
-// fallback, but unless the sketch calls EspUsbDeviceNet::macAddress() the
-// descriptor loader replaces it with this chip's per-device Ethernet MAC
-// (esp_read_mac / ESP_MAC_ETH) so two identical boards on one host do not clash.
 uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6a, 0x96, 0x00};
-
-// Set true once the sketch calls macAddress(), which pins the MAC and suppresses
-// the automatic per-chip ESP_MAC_ETH derivation below.
 static bool g_netMacUserSet = false;
-
-// Holds the iMACAddress string (12 upper-hex chars, no separators) that the NCM
-// descriptor points at. tinyusb_add_string_descriptor() stores the pointer (it
-// does not copy), so this must have static lifetime.
 static char g_netMacString[13] = {};
+static uint8_t g_webUsbUrlDescriptor[128] = {};
 
-static uint16_t espUsbDeviceLoadNetDescriptor(uint8_t *dst, uint8_t *itf)
+static constexpr uint8_t WEBUSB_BOS_DESCRIPTOR[] = {
+    5, USB_DESC_BOS, 29, 0, 1,
+    24, USB_DESC_DEVICE_CAPABILITY, 0x05, 0x00,
+    0x38, 0xb6, 0x08, 0x34, 0xa9, 0x09, 0xa0, 0x47,
+    0x8b, 0xfd, 0xa0, 0x76, 0x88, 0x15, 0xb6, 0x65,
+    0x00, 0x01, 0x01, 0x01,
+};
+
+#if ESP_USB_DEVICE_HAS_TINYUSB
+extern "C" uint8_t const *tud_descriptor_device_cb(void)
 {
-  if (!g_activeNet)
-  {
-    return 0;
-  }
-  const uint8_t strIndex = tinyusb_add_string_descriptor("EspUsbDevice NCM");
-#if ESP_USB_DEVICE_HAS_ESP_MAC
-  // Give each chip a unique NIC MAC by default. ESP_MAC_ETH is derived from the
-  // eFuse base MAC and is guaranteed distinct from the Wi-Fi STA/AP and BT MACs,
-  // so enabling Wi-Fi alongside NCM never collides with our own interface.
-  if (!g_netMacUserSet)
-  {
-    esp_read_mac(tud_network_mac_address, ESP_MAC_ETH);
-  }
-#endif
-  static const char *hex = "0123456789ABCDEF";
-  for (int i = 0; i < 6; i++)
-  {
-    g_netMacString[i * 2] = hex[(tud_network_mac_address[i] >> 4) & 0x0f];
-    g_netMacString[i * 2 + 1] = hex[tud_network_mac_address[i] & 0x0f];
-  }
-  g_netMacString[12] = '\0';
-  const uint8_t macStrIndex = tinyusb_add_string_descriptor(g_netMacString);
+  return g_activeDevice ? g_activeDevice->deviceDescriptor() : nullptr;
+}
 
-  // NCM needs one interrupt-IN notification endpoint plus a bulk IN/OUT pair.
-  const uint8_t epNotif = tinyusb_get_free_in_endpoint();
-  const uint8_t epIn = tinyusb_get_free_in_endpoint();
-  const uint8_t epOut = tinyusb_get_free_out_endpoint();
-  if (epNotif == 0 || epIn == 0 || epOut == 0)
+extern "C" uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
+{
+  return g_activeDevice
+             ? g_activeDevice->configurationDescriptorForSpeed(
+                   index, tud_speed_get() == TUSB_SPEED_HIGH)
+             : nullptr;
+}
+
+extern "C" uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
+{
+  return g_activeDevice ? g_activeDevice->stringDescriptor(index, langid) : nullptr;
+}
+
+extern "C" uint8_t const *tud_descriptor_bos_cb(void)
+{
+  if (!g_activeDevice || !g_activeDevice->config().webusbEnabled)
   {
-    return 0;
+    return nullptr;
   }
-  static constexpr uint16_t NET_ENDPOINT_SIZE = 64;
-  static constexpr uint16_t NET_NOTIF_SIZE = 64;
-  static constexpr uint16_t NET_MAX_SEGMENT_SIZE = 1514;
-  uint8_t descriptor[] = {
-      TUD_CDC_NCM_DESCRIPTOR(*itf, strIndex, macStrIndex,
-                             static_cast<uint8_t>(0x80 | epNotif), NET_NOTIF_SIZE,
-                             epOut, static_cast<uint8_t>(0x80 | epIn), NET_ENDPOINT_SIZE,
-                             NET_MAX_SEGMENT_SIZE, 16, 0),
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  *itf = static_cast<uint8_t>(*itf + 2);
-  return sizeof(descriptor);
+  return WEBUSB_BOS_DESCRIPTOR;
+}
+
+extern "C" uint8_t const *tud_descriptor_device_qualifier_cb(void)
+{
+  return g_activeDevice ? g_activeDevice->deviceQualifierDescriptor() : nullptr;
+}
+
+extern "C" uint8_t const *tud_descriptor_other_speed_configuration_cb(uint8_t index)
+{
+  return g_activeDevice
+             ? g_activeDevice->otherSpeedConfigurationDescriptor(
+                   index, tud_speed_get() == TUSB_SPEED_HIGH)
+             : nullptr;
 }
 
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
@@ -618,8 +530,47 @@ void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize)
   }
 }
 
-extern "C" bool tinyusb_vendor_control_request_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
+extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
 {
+  if (g_activeDevice && request && request->bRequest == 0x01 &&
+      g_activeDevice->config().webusbEnabled)
+  {
+    if (stage != CONTROL_STAGE_SETUP)
+    {
+      return true;
+    }
+    const char *url = g_activeDevice->config().webusbUrl;
+    if (!url)
+    {
+      return false;
+    }
+    uint8_t scheme = 0xff;
+    if (strncmp(url, "https://", 8) == 0)
+    {
+      scheme = 1;
+      url += 8;
+    }
+    else if (strncmp(url, "http://", 7) == 0)
+    {
+      scheme = 0;
+      url += 7;
+    }
+    else
+    {
+      scheme = 1;
+    }
+    size_t length = strlen(url);
+    if (length > sizeof(g_webUsbUrlDescriptor) - 3)
+    {
+      length = sizeof(g_webUsbUrlDescriptor) - 3;
+    }
+    g_webUsbUrlDescriptor[0] = static_cast<uint8_t>(length + 3);
+    g_webUsbUrlDescriptor[1] = 0x03;
+    g_webUsbUrlDescriptor[2] = scheme;
+    memcpy(&g_webUsbUrlDescriptor[3], url, length);
+    return tud_control_xfer(rhport, request, g_webUsbUrlDescriptor,
+                            g_webUsbUrlDescriptor[0]);
+  }
   return g_activeVendor ? g_activeVendor->handleControlRequest(rhport, stage, request) : false;
 }
 
@@ -678,162 +629,87 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
   {
     return false;
   }
+  size_t begunClassCount = 0;
   for (size_t i = 0; i < classCount_; i++)
   {
     if (classes_[i] && !classes_[i]->begin())
     {
+      classes_[i]->end();
+      while (begunClassCount > 0)
+      {
+        --begunClassCount;
+        classes_[begunClassCount]->end();
+      }
       setLastError(ESP_FAIL);
       return false;
     }
+    ++begunClassCount;
   }
   if (config_.startTinyUsb && classCount_ > 0)
   {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
-    if (hasAudioClass())
-    {
-#if ESP_USB_DEVICE_HAS_ARDUINO_USB_AUDIO
-      if (classCount_ != 1 || hasHidClass() || hasCdcClass() || hasMidiClass() || hasMscClass() || hasVendorClass())
-      {
-        setLastError(ESP_ERR_NOT_SUPPORTED);
-        return false;
-      }
-      for (size_t i = 0; i < classCount_; i++)
-      {
-        if (classes_[i] && !classes_[i]->afterDeviceStarted())
-        {
-          setLastError(ESP_FAIL);
-          return false;
-        }
-      }
-      if (!USB.begin())
-      {
-        setLastError(ESP_FAIL);
-        return false;
-      }
-      tinyusbStarted_ = true;
-      running_ = true;
-      ready_ = true;
-      setLastError(ESP_OK);
-      return true;
-#else
-      setLastError(ESP_ERR_NOT_SUPPORTED);
-      return false;
-#endif
-    }
-
+#if ESP_USB_DEVICE_HAS_TINYUSB
     if (g_activeDevice && g_activeDevice != this)
     {
+      while (begunClassCount > 0)
+      {
+        --begunClassCount;
+        classes_[begunClassCount]->end();
+      }
       setLastError(ESP_ERR_INVALID_STATE);
       return false;
     }
     g_activeDevice = this;
 
-    esp_err_t err = ESP_OK;
-    if (hasHidClass())
+    espusb::internal::TinyUsbRuntimeOptions runtimeOptions;
+    switch (config_.controller)
     {
-      // Build descriptors first so hidInterfacesLength_ is populated, then
-      // reserve only the HID interface slice (not any trailing Vendor interface,
-      // which is enabled separately below).
-      (void)configurationDescriptor(0);
-      const uint16_t interfaceLength = hidInterfacesLength_;
-      // reserve_endpoints=true registers the HID endpoint (EP1, duplex) in the
-      // Arduino-ESP32 core endpoint bitmask, so dynamically-allocated classes
-      // (MSC / MIDI / Vendor via tinyusb_get_free_*) skip it instead of
-      // colliding. Our HID descriptor uses a single duplex endpoint on EP1
-      // (OUT=0x01 / IN=0x81) to match what the core reserves. See
-      // docs/DESIGN_NOTES.ja.md "複合時の endpoint 採番衝突".
-      err = tinyusb_enable_interface2(USB_INTERFACE_HID, interfaceLength, espUsbDeviceLoadHidDescriptor, true);
-      if (err != ESP_OK)
-      {
-        setLastError(err);
-        return false;
-      }
-    }
-    if (hasCdcClass())
-    {
-      err = tinyusb_enable_interface(USB_INTERFACE_CDC, TUD_CDC_DESC_LEN, espUsbDeviceLoadCdcDescriptor);
-      if (err != ESP_OK)
-      {
-        setLastError(err);
-        return false;
-      }
-    }
-    if (hasMidiClass())
-    {
-      err = tinyusb_enable_interface(USB_INTERFACE_MIDI, TUD_MIDI_DESC_LEN, espUsbDeviceLoadMidiDescriptor);
-      if (err != ESP_OK)
-      {
-        setLastError(err);
-        return false;
-      }
-    }
-    if (hasMscClass())
-    {
-      err = tinyusb_enable_interface(USB_INTERFACE_MSC, TUD_MSC_DESC_LEN, espUsbDeviceLoadMscDescriptor);
-      if (err != ESP_OK)
-      {
-        setLastError(err);
-        return false;
-      }
-    }
-    if (hasVendorClass())
-    {
-      err = tinyusb_enable_interface(USB_INTERFACE_VENDOR, TUD_VENDOR_DESC_LEN, espUsbDeviceLoadVendorDescriptor);
-      if (err != ESP_OK)
-      {
-        setLastError(err);
-        return false;
-      }
-    }
-    if (hasNetClass())
-    {
-      // No dedicated NET interface enum in the core; register the CDC-NCM
-      // descriptors through the CUSTOM slot. TinyUSB's built-in netd driver
-      // claims them at enumeration.
-      err = tinyusb_enable_interface(USB_INTERFACE_CUSTOM, TUD_CDC_NCM_DESC_LEN, espUsbDeviceLoadNetDescriptor);
-      if (err != ESP_OK)
-      {
-        setLastError(err);
-        return false;
-      }
+    case EspUsbController::FullSpeed:
+      runtimeOptions.controller = espusb::internal::UsbController::FullSpeed;
+      break;
+    case EspUsbController::HighSpeed:
+      runtimeOptions.controller = espusb::internal::UsbController::HighSpeed;
+      break;
+    case EspUsbController::Auto:
+    default:
+      runtimeOptions.controller = espusb::internal::UsbController::Auto;
+      break;
     }
 
-    tinyusb_device_config_t tinyusbConfig = {
-        .vid = config_.vid,
-        .pid = config_.pid,
-        .product_name = config_.product,
-        .manufacturer_name = config_.manufacturer,
-        .serial_number = config_.serialNumber,
-        .fw_version = 0x0100,
-        .usb_version = 0x0200,
-        .usb_class = static_cast<uint8_t>(hasAudioClass() ? 0xef : 0x00),
-        .usb_subclass = static_cast<uint8_t>(hasAudioClass() ? 0x02 : 0x00),
-        .usb_protocol = static_cast<uint8_t>(hasAudioClass() ? 0x01 : 0x00),
-        .usb_attributes = static_cast<uint8_t>(0x80 | (config_.selfPowered ? 0x40 : 0x00)),
-        .usb_power_ma = config_.maxPowerMilliamps,
-        .webusb_enabled = config_.webusbEnabled,
-        .webusb_url = config_.webusbUrl,
-    };
-
-    err = tinyusb_init(&tinyusbConfig);
-    if (err == ESP_OK)
-    {
-      for (size_t i = 0; i < classCount_; i++)
-      {
-        if (classes_[i] && !classes_[i]->afterDeviceStarted())
-        {
-          setLastError(ESP_FAIL);
-          return false;
-        }
-      }
-    }
+    const esp_err_t err = espusb::internal::startTinyUsbRuntime(runtimeOptions);
     if (err != ESP_OK)
     {
+      g_activeDevice = nullptr;
+      while (begunClassCount > 0)
+      {
+        --begunClassCount;
+        classes_[begunClassCount]->end();
+      }
       setLastError(err);
       return false;
     }
     tinyusbStarted_ = true;
+    for (size_t i = 0; i < classCount_; i++)
+    {
+      if (classes_[i] && !classes_[i]->afterDeviceStarted())
+      {
+        espusb::internal::stopTinyUsbRuntime();
+        tinyusbStarted_ = false;
+        g_activeDevice = nullptr;
+        while (begunClassCount > 0)
+        {
+          --begunClassCount;
+          classes_[begunClassCount]->end();
+        }
+        setLastError(ESP_FAIL);
+        return false;
+      }
+    }
 #else
+    while (begunClassCount > 0)
+    {
+      --begunClassCount;
+      classes_[begunClassCount]->end();
+    }
     setLastError(ESP_ERR_NOT_SUPPORTED);
     return false;
 #endif
@@ -847,6 +723,27 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
 
 void EspUsbDevice::end()
 {
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (tinyusbStarted_)
+  {
+    espusb::internal::stopTinyUsbRuntime();
+    tinyusbStarted_ = false;
+  }
+#endif
+  if (running_)
+  {
+    for (size_t i = classCount_; i > 0; --i)
+    {
+      if (classes_[i - 1])
+      {
+        classes_[i - 1]->end();
+      }
+    }
+  }
+  if (g_activeDevice == this)
+  {
+    g_activeDevice = nullptr;
+  }
   running_ = false;
   ready_ = false;
 }
@@ -857,7 +754,7 @@ void EspUsbDevice::task()
 
 bool EspUsbDevice::ready() const
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   if (tinyusbStarted_)
   {
     return tud_mounted();
@@ -912,10 +809,31 @@ bool EspUsbDevice::addClass(EspUsbDeviceClass *deviceClass)
   return true;
 }
 
+void EspUsbDevice::removeClass(EspUsbDeviceClass *deviceClass)
+{
+  for (size_t i = 0; i < classCount_; ++i)
+  {
+    if (classes_[i] != deviceClass)
+    {
+      continue;
+    }
+    for (size_t j = i + 1; j < classCount_; ++j)
+    {
+      classes_[j - 1] = classes_[j];
+      if (classes_[j - 1])
+      {
+        classes_[j - 1]->hidInstance_ = static_cast<uint8_t>(j - 1);
+      }
+    }
+    classes_[--classCount_] = nullptr;
+    return;
+  }
+}
+
 bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs)
 {
   (void)timeoutMs;
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   if (!tinyusbStarted_)
   {
     setLastError(ESP_ERR_INVALID_STATE);
@@ -952,12 +870,54 @@ const uint8_t *EspUsbDevice::deviceDescriptor()
 
 const uint8_t *EspUsbDevice::configurationDescriptor(uint8_t index)
 {
+  return configurationDescriptorForSpeed(index, false);
+}
+
+const uint8_t *EspUsbDevice::configurationDescriptorForSpeed(uint8_t index, bool highSpeed)
+{
   if (index != 0)
   {
     return nullptr;
   }
+  if (!buildDescriptors())
+  {
+    return nullptr;
+  }
+  return highSpeed ? configDescriptorHighSpeed_ : configDescriptor_;
+}
+
+const uint8_t *EspUsbDevice::deviceQualifierDescriptor()
+{
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (config_.controller == EspUsbController::FullSpeed)
+  {
+    return nullptr;
+  }
   buildDescriptors();
-  return configDescriptor_;
+  return deviceQualifierDescriptor_;
+#else
+  return nullptr;
+#endif
+}
+
+const uint8_t *EspUsbDevice::otherSpeedConfigurationDescriptor(uint8_t index, bool currentHighSpeed)
+{
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (index != 0 || config_.controller == EspUsbController::FullSpeed ||
+      !buildDescriptors())
+  {
+    return nullptr;
+  }
+  const uint8_t *source =
+      currentHighSpeed ? configDescriptor_ : configDescriptorHighSpeed_;
+  memcpy(otherSpeedDescriptor_, source, configDescriptorLength_);
+  otherSpeedDescriptor_[1] = 0x07;
+  return otherSpeedDescriptor_;
+#else
+  (void)index;
+  (void)currentHighSpeed;
+  return nullptr;
+#endif
 }
 
 uint16_t EspUsbDevice::hidInterfacesLength() const
@@ -993,6 +953,10 @@ const uint16_t *EspUsbDevice::stringDescriptor(uint8_t index, uint16_t langid)
   else if (index == 3)
   {
     value = config_.serialNumber;
+  }
+  else if (index == 4 && g_activeNet)
+  {
+    value = g_netMacString;
   }
   if (!value)
   {
@@ -1092,7 +1056,7 @@ bool EspUsbDevice::buildDescriptors()
   }
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isVendor())
+    if (classes_[i] && !classes_[i]->isHid())
     {
       interfaceCount += classes_[i]->interfaceCount();
     }
@@ -1101,7 +1065,7 @@ bool EspUsbDevice::buildDescriptors()
   memset(deviceDescriptor_, 0, sizeof(deviceDescriptor_));
   deviceDescriptor_[0] = 18;
   deviceDescriptor_[1] = USB_DESC_DEVICE;
-  put16(&deviceDescriptor_[2], 0x0200);
+  put16(&deviceDescriptor_[2], config_.webusbEnabled ? 0x0201 : 0x0200);
   deviceDescriptor_[4] = 0x00;
   deviceDescriptor_[5] = 0x00;
   deviceDescriptor_[6] = 0x00;
@@ -1165,19 +1129,22 @@ bool EspUsbDevice::buildDescriptors()
       hidReportDescriptorLength_ += srcLen - 6;
     }
 
-    // Single duplex endpoint on EP1 (OUT=0x01 / IN=0x81) so it matches the
-    // core's reserved HID endpoint and never collides with dynamically
-    // allocated classes.
-    const uint8_t epOut = endpointNumber;
-    const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
-    uint8_t descriptor[] = {
-        9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_HID, 0x00, 0x00, 0,
-        9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(hidReportDescriptorLength_ & 0xff), static_cast<uint8_t>((hidReportDescriptorLength_ >> 8) & 0xff),
-        7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
-        7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
-    };
-    memcpy(&configDescriptor_[offset], descriptor, sizeof(descriptor));
-    offset += sizeof(descriptor);
+    // Single duplex endpoint on EP1 (OUT=0x01 / IN=0x81).
+    const uint16_t written = writeHidConfigurationDescriptor(
+        &configDescriptor_[offset],
+        interfaceNumber,
+        endpointNumber,
+        endpointSize,
+        0,
+        0,
+        hidReportDescriptorLength_,
+        true);
+    if (written == 0)
+    {
+      setLastError(ESP_FAIL);
+      return false;
+    }
+    offset += written;
     interfaceNumber += 1;
     endpointNumber += 1;
   }
@@ -1200,20 +1167,41 @@ bool EspUsbDevice::buildDescriptors()
       }
     }
   }
-  // Everything written so far is HID (composite merged interface or a single
-  // HID class). Record its extent so the composite HID loader copies only this
-  // slice and does not also emit the trailing Vendor interface (which the core
-  // enables separately) — otherwise the Vendor interface is duplicated.
+  // Everything written so far is HID; keep the extent for descriptor tests and
+  // report-instance bookkeeping.
   hidInterfacesLength_ = static_cast<uint16_t>(offset - 9);
   hidInterfaceCount_ = interfaceNumber;
+  EspUsbDeviceClass *audioClass = nullptr;
+  uint16_t audioOffset = 0;
+  uint16_t audioLength = 0;
+  uint8_t audioInterfaceNumber = 0;
+  uint8_t audioEndpointNumber = 0;
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (!classes_[i] || !classes_[i]->isVendor())
+    if (!classes_[i] || classes_[i]->isHid())
     {
       continue;
     }
-    uint16_t written = classes_[i]->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, 64);
+    const uint16_t classOffset = offset;
+    const uint8_t classInterface = interfaceNumber;
+    const uint8_t classEndpoint = endpointNumber;
+    uint16_t written = classes_[i]->configurationDescriptorForSpeed(
+        &configDescriptor_[offset], MAX_CONFIG_DESCRIPTOR - offset,
+        interfaceNumber, endpointNumber, false);
+    if (written == 0)
+    {
+      setLastError(ESP_FAIL);
+      return false;
+    }
     offset += written;
+    if (classes_[i]->isAudio())
+    {
+      audioClass = classes_[i];
+      audioOffset = classOffset;
+      audioLength = written;
+      audioInterfaceNumber = classInterface;
+      audioEndpointNumber = classEndpoint;
+    }
     interfaceNumber += classes_[i]->interfaceCount();
     endpointNumber += classes_[i]->endpointCount();
     if (offset > MAX_CONFIG_DESCRIPTOR)
@@ -1224,6 +1212,51 @@ bool EspUsbDevice::buildDescriptors()
   }
   configDescriptorLength_ = offset;
   put16(&configDescriptor_[2], configDescriptorLength_);
+
+  memcpy(configDescriptorHighSpeed_, configDescriptor_, configDescriptorLength_);
+  for (uint16_t descriptorOffset = 0;
+       descriptorOffset + 1 < configDescriptorLength_;)
+  {
+    const uint8_t descriptorLength =
+        configDescriptorHighSpeed_[descriptorOffset];
+    if (descriptorLength < 2 ||
+        descriptorOffset + descriptorLength > configDescriptorLength_)
+    {
+      setLastError(ESP_FAIL);
+      return false;
+    }
+    if (configDescriptorHighSpeed_[descriptorOffset + 1] == USB_DESC_ENDPOINT &&
+        descriptorLength >= 7 &&
+        (configDescriptorHighSpeed_[descriptorOffset + 3] & 0x03) ==
+            USB_ENDPOINT_ATTR_BULK)
+    {
+      put16(&configDescriptorHighSpeed_[descriptorOffset + 4], 512);
+    }
+    descriptorOffset = static_cast<uint16_t>(descriptorOffset + descriptorLength);
+  }
+  if (audioClass)
+  {
+    const uint16_t highSpeedAudioLength =
+        audioClass->configurationDescriptorForSpeed(
+            &configDescriptorHighSpeed_[audioOffset],
+            MAX_CONFIG_DESCRIPTOR - audioOffset, audioInterfaceNumber,
+            audioEndpointNumber, true);
+    if (highSpeedAudioLength != audioLength)
+    {
+      setLastError(ESP_FAIL);
+      return false;
+    }
+  }
+
+  memset(deviceQualifierDescriptor_, 0, sizeof(deviceQualifierDescriptor_));
+  deviceQualifierDescriptor_[0] = sizeof(deviceQualifierDescriptor_);
+  deviceQualifierDescriptor_[1] = 0x06;
+  put16(&deviceQualifierDescriptor_[2], config_.webusbEnabled ? 0x0201 : 0x0200);
+  deviceQualifierDescriptor_[4] = deviceDescriptor_[4];
+  deviceQualifierDescriptor_[5] = deviceDescriptor_[5];
+  deviceQualifierDescriptor_[6] = deviceDescriptor_[6];
+  deviceQualifierDescriptor_[7] = deviceDescriptor_[7];
+  deviceQualifierDescriptor_[8] = 1;
   setLastError(ESP_OK);
   return true;
 }
@@ -1357,8 +1390,18 @@ EspUsbDeviceClass::EspUsbDeviceClass(EspUsbDevice &device) : device_(device)
   device_.addClass(this);
 }
 
+EspUsbDeviceClass::~EspUsbDeviceClass()
+{
+  device_.removeClass(this);
+}
+
 EspUsbDeviceCdcSerial::EspUsbDeviceCdcSerial(EspUsbDevice &device) : EspUsbDeviceClass(device)
 {
+}
+
+EspUsbDeviceCdcSerial::~EspUsbDeviceCdcSerial()
+{
+  end();
 }
 
 bool EspUsbDeviceCdcSerial::begin()
@@ -1376,18 +1419,34 @@ bool EspUsbDeviceCdcSerial::afterDeviceStarted()
   return true;
 }
 
+void EspUsbDeviceCdcSerial::end()
+{
+  if (g_activeCdcSerial == this)
+  {
+    g_activeCdcSerial = nullptr;
+  }
+}
+
 uint16_t EspUsbDeviceCdcSerial::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  (void)dst;
-  (void)interfaceNumber;
-  (void)endpointNumber;
-  (void)endpointSize;
-  return 0;
+  if (!dst || endpointNumber > 13)
+  {
+    return 0;
+  }
+  const uint8_t epNotification = static_cast<uint8_t>(0x80 | endpointNumber);
+  const uint8_t epOut = static_cast<uint8_t>(endpointNumber + 1);
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber + 2);
+  const uint8_t descriptor[] = {
+      TUD_CDC_DESCRIPTOR(interfaceNumber, 0, epNotification, 8,
+                         epOut, epIn, endpointSize),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
 }
 
 int EspUsbDeviceCdcSerial::available()
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return static_cast<int>(tud_cdc_n_available(0));
 #else
   return 0;
@@ -1406,7 +1465,7 @@ size_t EspUsbDeviceCdcSerial::read(uint8_t *buffer, size_t size)
   {
     return 0;
   }
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return tud_cdc_n_read(0, buffer, static_cast<uint32_t>(size));
 #else
   return 0;
@@ -1424,7 +1483,7 @@ size_t EspUsbDeviceCdcSerial::write(const uint8_t *buffer, size_t size)
   {
     return 0;
   }
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   if (!tud_cdc_n_ready(0))
   {
     return 0;
@@ -1439,14 +1498,14 @@ size_t EspUsbDeviceCdcSerial::write(const uint8_t *buffer, size_t size)
 
 void EspUsbDeviceCdcSerial::flush()
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   tud_cdc_n_write_flush(0);
 #endif
 }
 
 bool EspUsbDeviceCdcSerial::connected() const
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return tud_cdc_n_connected(0);
 #else
   return false;
@@ -1515,9 +1574,11 @@ EspUsbDeviceVendor::EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSi
 
 EspUsbDeviceVendor::~EspUsbDeviceVendor()
 {
-  // TinyUSB callbacks use this singleton to reach the active Vendor instance.
-  // Do not leave it pointing at an object that has gone out of scope; doing so
-  // also prevents a later EspUsbDeviceVendor instance from being started.
+  end();
+}
+
+void EspUsbDeviceVendor::end()
+{
   if (g_activeVendor == this)
   {
     g_activeVendor = nullptr;
@@ -1550,7 +1611,7 @@ uint16_t EspUsbDeviceVendor::configurationDescriptor(uint8_t *dst, uint8_t inter
 
 bool EspUsbDeviceVendor::mounted() const
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return tud_vendor_n_mounted(0);
 #else
   return false;
@@ -1559,7 +1620,7 @@ bool EspUsbDeviceVendor::mounted() const
 
 int EspUsbDeviceVendor::available()
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return static_cast<int>(tud_vendor_n_available(0));
 #else
   return 0;
@@ -1578,7 +1639,7 @@ size_t EspUsbDeviceVendor::read(uint8_t *buffer, size_t size)
   {
     return 0;
   }
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return tud_vendor_n_read(0, buffer, static_cast<uint32_t>(size));
 #else
   return 0;
@@ -1596,7 +1657,7 @@ size_t EspUsbDeviceVendor::write(const uint8_t *buffer, size_t size)
   {
     return 0;
   }
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   if (!mounted())
   {
     return 0;
@@ -1614,7 +1675,7 @@ size_t EspUsbDeviceVendor::write(const uint8_t *buffer, size_t size)
 
 void EspUsbDeviceVendor::flush()
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   tud_vendor_n_write_flush(0);
 #endif
 }
@@ -1631,7 +1692,7 @@ void EspUsbDeviceVendor::onControlRequest(ControlRequestCallback callback)
 
 bool EspUsbDeviceVendor::sendControlResponse(const EspUsbDeviceVendorControlRequest &request, const void *data, size_t length)
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   const tusb_control_request_t *raw = static_cast<const tusb_control_request_t *>(request.rawRequest);
   if (!raw)
   {
@@ -1665,7 +1726,7 @@ void EspUsbDeviceVendor::handleRx()
 
 bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, const void *request)
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   const tusb_control_request_t *raw = static_cast<const tusb_control_request_t *>(request);
   if (!raw || !controlRequestCallback_)
   {
@@ -1689,7 +1750,7 @@ bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, con
 #endif
 }
 
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
 // Shared TX path used by both the sendFrame() raw API and the esp_netif transmit
 // callback. `tud_network_xmit` only *records* the ref/len; the actual copy runs
 // later in the usbd task via handleXmit() (tud_network_xmit_cb). So we:
@@ -1777,22 +1838,16 @@ EspUsbDeviceNet::EspUsbDeviceNet(EspUsbDevice &device) : EspUsbDeviceClass(devic
 
 EspUsbDeviceNet::~EspUsbDeviceNet()
 {
-  // The USB stack keeps running after this object is gone. Clear the global
-  // first so tud_network_* callbacks (which may fire from the usbd/tcpip tasks)
-  // no-op instead of dereferencing freed memory, then tear down the netif.
-  if (g_activeNet == this)
-  {
-    g_activeNet = nullptr;
+  end();
 #if ESP_USB_DEVICE_HAS_ESP_NETIF
-    if (netif_)
-    {
-      esp_netif_destroy(static_cast<esp_netif_t *>(netif_));
-      netif_ = nullptr;
-      g_netDriverBase.netif = nullptr;
-    }
-#endif
-    netStarted_ = false;
+  if (netif_)
+  {
+    esp_netif_destroy(static_cast<esp_netif_t *>(netif_));
+    netif_ = nullptr;
+    g_netDriverBase.netif = nullptr;
   }
+#endif
+  netStarted_ = false;
 }
 
 bool EspUsbDeviceNet::begin()
@@ -1807,27 +1862,62 @@ bool EspUsbDeviceNet::begin()
 
 bool EspUsbDeviceNet::afterDeviceStarted()
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   // Bring the network link up so the host starts exchanging frames.
   tud_network_link_state(0, true);
 #endif
   return true;
 }
 
+void EspUsbDeviceNet::end()
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (g_activeNet == this)
+  {
+    tud_network_link_state(0, false);
+  }
+#endif
+  if (g_activeNet == this)
+  {
+    g_activeNet = nullptr;
+  }
+}
+
 uint16_t EspUsbDeviceNet::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  // NCM is emitted by espUsbDeviceLoadNetDescriptor through the CUSTOM slot,
-  // not through configDescriptor_ (like CDC/MSC/MIDI).
-  (void)dst;
-  (void)interfaceNumber;
-  (void)endpointNumber;
-  (void)endpointSize;
-  return 0;
+  if (!dst || endpointNumber > 13)
+  {
+    return 0;
+  }
+#if ESP_USB_DEVICE_HAS_ESP_MAC
+  if (!g_netMacUserSet)
+  {
+    esp_read_mac(tud_network_mac_address, ESP_MAC_ETH);
+  }
+#endif
+  static const char hex[] = "0123456789ABCDEF";
+  for (size_t i = 0; i < 6; ++i)
+  {
+    g_netMacString[i * 2] = hex[tud_network_mac_address[i] >> 4];
+    g_netMacString[i * 2 + 1] = hex[tud_network_mac_address[i] & 0x0f];
+  }
+  g_netMacString[12] = '\0';
+
+  const uint8_t epNotification = static_cast<uint8_t>(0x80 | endpointNumber);
+  const uint8_t epOut = static_cast<uint8_t>(endpointNumber + 1);
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber + 2);
+  const uint8_t descriptor[] = {
+      TUD_CDC_NCM_DESCRIPTOR(interfaceNumber, 0, 4,
+                             epNotification, 64, epOut, epIn, endpointSize,
+                             1514, 16, 0),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
 }
 
 void EspUsbDeviceNet::macAddress(const uint8_t mac[6])
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   memcpy(tud_network_mac_address, mac, 6);
   g_netMacUserSet = true;
 #else
@@ -1837,7 +1927,7 @@ void EspUsbDeviceNet::macAddress(const uint8_t mac[6])
 
 const uint8_t *EspUsbDeviceNet::macAddress() const
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return tud_network_mac_address;
 #else
   return nullptr;
@@ -1851,10 +1941,9 @@ void EspUsbDeviceNet::onFrame(FrameCallback callback)
 
 bool EspUsbDeviceNet::linkUp() const
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   // Reflect the actual USB attach/detach state rather than latching true after
-  // the first configuration. (The Arduino core owns tud_mount_cb/tud_umount_cb,
-  // so we query the mount state directly instead of hooking those callbacks.)
+  // the first configuration.
   return tud_mounted();
 #else
   return false;
@@ -1863,7 +1952,7 @@ bool EspUsbDeviceNet::linkUp() const
 
 bool EspUsbDeviceNet::sendFrame(const uint8_t *data, size_t length)
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   if (length == 0 || length > 0xffff)
   {
     return false;
@@ -1883,7 +1972,7 @@ bool EspUsbDeviceNet::sendFrame(const uint8_t *data, size_t length)
 
 bool EspUsbDeviceNet::handleRecv(const uint8_t *src, uint16_t size)
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
 #if ESP_USB_DEVICE_HAS_ESP_NETIF
   if (netStarted_ && netif_ && src && size)
   {
@@ -1922,7 +2011,7 @@ uint16_t EspUsbDeviceNet::handleXmit(uint8_t *dst, void *ref, uint16_t arg)
     return 0;
   }
   memcpy(dst, ref, arg);
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   // Unblock espUsbDeviceNetTxFrame(): the frame has been copied out.
   if (g_netTxDone)
   {
@@ -2141,6 +2230,11 @@ EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device) : EspUsbDeviceClass(dev
 {
 }
 
+EspUsbDeviceMidi::~EspUsbDeviceMidi()
+{
+  end();
+}
+
 bool EspUsbDeviceMidi::begin()
 {
   if (g_activeMidi && g_activeMidi != this)
@@ -2151,18 +2245,32 @@ bool EspUsbDeviceMidi::begin()
   return true;
 }
 
+void EspUsbDeviceMidi::end()
+{
+  if (g_activeMidi == this)
+  {
+    g_activeMidi = nullptr;
+  }
+}
+
 uint16_t EspUsbDeviceMidi::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  (void)dst;
-  (void)interfaceNumber;
-  (void)endpointNumber;
-  (void)endpointSize;
-  return 0;
+  if (!dst || endpointNumber > 14)
+  {
+    return 0;
+  }
+  const uint8_t epOut = endpointNumber;
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber + 1);
+  const uint8_t descriptor[] = {
+      TUD_MIDI_DESCRIPTOR(interfaceNumber, 0, epOut, epIn, endpointSize),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
 }
 
 bool EspUsbDeviceMidi::readPacket(EspUsbDeviceMidiPacket &packet)
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return tud_midi_packet_read(reinterpret_cast<uint8_t *>(&packet));
 #else
   (void)packet;
@@ -2172,7 +2280,7 @@ bool EspUsbDeviceMidi::readPacket(EspUsbDeviceMidiPacket &packet)
 
 bool EspUsbDeviceMidi::writePacket(const EspUsbDeviceMidiPacket &packet)
 {
-#if ESP_USB_DEVICE_HAS_ARDUINO_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB
   return tud_midi_packet_write(reinterpret_cast<const uint8_t *>(&packet));
 #else
   (void)packet;
@@ -2249,14 +2357,23 @@ EspUsbDeviceMsc::EspUsbDeviceMsc(EspUsbDevice &device) : EspUsbDeviceClass(devic
 {
 }
 
+EspUsbDeviceMsc::~EspUsbDeviceMsc()
+{
+  end();
+}
+
 bool EspUsbDeviceMsc::begin()
 {
+  if (blockCount_ == 0 || blockSize_ == 0 || !readCallback_ || !writeCallback_)
+  {
+    return false;
+  }
   if (g_activeMsc && g_activeMsc != this)
   {
     return false;
   }
   g_activeMsc = this;
-  return blockCount_ > 0 && blockSize_ > 0 && readCallback_ && writeCallback_;
+  return true;
 }
 
 bool EspUsbDeviceMsc::begin(uint32_t blockCount, uint16_t blockSize)
@@ -2266,13 +2383,27 @@ bool EspUsbDeviceMsc::begin(uint32_t blockCount, uint16_t blockSize)
   return blockCount_ > 0 && blockSize_ > 0 && readCallback_ && writeCallback_;
 }
 
+void EspUsbDeviceMsc::end()
+{
+  if (g_activeMsc == this)
+  {
+    g_activeMsc = nullptr;
+  }
+}
+
 uint16_t EspUsbDeviceMsc::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  (void)dst;
-  (void)interfaceNumber;
-  (void)endpointNumber;
-  (void)endpointSize;
-  return 0;
+  if (!dst || endpointNumber > 14)
+  {
+    return 0;
+  }
+  const uint8_t epOut = endpointNumber;
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber + 1);
+  const uint8_t descriptor[] = {
+      TUD_MSC_DESCRIPTOR(interfaceNumber, 0, epOut, epIn, endpointSize),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
 }
 
 void EspUsbDeviceMsc::vendorID(const char *value)
@@ -3166,10 +3297,6 @@ uint8_t EspUsbDeviceHidKeyboard::protocol() const
 
 uint16_t EspUsbDeviceHidKeyboard::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  // Duplex endpoint on EP1 (OUT=0x01 / IN=0x81); see the composite HID path
-  // and docs/DESIGN_NOTES.ja.md "複合時の endpoint 採番衝突".
-  const uint8_t epOut = endpointNumber;
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   // NKRO needs a packet big enough for its bitmap report; honour that over the
   // caller-supplied default when set.
   const uint16_t hint = hidInEndpointSize();
@@ -3177,15 +3304,14 @@ uint16_t EspUsbDeviceHidKeyboard::configurationDescriptor(uint8_t *dst, uint8_t 
   {
     endpointSize = hint;
   }
-  const uint16_t reportLen = hidReportDescriptorLength();
-  uint8_t descriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_HID, USB_SUBCLASS_BOOT, USB_PROTOCOL_KEYBOARD, 0,
-      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
-      7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
+  return writeHidConfigurationDescriptor(dst,
+                                         interfaceNumber,
+                                         endpointNumber,
+                                         endpointSize,
+                                         USB_SUBCLASS_BOOT,
+                                         USB_PROTOCOL_KEYBOARD,
+                                         hidReportDescriptorLength(),
+                                         true);
 }
 
 const uint8_t *EspUsbDeviceHidKeyboard::hidReportDescriptor() const
@@ -3488,15 +3614,14 @@ uint8_t EspUsbDeviceHidMouse::buttons() const
 
 uint16_t EspUsbDeviceHidMouse::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
-  const uint16_t reportLen = hidReportDescriptorLength();
-  uint8_t descriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, USB_SUBCLASS_BOOT, USB_PROTOCOL_MOUSE, 0,
-      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
+  return writeHidConfigurationDescriptor(dst,
+                                         interfaceNumber,
+                                         endpointNumber,
+                                         endpointSize,
+                                         USB_SUBCLASS_BOOT,
+                                         USB_PROTOCOL_MOUSE,
+                                         hidReportDescriptorLength(),
+                                         false);
 }
 
 const uint8_t *EspUsbDeviceHidMouse::hidReportDescriptor() const
@@ -3530,15 +3655,15 @@ bool EspUsbDeviceHidCustom::sendReport(const void *data, size_t length, uint8_t 
 
 uint16_t EspUsbDeviceHidCustom::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint16_t mps = inputReportSize_ < endpointSize ? inputReportSize_ : endpointSize;
-  uint8_t descriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, 0x00, 0x00, 0,
-      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportDescriptorLength_ & 0xff), static_cast<uint8_t>((reportDescriptorLength_ >> 8) & 0xff),
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(mps & 0xff), static_cast<uint8_t>((mps >> 8) & 0xff), 1,
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
+  return writeHidConfigurationDescriptor(dst,
+                                         interfaceNumber,
+                                         endpointNumber,
+                                         mps,
+                                         0,
+                                         0,
+                                         reportDescriptorLength_,
+                                         false);
 }
 
 const uint8_t *EspUsbDeviceHidCustom::hidReportDescriptor() const
@@ -3586,10 +3711,6 @@ void EspUsbDeviceHidVendor::onFeatureReport(ReportCallback callback)
 
 uint16_t EspUsbDeviceHidVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  // Duplex endpoint on EP1 (OUT=0x01 / IN=0x81); see the composite HID path
-  // and docs/DESIGN_NOTES.ja.md "複合時の endpoint 採番衝突".
-  const uint8_t epOut = endpointNumber;
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   uint16_t mps = static_cast<uint16_t>(reportSize_ + 1);
   if (mps < endpointSize)
   {
@@ -3599,15 +3720,14 @@ uint16_t EspUsbDeviceHidVendor::configurationDescriptor(uint8_t *dst, uint8_t in
   {
     mps = 64;
   }
-  const uint16_t reportLen = hidReportDescriptorLength();
-  uint8_t descriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_HID, 0x00, 0x00, 0,
-      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
-      7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(mps & 0xff), static_cast<uint8_t>((mps >> 8) & 0xff), 1,
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(mps & 0xff), static_cast<uint8_t>((mps >> 8) & 0xff), 1,
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
+  return writeHidConfigurationDescriptor(dst,
+                                         interfaceNumber,
+                                         endpointNumber,
+                                         mps,
+                                         0,
+                                         0,
+                                         hidReportDescriptorLength(),
+                                         true);
 }
 
 const uint8_t *EspUsbDeviceHidVendor::hidReportDescriptor() const
@@ -3694,16 +3814,15 @@ bool EspUsbDeviceHidGamepad::releaseAll(uint32_t timeoutMs)
 
 uint16_t EspUsbDeviceHidGamepad::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint16_t mps = endpointSize < 12 ? 12 : endpointSize;
-  const uint16_t reportLen = hidReportDescriptorLength();
-  uint8_t descriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, 0x00, 0x00, 0,
-      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(mps & 0xff), static_cast<uint8_t>((mps >> 8) & 0xff), 1,
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
+  return writeHidConfigurationDescriptor(dst,
+                                         interfaceNumber,
+                                         endpointNumber,
+                                         mps,
+                                         0,
+                                         0,
+                                         hidReportDescriptorLength(),
+                                         false);
 }
 
 const uint8_t *EspUsbDeviceHidGamepad::hidReportDescriptor() const
@@ -3762,15 +3881,14 @@ uint16_t EspUsbDeviceHidConsumerControl::usage() const
 
 uint16_t EspUsbDeviceHidConsumerControl::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
-  const uint16_t reportLen = hidReportDescriptorLength();
-  uint8_t descriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, 0x00, 0x00, 0,
-      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
+  return writeHidConfigurationDescriptor(dst,
+                                         interfaceNumber,
+                                         endpointNumber,
+                                         endpointSize,
+                                         0,
+                                         0,
+                                         hidReportDescriptorLength(),
+                                         false);
 }
 
 const uint8_t *EspUsbDeviceHidConsumerControl::hidReportDescriptor() const
@@ -3825,15 +3943,14 @@ uint8_t EspUsbDeviceHidSystemControl::usage() const
 
 uint16_t EspUsbDeviceHidSystemControl::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
-  const uint16_t reportLen = hidReportDescriptorLength();
-  uint8_t descriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 1, USB_CLASS_HID, 0x00, 0x00, 0,
-      9, USB_DESC_HID, 0x11, 0x01, 0x00, 1, 0x22, static_cast<uint8_t>(reportLen & 0xff), static_cast<uint8_t>((reportLen >> 8) & 0xff),
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_INTERRUPT, static_cast<uint8_t>(endpointSize & 0xff), static_cast<uint8_t>((endpointSize >> 8) & 0xff), 1,
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
+  return writeHidConfigurationDescriptor(dst,
+                                         interfaceNumber,
+                                         endpointNumber,
+                                         endpointSize,
+                                         0,
+                                         0,
+                                         hidReportDescriptorLength(),
+                                         false);
 }
 
 const uint8_t *EspUsbDeviceHidSystemControl::hidReportDescriptor() const

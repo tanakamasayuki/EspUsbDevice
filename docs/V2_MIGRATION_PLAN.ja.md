@@ -27,6 +27,43 @@ v1 maintenance branchはbuild可能な状態を維持する。v2をdefault branc
 旧経路を同居させると、強い/弱いTinyUSB symbol、PHY所有権、descriptor callbackのどれを
 使っているか判定できなくなる。そのため「classごとのfallback」も行わない。
 
+### 公開APIの方針
+
+既存APIの維持自体を目標にしない。同じAPIが新設計でも最も単純で自然な場合は維持するが、
+互換性のためにownershipの曖昧さ、特例、重複した状態、二重APIを持ち込まない。
+
+判断の優先順位:
+
+1. USB function、stream、bufferのownershipが明確
+2. lifecycleとerrorが一貫している
+3. callback contextとbuffer lifetimeが明確
+4. class間で同じ概念に同じAPIを使う
+5. 最小の型とmethodで基本機能を表現できる
+6. そのうえで既存APIと同じ形なら維持する
+
+維持できる可能性が高いもの:
+
+- CDCの`available()`、`read()`、`write()`というStream的操作
+- MIDIのpacket/message操作
+- MSCのblock read/writeという抽象
+- HIDのraw report送受信
+- Vendorのbulk/control transfer
+
+再検討するもの:
+
+- class objectをconstructorだけで暗黙登録する方式
+- `begin()`がdevice/classの両方に存在する現在のlifecycle
+- singleton/global callback dispatch
+- callbackとpolling APIの重複
+- classごとに異なるevent/error表現
+- NCMのUSB functionとnetwork serviceを1 classに持たせる構造
+- HID convenience classの粒度
+- Audio API全体
+- WebUSB / Microsoft OS capability設定
+
+破壊的変更を行う場合は、単なるrenameではなく、削除できる状態・特例・誤用が具体的にあることを
+設計記録へ残す。旧名alias、deprecated wrapper、互換shimは原則作らない。
+
 ### 依存の境界
 
 v2で残すplatform dependency:
@@ -167,13 +204,13 @@ Gate 1:
 
 作業:
 
-- 使用するTinyUSB release/commitを固定する。
-- source、license、provenance manifestを追加する。
-- ライブラリ所有の`tu_config.h`を追加する。
-- device classのcompile-time上限をv2 APIの上限と一致させる。
-- ESP32 S2/S3/P4 DWC2 driverに必要なsourceだけをbuildする。
-- DMA/cache alignment設定をtarget別に定義する。
-- upstream更新用の検証scriptを追加する。
+- [x] 使用するTinyUSB release/commitを固定する。
+- [x] source、license、provenance manifestを追加する。
+- [x] ライブラリ所有の`tusb_config.h`を追加する。
+- [x] device classのcompile-time上限をv2 APIの上限と一致させる。
+- [x] ESP32 S2/S3/P4 DWC2 driverに必要なsourceだけをbuildする。
+- [x] DMA/cache alignment設定をtarget別に定義する。
+- [x] upstream更新用の検証scriptを追加する。
 
 リンク検査:
 
@@ -183,9 +220,9 @@ Gate 1:
 
 Gate 2:
 
-- S3/P4のcompile smokeが通る。
-- TinyUSB sourceのlicense/provenanceがrelease packageに含まれる。
-- Arduino core同梱TinyUSBの設定を変えてもv2側の`CFG_TUD_*`が変化しない。
+- [x] S3/P4のcompile smokeが通る。
+- [x] TinyUSB sourceのlicense/provenanceがrelease packageに含まれる。
+- [x] Arduino core同梱TinyUSBの設定を変えてもv2側の`CFG_TUD_*`が変化しない。
 
 ### Phase 3: FS runtimeをS3で立ち上げる
 
@@ -254,11 +291,11 @@ Gate 4:
 
 作業:
 
-- `EspUsbController::{Auto, FullSpeed, HighSpeed}`を公開する。
-- FullSpeedをrhport 0、HighSpeedをrhport 1へmapする。
-- controllerと一致するPHYを確保する。
-- negotiated speedでconfiguration callbackを切り替える。
-- qualifier/other-speed requestを実装する。
+- [x] `EspUsbController::{Auto, FullSpeed, HighSpeed}`を公開する。
+- [x] FullSpeedをrhport 0、HighSpeedをrhport 1へmapする。
+- [x] controllerと一致するPHYを確保する。
+- [x] negotiated speedでconfiguration callbackを切り替える。
+- [x] qualifier/other-speed requestを実装する。
 - P4のcache sync、DMA alignment、endpoint/FIFO上限を検証する。
 
 注意:
@@ -282,12 +319,12 @@ Gate 5:
 
 実装順:
 
-1. Audio format/bandwidth validator
-2. Audio entity/stream graph
-3. UAC2 descriptor writer
-4. UAC2 class request
-5. playback data plane
-6. capture data plane
+1. [x] Audio format/bandwidth validator
+2. [x] Audio entity/stream graph
+3. [x] UAC2 descriptor writer
+4. [x] UAC2 class request
+5. [x] playback data plane（polling API、実転送Gate待ち）
+6. [x] capture data plane（polling API、実転送Gate待ち）
 7. duplex/headset
 8. UAC1 descriptorとclass request
 9. 複数alternate setting / sample rate
@@ -467,13 +504,14 @@ Gate 8:
 
 ## 実装開始前のチェックリスト
 
-- [ ] この移行計画のフェーズ分割と順序を承認
-- [ ] v2初期対応coreを3.3.11に固定することを承認
-- [ ] TinyUSB source snapshotを同梱することを承認
-- [ ] v1互換shimを作らないことを承認
-- [ ] Audio v2初期上限を承認
+- [x] この移行計画のフェーズ分割と順序を承認
+- [x] v2初期対応coreを3.3.11に固定する
+- [x] TinyUSB source snapshotを同梱する
+- [x] 既存APIは自然な場合だけ維持し、単純化を優先する
+- [x] Audioのv1互換shimを作らない
+- [x] Audio v2初期上限を承認
 - [x] Espressif由来Audio sourceを削除し独立実装する
 - [x] v2移行中の一時的なcompile failureを許容する
-- [ ] Phase 0の実機baselineを取得できるboard構成を確認
+- [x] Phase 0の実機baselineを取得できるboard構成を確認
 
 承認後の最初の作業はPhase 0であり、runtimeや公開APIの変更ではない。
