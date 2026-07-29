@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Reduce the `MSCFatRamDisk` example from a 96 KiB to a 64 KiB FAT12 image so it links within ESP32-S2 internal DRAM alongside the library-owned TinyUSB class buffers. The CONFIG.TXT copy/eject/read workflow is unchanged.
+- (JA) `MSCFatRamDisk` exampleのFAT12 imageを96 KiBから64 KiBへ縮小し、library所有のTinyUSB class bufferと合わせてもESP32-S2の内部DRAMに収まるようにしました。CONFIG.TXTのcopy/eject/read手順は変わりません。
 - (EN) Guard the current DWC2 transfer model with compile-time tests: Device DMA must remain disabled and CPU-driven slave/FIFO mode enabled on S2, S3, and P4. Enabling Device DMA now requires an intentional test update and cache-coherency audit instead of silently exposing cached P4 buffers to a new DMA path.
 - (JA) 現在のDWC2転送modelをcompile-time testで固定しました。S2/S3/P4でDevice DMAを無効、CPU駆動のslave/FIFO modeを有効のまま必須とします。Device DMAを有効化する場合はtestの意図的な更新とcache coherency監査が必要になり、P4のcached bufferを新しいDMA経路へ暗黙に晒しません。
 - (EN) Add an optional P4-to-PC High-Speed manual test with a dedicated raw Vendor bulk echo sketch and PyUSB host checker. It verifies an actual HS link, 512-byte active bulk endpoints, Device Qualifier, 64-byte Other-Speed bulk endpoints, and configurable sustained byte-for-byte echo without adding hardware-dependent work to the default pytest suite.
