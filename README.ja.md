@@ -19,7 +19,10 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 | --- | --- |
 | ESP32-S2 / ESP32-S3 / ESP32-P4 | 3.3.9 |
 
-これより古いコアは非対応です（3.3.8 以前はビルドに失敗します）。ライブラリ各バージョンのコア別ビルド結果は [`docs/`](docs/) に `COMPATIBILITY.<version>.md` として公開しています。
+これより古いCoreは公式対応外です。ライブラリ各versionのCore別build結果は
+[`docs/`](docs/)に`COMPATIBILITY.<version>.md`として公開し、現在のworktreeを
+実行したdraftは固定名`COMPATIBILITY.WORKTREE.md`を使用します。
+自動matrixは3.3.0以降を観測しますが、3.3.9未満の結果は参考情報であり、公式対応を意味しません。
 
 ## ライブラリ所有のTinyUSB stack
 

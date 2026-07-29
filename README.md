@@ -20,7 +20,12 @@ Minimum Arduino-ESP32 core (board package) version:
 | --- | --- |
 | ESP32-S2 / ESP32-S3 / ESP32-P4 | 3.3.9 |
 
-Older cores are not supported: 3.3.8 and earlier fail to build. Per-library-version build results across core versions are published under [`docs/`](docs/) as `COMPATIBILITY.<version>.md`.
+Older cores are not officially supported. Per-library-version build results
+across core versions are published under [`docs/`](docs/) as
+`COMPATIBILITY.<version>.md`; current-worktree runs use the stable draft name
+`COMPATIBILITY.WORKTREE.md`.
+The automatic matrix observes releases from 3.3.0 onward, but results below
+3.3.9 are informational and do not indicate official support.
 
 ## Library-owned TinyUSB stack
 
