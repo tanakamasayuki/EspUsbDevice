@@ -146,10 +146,13 @@ TinyUSB callback 内では次だけを行う。
 「FS = UAC1」「HS = UAC2」という分岐は行わない。UAC version はhost互換性の選択、
 bus speed はbandwidth/MPS/intervalの選択であり、別の軸である。
 
-初期公開APIはUAC2固定とし、実装されていないUAC1 selectorは公開しない。同じUAC2
-Audio functionはFS/HSの両descriptorで同じtopologyを公開する。formatが選択した
-controllerのbandwidthに収まらない場合は`begin()`を失敗させる。将来UAC1を追加する
-場合も、bus speedによる暗黙切替ではなく明示的な別実装として追加する。
+初期prototypeはUAC2だけを実装し、未実装のUAC1 selectorは公開しない。最終公開形では
+互換性を優先してUAC1をdefault、UAC2を明示選択とする。UAC versionは音質modeではなく、
+descriptor/control/clock modelとhost互換性の選択として扱う。
+
+同じAudio functionはFS/HSの両descriptorで選択したprotocol/topologyを公開する。
+formatがcontrollerのbandwidthに収まらない場合は`begin()`を失敗させる。
+bus speedによるUAC1/UAC2の暗黙切替は行わない。
 
 ### topology
 

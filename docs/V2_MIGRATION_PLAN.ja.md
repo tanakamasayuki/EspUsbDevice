@@ -328,7 +328,7 @@ Gate 5:
 7. [x] control/stream state event queue（固定長、polling、drop count）
 8. [x] FIFO clear lifecycleとoverrun/underrun counter
 9. [x] duplex/headset（Device firmwareとdescriptor、実転送Gate待ち）
-10. UAC1 descriptorとclass request（初期v2公開範囲外）
+10. UAC1 descriptorとclass request（Audio後段。完成時はdefault）
 11. 複数alternate setting / sample rate
 12. Audio + 他classのcomposite
 
@@ -370,7 +370,9 @@ Gate 6A (UAC2):
 
 Gate 6B (UAC1):
 
-- 初期v2ではUAC1を公開しない。
+- UAC1実装が完成するまでは未実装selectorを公開しない。
+- 最終公開APIはUAC1をdefault、UAC2を明示選択とする。
+- UAC versionとcontroller/link speedを独立に選び、速度による暗黙切替は行わない。
 - 将来追加する場合は、未実装selectorを先に公開せず、descriptor/class requestと
   streaming testを同時に追加する。
 
