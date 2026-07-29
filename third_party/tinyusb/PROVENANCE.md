@@ -1,5 +1,7 @@
 # TinyUSB provenance
 
+[日本語](PROVENANCE.ja.md)
+
 EspUsbDevice v2 vendors a selected TinyUSB device-stack source snapshot so its
 USB configuration and runtime do not depend on Arduino-ESP32's prebuilt
 `libarduino_tinyusb`.
@@ -21,6 +23,13 @@ and P4 tool packages:
 ```text
 tinyusb: master 53f8c53c2
 ```
+
+The verification cache is downloaded from the canonical
+[`hathach/tinyusb`](https://github.com/hathach/tinyusb) repository.
+[`espressif/tinyusb`](https://github.com/espressif/tinyusb) is a fork of that
+repository and also contains this exact Git commit. Because the full commit SHA
+identifies the same Git tree in both repositories, the selected source contents
+are identical; the canonical upstream is used as the download origin.
 
 ## Initial build source set
 
