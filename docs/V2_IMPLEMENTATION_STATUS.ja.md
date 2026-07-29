@@ -46,7 +46,7 @@ other-speed configurationもライブラリ側から返す。
 ## 検証結果
 
 - host unit: `tinyusb_vendor`、`tinyusb_config`、`descriptor_model`、`keymap`、
-  `audio_model`の5件PASS。
+  `audio_model`、`dependency_boundary`の6 suiteをPASS。
 - descriptor/runtime実機unit: 265 checks PASS。TinyUSB task、PHY、callback registryを
   同一deviceで100回begin/endし、二重begin/endの冪等性を確認。HID開始後のCDC失敗を
   rollbackし、同じdevice instanceで再beginできることも含む。
@@ -58,6 +58,11 @@ other-speed configurationもライブラリ側から返す。
   UAC2実streamingは対応するHost実装の準備後の共同Peer Gateとする。
 - Audio + HID/CDC/Vendorのcomposite descriptor buildと`MAX_CLASSES`制約を
   `unit/composite_constraints`のS3実機testでPASS。
+- S3 UAC1 HID+Audio composite Peerは、HID/Audio両interfaceのclaim、endpoint重複なし、
+  keyboard入力、48 kHz mono PCM playbackを3/3 PASS。
+- host-only `unit/dependency_boundary`でArduino Core TinyUSB header/initializer/
+  descriptor loader/endpoint allocatorへの参照、旧Audio Card sourceの再追加、
+  first-party AudioのEspressif derivation noticeを自動監査。
 - Arduino compile: KeyboardをS2/S3/P4でPASS。
 - Arduino compile: 更新後のdescriptor suiteをS3/P4でPASS。
 - Arduino compile: Vendor/HID、CDC、MIDI、MSC、NCM、compositeをS3でPASS。
@@ -86,6 +91,6 @@ S3 Keyboard ELF/mapでは次を確認した。
 ## 次の作業
 
 1. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
-2. Audio + 他class compositeのtarget別descriptor容量とendpoint制約をPeerで確認。
+2. 必要に応じてUAC1 Audio + CDC/Vendor compositeのPeer coverageを追加。
 3. UAC2対応Hostの準備後、speaker、microphone、duplexの実streamingとcounterを
    共同Peer testで実測。

@@ -76,7 +76,8 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
-| Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
+| Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
+| Core dependency boundary | ✅ `dependency_boundary` | | | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
@@ -262,7 +263,7 @@ pairs does too).
 | 1 | HID + CDC | ✅ hardware OK (`composite_hid_cdc` 4/4) | library allocator, no duplicate address |
 | 3 | HID + MSC | ✅ hardware OK (`composite_hid_msc` 3/3) | MSC and HID each use one duplex number, `dup=0 claimok=1` |
 | 2,4-10 | other non-Audio pairs | ○ (subsumed by the maximal config) | one library-owned allocator, consistent numbering; covered by the triple below |
-| 11 | Audio + another function | △ target-dependent | Audio + HID/CDC/Vendor descriptor builds pass in `unit/composite_constraints`; a composite Audio Peer test remains |
+| 11 | Audio + another function | ✅ S3 UAC1 HID+Audio | `composite_hid_audio` verifies `dup=0`, all claims, keyboard input, and PCM playback; HID/CDC/Vendor descriptor builds pass in `unit/composite_constraints` |
 | — | HID + bulk Vendor | ✅ hardware OK (`composite_hid_vendor` 3/3) | fixed the descriptor duplication (HID blob no longer includes Vendor). `docs/DESIGN_NOTES.ja.md` |
 
 **S3 endpoint budget:** `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`. The IN
@@ -360,6 +361,8 @@ enumerating on real hardware.
 38. ✅ `peer/composite_hid_cdc_msc` (HID+CDC+MSC, the maximal config that fits)
 39. ✅ `peer/composite_cdc_msc_vendor` (non-HID triple, Vendor via `onRx`-driven RX)
 40. ✅ `peer/composite_hid_vendor` (HID + bulk Vendor, descriptor-duplication fix → 3/3)
+41. ✅ `peer/composite_hid_audio` (UAC1 Audio + HID, claimed together; keyboard + PCM → 3/3)
+42. ✅ `unit/dependency_boundary` (Arduino Core TinyUSB dependency and Audio provenance regression scan)
 
 ## Acceptance Rules
 
