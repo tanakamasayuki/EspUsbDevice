@@ -232,8 +232,9 @@ HID keyboard + CDC serial + MSC FAT RAM disk を 1 つの `EspUsbDevice` に載�
 - CDC で `type <text>` を送ると、その文字列を HID keyboard で入力します。
 - CDC notificationを含む非control IN 4本でESP32-S3の上限に達します。さらにIN endpointを
   追加する構成にはESP32-P4が必要です。
-- UAC2 Audioも同じcomposite descriptor builderを使います。実際に組み合わせられる
-  functionはconfiguration descriptor容量とtargetのendpoint予算に制約されます。
+- USB Audioも同じcomposite descriptor builderを使います。UAC1がdefaultで、
+  UAC2は明示選択です。実際に組み合わせられるfunctionはconfiguration descriptor容量と
+  targetのendpoint予算に制約されます。
 
 ## UsbNetwork
 

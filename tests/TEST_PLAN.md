@@ -74,7 +74,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | N/A (P4 audio is UAC2/HS; loopback is FS-only) | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` (P4 HS) |
+| USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
@@ -138,13 +138,11 @@ First additions:
 CDC ACM, MIDI, MSC, USBVendor, and Audio require matching Device classes.
 EspUsbDevice-based counterparts for `peer/usb_serial`, `peer/usb_midi`,
 `peer/usb_msc`, `peer/usb_vendor`, and `peer/usb_audio_speaker` are in place.
-Audio is automated through the speaker-sink peer test (S3, UAC1 / full speed).
-There is deliberately no P4 loopback audio test: on P4 this library's audio is
-UAC2 / high speed only (`TUD_OPT_HIGH_SPEED`), while one-board loopback is
-full-speed (single UTMI PHY held by the device), so the two are fundamentally
-incompatible. P4 audio (UAC2/HS) is therefore HS-only and validated by manual
-high-speed checks; a two-board P4 HS peer could add automated UAC2 coverage later.
-See `docs/DESIGN_NOTES.ja.md`. `peer/usb_audio_microphone` covers the USB Audio source
+Audio is automated through UAC1 peer tests on S3. UAC1 is the library default;
+UAC2 is an explicit protocol selection and its streaming validation remains
+deferred until a matching Host implementation is available. There is currently
+no one-board P4 loopback Audio test, but Audio is no longer tied implicitly to
+either P4 or high speed. `peer/usb_audio_microphone` covers the USB Audio source
 (microphone) direction: the device streams generated PCM and the host verifies
 device -> host reception (S3, UAC1). `peer/usb_audio_headset` covers both
 directions at once (speaker + microphone on one device). Long playback, real
@@ -263,7 +261,7 @@ pairs does too).
 | 1 | HID + CDC | ✅ hardware OK (`composite_hid_cdc` 4/4) | library allocator, no duplicate address |
 | 3 | HID + MSC | ✅ hardware OK (`composite_hid_msc` 3/3) | MSC and HID each use one duplex number, `dup=0 claimok=1` |
 | 2,4-10 | other non-Audio pairs | ○ (subsumed by the maximal config) | one library-owned allocator, consistent numbering; covered by the triple below |
-| 11 | Audio + another function | △ target-dependent | Audio + HID/CDC/Vendor descriptor builds pass in `unit/composite_constraints`; Peer enumeration remains after EspUsbHost UAC2 support |
+| 11 | Audio + another function | △ target-dependent | Audio + HID/CDC/Vendor descriptor builds pass in `unit/composite_constraints`; a composite Audio Peer test remains |
 | — | HID + bulk Vendor | ✅ hardware OK (`composite_hid_vendor` 3/3) | fixed the descriptor duplication (HID blob no longer includes Vendor). `docs/DESIGN_NOTES.ja.md` |
 
 **S3 endpoint budget:** `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`. The IN
@@ -352,7 +350,7 @@ enumerating on real hardware.
 29. ✅ `loopback/hid_system_control`
 30. ✅ `peer/usb_audio_speaker`
 31. ✅ `loopback/hid_keyboard_layout`
-32. (no `loopback/usb_audio`: P4 audio is UAC2/HS, loopback is FS-only)
+32. (no `loopback/usb_audio`: not implemented; UAC1 Audio is covered by Peer tests)
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
 35. ✅ `unit/composite_constraints` (Audio composite builds / MAX_CLASSES)

@@ -52,8 +52,9 @@ endpoints.
   the S3 IN limit. See
   [../../docs/DESIGN_NOTES.ja.md](../../docs/DESIGN_NOTES.ja.md) ("複合時の
   endpoint 予算の上限"). More endpoints are available on the ESP32-P4.
-- UAC2 Audio uses the same composite descriptor builder, subject to descriptor
-  capacity and the target's endpoint budget.
+- USB Audio uses the same composite descriptor builder. UAC1 is the default and
+  UAC2 is explicit; both are subject to descriptor capacity and the target's
+  endpoint budget.
 - USB CDC and the logging Serial monitor are separate paths.
 - This library is not designed to run together with Arduino's built-in USB
   device classes.

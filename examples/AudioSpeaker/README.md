@@ -1,7 +1,8 @@
 # AudioSpeaker
 
-This example exposes a UAC2 Playback function and reads host-to-device PCM from
-a bounded FIFO.
+This example exposes the default UAC1 Playback function and reads
+host-to-device PCM from a bounded FIFO. Pass `EspUsbAudioProtocol::Uac2` as the
+second `EspUsbAudioFunction` constructor argument when UAC2 is required.
 
 ```cpp
 EspUsbDevice device;
@@ -21,4 +22,5 @@ PCMFlow, or another application layer. `audio.pollEvent()` reports stream,
 mute, volume, and sample-rate changes without executing user code on the
 TinyUSB task. The library does not apply volume or mute DSP to PCM implicitly.
 
-Detailed streaming validation is deferred until EspUsbHost supports UAC2.
+UAC1 enumeration, streaming, mute, volume, and rapid control changes are
+covered by the S3 peer tests.

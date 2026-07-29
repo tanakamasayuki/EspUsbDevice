@@ -1,7 +1,9 @@
 # AudioSpeakerM5
 
-UAC2 `EspUsbAudioPlaybackStream`とPCMFlowDeviceの
+defaultのUAC1 `EspUsbAudioPlaybackStream`とPCMFlowDeviceの
 `M5SpeakerBufferedPlayer`を接続する例です。
+
+UAC2 Hostを使う場合は`EspUsbAudioProtocol::Uac2`を明示選択します。
 
 - USB format: 48 kHz / stereo / 16-bit PCM
 - `loop()`で`playback.read()`してPCMをコピー

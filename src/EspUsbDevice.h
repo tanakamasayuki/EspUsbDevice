@@ -27,6 +27,7 @@ typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_FAIL -1
 #define ESP_ERR_INVALID_STATE 0x103
+#define ESP_ERR_INVALID_SIZE 0x104
 #define ESP_ERR_NOT_SUPPORTED 0x106
 #endif
 
@@ -342,6 +343,8 @@ private:
   static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
 
   bool buildDescriptors();
+  bool validateControllerEndpoints(const uint8_t *descriptor,
+                                   uint16_t length);
   bool compositeHid() const;
   bool hasHidClass() const;
   bool hasCdcClass() const;
@@ -630,6 +633,12 @@ enum class EspUsbAudioDirection : uint8_t
   Capture,
 };
 
+enum class EspUsbAudioProtocol : uint8_t
+{
+  Uac1,
+  Uac2,
+};
+
 enum class EspUsbAudioEventType : uint8_t
 {
   SampleRateChanged,
@@ -722,9 +731,12 @@ private:
 class EspUsbAudioFunction : public EspUsbDeviceClass
 {
 public:
-  explicit EspUsbAudioFunction(EspUsbDevice &device);
+  explicit EspUsbAudioFunction(
+      EspUsbDevice &device,
+      EspUsbAudioProtocol protocol = EspUsbAudioProtocol::Uac1);
   ~EspUsbAudioFunction() override;
 
+  EspUsbAudioProtocol protocol() const { return protocol_; }
   EspUsbAudioPlaybackStream &addPlaybackStream();
   EspUsbAudioCaptureStream &addCaptureStream();
   bool hasPlaybackStream() const { return playbackEnabled_; }
@@ -745,6 +757,8 @@ public:
 
   bool handleGetEntityRequest(uint8_t rhport, const void *request);
   bool handleSetEntityRequest(const void *request, const uint8_t *data);
+  bool handleGetEndpointRequest(uint8_t rhport, const void *request);
+  bool handleSetEndpointRequest(const void *request, const uint8_t *data);
   bool handleSetInterface(const void *request);
   bool handlePlaybackTransfer(uint16_t bytes, uint8_t alternateSetting);
   bool handleCaptureTransfer(uint16_t bytes, uint8_t alternateSetting);
@@ -767,6 +781,7 @@ private:
 
   bool playbackEnabled_ = false;
   bool captureEnabled_ = false;
+  EspUsbAudioProtocol protocol_ = EspUsbAudioProtocol::Uac1;
   EspUsbAudioPlaybackStream playback_{*this};
   EspUsbAudioCaptureStream capture_{*this};
   espusb::internal::AudioFunctionModel model_;

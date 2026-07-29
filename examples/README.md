@@ -270,9 +270,9 @@ See [CompositeHidCdcMsc/README.md](CompositeHidCdcMsc/README.md) for details.
 - Send `type <text>` over the CDC port to type it on the HID keyboard.
 - Reaches the ESP32-S3 limit of four non-control IN endpoints (including CDC
   notification); adding another IN endpoint requires the ESP32-P4.
-- UAC2 Audio uses the same composite descriptor builder. The usable combination
-  is bounded by configuration-descriptor capacity and the target's endpoint
-  budget.
+- USB Audio uses the same composite descriptor builder. UAC1 is the default and
+  UAC2 is selected explicitly. The usable combination is bounded by
+  configuration-descriptor capacity and the target's endpoint budget.
 
 ## UsbNetwork
 

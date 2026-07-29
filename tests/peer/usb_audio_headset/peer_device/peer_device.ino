@@ -58,9 +58,11 @@ void loop()
       {
         captureEnabled = event.enabled;
       }
-      Serial.printf("AUDIO_INTERFACE target=%u enabled=%u alt=%u\n",
-                    static_cast<unsigned>(event.target),
-                    event.enabled ? 1 : 0, event.alternateSetting);
+      const char *target =
+          event.target == EspUsbAudioEventTarget::Playback ? "SPK" : "MIC";
+      Serial.printf("AUDIO_INTERFACE %s %u alt=%u\n",
+                    target, event.enabled ? 1 : 0,
+                    event.alternateSetting);
     }
   }
 

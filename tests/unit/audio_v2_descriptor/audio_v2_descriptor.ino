@@ -24,10 +24,78 @@ static uint16_t read16(const uint8_t *data)
          static_cast<uint16_t>(static_cast<uint16_t>(data[1]) << 8);
 }
 
-static void testPlayback()
+static void testDefaultUac1()
 {
   EspUsbDevice device;
   EspUsbAudioFunction audio(device);
+  auto &playback = audio.addPlaybackStream();
+  check(audio.protocol() == EspUsbAudioProtocol::Uac1,
+        "uac1_default_protocol");
+  check(playback.addFormat({48000, 1, 2, 16}), "uac1_format");
+
+  EspUsbDeviceConfig config;
+  config.startTinyUsb = false;
+  check(device.begin(config), "uac1_begin");
+
+  const uint8_t *descriptor = device.configurationDescriptor(0);
+  const uint16_t length = read16(descriptor + 2);
+  bool foundHeader = false;
+  bool foundFormat = false;
+  bool foundDataEndpoint = false;
+  bool foundFeedbackEndpoint = false;
+  for (uint16_t offset = 9;
+       offset + 2 <= length && descriptor[offset] >= 2;
+       offset = static_cast<uint16_t>(offset + descriptor[offset]))
+  {
+    const uint8_t descriptorLength = descriptor[offset];
+    const uint8_t descriptorType = descriptor[offset + 1];
+    if (offset + descriptorLength > length)
+    {
+      break;
+    }
+    if (descriptorType == 0x24 && descriptorLength >= 5 &&
+        descriptor[offset + 2] == 0x01 &&
+        read16(descriptor + offset + 3) == 0x0100)
+    {
+      foundHeader = true;
+    }
+    if (descriptorType == 0x24 && descriptorLength == 11 &&
+        descriptor[offset + 2] == 0x02 &&
+        descriptor[offset + 3] == 0x01)
+    {
+      const uint32_t rate =
+          static_cast<uint32_t>(descriptor[offset + 8]) |
+          (static_cast<uint32_t>(descriptor[offset + 9]) << 8) |
+          (static_cast<uint32_t>(descriptor[offset + 10]) << 16);
+      foundFormat = descriptor[offset + 4] == 1 &&
+                    descriptor[offset + 5] == 2 &&
+                    descriptor[offset + 6] == 16 &&
+                    descriptor[offset + 7] == 1 && rate == 48000;
+    }
+    if (descriptorType == 0x05 && descriptorLength == 9)
+    {
+      const uint8_t address = descriptor[offset + 2];
+      if ((address & 0x80) == 0)
+      {
+        foundDataEndpoint = descriptor[offset + 3] == 0x09;
+      }
+      else
+      {
+        foundFeedbackEndpoint = true;
+      }
+    }
+  }
+  check(foundHeader, "uac1_header");
+  check(foundFormat, "uac1_type_i_format");
+  check(foundDataEndpoint, "uac1_adaptive_data_endpoint");
+  check(!foundFeedbackEndpoint, "uac1_no_feedback_endpoint");
+  device.end();
+}
+
+static void testPlayback()
+{
+  EspUsbDevice device;
+  EspUsbAudioFunction audio(device, EspUsbAudioProtocol::Uac2);
   auto &playback = audio.addPlaybackStream();
   check(playback.addFormat({48000, 2, 2, 16}), "playback_format");
 
@@ -104,7 +172,7 @@ static void testPlayback()
 static void testCapture()
 {
   EspUsbDevice device;
-  EspUsbAudioFunction audio(device);
+  EspUsbAudioFunction audio(device, EspUsbAudioProtocol::Uac2);
   auto &capture = audio.addCaptureStream();
   check(capture.addFormat({48000, 1, 2, 16}), "capture_format");
 
@@ -128,7 +196,7 @@ static void testCapture()
 static void testDuplex()
 {
   EspUsbDevice device;
-  EspUsbAudioFunction audio(device);
+  EspUsbAudioFunction audio(device, EspUsbAudioProtocol::Uac2);
   auto &playback = audio.addPlaybackStream();
   auto &capture = audio.addCaptureStream();
   check(playback.addFormat({48000, 2, 2, 16}) &&
@@ -151,6 +219,7 @@ void setup()
   delay(5000);
 
   Serial.println("TEST_BEGIN audio_v2_descriptor");
+  testDefaultUac1();
   testPlayback();
   testCapture();
   testDuplex();

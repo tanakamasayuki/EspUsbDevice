@@ -131,7 +131,10 @@ SDK に HS Host では USB Hub が使えない制約がある場合、HS host �
 | Device | HS(UTMI) 固定 | 相手依存（FS host なら FS に落ちる） | core が P4 で決め打ち。ライブラリからは変更不可 |
 | Host | port で選択（FS=別 PHY / HS=UTMI） | port 依存 | 1台 loopback では FS 必須 |
 
-#### USB Audio への影響と決定（P4 Audio は HS 専用）
+#### USB Audio への影響と現在の決定
+
+> この節の前半は旧Arduino Core依存実装を調査した記録です。現在の
+> `EspUsbAudioFunction`はdescriptor構築をライブラリ内に持ち、下記の旧制約を解消しています。
 
 1台 loopback のリンクは FS だが、audio descriptor は**コンパイル時マクロ** `TUD_OPT_HIGH_SPEED`（P4 は 1）で
 UAC2 として生成される（[EspUsbDeviceAudio.cpp](../src/EspUsbDeviceAudio.cpp)）。UAC2 は実質 HS 向けで、`EspUsbHost` の audio
@@ -145,10 +148,11 @@ UAC2 として生成される（[EspUsbDeviceAudio.cpp](../src/EspUsbDeviceAudio
   **Audio は esp_tinyusb コンポーネントの `tusb_audio_load_descriptor`**）。組み上がったバッファは core の
   static で外から触れない。request 時に速度別再生成するには両サブシステムを自前で握る＝実質フォークが必要。
 
-**決定：P4 の Audio は UAC2 / HS 専用とする**（コード変更なし。すでにそう動作している）。S3 は FS/UAC1 で
-`peer/usb_audio_speaker` が自動カバー、P4 の UAC2/HS は実機 HS 手動確認でカバーする。1台 P4 loopback は FS 限定で
-Audio と噛み合わないため、**loopback の audio テストは置かない**（`tests/loopback/usb_audio` は削除）。
-将来 UAC2 を自動化したい場合は P4 2台の HS peer 構成で行う。
+**現在の決定：UAC versionとcontroller/link speedを分離する。** UAC1をdefault、
+UAC2をconstructorで明示選択し、targetや速度による暗黙切替は行わない。UAC1の
+speaker/microphone/duplexはS3 Peerで実転送まで自動確認する。UAC2 streamingは
+対応するHost実装が揃った後に確認する。1台P4のAudio loopback testは現在未実装だが、
+P4 AudioをUAC2/HSへ固定することは理由にしない。
 
 #### bulk エンドポイントサイズと HS 準拠（現状の既知制約）
 
@@ -645,10 +649,9 @@ MSC は実装量が大きいので、HID/CDC/MIDI の後に着手してよいで
 - `peer/usb_audio_speaker`
 - `peer/usb_audio_microphone`
 
-Audio speaker sink は最小実装と peer test（S3, UAC1/FS）まで追加済みです。P4 の Audio は UAC2/HS 専用で、
-1台 loopback（FS 限定）とは噛み合わないため **loopback の audio テストは置かない**方針に決定
-（上記「USB Audio への影響と決定」参照）。残作業は、P4 UAC2/HS の実機 HS 手動確認、M5 speaker 実音確認、
-microphone path、複合 Audio device の制約確認です。
+AudioはUAC1をdefault、UAC2を明示選択とし、speaker/microphone/duplexの
+Peer streaming（S3, UAC1/FS）まで追加済みです。残作業は、対応Hostを用いた
+UAC2 streaming、M5 speaker実音確認、複合Audio deviceのPeer確認です。
 
 ## テスト計画
 

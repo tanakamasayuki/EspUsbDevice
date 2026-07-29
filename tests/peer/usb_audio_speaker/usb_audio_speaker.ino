@@ -117,12 +117,12 @@ void loop()
       uint32_t count = 0;
       for (int sweep = 0; sweep < 6; sweep++)
       {
-        for (int16_t v = -12800; v <= 0; v = static_cast<int16_t>(v + 128))
+        for (int16_t v = -12800; v <= 0; v = static_cast<int16_t>(v + 256))
         {
           usb.audioSetVolume(v, audioAddress, 0, 0, 20);
           count++;
         }
-        for (int16_t v = 0; v >= -12800; v = static_cast<int16_t>(v - 128))
+        for (int16_t v = 0; v >= -12800; v = static_cast<int16_t>(v - 256))
         {
           usb.audioSetVolume(v, audioAddress, 0, 0, 20);
           count++;

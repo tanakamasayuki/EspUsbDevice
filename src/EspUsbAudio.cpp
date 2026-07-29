@@ -53,9 +53,13 @@ uint16_t correctAudioFifoOverflow(tu_fifo_t *fifo)
 
 } // namespace
 
-EspUsbAudioFunction::EspUsbAudioFunction(EspUsbDevice &device)
+EspUsbAudioFunction::EspUsbAudioFunction(EspUsbDevice &device,
+                                         EspUsbAudioProtocol protocol)
     : EspUsbDeviceClass(device),
-      model_(espusb::internal::AudioProtocol::Uac2)
+      protocol_(protocol),
+      model_(protocol == EspUsbAudioProtocol::Uac2
+                 ? espusb::internal::AudioProtocol::Uac2
+                 : espusb::internal::AudioProtocol::Uac1)
 {
 }
 
@@ -103,7 +107,7 @@ bool EspUsbAudioFunction::addFormat(
       direction == espusb::internal::AudioDirection::Playback
           ? model_.playback()
           : model_.capture();
-  // The initial UAC2 implementation emits one topology at both speeds.
+  // Both protocol writers currently emit one topology at both speeds.
   // Reject a format that cannot be represented on a negotiated FS link.
   return stream.addFormat(
       internalFormat, espusb::internal::UsbSpeed::Full,
@@ -134,6 +138,7 @@ bool EspUsbAudioFunction::buildGraph(uint8_t interfaceNumber,
     }
   }
   espusb::internal::AudioFunctionGraphConfig config;
+  config.playbackFeedback = protocol_ == EspUsbAudioProtocol::Uac2;
   if (!espusb::internal::buildAudioFunctionGraph(model_, layout, config,
                                                   graph_))
   {
@@ -193,6 +198,10 @@ uint8_t EspUsbAudioFunction::interfaceCount() const
 uint8_t EspUsbAudioFunction::endpointCount() const
 {
   return static_cast<uint8_t>((playbackEnabled_ ? 1U : 0U) +
+                              (playbackEnabled_ &&
+                                       protocol_ == EspUsbAudioProtocol::Uac2
+                                   ? 1U
+                                   : 0U) +
                               (captureEnabled_ ? 1U : 0U));
 }
 
@@ -218,9 +227,15 @@ uint16_t EspUsbAudioFunction::configurationDescriptorForSpeed(
                 : espusb::internal::UsbSpeed::Full,
       buffer);
   espusb::internal::AudioDescriptorError error;
-  if (!espusb::internal::writeUac2Function(
-          context, model_, graph_, espusb::internal::AudioDescriptorConfig{},
-          &error))
+  const bool written =
+      protocol_ == EspUsbAudioProtocol::Uac2
+          ? espusb::internal::writeUac2Function(
+                context, model_, graph_,
+                espusb::internal::AudioDescriptorConfig{}, &error)
+          : espusb::internal::writeUac1Function(
+                context, model_, graph_,
+                espusb::internal::AudioDescriptorConfig{}, &error);
+  if (!written)
   {
     return 0;
   }
@@ -460,6 +475,69 @@ bool EspUsbAudioFunction::handleGetEntityRequest(uint8_t rhport,
 #if ESP_USB_AUDIO_HAS_TINYUSB
   const auto *request =
       static_cast<const tusb_control_request_t *>(rawRequest);
+  if (protocol_ == EspUsbAudioProtocol::Uac1)
+  {
+    if (!request)
+    {
+      return false;
+    }
+    const uint8_t interfaceNumber =
+        static_cast<uint8_t>(request->wIndex & 0xff);
+    const uint8_t entityId =
+        static_cast<uint8_t>(request->wIndex >> 8);
+    const uint8_t channel =
+        static_cast<uint8_t>(request->wValue & 0xff);
+    const uint8_t selector =
+        static_cast<uint8_t>(request->wValue >> 8);
+    if (interfaceNumber != graph_.controlInterface ||
+        controls_.entityKind(entityId) !=
+            espusb::internal::AudioControlEntityKind::Feature ||
+        (selector != 1 && selector != 2))
+    {
+      return false;
+    }
+    const auto control =
+        selector == 1
+            ? espusb::internal::AudioControlSelector::Mute
+            : espusb::internal::AudioControlSelector::Volume;
+    int32_t value = 0;
+    if (request->bRequest == 0x81)
+    {
+      if (!controls_.current(entityId, control, channel, value))
+      {
+        return false;
+      }
+    }
+    else
+    {
+      if (control != espusb::internal::AudioControlSelector::Volume ||
+          request->bRequest < 0x82 || request->bRequest > 0x84)
+      {
+        return false;
+      }
+      espusb::internal::AudioControlRange range;
+      if (!controls_.range(entityId, control, channel, range))
+      {
+        return false;
+      }
+      value = request->bRequest == 0x82
+                  ? range.minimum
+                  : (request->bRequest == 0x83
+                         ? range.maximum
+                         : range.resolution);
+    }
+    uint8_t response[2] = {
+        static_cast<uint8_t>(value & 0xff),
+        static_cast<uint8_t>((value >> 8) & 0xff),
+    };
+    const uint16_t responseLength = selector == 1 ? 1 : 2;
+    if (request->wLength != responseLength)
+    {
+      return false;
+    }
+    return tud_audio_buffer_and_schedule_control_xfer(
+        rhport, request, response, responseLength);
+  }
   uint8_t responseData[CFG_TUD_AUDIO_CTRL_BUF_SZ] = {};
   espusb::internal::DescriptorBuffer response(responseData,
                                               sizeof(responseData));
@@ -485,6 +563,55 @@ bool EspUsbAudioFunction::handleSetEntityRequest(const void *rawRequest,
 #if ESP_USB_AUDIO_HAS_TINYUSB
   const auto *request =
       static_cast<const tusb_control_request_t *>(rawRequest);
+  if (protocol_ == EspUsbAudioProtocol::Uac1)
+  {
+    if (!request || !data || request->bRequest != 0x01)
+    {
+      return false;
+    }
+    const uint8_t interfaceNumber =
+        static_cast<uint8_t>(request->wIndex & 0xff);
+    const uint8_t entityId =
+        static_cast<uint8_t>(request->wIndex >> 8);
+    const uint8_t channel =
+        static_cast<uint8_t>(request->wValue & 0xff);
+    const uint8_t selector =
+        static_cast<uint8_t>(request->wValue >> 8);
+    if (interfaceNumber != graph_.controlInterface ||
+        controls_.entityKind(entityId) !=
+            espusb::internal::AudioControlEntityKind::Feature ||
+        (selector != 1 && selector != 2))
+    {
+      return false;
+    }
+    const auto control =
+        selector == 1
+            ? espusb::internal::AudioControlSelector::Mute
+            : espusb::internal::AudioControlSelector::Volume;
+    const uint16_t expectedLength = selector == 1 ? 1 : 2;
+    if (request->wLength != expectedLength)
+    {
+      return false;
+    }
+    const int32_t value =
+        selector == 1
+            ? data[0]
+            : static_cast<int16_t>(
+                  static_cast<uint16_t>(data[0]) |
+                  static_cast<uint16_t>(
+                      static_cast<uint16_t>(data[1]) << 8));
+    int32_t previous = 0;
+    if (!controls_.current(entityId, control, channel, previous) ||
+        !controls_.setCurrent(entityId, control, channel, value))
+    {
+      return false;
+    }
+    if (previous != value)
+    {
+      pushControlEvent(control, entityId, channel, value);
+    }
+    return true;
+  }
   espusb::internal::AudioControlChange change;
   const bool applied = espusb::internal::applyUac2EntityRequest(
       controls_, graph_.controlInterface, toEntityRequest(request), data,
@@ -495,6 +622,91 @@ bool EspUsbAudioFunction::handleSetEntityRequest(const void *rawRequest,
                      change.value);
   }
   return applied;
+#else
+  (void)rawRequest;
+  (void)data;
+  return false;
+#endif
+}
+
+bool EspUsbAudioFunction::handleGetEndpointRequest(uint8_t rhport,
+                                                   const void *rawRequest)
+{
+#if ESP_USB_AUDIO_HAS_TINYUSB
+  if (protocol_ != EspUsbAudioProtocol::Uac1 || !rawRequest)
+  {
+    return false;
+  }
+  const auto *request =
+      static_cast<const tusb_control_request_t *>(rawRequest);
+  const uint8_t endpoint = static_cast<uint8_t>(request->wIndex & 0xff);
+  const uint8_t selector = static_cast<uint8_t>(request->wValue >> 8);
+  const espusb::internal::AudioPcmFormat *format = nullptr;
+  if (graph_.playback.present && endpoint == graph_.playback.dataEndpoint)
+  {
+    format = model_.playback().format(0);
+  }
+  else if (graph_.capture.present && endpoint == graph_.capture.dataEndpoint)
+  {
+    format = model_.capture().format(0);
+  }
+  if (!format || selector != 1 || request->wLength != 3 ||
+      request->bRequest < 0x81 || request->bRequest > 0x84)
+  {
+    return false;
+  }
+  const uint32_t rate =
+      request->bRequest == 0x84 ? 0 : format->sampleRate;
+  const uint8_t response[3] = {
+      static_cast<uint8_t>(rate & 0xffU),
+      static_cast<uint8_t>((rate >> 8) & 0xffU),
+      static_cast<uint8_t>((rate >> 16) & 0xffU),
+  };
+  return tud_audio_buffer_and_schedule_control_xfer(
+      rhport, request, const_cast<uint8_t *>(response), sizeof(response));
+#else
+  (void)rhport;
+  (void)rawRequest;
+  return false;
+#endif
+}
+
+bool EspUsbAudioFunction::handleSetEndpointRequest(const void *rawRequest,
+                                                   const uint8_t *data)
+{
+#if ESP_USB_AUDIO_HAS_TINYUSB
+  if (protocol_ != EspUsbAudioProtocol::Uac1 || !rawRequest || !data)
+  {
+    return false;
+  }
+  const auto *request =
+      static_cast<const tusb_control_request_t *>(rawRequest);
+  const uint8_t endpoint = static_cast<uint8_t>(request->wIndex & 0xff);
+  const uint8_t selector = static_cast<uint8_t>(request->wValue >> 8);
+  const espusb::internal::AudioPcmFormat *format = nullptr;
+  if (graph_.playback.present && endpoint == graph_.playback.dataEndpoint)
+  {
+    format = model_.playback().format(0);
+  }
+  else if (graph_.capture.present && endpoint == graph_.capture.dataEndpoint)
+  {
+    format = model_.capture().format(0);
+  }
+  if (!format || request->bRequest != 0x01 || selector != 1 ||
+      request->wLength != 3)
+  {
+    return false;
+  }
+  const uint32_t rate = static_cast<uint32_t>(data[0]) |
+                        (static_cast<uint32_t>(data[1]) << 8) |
+                        (static_cast<uint32_t>(data[2]) << 16);
+  if (format->sampleRate != rate)
+  {
+    return false;
+  }
+  // Each UAC1 endpoint currently advertises one discrete, fixed rate. SET_CUR
+  // confirms that rate; it does not mutate the function-wide UAC2 clock state.
+  return true;
 #else
   (void)rawRequest;
   (void)data;
@@ -628,9 +840,10 @@ extern "C" bool tud_audio_set_req_entity_cb(
 }
 
 extern "C" bool tud_audio_get_req_ep_cb(
-    uint8_t, const tusb_control_request_t *)
+    uint8_t rhport, const tusb_control_request_t *request)
 {
-  return false;
+  return g_activeAudio &&
+         g_activeAudio->handleGetEndpointRequest(rhport, request);
 }
 
 extern "C" bool tud_audio_get_req_itf_cb(
@@ -640,9 +853,10 @@ extern "C" bool tud_audio_get_req_itf_cb(
 }
 
 extern "C" bool tud_audio_set_req_ep_cb(
-    uint8_t, const tusb_control_request_t *, uint8_t *)
+    uint8_t, const tusb_control_request_t *request, uint8_t *data)
 {
-  return false;
+  return g_activeAudio &&
+         g_activeAudio->handleSetEndpointRequest(request, data);
 }
 
 extern "C" bool tud_audio_set_req_itf_cb(

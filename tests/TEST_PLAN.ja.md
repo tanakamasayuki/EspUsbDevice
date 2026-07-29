@@ -66,7 +66,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| USB Audio | ✅ compile smoke | ✅ `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 対象外（P4 の Audio は UAC2/HS、loopback は FS 限定） | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5`（P4 HS） |
+| USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 未実装 | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
@@ -128,11 +128,10 @@ USB 仕様上または Arduino-ESP32 / TinyUSB runtime 上の制約として説�
 
 CDC ACM、MIDI、MSC、USBVendor、Audio は Device 側 class 実装が必要です。
 `peer/usb_serial`、`peer/usb_midi`、`peer/usb_msc`、`peer/usb_vendor`、`peer/usb_audio_speaker` は
-EspUsbDevice 実装へ移行済みです。Audio は speaker sink の peer test（S3, UAC1/FS）まで自動化済み。
-P4 の loopback audio テストは意図的に用意しない：P4 では本ライブラリの Audio は UAC2/HS 専用
-（`TUD_OPT_HIGH_SPEED`）で、1台 loopback は FS 限定（UTMI PHY をデバイスが握る）のため原理的に
-噛み合わない。よって P4 Audio(UAC2/HS) は HS 専用とし実機 HS 手動確認でカバー。将来 P4 2台 HS peer で
-UAC2 自動化は可能（`docs/DESIGN_NOTES.ja.md` 参照）。`peer/usb_audio_microphone` が USB Audio source
+EspUsbDevice 実装へ移行済みです。Audio は S3 の UAC1 peer testで自動化済みです。
+UAC1をライブラリのdefaultとし、UAC2はconstructorで明示選択します。UAC2のstreaming検証は
+対応するHost実装が揃った後に行います。P4 1台のloopback Audio testは現時点で未実装ですが、
+AudioをP4やHSへ暗黙に固定する設計ではありません。`peer/usb_audio_microphone` が USB Audio source
 （マイク）方向をカバー：device が生成 PCM をストリームし、Host が device → Host 受信を検証（S3, UAC1）。
 `peer/usb_audio_headset` が両方向同時（1台で speaker + microphone）をカバー。
 長時間再生、実音確認、実マイク入力の取り込みは残作業。
@@ -211,8 +210,8 @@ Arduino Coreの`tinyusb_enable_interface()`や`tinyusb_get_free_*`は使わな�
 - HID複合は1 interface / 1 duplex endpointへreport IDで統合する。
 - CDC/NCMはnotification用1番号とdata duplex用1番号を使う。
 - MIDI/MSC/Vendorと双方向HIDはIN/OUTで同じendpoint番号を共有する。
-- Audioは他functionとのdescriptor buildを許可する。実streamingのPeer検証は
-  EspUsbHostのUAC2対応後に行う。
+- Audioは他functionとのdescriptor buildを許可する。UAC1単体の実streamingはPeer検証済み。
+  Audio複合deviceのPeer検証は今後追加する。
 - `MAX_CLASSES=4`はAPI上限であり、controllerのendpoint上限とは別。S3は非control
   IN endpoint 4本までなので、classの組み合わせによっては4class未満でも上限に達する。
 
@@ -228,7 +227,7 @@ Arduino Coreの`tinyusb_enable_interface()`や`tinyusb_get_free_*`は使わな�
 | 1 | HID + CDC | ✅ 実機 OK（`composite_hid_cdc` 4/4） | ライブラリ所有allocator、address重複なし |
 | 3 | HID + MSC | ✅ 実機 OK（`composite_hid_msc` 3/3） | MSC/HIDともduplex 1番号、`dup=0 claimok=1` |
 | 2,4-10 | 上記以外の非 Audio ペア | ○（最大構成で包含） | 単一のライブラリ所有allocatorで一貫採番。下記tripleがカバー |
-| 11 | Audio + 他function | △ target依存 | Audio + HID/CDC/Vendorのdescriptor buildは`unit/composite_constraints`でPASS。Peer列挙はEspUsbHost UAC2対応後 |
+| 11 | Audio + 他function | △ target依存 | Audio + HID/CDC/Vendorのdescriptor buildは`unit/composite_constraints`でPASS。Audio複合のPeer testは未実装 |
 | — | HID + bulk Vendor | ✅ 実機 OK（`composite_hid_vendor` 3/3） | descriptor 二重記述を修正（HID blob に Vendor を含めない）。`docs/DESIGN_NOTES.ja.md`「複合時の HID + bulk Vendor 二重記述」 |
 
 **S3 の endpoint 予算**: `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`。IN数はEP0を
@@ -315,7 +314,7 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 29. ✅ `loopback/hid_system_control`
 30. ✅ `peer/usb_audio_speaker`
 31. ✅ `loopback/hid_keyboard_layout`
-32. （`loopback/usb_audio` は無し：P4 の Audio は UAC2/HS、loopback は FS 限定のため）
+32. （`loopback/usb_audio` は未実装。UAC1 AudioはPeer testでカバー）
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
 35. ✅ `unit/composite_constraints`（Audio複合build / MAX_CLASSES）

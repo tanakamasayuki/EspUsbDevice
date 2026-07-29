@@ -34,7 +34,7 @@ Typical use cases:
 - Communicate with a PC or EspUsbHost over CDC ACM serial or USB MIDI.
 - Expose RAM disks, FAT RAM disks, or SD cards as USB MSC devices.
 - Build non-HID vendor-specific bulk/control interfaces.
-- Read and write UAC2 Playback/Capture PCM through bounded FIFOs.
+- Read and write UAC1/UAC2 Playback/Capture PCM through bounded FIFOs.
 - Present the board as a USB network adapter (CDC-NCM), with optional lwIP/DHCP
   so a PC can reach a page or API on the device over USB.
 - Combine several of the above as one composite device.
@@ -69,13 +69,14 @@ available:
 - USB MIDI event packets and note/control-change helpers.
 - USB MSC block device and SCSI callbacks.
 - USBVendor bulk IN/OUT, control requests, and WebUSB landing URL.
-- UAC2 Audio Playback/Capture polling I/O, control events, and stream stats.
+- UAC1-default Audio Playback/Capture polling I/O, control events, and stream
+  stats, with UAC2 available by explicit selection.
 - CDC-NCM network device with raw-frame API and optional lwIP/esp_netif
   integration (DHCP server / client / static address).
 - Multi-function composite devices (e.g. HID + CDC + MSC on one device).
 - Serial command sketches for pytest-embedded peer and loopback tests.
 
-This library owns the UAC2 class and PCM FIFO boundary only. Applications can
+This library owns the USB Audio class and PCM FIFO boundary only. Applications can
 forward PCM to PCMFlow, PCMFlowDevice, or another processing/output layer.
 Volume and mute are not applied to PCM implicitly.
 
@@ -256,9 +257,10 @@ Composite:
 
 - Do not use this library together with Arduino-ESP32's standard `USB.begin()`,
   `USBHIDKeyboard`, `USBHIDMouse`, or other built-in USB device classes.
-- USB Audio uses `EspUsbAudioFunction` for UAC2 Playback/Capture. I2S, codecs,
-  DACs, and other audio hardware are outside this library's responsibility.
-  Detailed streaming validation is deferred until EspUsbHost supports UAC2.
+- USB Audio uses `EspUsbAudioFunction` for Playback/Capture. UAC1 is the
+  compatibility-oriented default; select UAC2 explicitly with
+  `EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`. I2S, codecs, DACs,
+  and other audio hardware are outside this library's responsibility.
 - The network device is CDC-NCM only. CDC-ECM is not enabled in the Arduino-ESP32
   core (it would need a core rebuild); NCM is supported natively by modern hosts.
   A device reaching the internet through the PC needs host-side bridging/NAT and
