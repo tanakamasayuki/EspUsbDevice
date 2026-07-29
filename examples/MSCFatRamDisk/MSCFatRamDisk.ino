@@ -3,7 +3,10 @@
 EspUsbDevice device;
 EspUsbDeviceMsc msc(device);
 
-static uint8_t storage[96 * 1024];
+// Keep the example small enough for the ESP32-S2's internal DRAM after the
+// library-owned TinyUSB class buffers are linked. Larger RAM disks should use
+// PSRAM explicitly; persistent or substantially larger media should use SD.
+static uint8_t storage[64 * 1024];
 EspUsbDeviceMscFatRamDisk disk(storage, sizeof(storage));
 
 static bool scanRequested = false;

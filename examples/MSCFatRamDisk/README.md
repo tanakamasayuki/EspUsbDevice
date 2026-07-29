@@ -17,7 +17,8 @@ file afterward.
 
 ## What It Does
 
-- Formats a 96 KB RAM buffer as a FAT12 disk
+- Formats a 64 KB RAM buffer as a FAT12 disk, small enough for ESP32-S2
+  internal DRAM
 - Adds `README.TXT` as an initial file
 - Exposes a writable MSC device so the host can copy `CONFIG.TXT`
 - Reads and prints `CONFIG.TXT` on the ESP32 side after host eject / stop

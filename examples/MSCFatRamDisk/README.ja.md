@@ -15,7 +15,7 @@ PC からファイルを置き、eject 後に ESP32 側でそのファイルを�
 
 ## 動作内容
 
-- 96 KB の RAM buffer を FAT12 disk として初期化します。
+- S2の内部DRAMにも収まる64 KBのRAM bufferをFAT12 diskとして初期化します。
 - `README.TXT` を初期ファイルとして配置します。
 - Host から `CONFIG.TXT` を書き込める writable MSC device として公開します。
 - Host 側で eject / stop した後、ESP32 側で `CONFIG.TXT` を探して Serial に出力します。
