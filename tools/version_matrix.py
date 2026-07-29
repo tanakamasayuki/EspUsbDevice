@@ -41,11 +41,11 @@ import urllib.request
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE_INDEX_URL = "https://espressif.github.io/arduino-esp32/package_esp32_index.json"
-# Floor for `auto` core discovery. Supported baseline is arduino-esp32 3.3.9;
-# older cores do not build this library, so `auto` skips them. To document the
-# boundary (or re-check the floor), pass an explicit --core-versions list that
-# reaches below it, e.g. 3.3.0,3.3.8,3.3.9,3.3.10.
-CORE_VERSION_FLOOR = (3, 3, 9)
+# `auto` observes every released core from 3.3.0 onward. This is intentionally
+# wider than the official support promise: successful informational builds on
+# 3.3.0-3.3.8 do not lower the documented minimum without a separate decision.
+AUTO_DISCOVERY_FLOOR = (3, 3, 0)
+SUPPORTED_CORE_FLOOR = (3, 3, 9)
 
 # One representative example per feature category. Paths are relative to examples/.
 # Chosen to avoid external-library dependencies so a clean build reflects the core
@@ -213,12 +213,23 @@ def discover_core_versions() -> list[str]:
         for plat in pkg.get("platforms", []):
             if plat.get("architecture") == "esp32":
                 versions.add(plat.get("version"))
-    return sorted((v for v in versions if _ver_tuple(v) >= CORE_VERSION_FLOOR), key=_ver_tuple)
+    return sorted(
+        (v for v in versions if _ver_tuple(v) >= AUTO_DISCOVERY_FLOOR),
+        key=_ver_tuple,
+    )
 
 
 def _ver_tuple(v: str) -> tuple:
     parts = re.findall(r"\d+", v)
     return tuple(int(p) for p in parts[:3]) + (0,) * (3 - len(parts[:3]))
+
+
+def is_officially_supported(core_version: str) -> bool:
+    return _ver_tuple(core_version) >= SUPPORTED_CORE_FLOOR
+
+
+def format_version(version: tuple[int, int, int]) -> str:
+    return ".".join(str(part) for part in version)
 
 
 def resolve_lib_worktree(lib_ref: str, stack) -> tuple[pathlib.Path, str]:
@@ -290,14 +301,29 @@ def render_markdown(lib_version: str, lib_ref: str, core_versions, targets, exam
     lines.append(f"- Library ref: `{lib_ref}`")
     lines.append(f"- Targets: {', '.join(targets)}")
     lines.append(f"- Core versions: {', '.join(core_versions)}")
+    lines.append(
+        f"- Official support floor: arduino-esp32 "
+        f"{format_version(SUPPORTED_CORE_FLOOR)}"
+    )
     lines.append("")
+    if any(not is_officially_supported(core) for core in core_versions):
+        lines.append(
+            f"> Results below arduino-esp32 "
+            f"{format_version(SUPPORTED_CORE_FLOOR)} are informational build "
+            "observations and do not indicate official support."
+        )
+        lines.append("")
     lines.append("Legend: ✅ builds · ❌ fails · — example absent in this version · · not applicable (no profile / board not in core)")
     lines.append("")
 
     for target in targets:
         lines.append(f"## {target}")
         lines.append("")
-        header = "| Feature (example) | " + " | ".join(core_versions) + " |"
+        core_labels = [
+            core if is_officially_supported(core) else f"{core} (info)"
+            for core in core_versions
+        ]
+        header = "| Feature (example) | " + " | ".join(core_labels) + " |"
         sep = "| --- | " + " | ".join("---" for _ in core_versions) + " |"
         lines.append(header)
         lines.append(sep)
@@ -316,12 +342,34 @@ def build_payload(lib_version, lib_ref, core_versions, targets, results) -> dict
         "lib_version": lib_version,
         "lib_ref": lib_ref,
         "core_versions": core_versions,
+        "auto_discovery_floor": format_version(AUTO_DISCOVERY_FLOOR),
+        "supported_core_floor": format_version(SUPPORTED_CORE_FLOOR),
+        "core_support": {
+            core: {
+                "officially_supported": is_officially_supported(core),
+                "status": (
+                    "supported"
+                    if is_officially_supported(core)
+                    else "informational"
+                ),
+            }
+            for core in core_versions
+        },
         "targets": targets,
         "results": [
             {"category": cat, "example": path, "target": t, "core": c, "state": st, "note": nt}
             for (cat, path, t, c), (st, nt) in results.items()
         ],
     }
+
+
+def default_output_path(lib_version: str, lib_ref: str) -> pathlib.Path:
+    filename = (
+        "COMPATIBILITY.WORKTREE.md"
+        if lib_ref == "WORKTREE"
+        else f"COMPATIBILITY.{lib_version}.md"
+    )
+    return REPO_ROOT / "docs" / filename
 
 
 def merge_payloads(payloads: list[dict]):
@@ -369,7 +417,11 @@ def render_from_dir(input_dir: pathlib.Path, output_opt: str) -> int:
         return 2
     lib_version, lib_ref, core_versions, targets, examples, results = merge_payloads(payloads)
     md = render_markdown(lib_version, lib_ref, core_versions, targets, examples, results)
-    output = pathlib.Path(output_opt) if output_opt else REPO_ROOT / "docs" / f"COMPATIBILITY.{lib_version}.md"
+    output = (
+        pathlib.Path(output_opt)
+        if output_opt
+        else default_output_path(lib_version, lib_ref)
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(md)
     print(f"Merged {len(payloads)} payload(s) -> {output}")
@@ -382,12 +434,19 @@ def main() -> int:
     parser.add_argument("--lib-version", default="WORKTREE",
                         help="git tag/ref of the library to test, or WORKTREE (default) for the current tree")
     parser.add_argument("--core-versions", default="auto",
-                        help="comma-separated core versions, or 'auto' for released cores >= 3.3.9")
+                        help="comma-separated core versions, or 'auto' for released cores >= 3.3.0")
     parser.add_argument("--targets", default=",".join(DEFAULT_TARGETS),
                         help=f"comma-separated profile names (default: {','.join(DEFAULT_TARGETS)})")
     parser.add_argument("--examples", default="",
                         help="comma-separated example paths (relative to examples/); default: representative set")
-    parser.add_argument("--output", default="", help="Markdown output path (default: docs/COMPATIBILITY.<libver>.md)")
+    parser.add_argument(
+        "--output",
+        default="",
+        help=(
+            "Markdown output path (default: docs/COMPATIBILITY.WORKTREE.md "
+            "for WORKTREE, otherwise docs/COMPATIBILITY.<libver>.md)"
+        ),
+    )
     parser.add_argument("--json", dest="json_out", default="", help="JSON output path (per-core result payload)")
     parser.add_argument("--json-only", action="store_true",
                         help="build mode: write only the JSON payload, skip the Markdown (for matrix jobs)")
@@ -495,7 +554,11 @@ def main() -> int:
 
         if not args.json_only:
             md = render_markdown(lib_version, args.lib_version, core_versions, targets, examples, results)
-            out_path = pathlib.Path(args.output) if args.output else REPO_ROOT / "docs" / f"COMPATIBILITY.{lib_version}.md"
+            out_path = (
+                pathlib.Path(args.output)
+                if args.output
+                else default_output_path(lib_version, args.lib_version)
+            )
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(md)
             print(f"\nWrote {out_path}")

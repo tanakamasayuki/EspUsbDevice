@@ -1,6 +1,10 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Make the default compatibility report filename stable for worktree runs: `--lib-version WORKTREE` now writes `docs/COMPATIBILITY.WORKTREE.md` instead of embedding the current released version as `<version>+wt`. Tagged/ref runs and explicit `--output` paths are unchanged.
+- (JA) worktree互換reportの既定file名を固定しました。`--lib-version WORKTREE`は現在のrelease versionを`<version>+wt`としてfile名へ含めず、`docs/COMPATIBILITY.WORKTREE.md`へ出力します。tag/ref実行と明示的な`--output`は従来どおりです。
+- (EN) Expand the automatic Arduino-ESP32 compatibility observation range to 3.3.0 while keeping 3.3.9 as the official support floor. Markdown columns below 3.3.9 are labeled `(info)` with an explicit non-support notice, and JSON payloads now carry both floors and per-core support status.
+- (JA) Arduino-ESP32互換matrixの自動観測範囲を3.3.0まで広げつつ、公式対応下限は3.3.9のまま維持します。3.3.9未満のMarkdown列には`(info)`と非サポート注記を付け、JSON payloadにも両floorとCoreごとのsupport statusを記録します。
 - (EN) Rewrite the user and design documentation around the v2 ownership boundary. The READMEs now explain that the library builds and initializes its own pinned TinyUSB source/configuration, what runtime controller/per-speed descriptor/composite/WebUSB/reinitialization capabilities this enables, and which ESP-IDF/Core dependencies remain. Audio documentation now covers the breaking `EspUsbAudioFunction` + Playback/Capture stream model, bounded polling/event/stats APIs, first-party source boundary, validated UAC1 scope, and explicitly deferred UAC2 streaming.
 - (JA) v2のownership境界に合わせて利用者・設計文書を更新しました。libraryが固定TinyUSB source/configurationをbuild・初期化すること、それにより可能になったruntime controller選択、per-speed descriptor、composite/WebUSB、再初期化、残るESP-IDF/Core依存をREADMEへ明記しました。Audioは破壊的変更後の`EspUsbAudioFunction` + Playback/Capture stream、bounded polling/event/stats API、first-party source境界、検証済みUAC1範囲、保留中のUAC2 streamingを説明します。
 - (EN) Stop tracking the complete TinyUSB upstream source snapshot. Normal builds keep using the selected 43-file projection in `src/` without network access; `verify_tinyusb_vendor.py` now downloads the pinned upstream commit into an ignored cache only when a byte-for-byte vendor audit is requested.
