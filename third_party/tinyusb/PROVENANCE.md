@@ -9,8 +9,9 @@ USB configuration and runtime do not depend on Arduino-ESP32's prebuilt
 - Version macros: `0.21.0`
 - License: MIT
 - Archived source: complete upstream `src/` tree under `upstream/src/`
-- Arduino build tree: upstream headers and the selected `.c` files under
-  the library `src/` directory
+- Arduino build tree: only the selected `.c` files and their S2/S3/P4
+  transitive headers under the library `src/` directory
+- Build manifest: `BUILD_FILES.txt` (43 files: 12 sources and 31 headers)
 - Local patches: none at initial import
 
 This is the same TinyUSB commit recorded by the Arduino-ESP32 3.3.11 S2, S3,
@@ -43,10 +44,11 @@ ESP32 DWC2 device controller:
 - `src/portable/synopsys/dwc2/dcd_dwc2.c`
 - `src/portable/synopsys/dwc2/dwc2_common.c`
 
-The complete upstream source tree is archived so files and relative includes
-remain byte-identical to the pinned commit. Host, Type-C, DFU, video, printer,
-MTP, MIDI 2.0, ECM/RNDIS, and non-ESP32 portable drivers are not part of the
-initial build source set.
+The complete upstream source tree is archived as the immutable comparison
+source. The Arduino build tree is a minimal projection measured from clean
+S2, S3, and P4 compiler dependency files. Host, Type-C, DFU, video, printer,
+MTP, MIDI 2.0, ECM/RNDIS, non-FreeRTOS OSALs, and non-ESP32 portable files are
+not copied into the build tree.
 
 The `src/` build tree is a mechanical copy from the archived snapshot. Its
 upstream files are not patched. `src/tusb_config.h` and
@@ -58,7 +60,10 @@ upstream files are not patched. `src/tusb_config.h` and
 - Keep upstream copyright/SPDX headers unchanged.
 - Record every local patch in this file.
 - Run `python3 tools/verify_tinyusb_vendor.py` to verify that the Arduino build
-  tree is byte-identical to this archive and contains only the selected sources.
-- Run the host descriptor tests, S3/P4 compile tests, link-map symbol audit, and
-  the complete hardware pytest suite before accepting an update.
+  tree matches `BUILD_FILES.txt`, is byte-identical to the archive, and contains
+  only the selected sources and headers.
+- Regenerate the build manifest from clean S2, S3, and P4 compiler dependency
+  files whenever the TinyUSB commit, enabled class set, or target set changes.
+- Run the host descriptor tests, S2/S3/P4 compile tests, link-map symbol audit,
+  and the complete hardware pytest suite before accepting an update.
 - Do not copy Arduino-ESP32's `esp32-hal-tinyusb` integration into this tree.

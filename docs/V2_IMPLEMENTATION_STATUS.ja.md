@@ -8,7 +8,8 @@
 - Phase 0.5: 完了。旧Audio実装2ファイルを削除し、provenance境界を記録。
 - Phase 1: 基盤完了。host非依存のdescriptor modelとHID writerを追加。
 - Phase 2: 完了。TinyUSB `53f8c53c2`を固定し、選択したdevice sourceを
-  ライブラリ自身の設定でbuild。
+  ライブラリ自身の設定でbuild。完全snapshotは`third_party`に保持し、Arduinoが見る
+  `src`はS2/S3/P4の実コンパイラ依存から得た12 source + 31 headerに限定。
 - Phase 3: runtimeとclass lifecycle実装済み、S3 peer Gate再確認待ち。PHY、rhport、
   TinyUSB task、基本descriptor callbackをライブラリ所有へ移した。`begin()`失敗時は
   開始済みclassを逆順rollbackし、`end()`でcallback registryを解放する。

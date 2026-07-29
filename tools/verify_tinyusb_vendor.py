@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE = ROOT / "third_party" / "tinyusb" / "upstream" / "src"
+MANIFEST = ROOT / "third_party" / "tinyusb" / "BUILD_FILES.txt"
 BUILD = ROOT / "src"
 
 SOURCE_FILES = {
@@ -36,9 +37,28 @@ def build_upstream_files() -> set[str]:
     return files
 
 
+def manifest_files() -> set[str]:
+    entries = [
+        line.strip()
+        for line in MANIFEST.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if len(entries) != len(set(entries)):
+        raise ValueError(f"duplicate entry in {MANIFEST}")
+    return set(entries)
+
+
 def main() -> int:
     errors: list[str] = []
     build_files = build_upstream_files()
+    expected_files = manifest_files()
+    if build_files != expected_files:
+        errors.append(
+            "Arduino build tree differs from BUILD_FILES.txt:\n"
+            f"  missing: {sorted(expected_files - build_files)}\n"
+            f"  extra: {sorted(build_files - expected_files)}"
+        )
+
     actual_sources = {path for path in build_files if path.endswith(".c")}
     if actual_sources != SOURCE_FILES:
         errors.append(
@@ -60,7 +80,7 @@ def main() -> int:
         return 1
 
     print(
-        f"TinyUSB vendor tree verified: {len(build_files)} files, "
+        f"TinyUSB vendor tree verified: {len(build_files)} selected files, "
         f"{len(SOURCE_FILES)} compiled sources"
     )
     return 0
