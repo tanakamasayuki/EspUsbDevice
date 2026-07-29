@@ -68,7 +68,8 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 未実装 | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
-| composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
+| composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
+| Core依存境界 | ✅ `dependency_boundary` | | | | |
 | examples compile | ✅ `examples_compile` | | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
@@ -228,7 +229,7 @@ Arduino Coreの`tinyusb_enable_interface()`や`tinyusb_get_free_*`は使わな�
 | 1 | HID + CDC | ✅ 実機 OK（`composite_hid_cdc` 4/4） | ライブラリ所有allocator、address重複なし |
 | 3 | HID + MSC | ✅ 実機 OK（`composite_hid_msc` 3/3） | MSC/HIDともduplex 1番号、`dup=0 claimok=1` |
 | 2,4-10 | 上記以外の非 Audio ペア | ○（最大構成で包含） | 単一のライブラリ所有allocatorで一貫採番。下記tripleがカバー |
-| 11 | Audio + 他function | △ target依存 | Audio + HID/CDC/Vendorのdescriptor buildは`unit/composite_constraints`でPASS。Audio複合のPeer testは未実装 |
+| 11 | Audio + 他function | ✅ S3 UAC1 HID+Audio | `composite_hid_audio`で`dup=0`、全claim、keyboard入力、PCM playbackを確認。HID/CDC/Vendorとのdescriptor buildは`unit/composite_constraints`でPASS |
 | — | HID + bulk Vendor | ✅ 実機 OK（`composite_hid_vendor` 3/3） | descriptor 二重記述を修正（HID blob に Vendor を含めない）。`docs/DESIGN_NOTES.ja.md`「複合時の HID + bulk Vendor 二重記述」 |
 
 **S3 の endpoint 予算**: `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`。IN数はEP0を
@@ -324,6 +325,8 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 38. ✅ `peer/composite_hid_cdc_msc`（HID+CDC+MSC、収まる最大構成）
 39. ✅ `peer/composite_cdc_msc_vendor`（非 HID triple、Vendor は `onRx` 駆動 RX）
 40. ✅ `peer/composite_hid_vendor`（HID + bulk Vendor、descriptor 二重記述の修正 → 3/3）
+41. ✅ `peer/composite_hid_audio`（UAC1 Audio + HIDを同時claim、keyboard + PCM → 3/3）
+42. ✅ `unit/dependency_boundary`（Arduino Core TinyUSB依存とAudio provenanceの回帰scan）
 
 ## 合格条件
 

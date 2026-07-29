@@ -172,7 +172,8 @@ manual 確認に残す範囲:
 2. UAC1のPlayback/Capture/duplex Peer streamingを回帰テストとして維持する。
 3. 対応Hostの準備後にUAC2 streamingを確認し、必要ならbuffer/profile/event handlingを調整する。
 4. Audioのdescriptor、control request、FIFO、event、statsのDevice単体検証を維持する。
-5. USB Audio composite deviceのdescriptor容量とtarget別endpoint制約を確認する。
+5. USB Audio composite deviceはS3 UAC1 HID+Audio Peerまで自動化済み。必要なら
+   CDC/Vendorとの組み合わせを追加する。
 6. MSC FAT RAM disk / SD card / USBVendor の manual 確認手順を実機で消化する。
 7. WebUSB / libusb / WinUSB の Host 側サンプルを追加するか判断する。
 8. USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API を検討する。

@@ -425,8 +425,9 @@ Gate 7:
 
 Gate 8:
 
-- forbidden dependency scanが0件。
-- first-party Audio sourceのEspressif copyright/derivation noticeが0件。
+- [x] forbidden dependency scanが0件（`unit/dependency_boundary`で自動化）。
+- [x] first-party Audio sourceのEspressif copyright/derivation noticeが0件
+  （`unit/dependency_boundary`で自動化）。
 - 全unit test、S3 peer、P4 FS loopback、P4 HS manual/peerが通る。
 - clean installしたArduino CLI環境でrelease archiveだけからbuildできる。
 - v1 APIを使うcompile-fail testが、意図したmigration messageを出すかmigration guideで置換先を示す。
