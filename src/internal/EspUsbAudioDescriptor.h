@@ -21,6 +21,12 @@ struct AudioDescriptorConfig {
   uint8_t captureStringIndex = 0;
 };
 
+bool writeUac1Function(DescriptorBuildContext &context,
+                       const AudioFunctionModel &function,
+                       const AudioFunctionGraph &graph,
+                       const AudioDescriptorConfig &config,
+                       AudioDescriptorError *error = nullptr);
+
 bool writeUac2Function(DescriptorBuildContext &context,
                        const AudioFunctionModel &function,
                        const AudioFunctionGraph &graph,

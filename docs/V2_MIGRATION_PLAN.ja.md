@@ -328,7 +328,7 @@ Gate 5:
 7. [x] control/stream state event queue（固定長、polling、drop count）
 8. [x] FIFO clear lifecycleとoverrun/underrun counter
 9. [x] duplex/headset（Device firmwareとdescriptor、実転送Gate待ち）
-10. UAC1 descriptorとclass request（Audio後段。完成時はdefault）
+10. [x] UAC1 descriptorとclass request（default）
 11. 複数alternate setting / sample rate
 12. Audio + 他classのcomposite
 
@@ -364,17 +364,16 @@ Gate 6A (UAC2):
 
 - Device側ではS3/P4 compile、FS/HS descriptor、class request、FIFO/event、
   speaker/microphone/duplex Peer firmwareまでを完成条件とする。
-- S3 FSとP4 HSの実streaming、control flood、counter実測はEspUsbHostのUAC2対応後に
+- UAC2の実streaming、control flood、counter実測は対応するHost実装の準備後に
   Peer testとして実施する。この外部GateはDevice側cutoverを妨げない。
 - protocolを変えず、速度によってMPS/intervalだけが変わる。
 
 Gate 6B (UAC1):
 
-- UAC1実装が完成するまでは未実装selectorを公開しない。
-- 最終公開APIはUAC1をdefault、UAC2を明示選択とする。
+- UAC1をdefault、UAC2をconstructorで明示選択する。
 - UAC versionとcontroller/link speedを独立に選び、速度による暗黙切替は行わない。
-- 将来追加する場合は、未実装selectorを先に公開せず、descriptor/class requestと
-  streaming testを同時に追加する。
+- descriptor、endpoint sample-rate request、Feature Unit request、speaker /
+  microphone / duplex streamingを同時にPeer testする。
 
 ### Phase 7: WebUSB / Microsoft OS descriptorを独立実装する
 

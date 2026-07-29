@@ -83,6 +83,21 @@ static void testMaxClasses()
   check(device.lastError() == ESP_FAIL, "fifth_class_rejected");
 }
 
+static void testS3EndpointLimit()
+{
+  EspUsbDevice device;
+  EspUsbDeviceHidKeyboard hid(device);
+  EspUsbDeviceCdcSerial cdc(device);
+  EspUsbDeviceMidi midi(device);
+  EspUsbDeviceVendor vendor(device);
+
+  EspUsbDeviceConfig config;
+  config.startTinyUsb = false;
+  check(!device.begin(config), "s3_in_endpoint_limit_rejected");
+  check(device.lastError() == ESP_ERR_INVALID_SIZE,
+        "s3_in_endpoint_limit_error");
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -94,6 +109,7 @@ void setup()
   testAudioWithVendor();
   testAudioAddedLast();
   testMaxClasses();
+  testS3EndpointLimit();
   Serial.printf("TEST_END pass=%d fail=%d\n", passCount, failCount);
   Serial.println(failCount == 0 ? "OK" : "NG");
   Serial.flush();

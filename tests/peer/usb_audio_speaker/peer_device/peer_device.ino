@@ -6,6 +6,8 @@ EspUsbAudioPlaybackStream &playback = audio.addPlaybackStream();
 
 static uint32_t receivedAudioBytes = 0;
 static bool receivedAudioReported = false;
+static uint32_t volumeEventCount = 0;
+static uint32_t muteEventCount = 0;
 void setup()
 {
   Serial.begin(115200);
@@ -44,10 +46,12 @@ void loop()
       // here with its accumulated event counts and never reset.
       const EspUsbAudioStreamStats stats = playback.stats();
       Serial.printf(
-          "DEVICE_ALIVE rx=%lu usb=%lu overruns=%lu events=%lu\n",
+          "DEVICE_ALIVE rx=%lu usb=%lu overruns=%lu vol=%lu mute=%lu events=%lu\n",
           static_cast<unsigned long>(receivedAudioBytes),
           static_cast<unsigned long>(stats.transferredBytes),
           static_cast<unsigned long>(stats.overrunCount),
+          static_cast<unsigned long>(volumeEventCount),
+          static_cast<unsigned long>(muteEventCount),
           static_cast<unsigned long>(audio.droppedEvents()));
     }
   }
@@ -59,6 +63,20 @@ void loop()
     {
       Serial.printf("AUDIO_INTERFACE PLAYBACK %u alt=%u\n",
                     event.enabled ? 1 : 0, event.alternateSetting);
+    }
+    else if (event.type == EspUsbAudioEventType::VolumeChanged)
+    {
+      volumeEventCount++;
+      Serial.printf("DEV_VOL ch=%u db=%d n=%lu\n",
+                    event.channel, event.volumeDb256,
+                    static_cast<unsigned long>(volumeEventCount));
+    }
+    else if (event.type == EspUsbAudioEventType::MuteChanged)
+    {
+      muteEventCount++;
+      Serial.printf("DEV_MUTE ch=%u m=%u n=%lu\n",
+                    event.channel, event.muted ? 1 : 0,
+                    static_cast<unsigned long>(muteEventCount));
     }
   }
 

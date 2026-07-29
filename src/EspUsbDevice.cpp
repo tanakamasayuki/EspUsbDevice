@@ -788,6 +788,8 @@ const char *EspUsbDevice::lastErrorName() const
     return "ESP_FAIL";
   case ESP_ERR_INVALID_STATE:
     return "ESP_ERR_INVALID_STATE";
+  case ESP_ERR_INVALID_SIZE:
+    return "ESP_ERR_INVALID_SIZE";
   case ESP_ERR_NOT_SUPPORTED:
     return "ESP_ERR_NOT_SUPPORTED";
   default:
@@ -1212,6 +1214,12 @@ bool EspUsbDevice::buildDescriptors()
   }
   configDescriptorLength_ = offset;
   put16(&configDescriptor_[2], configDescriptorLength_);
+  if (!validateControllerEndpoints(configDescriptor_,
+                                   configDescriptorLength_))
+  {
+    setLastError(ESP_ERR_INVALID_SIZE);
+    return false;
+  }
 
   memcpy(configDescriptorHighSpeed_, configDescriptor_, configDescriptorLength_);
   for (uint16_t descriptorOffset = 0;
@@ -1259,6 +1267,79 @@ bool EspUsbDevice::buildDescriptors()
   deviceQualifierDescriptor_[8] = 1;
   setLastError(ESP_OK);
   return true;
+}
+
+bool EspUsbDevice::validateControllerEndpoints(const uint8_t *descriptor,
+                                               uint16_t length)
+{
+  if (!descriptor || length < 9)
+  {
+    return false;
+  }
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  constexpr uint8_t maxEndpointNumber = 5;
+  constexpr uint8_t maxNonControlInEndpoints = 4;
+  constexpr uint8_t maxNonControlOutEndpoints = 5;
+#else
+  // P4 exposes different FS and HS controllers. Keep protocol validation
+  // independent until their per-controller capabilities are represented by
+  // the runtime port model.
+  constexpr uint8_t maxEndpointNumber = 15;
+  constexpr uint8_t maxNonControlInEndpoints = 15;
+  constexpr uint8_t maxNonControlOutEndpoints = 15;
+#endif
+  uint16_t inMask = 0;
+  uint16_t outMask = 0;
+  uint8_t endpointOwner[2][16];
+  memset(endpointOwner, 0xff, sizeof(endpointOwner));
+  uint8_t currentInterface = 0xff;
+  for (uint16_t offset = 9; offset + 2 <= length;)
+  {
+    const uint8_t descriptorLength = descriptor[offset];
+    if (descriptorLength < 2 ||
+        offset + descriptorLength > length)
+    {
+      return false;
+    }
+    if (descriptor[offset + 1] == USB_DESC_INTERFACE &&
+        descriptorLength >= 9)
+    {
+      currentInterface = descriptor[offset + 2];
+    }
+    if (descriptor[offset + 1] == USB_DESC_ENDPOINT &&
+        descriptorLength >= 7)
+    {
+      const uint8_t address = descriptor[offset + 2];
+      const uint8_t number = static_cast<uint8_t>(address & 0x0f);
+      if (currentInterface == 0xff || number == 0 ||
+          number > maxEndpointNumber)
+      {
+        return false;
+      }
+      const uint8_t direction = (address & 0x80) != 0 ? 1 : 0;
+      uint8_t &owner = endpointOwner[direction][number];
+      if (owner != 0xff && owner != currentInterface)
+      {
+        return false;
+      }
+      owner = currentInterface;
+      uint16_t &mask = direction != 0 ? inMask : outMask;
+      const uint16_t bit = static_cast<uint16_t>(1U << number);
+      mask = static_cast<uint16_t>(mask | bit);
+    }
+    offset = static_cast<uint16_t>(offset + descriptorLength);
+  }
+  const auto endpointCount = [](uint16_t mask) {
+    uint8_t count = 0;
+    while (mask != 0)
+    {
+      count = static_cast<uint8_t>(count + (mask & 1U));
+      mask >>= 1;
+    }
+    return count;
+  };
+  return endpointCount(inMask) <= maxNonControlInEndpoints &&
+         endpointCount(outMask) <= maxNonControlOutEndpoints;
 }
 
 bool EspUsbDevice::compositeHid() const

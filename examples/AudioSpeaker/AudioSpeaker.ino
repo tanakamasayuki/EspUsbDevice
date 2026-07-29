@@ -47,7 +47,7 @@ void setup()
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
     return;
   }
-  Serial.println("Audio speaker ready: UAC2, 48000 Hz, 16-bit, stereo");
+  Serial.println("Audio speaker ready: UAC1, 48000 Hz, 16-bit, stereo");
 }
 
 void loop()

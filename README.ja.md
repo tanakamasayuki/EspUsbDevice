@@ -33,7 +33,7 @@ CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC
 - PC や `EspUsbHost` と CDC ACM serial / USB MIDI で通信する。
 - RAM disk、FAT RAM disk、SD card を USB MSC として公開する。
 - HID ではない vendor-specific bulk/control interface を作る。
-- UAC2 Audio のPlayback/Capture PCMをbounded FIFO経由で読み書きする。
+- UAC1/UAC2 AudioのPlayback/Capture PCMをbounded FIFO経由で読み書きする。
 - ボードを USB ネットワークアダプタ（CDC-NCM）として見せ、任意で lwIP/DHCP を有効にして
   PC が USB 経由でデバイス上のページや API にアクセスできるようにする。
 - 上記を組み合わせて 1 つの複合デバイスにする。
@@ -65,13 +65,14 @@ loopback テストで確認できる範囲を広げています。
 - USB MIDI event packet と note / control change helper。
 - USB MSC block device と SCSI callback。
 - USBVendor bulk IN/OUT、control request、WebUSB landing URL。
-- UAC2 Audio Playback/Captureのpolling I/O、control event、stream stats。
+- UAC1 defaultのAudio Playback/Capture polling I/O、control event、stream stats。
+  UAC2は明示選択できます。
 - CDC-NCM ネットワークデバイス（生フレーム API と、任意の lwIP/esp_netif 統合＝DHCP
   サーバ / クライアント / 静的アドレス）。
 - 多機能な複合デバイス（例: HID + CDC + MSC を 1 台に）。
 - pytest-embedded peer / loopback テスト用の serial command sketch。
 
-USB Audioの責務はUAC2 classとPCM FIFO境界までです。受け取ったPCMはアプリケーション、
+USB Audioの責務はAudio classとPCM FIFO境界までです。受け取ったPCMはアプリケーション、
 PCMFlow、PCMFlowDeviceなど任意の処理系へ渡します。volume/muteをPCMへ暗黙適用しません。
 
 - PCMFlow: https://github.com/tanakamasayuki/PCMFlow
@@ -237,9 +238,10 @@ USB ネットワーク（CDC-NCM）:
 ## 制限事項
 
 - Arduino-ESP32 標準の `USB.begin()`、`USBHIDKeyboard`、`USBHIDMouse` などとは併用しません。
-- USB Audioは`EspUsbAudioFunction`によるUAC2 Playback/Capture実装です。I2S、codec、
-  DACなどのデバイス接続はこのライブラリの責務外です。UAC2実streamingの詳細確認は
-  EspUsbHostのUAC2対応後にPeer testで行います。
+- USB Audioは`EspUsbAudioFunction`によるPlayback/Capture実装です。互換性重視の
+  UAC1がdefaultで、UAC2は
+  `EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`で明示選択します。
+  I2S、codec、DACなどのデバイス接続はこのライブラリの責務外です。
 - ネットワークデバイスは CDC-NCM のみです。CDC-ECM は Arduino-ESP32 core で無効（有効化には core 再ビルドが必要）で、NCM は最近のホスト OS が標準対応します。デバイスが PC 経由でインターネットに抜けるにはホスト側のブリッジ/NAT が必要でスコープ外です（その用途は ESP 自身の Wi-Fi を使用）。
 - 複合デバイスはESP32-S3のUSB endpoint予算とconfiguration descriptor容量で制限されます。
   Audioを含む複合構成はDevice側descriptor制約の確認中です。

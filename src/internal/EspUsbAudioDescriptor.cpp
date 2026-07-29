@@ -11,6 +11,7 @@ constexpr uint8_t DESC_CS_ENDPOINT = 0x25;
 constexpr uint8_t USB_CLASS_AUDIO = 0x01;
 constexpr uint8_t AUDIO_SUBCLASS_CONTROL = 0x01;
 constexpr uint8_t AUDIO_SUBCLASS_STREAMING = 0x02;
+constexpr uint8_t AUDIO_PROTOCOL_UAC1 = 0x00;
 constexpr uint8_t AUDIO_PROTOCOL_UAC2 = 0x20;
 
 constexpr uint8_t AC_HEADER = 0x01;
@@ -196,6 +197,152 @@ bool writeStreamingInterface(DescriptorBuildContext &context,
   return true;
 }
 
+bool writeUac1InputTerminal(DescriptorBuffer &buffer,
+                            const AudioEntity &entity)
+{
+  const bool usb = entity.kind == AudioEntityKind::UsbStreamingTerminal;
+  return buffer.writeU8(12) && buffer.writeU8(DESC_CS_INTERFACE) &&
+         buffer.writeU8(AC_INPUT_TERMINAL) && buffer.writeU8(entity.id) &&
+         buffer.writeU16(usb ? TERMINAL_USB_STREAMING : TERMINAL_MICROPHONE) &&
+         buffer.writeU8(0) && buffer.writeU8(entity.channels) &&
+         buffer.writeU16(static_cast<uint16_t>(channelConfig(entity.channels))) &&
+         buffer.writeU8(0) && buffer.writeU8(0);
+}
+
+bool writeUac1OutputTerminal(DescriptorBuffer &buffer,
+                             const AudioEntity &entity)
+{
+  const bool usb = entity.kind == AudioEntityKind::UsbStreamingTerminal;
+  return buffer.writeU8(9) && buffer.writeU8(DESC_CS_INTERFACE) &&
+         buffer.writeU8(AC_OUTPUT_TERMINAL) && buffer.writeU8(entity.id) &&
+         buffer.writeU16(usb ? TERMINAL_USB_STREAMING : TERMINAL_SPEAKER) &&
+         buffer.writeU8(0) && buffer.writeU8(entity.sourceId) &&
+         buffer.writeU8(0);
+}
+
+bool writeUac1FeatureUnit(DescriptorBuffer &buffer,
+                          const AudioEntity &entity)
+{
+  const uint8_t length =
+      static_cast<uint8_t>(7U + static_cast<uint16_t>(entity.channels) + 1U);
+  uint8_t controls = 0;
+  if (entity.muteControl)
+  {
+    controls |= 0x01;
+  }
+  if (entity.volumeControl)
+  {
+    controls |= 0x02;
+  }
+  if (!(buffer.writeU8(length) && buffer.writeU8(DESC_CS_INTERFACE) &&
+        buffer.writeU8(AC_FEATURE_UNIT) && buffer.writeU8(entity.id) &&
+        buffer.writeU8(entity.sourceId) && buffer.writeU8(1) &&
+        buffer.writeU8(controls)))
+  {
+    return false;
+  }
+  for (uint8_t channel = 0; channel < entity.channels; ++channel)
+  {
+    if (!buffer.writeU8(0))
+    {
+      return false;
+    }
+  }
+  return buffer.writeU8(0);
+}
+
+bool writeUac1Entity(DescriptorBuffer &buffer, const AudioEntity &entity)
+{
+  switch (entity.kind)
+  {
+  case AudioEntityKind::ClockSource:
+    return true;
+  case AudioEntityKind::FeatureUnit:
+    return writeUac1FeatureUnit(buffer, entity);
+  case AudioEntityKind::UsbStreamingTerminal:
+    return entity.direction == AudioDirection::Playback
+               ? writeUac1InputTerminal(buffer, entity)
+               : writeUac1OutputTerminal(buffer, entity);
+  case AudioEntityKind::PhysicalTerminal:
+    return entity.direction == AudioDirection::Capture
+               ? writeUac1InputTerminal(buffer, entity)
+               : writeUac1OutputTerminal(buffer, entity);
+  }
+  return false;
+}
+
+bool writeUac1StreamingInterface(DescriptorBuildContext &context,
+                                 const AudioStreamModel &model,
+                                 const AudioStreamLayout &layout,
+                                 const AudioDescriptorConfig &config)
+{
+  const AudioPcmFormat *format = model.format(0);
+  AudioPacketRequirement packet;
+  if (!format ||
+      validateAudioFormat(*format, context.speed(),
+                          defaultAudioBusLimits(context.speed()), &packet) !=
+          AudioFormatError::None)
+  {
+    return false;
+  }
+
+  const uint8_t endpointCount =
+      static_cast<uint8_t>(1U + (layout.feedbackEndpoint ? 1U : 0U));
+  if (!context.writeInterface(layout.interfaceNumber, 0, 0, USB_CLASS_AUDIO,
+                              AUDIO_SUBCLASS_STREAMING, AUDIO_PROTOCOL_UAC1,
+                              streamString(config, layout.direction)) ||
+      !context.writeInterface(layout.interfaceNumber, 1, endpointCount,
+                              USB_CLASS_AUDIO, AUDIO_SUBCLASS_STREAMING,
+                              AUDIO_PROTOCOL_UAC1,
+                              streamString(config, layout.direction)))
+  {
+    return false;
+  }
+
+  DescriptorBuffer &buffer = context.buffer();
+  const uint32_t rate = format->sampleRate;
+  if (!(buffer.writeU8(7) && buffer.writeU8(DESC_CS_INTERFACE) &&
+        buffer.writeU8(AS_GENERAL) && buffer.writeU8(layout.terminalLink) &&
+        buffer.writeU8(1) && buffer.writeU16(0x0001) &&
+        buffer.writeU8(11) && buffer.writeU8(DESC_CS_INTERFACE) &&
+        buffer.writeU8(AS_FORMAT_TYPE) && buffer.writeU8(0x01) &&
+        buffer.writeU8(format->channels) &&
+        buffer.writeU8(format->subslotBytes) &&
+        buffer.writeU8(format->validBits) && buffer.writeU8(1) &&
+        buffer.writeU8(static_cast<uint8_t>(rate & 0xffU)) &&
+        buffer.writeU8(static_cast<uint8_t>((rate >> 8) & 0xffU)) &&
+        buffer.writeU8(static_cast<uint8_t>((rate >> 16) & 0xffU))))
+  {
+    return false;
+  }
+
+  const uint16_t maxPacket = packet.maxPacketSize;
+  const uint8_t dataAttributes =
+      layout.direction == AudioDirection::Playback ? 0x09 : 0x05;
+  if (!(buffer.writeU8(9) && buffer.writeU8(0x05) &&
+        buffer.writeU8(layout.dataEndpoint) &&
+        buffer.writeU8(dataAttributes) &&
+        buffer.writeU16(maxPacket) && buffer.writeU8(1) &&
+        buffer.writeU8(0) &&
+        buffer.writeU8(layout.feedbackEndpoint) &&
+        buffer.writeU8(7) && buffer.writeU8(DESC_CS_ENDPOINT) &&
+        buffer.writeU8(EP_GENERAL) && buffer.writeU8(0x01) &&
+        buffer.writeU8(0) && buffer.writeU16(0)))
+  {
+    return false;
+  }
+
+  if (layout.feedbackEndpoint &&
+      !(buffer.writeU8(9) && buffer.writeU8(0x05) &&
+        buffer.writeU8(layout.feedbackEndpoint) && buffer.writeU8(0x01) &&
+        buffer.writeU16(3) && buffer.writeU8(1) &&
+        buffer.writeU8(1) && buffer.writeU8(0)))
+  {
+    return false;
+  }
+  return true;
+}
+
 void setError(AudioDescriptorError *error, AudioDescriptorError value)
 {
   if (error)
@@ -205,6 +352,106 @@ void setError(AudioDescriptorError *error, AudioDescriptorError value)
 }
 
 } // namespace
+
+bool writeUac1Function(DescriptorBuildContext &context,
+                       const AudioFunctionModel &function,
+                       const AudioFunctionGraph &graph,
+                       const AudioDescriptorConfig &config,
+                       AudioDescriptorError *error)
+{
+  setError(error, AudioDescriptorError::None);
+  if (graph.error != AudioGraphError::None ||
+      (!graph.playback.present && !graph.capture.present))
+  {
+    setError(error, AudioDescriptorError::InvalidGraph);
+    return false;
+  }
+  if (function.protocol() != AudioProtocol::Uac1 ||
+      graph.protocol != AudioProtocol::Uac1)
+  {
+    setError(error, AudioDescriptorError::UnsupportedProtocol);
+    return false;
+  }
+  if ((graph.playback.present && function.playback().formatCount() != 1) ||
+      (graph.capture.present && function.capture().formatCount() != 1))
+  {
+    setError(error, AudioDescriptorError::UnsupportedFormatCount);
+    return false;
+  }
+
+  DescriptorBuffer &buffer = context.buffer();
+  const uint8_t streamCount =
+      static_cast<uint8_t>((graph.playback.present ? 1U : 0U) +
+                           (graph.capture.present ? 1U : 0U));
+  const uint8_t iad[] = {
+      8, DESC_INTERFACE_ASSOCIATION, graph.controlInterface,
+      static_cast<uint8_t>(1U + streamCount), USB_CLASS_AUDIO, 0,
+      AUDIO_PROTOCOL_UAC1, config.functionStringIndex,
+  };
+  if (!buffer.append(iad, sizeof(iad)) ||
+      !context.writeInterface(graph.controlInterface, 0, 0, USB_CLASS_AUDIO,
+                              AUDIO_SUBCLASS_CONTROL, AUDIO_PROTOCOL_UAC1,
+                              config.controlStringIndex))
+  {
+    setError(error, AudioDescriptorError::BufferOverflow);
+    return false;
+  }
+
+  const size_t acStart = buffer.size();
+  if (!(buffer.writeU8(static_cast<uint8_t>(8U + streamCount)) &&
+        buffer.writeU8(DESC_CS_INTERFACE) && buffer.writeU8(AC_HEADER) &&
+        buffer.writeU16(0x0100) && buffer.writeU16(0) &&
+        buffer.writeU8(streamCount)))
+  {
+    setError(error, AudioDescriptorError::BufferOverflow);
+    return false;
+  }
+  if (graph.playback.present &&
+      !buffer.writeU8(graph.playback.interfaceNumber))
+  {
+    setError(error, AudioDescriptorError::BufferOverflow);
+    return false;
+  }
+  if (graph.capture.present &&
+      !buffer.writeU8(graph.capture.interfaceNumber))
+  {
+    setError(error, AudioDescriptorError::BufferOverflow);
+    return false;
+  }
+  for (size_t i = 0; i < graph.entityCount; ++i)
+  {
+    if (!writeUac1Entity(buffer, graph.entities[i]))
+    {
+      setError(error, AudioDescriptorError::BufferOverflow);
+      return false;
+    }
+  }
+  const size_t acLength = buffer.size() - acStart;
+  if (acLength > 0xffffU ||
+      !buffer.patchU16(acStart + 5, static_cast<uint16_t>(acLength)))
+  {
+    setError(error, AudioDescriptorError::BufferOverflow);
+    return false;
+  }
+
+  if (graph.playback.present &&
+      !writeUac1StreamingInterface(context, function.playback(),
+                                   graph.playback, config))
+  {
+    setError(error, buffer.ok() ? AudioDescriptorError::InvalidFormat
+                                : AudioDescriptorError::BufferOverflow);
+    return false;
+  }
+  if (graph.capture.present &&
+      !writeUac1StreamingInterface(context, function.capture(),
+                                   graph.capture, config))
+  {
+    setError(error, buffer.ok() ? AudioDescriptorError::InvalidFormat
+                                : AudioDescriptorError::BufferOverflow);
+    return false;
+  }
+  return true;
+}
 
 bool writeUac2Function(DescriptorBuildContext &context,
                        const AudioFunctionModel &function,

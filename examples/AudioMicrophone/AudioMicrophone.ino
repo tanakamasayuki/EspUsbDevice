@@ -30,7 +30,7 @@ void setup()
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
     return;
   }
-  Serial.println("Audio microphone ready: UAC2, 48000 Hz, 16-bit, mono");
+  Serial.println("Audio microphone ready: UAC1, 48000 Hz, 16-bit, mono");
 }
 
 void loop()

@@ -146,8 +146,7 @@ TinyUSB callback 内では次だけを行う。
 「FS = UAC1」「HS = UAC2」という分岐は行わない。UAC version はhost互換性の選択、
 bus speed はbandwidth/MPS/intervalの選択であり、別の軸である。
 
-初期prototypeはUAC2だけを実装し、未実装のUAC1 selectorは公開しない。最終公開形では
-互換性を優先してUAC1をdefault、UAC2を明示選択とする。UAC versionは音質modeではなく、
+互換性を優先してUAC1をdefault、UAC2をconstructorで明示選択する。UAC versionは音質modeではなく、
 descriptor/control/clock modelとhost互換性の選択として扱う。
 
 同じAudio functionはFS/HSの両descriptorで選択したprotocol/topologyを公開する。
@@ -159,7 +158,9 @@ bus speedによるUAC1/UAC2の暗黙切替は行わない。
 旧APIの `speakerChannels` / `micChannels` を中心にしたAudio Card固定モデルを廃止する。
 
 ```cpp
-EspUsbAudioFunction audio(device);
+EspUsbAudioFunction audio(device); // UAC1
+// UAC2を選ぶ場合:
+// EspUsbAudioFunction audio(device, EspUsbAudioProtocol::Uac2);
 
 auto &playback = audio.addPlaybackStream();
 playback.addFormat({48000, 2, 2, 16});

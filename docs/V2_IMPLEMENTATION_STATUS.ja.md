@@ -15,11 +15,11 @@
   開始済みclassを逆順rollbackし、`end()`でcallback registryを解放する。
 - Phase 4: 非Audio classの実装済み、S3/P4実機回帰通過。
 - Phase 5: controller選択とper-speed descriptor実装済み、P4 HS PC実測待ち。
-- Phase 6: Audio format/bandwidth model、entity/stream graph、UAC2 descriptor writer、
-  Clock/Feature control request、polling data plane、固定長control/stream event queueを
+- Phase 6: Audio format/bandwidth model、entity/stream graph、UAC1/UAC2 descriptor writer、
+  endpoint/Clock/Feature control request、polling data plane、固定長control/stream event queueを
   独立実装済み。FIFO clear lifecycleと、playback/captureの転送byte・overrun・
   underrun counterも追加。新公開prototypeは`EspUsbAudioFunction` +
-  playback/capture stream。実streaming Gateは未完了。
+  playback/capture stream。UAC1をdefault、UAC2を明示選択とした。
 
 ## 現在使える経路
 
@@ -51,12 +51,10 @@ other-speed configurationもライブラリ側から返す。
   callback registry rollbackを含む。
 - 新Audio公開APIのdescriptor実機unit: speaker / microphone / duplexと、
   mute / volume / stream state eventのpolling、stream stats lifecycleをPASS。
-- S3 peer: spec準拠UAC2のAudio OUT 98-byte endpointと4-byte feedback endpointの
-  列挙PASS。EspUsbHost 2.5.0はUAC1 Type-I parserのみのため、UAC2 format解釈と
-  streaming開始はHost側UAC2対応後の共同Peer Gateへ延期。
-- Audio speaker / microphone / headsetの通常example、M5 example、Peer device
-  firmwareを新しいUAC2 polling APIへ移行し、S3 compileをPASS。duplexの
-  `AudioHeadset`はS2/P4 compileもPASS。
+- S3 UAC1 peer: speaker、microphone、headsetの列挙・stream開始・PCM転送をPASS。
+  speakerのmute/volumeと連続control requestもSTALL・rebootなしでPASS。
+- UAC2 descriptor/class requestは明示選択時に維持し、descriptor unitをPASS。
+  UAC2実streamingは対応するHost実装の準備後の共同Peer Gateとする。
 - Audio + HID/CDC/Vendorのcomposite descriptor buildと`MAX_CLASSES`制約を
   `unit/composite_constraints`のS3実機testでPASS。
 - Arduino compile: KeyboardをS2/S3/P4でPASS。
@@ -70,9 +68,8 @@ other-speed configurationもライブラリ側から返す。
   集約した。CDC/NCMはnotification用1番号+data duplex用1番号、MIDI/MSC/Vendor/HIDは
   duplex 1番号。修正後、該当composite 12件、descriptor/compile/constraint unit 3件、
   MIDI/MSC/NCM/VendorとP4 loopbackの横断31件を全PASS。
-- S3のHID+CDC+MSC+Vendorも試験し、`begin()`は成功するが非control INが5本となるため
-  SET_CONFIGURATIONでEP0 STALLになることを再確認。S3上限はclass数ではなく、
-  EP0を除くIN endpoint 4本である。
+- S2/S3のcontroller endpoint validatorを追加。非control INが4本を超える構成は
+  SET_CONFIGURATIONまで進めず、`begin()`が`ESP_ERR_INVALID_SIZE`で拒否する。
 
 ## link audit
 
@@ -87,10 +84,8 @@ S3 Keyboard ELF/mapでは次を確認した。
 
 ## 次の作業
 
-1. controller capabilityをdescriptor validatorへ渡し、S2/S3のIN endpoint超過を
-   SET_CONFIGURATIONより前の`begin()`で具体的に拒否する。
-2. begin/end反復とpartial failure cleanupを追加実機検証。
-3. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
-4. Audio + 他class compositeのtarget別descriptor容量とendpoint制約をPeerで確認。
-5. EspUsbHostのUAC2対応後、speaker、microphone、duplexの実streamingとcounterを
+1. begin/end反復とpartial failure cleanupを追加実機検証。
+2. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
+3. Audio + 他class compositeのtarget別descriptor容量とendpoint制約をPeerで確認。
+4. UAC2対応Hostの準備後、speaker、microphone、duplexの実streamingとcounterを
    共同Peer testで実測。
