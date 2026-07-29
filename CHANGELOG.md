@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Guard the current DWC2 transfer model with compile-time tests: Device DMA must remain disabled and CPU-driven slave/FIFO mode enabled on S2, S3, and P4. Enabling Device DMA now requires an intentional test update and cache-coherency audit instead of silently exposing cached P4 buffers to a new DMA path.
+- (JA) 現在のDWC2転送modelをcompile-time testで固定しました。S2/S3/P4でDevice DMAを無効、CPU駆動のslave/FIFO modeを有効のまま必須とします。Device DMAを有効化する場合はtestの意図的な更新とcache coherency監査が必要になり、P4のcached bufferを新しいDMA経路へ暗黙に晒しません。
 - (EN) Add an optional P4-to-PC High-Speed manual test with a dedicated raw Vendor bulk echo sketch and PyUSB host checker. It verifies an actual HS link, 512-byte active bulk endpoints, Device Qualifier, 64-byte Other-Speed bulk endpoints, and configurable sustained byte-for-byte echo without adding hardware-dependent work to the default pytest suite.
 - (JA) P4とPCを直結する任意のHigh-Speed手動testを追加しました。専用raw Vendor bulk echo sketchとPyUSB Host checkerで、実HS link、active bulk endpointの512 bytes、Device Qualifier、Other-Speed bulk endpointの64 bytes、指定容量の連続byte一致を確認します。hardware依存のためdefault pytestには追加しません。
 - (EN) Make the P4 HS host checker report an actionable Linux/WSL device-permission error instead of a PyUSB traceback, and document temporary node access plus a persistent VID/PID udev rule.
