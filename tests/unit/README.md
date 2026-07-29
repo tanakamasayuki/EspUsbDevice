@@ -62,8 +62,15 @@ wire formats.
 Builds the new public `EspUsbAudioFunction` API on S3 hardware and checks the
 speaker, microphone, and duplex configuration descriptors, FS/HS packet sizes,
 polling of mute, volume, and stream-state events, and the stream-stats reset
-lifecycle. It leaves the USB runtime stopped, so this specifically tests public
-API, device-descriptor, and control state integration.
+lifecycle. UAC1 24-bit and 32-bit formats also verify subslot/bit fields, packet
+sizes, and transfer accounting. It leaves the USB runtime stopped, so this
+specifically tests public API, device-descriptor, and control state integration.
+
+## `p4_controller_endpoints`
+
+Runs on P4 without starting TinyUSB and verifies controller-specific descriptor
+limits: a five-IN-endpoint composite is rejected for the FS controller but
+accepted for HS and for P4's HS-default `Auto` selection.
 
 ## `keymap`
 

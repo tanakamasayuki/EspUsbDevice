@@ -363,6 +363,141 @@ uint32_t EspUsbAudioFunction::currentSampleRate() const
   return controls_.currentSampleRate();
 }
 
+uint8_t EspUsbAudioFunction::controlEntityId(
+    EspUsbAudioDirection direction) const
+{
+  const espusb::internal::AudioDirection internalDirection =
+      direction == EspUsbAudioDirection::Playback
+          ? espusb::internal::AudioDirection::Playback
+          : espusb::internal::AudioDirection::Capture;
+  for (size_t i = 0; i < graph_.entityCount; ++i)
+  {
+    const espusb::internal::AudioEntity &entity = graph_.entities[i];
+    if (entity.kind == espusb::internal::AudioEntityKind::FeatureUnit &&
+        entity.direction == internalDirection)
+    {
+      return entity.id;
+    }
+  }
+  return 0;
+}
+
+bool EspUsbAudioFunction::hasMute(EspUsbAudioDirection direction,
+                                  uint8_t channel) const
+{
+  bool muted = false;
+  return getMute(muted, direction, channel);
+}
+
+bool EspUsbAudioFunction::hasVolume(EspUsbAudioDirection direction,
+                                    uint8_t channel) const
+{
+  int16_t volume = 0;
+  return getVolume(volume, direction, channel);
+}
+
+bool EspUsbAudioFunction::getMute(bool &mute,
+                                  EspUsbAudioDirection direction,
+                                  uint8_t channel) const
+{
+  const uint8_t entityId = controlEntityId(direction);
+  int32_t value = 0;
+  if (entityId == 0 ||
+      !controls_.current(entityId,
+                         espusb::internal::AudioControlSelector::Mute,
+                         channel, value))
+  {
+    return false;
+  }
+  mute = value != 0;
+  return true;
+}
+
+bool EspUsbAudioFunction::setMute(bool mute,
+                                  EspUsbAudioDirection direction,
+                                  uint8_t channel)
+{
+  const uint8_t entityId = controlEntityId(direction);
+  int32_t previous = 0;
+  const int32_t value = mute ? 1 : 0;
+  if (entityId == 0 ||
+      !controls_.current(entityId,
+                         espusb::internal::AudioControlSelector::Mute,
+                         channel, previous) ||
+      !controls_.setCurrent(entityId,
+                            espusb::internal::AudioControlSelector::Mute,
+                            channel, value))
+  {
+    return false;
+  }
+  if (previous != value)
+  {
+    pushControlEvent(espusb::internal::AudioControlSelector::Mute,
+                     entityId, channel, value);
+  }
+  return true;
+}
+
+bool EspUsbAudioFunction::getVolume(int16_t &volume,
+                                    EspUsbAudioDirection direction,
+                                    uint8_t channel) const
+{
+  const uint8_t entityId = controlEntityId(direction);
+  int32_t value = 0;
+  if (entityId == 0 ||
+      !controls_.current(entityId,
+                         espusb::internal::AudioControlSelector::Volume,
+                         channel, value))
+  {
+    return false;
+  }
+  volume = static_cast<int16_t>(value);
+  return true;
+}
+
+bool EspUsbAudioFunction::setVolume(int16_t volume,
+                                    EspUsbAudioDirection direction,
+                                    uint8_t channel)
+{
+  const uint8_t entityId = controlEntityId(direction);
+  int32_t previous = 0;
+  if (entityId == 0 ||
+      !controls_.current(entityId,
+                         espusb::internal::AudioControlSelector::Volume,
+                         channel, previous) ||
+      !controls_.setCurrent(entityId,
+                            espusb::internal::AudioControlSelector::Volume,
+                            channel, volume))
+  {
+    return false;
+  }
+  if (previous != volume)
+  {
+    pushControlEvent(espusb::internal::AudioControlSelector::Volume,
+                     entityId, channel, volume);
+  }
+  return true;
+}
+
+bool EspUsbAudioFunction::getVolumeRange(
+    EspUsbAudioVolumeRange &range, EspUsbAudioDirection direction,
+    uint8_t channel) const
+{
+  const uint8_t entityId = controlEntityId(direction);
+  espusb::internal::AudioControlRange internalRange;
+  if (entityId == 0 ||
+      !controls_.range(entityId,
+                       espusb::internal::AudioControlSelector::Volume,
+                       channel, internalRange))
+  {
+    return false;
+  }
+  range.min = static_cast<int16_t>(internalRange.minimum);
+  range.max = static_cast<int16_t>(internalRange.maximum);
+  range.resolution = static_cast<int16_t>(internalRange.resolution);
+  return true;
+}
+
 EspUsbAudioEventTarget
 EspUsbAudioFunction::eventTarget(uint8_t entityId) const
 {

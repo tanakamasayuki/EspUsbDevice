@@ -142,6 +142,26 @@ void loop()
       }
       Serial.printf("MUTE_FLOOD_DONE %lu\n", static_cast<unsigned long>(count));
     }
+    else if (command == 'c')
+    {
+      const bool capabilities =
+          usb.audioHasMute(audioAddress, 0, 1) &&
+          usb.audioHasVolume(audioAddress, 0, 1);
+      const bool setOk =
+          usb.audioSetMute(true, audioAddress, 0, 1) &&
+          usb.audioSetVolume(-6 * 256, audioAddress, 0, 1);
+      bool muted = false;
+      int16_t volume = 0;
+      EspUsbHostAudioVolumeRange range;
+      const bool getOk =
+          usb.audioGetMute(muted, audioAddress, 0, 1) &&
+          usb.audioGetVolume(volume, audioAddress, 0, 1) &&
+          usb.audioGetVolumeRange(range, audioAddress, 0, 1);
+      Serial.printf(
+          "CHANNEL_CONTROL caps=%u set=%u get=%u mute=%u volume=%d range=%d:%d:%d\n",
+          capabilities ? 1 : 0, setOk ? 1 : 0, getOk ? 1 : 0,
+          muted ? 1 : 0, volume, range.min, range.max, range.resolution);
+    }
   }
   delay(1);
 }

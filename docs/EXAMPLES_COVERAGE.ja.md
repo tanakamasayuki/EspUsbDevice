@@ -37,6 +37,7 @@
 | `USBVendor` | `USBVendor` | 一部対応 | HID ではない vendor interface / bulk IN/OUT / control request / WebUSB URL。custom vendor code と Microsoft OS 2.0 descriptor 差し替え API は未実装。 |
 | `AudioCard` | `AudioSpeaker` / `AudioSpeakerM5` | 一部対応 | 最小 speaker sink と M5 speaker 連携例。I2S bridge / codec はこのライブラリの責務外。 |
 | `CompositeDevice` | `CompositeHidCdcMsc` ほか | 一部対応 | HID+CDC+MSC の複合 example あり。4-in-1（+Vendor）は S3 の endpoint 予算超で未作成（P4 が必要）。 |
+| P4 port選択 | `P4HighSpeedDevice` / `P4FullSpeedDevice` | 対応済み | rhport、UTMI/FS接続先、GPIO26/27既定とGPIO24/25 swap、VBUS/CC注意を記載。 |
 | （標準に無し） | `UsbNetwork` | 新規 | Arduino-ESP32 標準に無い CDC-NCM ネットワークデバイス（生フレーム + 任意の lwIP/esp_netif、DHCP サーバ/クライアント/静的）。 |
 
 ## 現在の EspUsbDevice examples

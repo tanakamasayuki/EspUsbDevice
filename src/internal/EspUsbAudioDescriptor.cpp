@@ -103,7 +103,7 @@ bool writeFeatureUnit(DescriptorBuffer &buffer, const AudioEntity &entity)
   }
   for (uint8_t channel = 0; channel < entity.channels; ++channel)
   {
-    if (!writeU32(buffer, 0))
+    if (!writeU32(buffer, masterControls))
     {
       return false;
     }
@@ -243,7 +243,7 @@ bool writeUac1FeatureUnit(DescriptorBuffer &buffer,
   }
   for (uint8_t channel = 0; channel < entity.channels; ++channel)
   {
-    if (!buffer.writeU8(0))
+    if (!buffer.writeU8(controls))
     {
       return false;
     }

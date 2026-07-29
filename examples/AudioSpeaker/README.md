@@ -22,5 +22,16 @@ PCMFlow, or another application layer. `audio.pollEvent()` reports stream,
 mute, volume, and sample-rate changes without executing user code on the
 TinyUSB task. The library does not apply volume or mute DSP to PCM implicitly.
 
+The feature-unit state is also available directly:
+
+```cpp
+bool leftMuted;
+int16_t rightVolume;
+audio.getMute(leftMuted, EspUsbAudioDirection::Playback, 1);
+audio.getVolume(rightVolume, EspUsbAudioDirection::Playback, 2);
+```
+
+Channels are `0` Master, `1` Left, and `2` Right. Volume uses 1/256 dB units.
+
 UAC1 enumeration, streaming, mute, volume, and rapid control changes are
 covered by the S3 peer tests.

@@ -69,8 +69,9 @@ available:
 - USB MIDI event packets and note/control-change helpers.
 - USB MSC block device and SCSI callbacks.
 - USBVendor bulk IN/OUT, control requests, and WebUSB landing URL.
-- UAC1-default Audio Playback/Capture polling I/O, control events, and stream
-  stats, with UAC2 available by explicit selection.
+- UAC1-default Audio Playback/Capture polling I/O, per-channel mute/volume
+  state, control events, and stream stats, with UAC2 available by explicit
+  selection.
 - CDC-NCM network device with raw-frame API and optional lwIP/esp_netif
   integration (DHCP server / client / static address).
 - Multi-function composite devices (e.g. HID + CDC + MSC on one device).
@@ -79,6 +80,9 @@ available:
 This library owns the USB Audio class and PCM FIFO boundary only. Applications can
 forward PCM to PCMFlow, PCMFlowDevice, or another processing/output layer.
 Volume and mute are not applied to PCM implicitly.
+`hasMute()` / `getMute()` / `setMute()` and the corresponding volume APIs use
+the same Master/Left/Right control state exposed to the USB host. Volume values
+use the USB Audio wire unit of 1/256 dB.
 
 - PCMFlow: https://github.com/tanakamasayuki/PCMFlow
 - PCMFlowDevice: https://github.com/tanakamasayuki/PCMFlowDevice

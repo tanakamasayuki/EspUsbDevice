@@ -65,13 +65,13 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   device's own web server reports it served the host's request).
 - `usb_audio_speaker`: USB Audio speaker sink (host -> device). Host -> Device
   speaker PCM reception passes on the two-board S3 setup (UAC1 / full speed).
+  Logical-channel mute/volume capability, SET/GET, range, and Device event
+  delivery are also covered.
   `test_usb_audio_speaker_volume_flood`
   reproduces a real-Windows failure mode by blasting a burst of rapid volume /
   mute SET_CUR changes (like dragging the volume slider) and asserts the device
-  keeps running without rebooting. There is no P4 loopback
-  counterpart: P4 audio is UAC2 / high-speed only while one-board loopback is
-  full-speed, so the two cannot meet. P4 audio (UAC2/HS) is validated by manual
-  high-speed checks.
+  keeps running without rebooting. UAC2 streaming remains a later Host peer
+  gate; it is not required by these UAC1 tests.
 
 - `usb_audio_microphone`: USB Audio source / microphone (device -> host). The
   device streams a generated sawtooth to the host; the host starts the input

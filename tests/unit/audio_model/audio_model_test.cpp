@@ -25,6 +25,14 @@ static uint16_t read16(const uint8_t *data)
          static_cast<uint16_t>(static_cast<uint16_t>(data[1]) << 8);
 }
 
+static uint32_t read32(const uint8_t *data)
+{
+  return static_cast<uint32_t>(data[0]) |
+         (static_cast<uint32_t>(data[1]) << 8) |
+         (static_cast<uint32_t>(data[2]) << 16) |
+         (static_cast<uint32_t>(data[3]) << 24);
+}
+
 int main()
 {
   AudioPacketRequirement packet;
@@ -209,8 +217,10 @@ int main()
         "playback_uac2_clock");
   check(playbackDescriptor[60] == 18 &&
             playbackDescriptor[62] == 0x06 &&
-            playbackDescriptor[65] == 0x0f,
-        "playback_uac2_feature");
+            read32(playbackDescriptor + 65) == 0x0f &&
+            read32(playbackDescriptor + 69) == 0x0f &&
+            read32(playbackDescriptor + 73) == 0x0f,
+        "playback_uac2_feature_channels");
   check(playbackDescriptor[90 + 3] == 0 &&
             playbackDescriptor[99 + 3] == 1 &&
             playbackDescriptor[99 + 4] == 2,
@@ -351,10 +361,29 @@ int main()
                              0, -385) &&
             controls.error() == AudioControlError::InvalidValue,
         "volume_resolution_rejected");
+  check(controls.setCurrent(playbackFeature, AudioControlSelector::Mute,
+                            1, 1) &&
+            controls.current(playbackFeature, AudioControlSelector::Mute,
+                             1, current) &&
+            current == 1,
+        "playback_left_mute_state");
+  check(controls.setCurrent(playbackFeature, AudioControlSelector::Volume,
+                            2, -12 * 256) &&
+            controls.current(playbackFeature, AudioControlSelector::Volume,
+                             2, current) &&
+            current == -12 * 256,
+        "playback_right_volume_state");
+  check(controls.current(captureFeature, AudioControlSelector::Mute,
+                         1, current),
+        "capture_mono_channel_control");
   check(!controls.current(captureFeature, AudioControlSelector::Mute,
-                          1, current) &&
+                          2, current) &&
             controls.error() == AudioControlError::InvalidChannel,
-        "per_channel_control_not_advertised");
+        "capture_invalid_channel_rejected");
+  check(!controls.current(playbackFeature, AudioControlSelector::Mute,
+                          3, current) &&
+            controls.error() == AudioControlError::InvalidChannel,
+        "playback_invalid_channel_rejected");
   check(!controls.current(99, AudioControlSelector::Mute, 0, current) &&
             controls.error() == AudioControlError::UnknownEntity,
         "unknown_entity_rejected");

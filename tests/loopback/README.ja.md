@@ -13,7 +13,8 @@ descriptor ログで P4 の port / speed 挙動を確認します。
 - `hid_keyboard`: P4 1台上で `EspUsbHost` と `EspUsbDeviceHidKeyboard` を同時に起動し、
   Device 側から `hello, keyboard` を送信して Host 側 `onKeyboard()` で確認する。
   Host 側から NumLock / CapsLock / ScrollLock / clear の LED output report も送信し、
-  Device 側 `onOutputReport()` で確認する。
+  Device 側 `onOutputReport()` で確認する。Device HS + Host FSの後、Device FS + Host HSへ
+  controllerを反転して両構成を検証する。
 - `hid_mouse`: P4 1台上で `EspUsbHost` と `EspUsbDeviceHidMouse` を同時に起動し、
   move / wheel / left / right / middle / back / forward を Host 側 `onMouse()` で確認する。
 - `hid_keyboard_mouse`: P4 1台上で keyboard + mouse composite device を起動し、
@@ -37,33 +38,29 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   inquiry / read / write / error path を確認する。
 - `usb_vendor`: P4 1台上で vendor-specific interface を起動し、bulk echo、application
   control IN/OUT、WebUSB landing URL 読み出しを確認する。
-- `usb_audio`: 意図的に用意しない。P4 では本ライブラリの Audio は UAC2 / High Speed 専用だが、
-  1台 loopback は Full Speed でしか動けない（下の P4 注記参照）ため、P4 Audio は loopback で
-  流せない。Audio は `peer/usb_audio_speaker`（S3, UAC1）と実機 HS 手動確認でカバーする。
+- `usb_audio`: Host側Audio PeerがUAC1中心の間は後回しにする。P4 Device Audioも他targetと
+  同じくUAC1 defaultで、UAC2は明示選択する。
 
 ## P4 ポート / PHY の実態（2026-07 実機確認）
 
 P4 は OTG コントローラが2個あるが UTMI(HS) PHY は1個だけ
-（`SOC_USB_OTG_PERIPH_NUM=2`, `SOC_USB_UTMI_PHY_NUM=1`）。Arduino core がデバイス
-スタックを HS/UTMI PHY に固定しており、`EspUsbDeviceConfig.port` / `speed` は
-`tinyusb_init` に渡っていない。速度とコントローラは別で、HS 対応デバイスでも相手が
-FS ホストなら **Full Speed** でネゴして動く。
+（`SOC_USB_OTG_PERIPH_NUM=2`, `SOC_USB_UTMI_PHY_NUM=1`）。EspUsbDeviceはTinyUSB runtimeを
+所有し、`FullSpeed`をrhport 0/internal PHY、`HighSpeed`をrhport 1/UTMIへmapする。
+EspUsbHostは空いているもう一方のcontrollerを独立して選択できる。
 
 1台 loopback での帰結:
 
-- デバイスは HS/UTMI PHY 上にいるが FS ホスト相手なので FS 動作。enumerate は正常。
-- 唯一の UTMI PHY をデバイスが握るため、ホストは `ESP_USB_HOST_PORT_FULL_SPEED` 限定。
-  ホストを HS にすると PHY 衝突（`usb_phy: selected PHY is in use`）。
-- よって 1台では HS リンクは作れない。HS リンクの検証は2台構成の peer で行う。
+- Device HS + Host FSは有効で、HostがFSなのでFS linkになる。
+- Device FS + Host HSも有効で、DeviceがFSなのでFS linkになる。
+- Device HS + Host HSはrhport 1/UTMIを共有するため不可。
+- Device FS + Host FSはrhport 0を共有するため不可。
+- よって1台ではHS linkは作れず、HS link検証は2台構成のPeerで行う。
 
 ## Matrix
 
 | Device | Host | 期待 |
 |--------|------|------|
-| HS(UTMI) device / FS 動作 | FS host | 1台 loopback で実現できる構成。デバイスは HS PHY 固定だが FS でネゴ。 |
-| HS device | HS host | 1台 P4 では不可。UTMI PHY を共有できず衝突。HS リンクは2台構成で。 |
-
-> P4 に audio loopback は無い：本ライブラリの Audio は P4 で UAC2 / High Speed
-> （`TUD_OPT_HIGH_SPEED`）専用だが、1台 loopback のリンクは Full Speed なので原理的に噛み合わない。
-> よって P4 Audio は HS 専用とし、loopback 外で検証する。
-> 詳細は `docs/DESIGN_NOTES.ja.md`「P4 USB ポート/PHY の実測整理」。
+| HS/UTMI device | FS host | 対応。FSでネゴする。 |
+| FS device | HS/UTMI host | 対応。FSでネゴする。 |
+| HS device | HS host | 1台P4ではrhport 1/UTMIが衝突するため不可。 |
+| FS device | FS host | 1台P4ではrhport 0が衝突するため不可。 |

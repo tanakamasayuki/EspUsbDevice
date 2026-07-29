@@ -1463,10 +1463,17 @@ bool EspUsbDevice::validateControllerEndpoints(const uint8_t *descriptor,
   constexpr uint8_t maxEndpointNumber = 5;
   constexpr uint8_t maxNonControlInEndpoints = 4;
   constexpr uint8_t maxNonControlOutEndpoints = 5;
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+  // P4 rhport 0 is the FS controller (7 endpoint numbers total, 5 IN
+  // endpoints including EP0). rhport 1 is the HS controller (16 endpoint
+  // numbers total, 8 IN endpoints including EP0). Auto selects HS on P4.
+  const bool fullSpeed = config_.controller == EspUsbController::FullSpeed;
+  const uint8_t maxEndpointNumber = fullSpeed ? 6 : 15;
+  const uint8_t maxNonControlInEndpoints = fullSpeed ? 4 : 7;
+  const uint8_t maxNonControlOutEndpoints = fullSpeed ? 6 : 15;
 #else
-  // P4 exposes different FS and HS controllers. Keep protocol validation
-  // independent until their per-controller capabilities are represented by
-  // the runtime port model.
+  // Unknown future targets keep USB's protocol maximum until their controller
+  // capabilities are represented here.
   constexpr uint8_t maxEndpointNumber = 15;
   constexpr uint8_t maxNonControlInEndpoints = 15;
   constexpr uint8_t maxNonControlOutEndpoints = 15;

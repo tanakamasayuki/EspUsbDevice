@@ -303,7 +303,8 @@ Gate 4:
 - [x] controllerと一致するPHYを確保する。
 - [x] negotiated speedでconfiguration callbackを切り替える。
 - [x] qualifier/other-speed requestを実装する。
-- P4のcache sync、DMA alignment、endpoint/FIFO上限を検証する。
+- [x] P4のFS/HS別endpoint番号・IN/OUT本数上限をbegin前に検証する。
+- P4のcache sync、DMA alignment、FIFO実効上限を実streamingで検証する。
 
 注意:
 
@@ -443,6 +444,8 @@ Gate 8:
 | `writeMic()` | capture streamの`write()` |
 | Audio内`applyVolume()` | 独立DSP/helperへ分離 |
 | Audio内`onEvent()` | control state/event queue |
+| `mute(channel)` / `mute(channel, value)` | `getMute()` / `setMute()`（direction + channel） |
+| `volume(channel)` / `volume(channel, dB)` | `getVolume()` / `setVolume()`（1/256 dB） |
 | core由来WebUSB設定 | v2 device capability設定 |
 
 完全なAPI名はPhase 1のmodelとPhase 6のprototypeをhost testで使ってから固定する。

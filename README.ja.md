@@ -65,8 +65,8 @@ loopback テストで確認できる範囲を広げています。
 - USB MIDI event packet と note / control change helper。
 - USB MSC block device と SCSI callback。
 - USBVendor bulk IN/OUT、control request、WebUSB landing URL。
-- UAC1 defaultのAudio Playback/Capture polling I/O、control event、stream stats。
-  UAC2は明示選択できます。
+- UAC1 defaultのAudio Playback/Capture polling I/O、チャンネル別mute/volume state、
+  control event、stream stats。UAC2は明示選択できます。
 - CDC-NCM ネットワークデバイス（生フレーム API と、任意の lwIP/esp_netif 統合＝DHCP
   サーバ / クライアント / 静的アドレス）。
 - 多機能な複合デバイス（例: HID + CDC + MSC を 1 台に）。
@@ -74,6 +74,9 @@ loopback テストで確認できる範囲を広げています。
 
 USB Audioの責務はAudio classとPCM FIFO境界までです。受け取ったPCMはアプリケーション、
 PCMFlow、PCMFlowDeviceなど任意の処理系へ渡します。volume/muteをPCMへ暗黙適用しません。
+`hasMute()` / `getMute()` / `setMute()`と対応するvolume APIは、USB Hostへ公開する
+Master/Left/Rightのcontrol stateを共有します。volume値はUSB Audio wire形式と同じ
+1/256 dB単位です。
 
 - PCMFlow: https://github.com/tanakamasayuki/PCMFlow
 - PCMFlowDevice: https://github.com/tanakamasayuki/PCMFlowDevice

@@ -31,6 +31,8 @@
 
 `Auto`はS2/S3でFullSpeed、P4でHighSpeedを選ぶ。P4ではFullSpeedをrhport 0、
 HighSpeedをrhport 1へmapし、対応するPHYを確保する。
+descriptorのendpoint上限もP4 FullSpeed（EP 1..6、IN 4、OUT 6）と
+HighSpeed/Auto（EP 1..15、IN 7、OUT 15）で分けてbegin前に検証する。
 
 P4 HighSpeed controllerではnegotiated speedをdescriptor callback時に読み、
 FS/HS configurationを切り替える。bulk MPSはFS 64 / HS 512で、device qualifierと
@@ -50,8 +52,10 @@ other-speed configurationもライブラリ側から返す。
 - descriptor/runtime実機unit: 265 checks PASS。TinyUSB task、PHY、callback registryを
   同一deviceで100回begin/endし、二重begin/endの冪等性を確認。HID開始後のCDC失敗を
   rollbackし、同じdevice instanceで再beginできることも含む。
-- 新Audio公開APIのdescriptor実機unit: speaker / microphone / duplexと、
-  mute / volume / stream state eventのpolling、stream stats lifecycleをPASS。
+- 新Audio公開APIのdescriptor実機unit: speaker / microphone / duplex、Master/Left/Right
+  ごとのmute / volume stateとcapability、Host SET_CURとlocal setterのevent polling、
+  24/32bit UAC1 format descriptor・packet size・transfer accounting、stream stats
+  lifecycleをPASS。
 - S3 UAC1 peer: speaker、microphone、headsetの列挙・stream開始・PCM転送をPASS。
   speakerのmute/volumeと連続control requestもSTALL・rebootなしでPASS。
 - UAC2 descriptor/class requestは明示選択時に維持し、descriptor unitをPASS。
@@ -90,7 +94,7 @@ S3 Keyboard ELF/mapでは次を確認した。
 
 ## 次の作業
 
-1. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
+1. P4 rhport 0のFS class実機試験と、rhport 1をPCへ接続したHS実測。
 2. 必要に応じてUAC1 Audio + CDC/Vendor compositeのPeer coverageを追加。
 3. UAC2対応Hostの準備後、speaker、microphone、duplexの実streamingとcounterを
    共同Peer testで実測。

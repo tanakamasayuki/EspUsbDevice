@@ -4,6 +4,16 @@
 このライブラリを使う sketch では Arduino-ESP32 標準の `USB.begin()`、
 `USBHIDKeyboard`、`USBHIDMouse` は使いません。
 
+## ESP32-P4 Device port
+
+- [P4HighSpeedDevice](P4HighSpeedDevice/README.ja.md): rhport 1と、external UTMI
+  High-Speed PHYへ接続されたboard側connectorを使います。
+- [P4FullSpeedDevice](P4FullSpeedDevice/README.ja.md): rhport 0、通常は
+  GPIO26/GPIO27を使い、GPIO24/GPIO25へ切り替えるFS routing callもコメントアウトした
+  状態でsketchに記載しています。
+
+connector名、VBUS、USB-C CC処理はboard回路図に依存します。
+
 ## Keyboard
 
 HID boot keyboard device の例です。詳しくは [Keyboard/README.ja.md](Keyboard/README.ja.md) を参照してください。
