@@ -50,6 +50,8 @@ uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean -vv
 These are not required for the first release, but can be run from
 `tests/manual/README.md` when needed.
 
+- `tests/manual/p4_hs_bulk`: P4-to-PC HS enumeration, Device Qualifier,
+  FS/HS descriptors, and sustained bulk echo.
 - `examples/MSCFatRamDisk`: PC mount, file copy, OS eject, device-side file read.
 - `examples/MSCSdCard`: SD card mount, host OS read/write, OS eject.
 - `examples/USBVendor`: browser / libusb / WinUSB claim, bulk echo, control

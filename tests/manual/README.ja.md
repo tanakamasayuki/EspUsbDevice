@@ -5,6 +5,80 @@
 手動テストは、pytest だけでは完全に制御できない挙動に限定します。
 例: ホスト OS の列挙表示、LED の目視確認、外部 USB analyzer、物理的な配線変更。
 
+## `p4_hs_bulk`（ESP32-P4 High-Speed Device）
+
+目的:
+
+- ESP32-P4のHS Device controllerをPCへ直結し、USB High-Speed
+  （480 Mbit/s signaling）で列挙することを確認する。
+- active HS configurationのbulk endpointがMPS 512、Other-Speed Configurationの
+  FS bulk endpointがMPS 64であることを確認する。
+- Device Qualifierを取得できることを確認する。
+- raw bulk OUT/IN echoを連続実行し、timeout、短い転送、データ化けがないことを確認する。
+
+必要なもの:
+
+- 外部UTMI HS PHYと、そのDevice connectorを持つESP32-P4 board
+- data通信対応USB cable
+- libusbを利用できるPC
+
+手順:
+
+1. [`p4_hs_bulk/p4_hs_bulk.ino`](p4_hs_bulk/p4_hs_bulk.ino)を書き込む:
+   ```
+   cd tests/manual/p4_hs_bulk
+   arduino-cli compile --profile esp32p4 --upload
+   ```
+2. Serial monitorで`P4_HS_BULK_READY`を確認する。
+3. board schematicを確認し、P4の外部UTMI HS PHYへ配線されたDevice connectorをPCへ接続する。
+   USB Serial/JTAG端子やGPIO26/GPIO27のFS pairではない。
+4. Linuxでは任意確認として`lsusb -t`を実行し、`480M`になっていることを確認する。
+5. PC側検査を実行する:
+   ```
+   cd tests
+   uv run --with pyusb python manual/p4_hs_bulk/p4_hs_bulk.py --megabytes 16
+   ```
+   長時間確認する場合は、例えば`--megabytes 256`へ増やす。
+
+Linux / WSLで`Access denied (insufficient permissions)`になった場合は、現在の接続だけ
+一時的に許可して再実行できる（`001/010`はcheckerが表示した現在のnodeへ置き換える）:
+
+```
+sudo chmod a+rw /dev/bus/usb/001/010
+```
+
+恒久的にはudev ruleを追加する:
+
+```
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="303a", ATTR{idProduct}=="4041", MODE="0660", GROUP="plugdev"' \
+  | sudo tee /etc/udev/rules.d/70-espusbdevice-p4-hs.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --attr-match=idVendor=303a --attr-match=idProduct=4041
+```
+
+その後USB deviceを再接続する。WSLへusbipdで渡している場合はdetach / attachし直す。
+接続ごとに`/dev/bus/usb/BBB/DDD`の番号は変わるが、udev ruleはVID/PIDへ適用される。
+
+合格条件:
+
+- `PASS link: USB High-Speed`。
+- active descriptorのbulk IN/OUTがMPS 512。
+- Device Qualifierを取得できる。
+- Other-Speed Configurationのbulk IN/OUTがMPS 64。
+- 指定した全byteのechoが一致し、scriptが`PASS bulk echo`で終了する。
+- Device側の`P4_HS_BULK_STATUS`で`errors=0`のまま、意図しない再起動がない。
+
+注意:
+
+- PyUSBの実行にはlibusb backendとdevice permissionが必要。Windowsで直接実行する場合は
+  WinUSB driver bindingが必要になることがある。
+- 表示するMiB/sはpacketごとの同期echoを含む健全性確認値で、最大帯域benchmarkではない。
+- 512-byteちょうどのechoを`flush()`するとTinyUSBは転送終端のZLPを送る。checkerは
+  この正規の0-byte packetを数えて読み飛ばし、echo payload全体を比較する。
+- 中断した前回実行のechoやZLPがendpoint/FIFOへ残る場合があるため、checkerは開始時に
+  USB標準の`SET_CONFIGURATION 0 → 1`でclass endpointを再初期化してから比較を始める。
+- HS cable/port/PHYの物理条件を含むため通常のpytestには入れず、release candidateで実行する。
+
 ## `usb_ncm`（USB CDC-NCM ネットワークデバイス）
 
 目的:

@@ -6,6 +6,90 @@ Manual tests are reserved for behavior that cannot be fully controlled by
 pytest, such as host OS enumeration dialogs, visual LED confirmation, external
 USB analyzers, or physical cabling changes.
 
+## `p4_hs_bulk` (ESP32-P4 High-Speed Device)
+
+Purpose:
+
+- Connect the ESP32-P4 HS Device controller directly to a PC and verify USB
+  High-Speed enumeration (480 Mbit/s signaling).
+- Verify bulk endpoint MPS 512 in the active HS configuration and MPS 64 in the
+  Full-Speed Other-Speed Configuration.
+- Retrieve the Device Qualifier.
+- Run sustained raw bulk OUT/IN echo and detect timeouts, short transfers, or
+  data corruption.
+
+Requirements:
+
+- An ESP32-P4 board with an external UTMI HS PHY and its Device connector
+- A data-capable USB cable
+- A PC with a working libusb backend
+
+Steps:
+
+1. Flash [`p4_hs_bulk/p4_hs_bulk.ino`](p4_hs_bulk/p4_hs_bulk.ino):
+   ```
+   cd tests/manual/p4_hs_bulk
+   arduino-cli compile --profile esp32p4 --upload
+   ```
+2. Wait for `P4_HS_BULK_READY` on the serial monitor.
+3. Check the board schematic and connect the Device connector wired to the
+   external UTMI HS PHY to the PC. It is not the USB Serial/JTAG connector or
+   the GPIO26/GPIO27 FS pair.
+4. On Linux, optionally run `lsusb -t` and confirm that the link shows `480M`.
+5. Run the host check:
+   ```
+   cd tests
+   uv run --with pyusb python manual/p4_hs_bulk/p4_hs_bulk.py --megabytes 16
+   ```
+   For a longer run, increase the amount, for example to `--megabytes 256`.
+
+If Linux or WSL reports `Access denied (insufficient permissions)`, grant
+temporary access to the current connection and rerun the check (replace
+`001/010` with the node printed by the checker):
+
+```
+sudo chmod a+rw /dev/bus/usb/001/010
+```
+
+For persistent access, install a udev rule:
+
+```
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="303a", ATTR{idProduct}=="4041", MODE="0660", GROUP="plugdev"' \
+  | sudo tee /etc/udev/rules.d/70-espusbdevice-p4-hs.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --attr-match=idVendor=303a --attr-match=idProduct=4041
+```
+
+Reconnect the USB device afterward. If usbipd passes the device through to WSL,
+detach and attach it again. The `/dev/bus/usb/BBB/DDD` numbers can change on
+each connection, while the udev rule follows the VID/PID.
+
+Pass criteria:
+
+- `PASS link: USB High-Speed`.
+- The active descriptor has bulk IN/OUT MPS 512.
+- The Device Qualifier can be retrieved.
+- The Other-Speed Configuration has bulk IN/OUT MPS 64.
+- Every requested byte echoes correctly and the script exits with
+  `PASS bulk echo`.
+- Device log `P4_HS_BULK_STATUS` remains at `errors=0` with no unexpected
+  reboot.
+
+Notes:
+
+- PyUSB needs a libusb backend and permission to access the device. Running
+  directly on Windows may require WinUSB binding.
+- The reported MiB/s includes one synchronous echo per packet. It is a
+  stability check, not a maximum-throughput benchmark.
+- Flushing an echo of exactly 512 bytes makes TinyUSB terminate the transfer
+  with a ZLP. The checker counts and skips this valid zero-length packet before
+  comparing the complete echo payload.
+- An interrupted run can leave an echo or ZLP in an endpoint/FIFO. Before
+  comparing new payloads, the checker reinitializes class endpoints with the
+  standard USB `SET_CONFIGURATION 0 → 1` sequence.
+- Physical HS cable/port/PHY conditions make this a release-candidate manual
+  test rather than part of the default pytest suite.
+
 ## `usb_ncm` (USB CDC-NCM network device)
 
 Purpose:

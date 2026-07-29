@@ -1,6 +1,14 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Add an optional P4-to-PC High-Speed manual test with a dedicated raw Vendor bulk echo sketch and PyUSB host checker. It verifies an actual HS link, 512-byte active bulk endpoints, Device Qualifier, 64-byte Other-Speed bulk endpoints, and configurable sustained byte-for-byte echo without adding hardware-dependent work to the default pytest suite.
+- (JA) P4とPCを直結する任意のHigh-Speed手動testを追加しました。専用raw Vendor bulk echo sketchとPyUSB Host checkerで、実HS link、active bulk endpointの512 bytes、Device Qualifier、Other-Speed bulk endpointの64 bytes、指定容量の連続byte一致を確認します。hardware依存のためdefault pytestには追加しません。
+- (EN) Make the P4 HS host checker report an actionable Linux/WSL device-permission error instead of a PyUSB traceback, and document temporary node access plus a persistent VID/PID udev rule.
+- (JA) P4 HS Host checkerでLinux/WSLのdevice permission不足をPyUSB tracebackではなく具体的な対処として表示し、一時的なnode許可とVID/PID指定の恒久udev ruleを手順へ追加しました。
+- (EN) Handle the valid ZLP emitted after each flushed full-MPS P4 HS bulk echo. The checker now skips and counts zero-length terminators while still requiring an exact byte-for-byte payload match.
+- (JA) P4 HS bulkでfull-MPSのechoをflushした後に送られる正規のZLPへ対応しました。checkerは0-byte終端を数えて読み飛ばしつつ、payload全体のbyte一致を引き続き必須にします。
+- (EN) Reset class endpoints with the standard USB `SET_CONFIGURATION 0 → 1` sequence before a P4 HS run, preventing a payload or ZLP left by an interrupted checker from desynchronizing the next run.
+- (JA) 中断したP4 HS checkerが残したpayloadやZLPで次回実行が同期ずれしないよう、開始前にUSB標準の`SET_CONFIGURATION 0 → 1`でclass endpointを再初期化します。
 - (EN) Make the default compatibility report filename stable for worktree runs: `--lib-version WORKTREE` now writes `docs/COMPATIBILITY.WORKTREE.md` instead of embedding the current released version as `<version>+wt`. Tagged/ref runs and explicit `--output` paths are unchanged.
 - (JA) worktree互換reportの既定file名を固定しました。`--lib-version WORKTREE`は現在のrelease versionを`<version>+wt`としてfile名へ含めず、`docs/COMPATIBILITY.WORKTREE.md`へ出力します。tag/ref実行と明示的な`--output`は従来どおりです。
 - (EN) Expand the automatic Arduino-ESP32 compatibility observation range to 3.3.0 while keeping 3.3.9 as the official support floor. Markdown columns below 3.3.9 are labeled `(info)` with an explicit non-support notice, and JSON payloads now carry both floors and per-core support status.
