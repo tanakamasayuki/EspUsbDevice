@@ -23,6 +23,7 @@
 ライブラリ更新や profile 切り替え後は stale build cache を避けるため `--clean` を付けます。
 
 ```sh
+python3 tools/verify_tinyusb_vendor.py
 cd tests
 uv run --env-file .env pytest --clean
 ```
@@ -45,7 +46,8 @@ uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean -vv
 
 ## リリース作業
 
-- bump script で version と changelog を更新する。
+- bump script で version と changelog を更新する。独立TinyUSB / 新Audio構造の
+  最初のreleaseはmajor bump (`2.0.0`) にする。
 - 更新後に `library.properties`、`src/espusbdevice_version.h`、`CHANGELOG.md` の整合性を確認する。
 - 最終 diff に意図しない build artifact、cache、local profile 固有の変更が入っていないことを確認する。
 - tag / GitHub release を作成する。

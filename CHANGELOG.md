@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Stop tracking the complete TinyUSB upstream source snapshot. Normal builds keep using the selected 43-file projection in `src/` without network access; `verify_tinyusb_vendor.py` now downloads the pinned upstream commit into an ignored cache only when a byte-for-byte vendor audit is requested.
+- (JA) TinyUSB upstream sourceの完全なsnapshotをtracked fileから外しました。通常buildは引き続き`src/`の選択済み43-file projectionだけをnetwork不要で使用し、byte-for-byteのvendor監査を実行するときだけ`verify_tinyusb_vendor.py`が固定commitをignored cacheへ取得します。
 - (EN) Expand example compile automation from one hard-coded S3 profile to every profile declared by each example's `sketch.yaml` (68 S2/S3/P4 builds currently). Board-specific M5 examples remain S3-only, while the new P4 port examples compile only for P4.
 - (JA) exampleのcompile自動化を、固定のS3 profile 1つから各`sketch.yaml`が宣言する全profile（現在68件のS2/S3/P4 build）へ拡張しました。board固有のM5 exampleはS3のみ、新しいP4 port exampleはP4のみをcompileします。
 - (EN) Add `P4HighSpeedDevice` and `P4FullSpeedDevice` examples. They identify rhport 1/UTMI versus rhport 0/internal FS, explain which board connection carries the Device link, and keep the optional `usb_wrap_ll_phy_select(&USB_WRAP, 0)` GPIO26/27-to-GPIO24/25 FS routing change commented in the source. Both examples warn that D+/D- routing does not configure board-specific VBUS or USB-C CC circuitry.
