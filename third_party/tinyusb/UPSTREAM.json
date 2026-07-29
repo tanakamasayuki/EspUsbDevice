@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "repository": "hathach/tinyusb",
+  "commit": "53f8c53c2cbd73a91a172f1ae35e9abc00eb5075",
+  "tinyusb_version": "0.21.0",
+  "reviewed_with_arduino_esp32": "3.3.11",
+  "selection_reason": "Matches the TinyUSB commit recorded by the Arduino-ESP32 3.3.11 S2, S3, and P4 tool packages."
+}
