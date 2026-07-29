@@ -37,6 +37,7 @@
 #define CFG_TUSB_MEM_SECTION
 #define CFG_TUD_ENDPOINT0_SIZE 64
 #define CFG_TUD_DWC2_DMA_ENABLE 0
+#define CFG_TUD_DWC2_SLAVE_ENABLE 1
 
 // Compile one instance of every device class supported by the v2 function
 // model. Whether an instance appears in a device is decided by its descriptor

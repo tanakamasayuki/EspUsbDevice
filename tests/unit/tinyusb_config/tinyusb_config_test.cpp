@@ -15,6 +15,10 @@
 
 static_assert(CFG_TUD_ENABLED == 1, "device stack must be enabled");
 static_assert(CFG_TUH_ENABLED == 0, "host stack must not be compiled");
+static_assert(CFG_TUD_DWC2_DMA_ENABLE == 0,
+              "device DMA requires an explicit cache-coherency audit");
+static_assert(CFG_TUD_DWC2_SLAVE_ENABLE == 1,
+              "device transfers currently use CPU-driven DWC2 FIFO access");
 static_assert(CFG_TUD_CDC == 1 && CFG_TUD_MSC == 1 && CFG_TUD_HID == 1,
               "non-Audio classes must be library-owned");
 static_assert(CFG_TUD_MIDI == 1 && CFG_TUD_VENDOR == 1 && CFG_TUD_NCM == 1,
