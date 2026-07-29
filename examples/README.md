@@ -4,6 +4,16 @@ Arduino sketches that show the basic `EspUsbDevice` usage. Sketches using this
 library should not call Arduino-ESP32's `USB.begin()`, `USBHIDKeyboard`, or
 `USBHIDMouse`.
 
+## ESP32-P4 Device Ports
+
+- [P4HighSpeedDevice](P4HighSpeedDevice/README.md): rhport 1 and the board
+  connector wired to its external UTMI high-speed PHY.
+- [P4FullSpeedDevice](P4FullSpeedDevice/README.md): rhport 0, normally
+  GPIO26/GPIO27, with the optional GPIO24/GPIO25 FS routing call left
+  commented in the sketch.
+
+Board connector labels, VBUS, and USB-C CC handling are schematic-specific.
+
 ## Keyboard
 
 HID boot keyboard device example.
@@ -155,6 +165,8 @@ See [AudioSpeaker/README.md](AudioSpeaker/README.md) for details.
 - Configure formats as `{sampleRate, channels, bytesPerSample, bitsPerSample}`.
 - Poll volume, mute, sample-rate, and interface-enable changes with
   `pollEvent()`.
+- Query or update Master/Left/Right feature-unit state with `hasMute()` /
+  `getMute()` / `setMute()` and the corresponding volume APIs.
 - I2S bridging and codec setup are outside this library's responsibility. The
   received PCM can be forwarded to the application, PCMFlow, PCMFlowDevice, or
   another output layer.

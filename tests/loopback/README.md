@@ -14,6 +14,8 @@ port/speed behavior can be verified before broader class coverage is added.
   sends `hello, keyboard` from the device side, and verifies it through Host
   `onKeyboard()`. It also sends NumLock / CapsLock / ScrollLock / clear LED
   output reports from the host side and verifies Device `onOutputReport()`.
+  The test runs both controller assignments: Device HS + Host FS, then Device
+  FS + Host HS.
 - `hid_mouse`: starts `EspUsbHost` and `EspUsbDeviceHidMouse` on one P4 and
   verifies move / wheel / left / right / middle / back / forward through Host
   `onMouse()`.
@@ -39,37 +41,30 @@ port/speed behavior can be verified before broader class coverage is added.
   capacity, inquiry, read, write, and error paths.
 - `usb_vendor`: starts a vendor-specific interface on one P4 and verifies bulk
   echo, application control IN/OUT, and WebUSB landing URL reads.
-- `usb_audio`: intentionally omitted. On P4 this library's audio is UAC2 / high
-  speed only, but one-board loopback can only run at full speed (see the P4 note
-  below), so P4 audio cannot be exercised in loopback. Audio is covered by
-  `peer/usb_audio_speaker` (S3, UAC1) plus manual high-speed checks.
+- `usb_audio`: deferred while the Host-side Audio peer remains UAC1-focused.
+  P4 Device Audio defaults to UAC1 like other targets; UAC2 is explicit.
 
 ## P4 port / PHY reality (verified 2026-07)
 
 P4 has two USB OTG controllers but only one UTMI (high-speed) PHY
-(`SOC_USB_OTG_PERIPH_NUM=2`, `SOC_USB_UTMI_PHY_NUM=1`). The Arduino core pins the
-device stack to the HS/UTMI PHY (`EspUsbDeviceConfig.port`/`speed` are not wired to
-`tinyusb_init`). Speed and controller are separate: the HS-capable device still
-negotiates **Full Speed** when the link partner is a full-speed host.
+(`SOC_USB_OTG_PERIPH_NUM=2`, `SOC_USB_UTMI_PHY_NUM=1`). EspUsbDevice owns its
+TinyUSB runtime and maps `FullSpeed` to rhport 0/internal PHY and `HighSpeed` to
+rhport 1/UTMI. EspUsbHost can independently select the other controller.
 
 Consequences for one-board loopback:
 
-- The device sits on the HS/UTMI PHY but runs at FS against an FS host, and it
-  enumerates fine.
-- The single UTMI PHY is held by the device, so the host must use
-  `ESP_USB_HOST_PORT_FULL_SPEED`. An HS host collides on the PHY
-  (`usb_phy: selected PHY is in use`).
-- Therefore an HS link is impossible on one board; HS-link validation needs the
-  two-board peer setup.
+- Device HS + Host FS is valid and negotiates FS because the host is FS.
+- Device FS + Host HS is also valid and negotiates FS because the device is FS.
+- Device HS + Host HS cannot share rhport 1/the single UTMI PHY.
+- Device FS + Host FS cannot share rhport 0/the internal FS controller.
+- Therefore an HS link is impossible on one board; HS-link validation still
+  needs two boards.
 
 ## Matrix
 
 | Device | Host | Expected |
 |--------|------|----------|
-| HS(UTMI) device, FS operation | FS host | The realizable one-board loopback. Device is HS-PHY-fixed but negotiates FS. |
-| HS device | HS host | Not possible on one P4 — the single UTMI PHY cannot be shared (PHY conflict). Use two boards for an HS link. |
-
-> No audio loopback on P4: this library's audio is UAC2 / high speed on P4
-> (`TUD_OPT_HIGH_SPEED`), but the one-board loopback link is full speed, so the
-> two are fundamentally incompatible. P4 audio is therefore HS-only and validated
-> outside loopback. See `docs/DESIGN_NOTES.ja.md` "P4 USB ポート/PHY の実測整理".
+| HS/UTMI device | FS host | Supported; link negotiates FS. |
+| FS device | HS/UTMI host | Supported; link negotiates FS. |
+| HS device | HS host | Not possible on one P4; rhport 1/UTMI conflict. |
+| FS device | FS host | Not possible on one P4; rhport 0 conflict. |

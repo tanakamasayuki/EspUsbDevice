@@ -73,6 +73,10 @@ ESP32-P4 では次の対応とする。
 | FullSpeed | 0 | `USB_PHY_SPEED_FULL` | FS |
 | HighSpeed | 1 | `USB_PHY_SPEED_HIGH` | HS/FS negotiation |
 
+P4のdescriptor事前検証も選択controllerへ合わせる。FullSpeedはendpoint番号1..6、
+非control IN最大4・OUT最大6、HighSpeed/Autoはendpoint番号1..15、
+非control IN最大7・OUT最大15として、PHY開始前に不可能なCompositeを拒否する。
+
 HighSpeed controller を選んでも相手が FS host なら実リンクは FS になる。descriptor callback
 は request 時の negotiated speed を参照し、FS/HS descriptor table を選択する。
 
@@ -204,6 +208,11 @@ control plane と PCM data plane を分ける。
 - `EspUsbAudioPlaybackStream`: OUT FIFO、受信queue、`available()` / `read()`
 - `EspUsbAudioCaptureStream`: IN FIFO、`write()`
 - `EspUsbAudioControl`: clock、mute、volume state
+
+mute/volume feature unitはMaster（channel 0）と各logical channel
+（monoは1、stereoは1=Left / 2=Right）へ同じcapabilityを広告し、それぞれ独立したstateを
+持つ。公開APIはEspUsbHostの語彙に合わせて`hasMute/getMute/setMute`、
+`hasVolume/getVolume/setVolume/getVolumeRange`とし、volumeは1/256 dB単位を使う。
 
 controlとalternate settingの変更通知はcallbackではなく、固定長queueをpollする。
 

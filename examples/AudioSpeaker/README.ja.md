@@ -21,4 +21,15 @@ sampleRate, channels, bytesPerSample, bitsPerSample
 渡します。`audio.pollEvent()`はTinyUSB taskでユーザーコードを実行せずにstream、
 mute、volume、sample rate変更を通知します。volume/mute DSPはPCMへ暗黙適用しません。
 
+feature unitの状態は直接取得・設定もできます。
+
+```cpp
+bool leftMuted;
+int16_t rightVolume;
+audio.getMute(leftMuted, EspUsbAudioDirection::Playback, 1);
+audio.getVolume(rightVolume, EspUsbAudioDirection::Playback, 2);
+```
+
+channelは`0` Master、`1` Left、`2` Rightです。volumeは1/256 dB単位です。
+
 UAC1の列挙、streaming、mute、volume、control連打はS3 peer testで確認済みです。

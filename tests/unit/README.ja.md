@@ -54,8 +54,14 @@ Clock/Feature control stateとCUR/RANGE wire formatを確認します。
 
 新公開APIの`EspUsbAudioFunction`をS3実機上で構築し、speaker、microphone、duplexの
 configuration descriptor、FS/HS packet size、mute / volume / stream state eventの
-polling、stream statsのreset lifecycleを確認します。USB runtimeは開始しないため、
-純粋な公開API・device descriptor・control state統合テストです。
+polling、stream statsのreset lifecycleを確認します。UAC1の24/32bit formatについても
+subslot/bit field、packet size、transfer accountingを検証します。USB runtimeは開始しない
+ため、純粋な公開API・device descriptor・control state統合テストです。
+
+## `p4_controller_endpoints`
+
+TinyUSBを開始せずP4上でcontroller別descriptor上限を検証します。IN endpointを5本使う
+CompositeはFS controllerで拒否し、HSとP4でHSを選ぶ`Auto`では受理することを確認します。
 
 ## `keymap`
 

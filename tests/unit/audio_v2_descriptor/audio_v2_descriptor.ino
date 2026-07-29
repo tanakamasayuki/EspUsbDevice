@@ -31,7 +31,7 @@ static void testDefaultUac1()
   auto &playback = audio.addPlaybackStream();
   check(audio.protocol() == EspUsbAudioProtocol::Uac1,
         "uac1_default_protocol");
-  check(playback.addFormat({48000, 1, 2, 16}), "uac1_format");
+  check(playback.addFormat({48000, 2, 2, 16}), "uac1_format");
 
   EspUsbDeviceConfig config;
   config.startTinyUsb = false;
@@ -41,6 +41,8 @@ static void testDefaultUac1()
   const uint16_t length = read16(descriptor + 2);
   bool foundHeader = false;
   bool foundFormat = false;
+  bool foundFeatureControls = false;
+  uint8_t featureUnitId = 0;
   bool foundDataEndpoint = false;
   bool foundFeedbackEndpoint = false;
   for (uint16_t offset = 9;
@@ -67,10 +69,19 @@ static void testDefaultUac1()
           static_cast<uint32_t>(descriptor[offset + 8]) |
           (static_cast<uint32_t>(descriptor[offset + 9]) << 8) |
           (static_cast<uint32_t>(descriptor[offset + 10]) << 16);
-      foundFormat = descriptor[offset + 4] == 1 &&
+      foundFormat = descriptor[offset + 4] == 2 &&
                     descriptor[offset + 5] == 2 &&
                     descriptor[offset + 6] == 16 &&
                     descriptor[offset + 7] == 1 && rate == 48000;
+    }
+    if (descriptorType == 0x24 && descriptorLength == 10 &&
+        descriptor[offset + 2] == 0x06)
+    {
+      foundFeatureControls = descriptor[offset + 5] == 1 &&
+                             descriptor[offset + 6] == 0x03 &&
+                             descriptor[offset + 7] == 0x03 &&
+                             descriptor[offset + 8] == 0x03;
+      featureUnitId = descriptor[offset + 3];
     }
     if (descriptorType == 0x05 && descriptorLength == 9)
     {
@@ -87,8 +98,73 @@ static void testDefaultUac1()
   }
   check(foundHeader, "uac1_header");
   check(foundFormat, "uac1_type_i_format");
+  check(foundFeatureControls, "uac1_feature_channel_controls");
   check(foundDataEndpoint, "uac1_adaptive_data_endpoint");
   check(!foundFeedbackEndpoint, "uac1_no_feedback_endpoint");
+
+  check(audio.hasMute(EspUsbAudioDirection::Playback, 0) &&
+            audio.hasMute(EspUsbAudioDirection::Playback, 1) &&
+            audio.hasMute(EspUsbAudioDirection::Playback, 2) &&
+            !audio.hasMute(EspUsbAudioDirection::Playback, 3),
+        "uac1_mute_capabilities");
+  check(audio.hasVolume(EspUsbAudioDirection::Playback, 0) &&
+            audio.hasVolume(EspUsbAudioDirection::Playback, 1) &&
+            audio.hasVolume(EspUsbAudioDirection::Playback, 2) &&
+            !audio.hasVolume(EspUsbAudioDirection::Capture, 0),
+        "uac1_volume_capabilities");
+  bool muted = false;
+  int16_t volume = 0;
+  EspUsbAudioVolumeRange range;
+  check(audio.setMute(true, EspUsbAudioDirection::Playback, 1) &&
+            audio.getMute(muted, EspUsbAudioDirection::Playback, 1) &&
+            muted,
+        "uac1_set_get_left_mute");
+  check(audio.setVolume(-12 * 256, EspUsbAudioDirection::Playback, 2) &&
+            audio.getVolume(volume, EspUsbAudioDirection::Playback, 2) &&
+            volume == -12 * 256,
+        "uac1_set_get_right_volume");
+  check(audio.getVolumeRange(range, EspUsbAudioDirection::Playback, 2) &&
+            range.min == -90 * 256 && range.max == 0 &&
+            range.resolution == 256,
+        "uac1_volume_range");
+  check(!audio.setVolume(-385, EspUsbAudioDirection::Playback, 0),
+        "uac1_volume_resolution_rejected");
+  EspUsbAudioEvent event;
+  check(audio.pollEvent(event) &&
+            event.type == EspUsbAudioEventType::MuteChanged &&
+            event.channel == 1 && event.muted,
+        "uac1_local_mute_event");
+  check(audio.pollEvent(event) &&
+            event.type == EspUsbAudioEventType::VolumeChanged &&
+            event.channel == 2 && event.volumeDb256 == -12 * 256,
+        "uac1_local_volume_event");
+
+  tusb_control_request_t request = {};
+  request.bRequest = 0x01;
+  request.wIndex = static_cast<uint16_t>(featureUnitId) << 8;
+  request.wValue = static_cast<uint16_t>((1U << 8) | 2U);
+  request.wLength = 1;
+  const uint8_t muteRight[] = {1};
+  check(featureUnitId != 0 &&
+            audio.handleSetEntityRequest(&request, muteRight) &&
+            audio.getMute(muted, EspUsbAudioDirection::Playback, 2) &&
+            muted,
+        "uac1_host_set_right_mute");
+  request.wValue = static_cast<uint16_t>((2U << 8) | 1U);
+  request.wLength = 2;
+  const uint8_t minusSixDb[] = {0x00, 0xfa};
+  check(audio.handleSetEntityRequest(&request, minusSixDb) &&
+            audio.getVolume(volume, EspUsbAudioDirection::Playback, 1) &&
+            volume == -6 * 256,
+        "uac1_host_set_left_volume");
+  check(audio.pollEvent(event) &&
+            event.type == EspUsbAudioEventType::MuteChanged &&
+            event.channel == 2 && event.muted,
+        "uac1_host_mute_event");
+  check(audio.pollEvent(event) &&
+            event.type == EspUsbAudioEventType::VolumeChanged &&
+            event.channel == 1 && event.volumeDb256 == -6 * 256,
+        "uac1_host_volume_event");
   device.end();
 }
 
@@ -169,6 +245,81 @@ static void testPlayback()
   device.end();
 }
 
+static bool findUac1Format(const uint8_t *descriptor, uint8_t channels,
+                           uint8_t bytesPerSample, uint8_t bitsPerSample,
+                           uint16_t &packetSize)
+{
+  const uint16_t length = read16(descriptor + 2);
+  bool formatFound = false;
+  packetSize = 0;
+  for (uint16_t offset = 9;
+       offset + 2 <= length && descriptor[offset] >= 2;
+       offset = static_cast<uint16_t>(offset + descriptor[offset]))
+  {
+    const uint8_t descriptorLength = descriptor[offset];
+    const uint8_t descriptorType = descriptor[offset + 1];
+    if (offset + descriptorLength > length)
+    {
+      break;
+    }
+    if (descriptorType == 0x24 && descriptorLength == 11 &&
+        descriptor[offset + 2] == 0x02 &&
+        descriptor[offset + 3] == 0x01)
+    {
+      formatFound = descriptor[offset + 4] == channels &&
+                    descriptor[offset + 5] == bytesPerSample &&
+                    descriptor[offset + 6] == bitsPerSample;
+    }
+    if (descriptorType == 0x05 && descriptorLength == 9 &&
+        (descriptor[offset + 2] & 0x80) == 0)
+    {
+      packetSize = read16(descriptor + offset + 4);
+    }
+  }
+  return formatFound;
+}
+
+static void testUac1HighResolutionFormats()
+{
+  {
+    EspUsbDevice device;
+    EspUsbAudioFunction audio(device);
+    auto &playback = audio.addPlaybackStream();
+    check(playback.addFormat({48000, 2, 3, 24}), "uac1_24bit_format");
+    EspUsbDeviceConfig config;
+    config.startTinyUsb = false;
+    check(device.begin(config), "uac1_24bit_begin");
+    uint16_t packetSize = 0;
+    check(findUac1Format(device.configurationDescriptor(0), 2, 3, 24,
+                         packetSize) &&
+              packetSize == 294,
+          "uac1_24bit_descriptor");
+    check(audio.handlePlaybackTransfer(packetSize, 1) &&
+              playback.stats().transferredBytes == packetSize,
+          "uac1_24bit_transfer_accounting");
+    device.end();
+  }
+
+  {
+    EspUsbDevice device;
+    EspUsbAudioFunction audio(device);
+    auto &playback = audio.addPlaybackStream();
+    check(playback.addFormat({96000, 2, 4, 32}), "uac1_32bit_format");
+    EspUsbDeviceConfig config;
+    config.startTinyUsb = false;
+    check(device.begin(config), "uac1_32bit_begin");
+    uint16_t packetSize = 0;
+    check(findUac1Format(device.configurationDescriptor(0), 2, 4, 32,
+                         packetSize) &&
+              packetSize == 776,
+          "uac1_32bit_descriptor");
+    check(audio.handlePlaybackTransfer(packetSize, 1) &&
+              playback.stats().transferredBytes == packetSize,
+          "uac1_32bit_transfer_accounting");
+    device.end();
+  }
+}
+
 static void testCapture()
 {
   EspUsbDevice device;
@@ -221,6 +372,7 @@ void setup()
   Serial.println("TEST_BEGIN audio_v2_descriptor");
   testDefaultUac1();
   testPlayback();
+  testUac1HighResolutionFormats();
   testCapture();
   testDuplex();
   Serial.printf("TEST_END pass=%d fail=%d\n", passCount, failCount);

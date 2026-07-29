@@ -687,6 +687,13 @@ struct EspUsbAudioStreamStats
   uint32_t underrunBytes = 0;
 };
 
+struct EspUsbAudioVolumeRange
+{
+  int16_t min = 0;
+  int16_t max = 0;
+  int16_t resolution = 0;
+};
+
 class EspUsbAudioFunction;
 
 class EspUsbAudioPlaybackStream
@@ -775,6 +782,32 @@ public:
   bool handlePlaybackTransfer(uint16_t bytes, uint8_t alternateSetting);
   bool handleCaptureTransfer(uint16_t bytes, uint8_t alternateSetting);
   uint32_t currentSampleRate() const;
+  bool hasMute(EspUsbAudioDirection direction =
+                   EspUsbAudioDirection::Playback,
+               uint8_t channel = 0) const;
+  bool hasVolume(EspUsbAudioDirection direction =
+                     EspUsbAudioDirection::Playback,
+                 uint8_t channel = 0) const;
+  bool getMute(bool &mute,
+               EspUsbAudioDirection direction =
+                   EspUsbAudioDirection::Playback,
+               uint8_t channel = 0) const;
+  bool setMute(bool mute,
+               EspUsbAudioDirection direction =
+                   EspUsbAudioDirection::Playback,
+               uint8_t channel = 0);
+  bool getVolume(int16_t &volume,
+                 EspUsbAudioDirection direction =
+                     EspUsbAudioDirection::Playback,
+                 uint8_t channel = 0) const;
+  bool setVolume(int16_t volume,
+                 EspUsbAudioDirection direction =
+                     EspUsbAudioDirection::Playback,
+                 uint8_t channel = 0);
+  bool getVolumeRange(
+      EspUsbAudioVolumeRange &range,
+      EspUsbAudioDirection direction = EspUsbAudioDirection::Playback,
+      uint8_t channel = 0) const;
   bool pollEvent(EspUsbAudioEvent &event);
   size_t pendingEvents() const;
   uint32_t droppedEvents() const;
@@ -787,6 +820,7 @@ private:
   bool addFormat(espusb::internal::AudioDirection direction,
                  const EspUsbAudioFormat &format);
   bool buildGraph(uint8_t interfaceNumber, uint8_t endpointNumber);
+  uint8_t controlEntityId(EspUsbAudioDirection direction) const;
   EspUsbAudioEventTarget eventTarget(uint8_t entityId) const;
   void pushControlEvent(espusb::internal::AudioControlSelector selector,
                         uint8_t entityId, uint8_t channel, int32_t value);

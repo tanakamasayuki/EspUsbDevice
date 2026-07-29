@@ -92,6 +92,7 @@ bool AudioControlState::configure(const AudioFunctionModel &function,
     FeatureState &state = features_[featureCount_++];
     state.entityId = entity.id;
     state.direction = entity.direction;
+    state.channels = entity.channels;
     state.muteSupported = entity.muteControl;
     state.volumeSupported = entity.volumeControl;
   }
@@ -101,6 +102,19 @@ bool AudioControlState::configure(const AudioFunctionModel &function,
 }
 
 AudioControlState::FeatureState *AudioControlState::feature(uint8_t entityId)
+{
+  for (size_t i = 0; i < featureCount_; ++i)
+  {
+    if (features_[i].entityId == entityId)
+    {
+      return &features_[i];
+    }
+  }
+  return nullptr;
+}
+
+const AudioControlState::FeatureState *
+AudioControlState::feature(uint8_t entityId) const
 {
   for (size_t i = 0; i < featureCount_; ++i)
   {
@@ -124,7 +138,7 @@ bool AudioControlState::sampleRateSupported(uint32_t rate) const
   return false;
 }
 
-bool AudioControlState::validateMasterChannel(uint8_t channel)
+bool AudioControlState::validateMasterChannel(uint8_t channel) const
 {
   if (channel != 0)
   {
@@ -134,9 +148,20 @@ bool AudioControlState::validateMasterChannel(uint8_t channel)
   return true;
 }
 
+bool AudioControlState::validateFeatureChannel(
+    const FeatureState &state, uint8_t channel) const
+{
+  if (channel > state.channels || channel >= 3)
+  {
+    setError(AudioControlError::InvalidChannel);
+    return false;
+  }
+  return true;
+}
+
 bool AudioControlState::current(uint8_t entityId,
                                 AudioControlSelector selector,
-                                uint8_t channel, int32_t &value)
+                                uint8_t channel, int32_t &value) const
 {
   if (!configured_)
   {
@@ -166,24 +191,24 @@ bool AudioControlState::current(uint8_t entityId,
     return true;
   }
 
-  FeatureState *state = feature(entityId);
+  const FeatureState *state = feature(entityId);
   if (!state)
   {
     setError(AudioControlError::UnknownEntity);
     return false;
   }
-  if (!validateMasterChannel(channel))
+  if (!validateFeatureChannel(*state, channel))
   {
     return false;
   }
   if (selector == AudioControlSelector::Mute && state->muteSupported)
   {
-    value = state->muted ? 1 : 0;
+    value = state->muted[channel] ? 1 : 0;
   }
   else if (selector == AudioControlSelector::Volume &&
            state->volumeSupported)
   {
-    value = state->volume;
+    value = state->volume[channel];
   }
   else
   {
@@ -235,7 +260,7 @@ bool AudioControlState::setCurrent(uint8_t entityId,
     setError(AudioControlError::UnknownEntity);
     return false;
   }
-  if (!validateMasterChannel(channel))
+  if (!validateFeatureChannel(*state, channel))
   {
     return false;
   }
@@ -246,7 +271,7 @@ bool AudioControlState::setCurrent(uint8_t entityId,
       setError(AudioControlError::InvalidValue);
       return false;
     }
-    state->muted = value != 0;
+    state->muted[channel] = value != 0;
   }
   else if (selector == AudioControlSelector::Volume &&
            state->volumeSupported)
@@ -257,7 +282,7 @@ bool AudioControlState::setCurrent(uint8_t entityId,
       setError(AudioControlError::InvalidValue);
       return false;
     }
-    state->volume = static_cast<int16_t>(value);
+    state->volume[channel] = static_cast<int16_t>(value);
   }
   else
   {
@@ -270,7 +295,7 @@ bool AudioControlState::setCurrent(uint8_t entityId,
 
 bool AudioControlState::range(uint8_t entityId,
                               AudioControlSelector selector,
-                              uint8_t channel, AudioControlRange &value)
+                              uint8_t channel, AudioControlRange &value) const
 {
   if (!configured_)
   {
@@ -302,13 +327,13 @@ bool AudioControlState::range(uint8_t entityId,
     return true;
   }
 
-  FeatureState *state = feature(entityId);
+  const FeatureState *state = feature(entityId);
   if (!state)
   {
     setError(AudioControlError::UnknownEntity);
     return false;
   }
-  if (!validateMasterChannel(channel))
+  if (!validateFeatureChannel(*state, channel))
   {
     return false;
   }
@@ -346,7 +371,7 @@ AudioControlState::entityKind(uint8_t entityId) const
   return AudioControlEntityKind::Unknown;
 }
 
-void AudioControlState::setError(AudioControlError error)
+void AudioControlState::setError(AudioControlError error) const
 {
   error_ = error;
 }

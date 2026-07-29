@@ -155,7 +155,10 @@ void setup()
     Serial.println("NG");
     return;
   }
-  Serial.println("DEVICE_READY fs");
+  // Normal P4 loopback:
+  //   Device = HighSpeed controller / rhport 1 / UTMI connector
+  //   Host   = FullSpeed controller / rhport 0 / internal FS PHY
+  Serial.println("DEVICE_READY hs");
 
   if (!waitFor(deviceConnected, 30000))
   {
@@ -188,6 +191,72 @@ void setup()
   {
     Serial.println("LED_TIMEOUT");
   }
+
+  Serial.println(ok ? "PHASE_NORMAL ok" : "PHASE_NORMAL fail");
+  if (!ok)
+  {
+    Serial.println("TEST_END fail");
+    Serial.println("NG");
+    return;
+  }
+
+  // Reverse the two P4 controllers across the same cable:
+  //   Device = FullSpeed controller / rhport 0 / internal FS PHY
+  //   Host   = HighSpeed-capable controller / rhport 1 / UTMI connector
+  // The link negotiates full speed because the Device side is FS.
+  device.end();
+  usb.end();
+  delay(500);
+
+  deviceConnected = false;
+  textReceived = false;
+  ledReceived = false;
+  textLength = 0;
+  textBuffer[0] = '\0';
+  lastLeds = 0;
+
+  EspUsbHostConfig reverseHostConfig;
+  reverseHostConfig.port = ESP_USB_HOST_PORT_HIGH_SPEED;
+  if (!usb.begin(reverseHostConfig))
+  {
+    Serial.printf("REVERSE_HOST_BEGIN_FAILED %s\n", usb.lastErrorName());
+    Serial.println("TEST_END fail");
+    Serial.println("NG");
+    return;
+  }
+  Serial.println("REVERSE_HOST_READY hs");
+
+  deviceConfig.controller = EspUsbController::FullSpeed;
+  if (!device.begin(deviceConfig))
+  {
+    Serial.printf("REVERSE_DEVICE_BEGIN_FAILED %s\n",
+                  device.lastErrorName());
+    Serial.println("TEST_END fail");
+    Serial.println("NG");
+    return;
+  }
+  Serial.println("REVERSE_DEVICE_READY fs");
+
+  if (!waitFor(deviceConnected, 30000))
+  {
+    Serial.printf("REVERSE_DEVICE_TIMEOUT host_error=%s device_error=%s\n",
+                  usb.lastErrorName(), device.lastErrorName());
+    Serial.println("TEST_END fail");
+    Serial.println("NG");
+    return;
+  }
+
+  delay(500);
+  if (!sendText("hello, keyboard") || !waitFor(textReceived, 5000))
+  {
+    Serial.println("REVERSE_TEXT_TIMEOUT");
+    Serial.println("TEST_END fail");
+    Serial.println("NG");
+    return;
+  }
+  ok = sendKeyboardLeds(false, true, false,
+                        ESP_USB_DEVICE_KEYBOARD_LED_CAPS_LOCK);
+  Serial.println(ok ? "PHASE_REVERSE ok" : "PHASE_REVERSE fail");
 
   Serial.println(ok ? "TEST_END ok" : "TEST_END fail");
   Serial.println(ok ? "OK" : "NG");

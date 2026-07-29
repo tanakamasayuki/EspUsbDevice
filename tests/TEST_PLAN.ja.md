@@ -54,8 +54,8 @@ tests/
 | device descriptor config | ✅ `descriptor` | | | 予定 | |
 | runtime lifecycle | ✅ `descriptor`（100回begin/end + 途中失敗からの復帰） | | | | |
 | FS/HS endpoint MPS | ✅ `descriptor` | 予定 | 予定 | 予定 | |
-| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | build済み `hid_keyboard` | | |
-| HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard` | build済み `hid_keyboard` | | 任意 |
+| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` 通常/逆port | | |
+| HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard` | ✅ `hid_keyboard` 通常/逆port | | 任意 |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | build済み `hid_mouse` | | |
 | keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | build済み `hid_keyboard_mouse` | | |
 | custom HID report descriptor | 予定 | ✅ `custom_hid` | ✅ `custom_hid` | | |
@@ -70,7 +70,7 @@ tests/
 | USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 未実装 | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
 | Core依存境界 | ✅ `dependency_boundary` | | | | |
-| examples compile | ✅ `examples_compile` | | | | |
+| examples compile | ✅ `examples_compile` 宣言済みS2/S3/P4全profile | | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
 
@@ -176,6 +176,9 @@ bulk OUT -> Device -> bulk IN echo、application vendor control IN/OUT、WebUSB 
 default profile は released Host を使い、`s3_peer_local` は Host 側未リリース修正の任意確認に
 だけ使います。実際のWindows driver bindingとbrowser動作はHost OS / browser / driver状態に
 依存するため、`tests/manual`で確認します。
+
+`peer/usb_audio_speaker`ではUAC1のMaster control連打と、logical channelのmute/volume
+検出、SET/GET、volume range、Device event通知を検証します。
 
 MSC の transport テストとファイル受け渡しテストは分けます。`peer/usb_msc` /
 `loopback/usb_msc` は raw block I/O、SCSI、error path を確認するテストとして維持します。

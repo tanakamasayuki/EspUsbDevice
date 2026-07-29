@@ -62,8 +62,8 @@ tests/
 | Device descriptor config | ✅ `descriptor` | | | planned | |
 | Runtime lifecycle | ✅ `descriptor` (100 begin/end + partial failure recovery) | | | | |
 | FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | planned | |
-| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | builds `hid_keyboard` | | |
-| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | builds `hid_keyboard` | | optional |
+| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal/reverse ports | | |
+| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal/reverse ports | | optional |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | | |
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
 | Custom HID report descriptor | planned | ✅ `custom_hid` | ✅ `custom_hid` | | |
@@ -78,7 +78,7 @@ tests/
 | USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
 | Core dependency boundary | ✅ `dependency_boundary` | | | | |
-| examples compile | ✅ `examples_compile` | | | | |
+| examples compile | ✅ `examples_compile` all declared S2/S3/P4 profiles | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
 
@@ -197,6 +197,9 @@ The default profile uses the released Host version.
 `s3_peer_local` is only for optional pre-release validation of unreleased
 Host-side fixes. Actual Windows driver binding and browser behavior remain in
 `tests/manual` because they depend on host OS, browser, and driver state.
+
+`peer/usb_audio_speaker` validates UAC1 Master control floods and logical
+channel mute/volume discovery, SET/GET, volume range, and Device event delivery.
 
 MSC transport tests and file handoff tests are separate. `peer/usb_msc` and
 `loopback/usb_msc` remain raw block I/O, SCSI, and error-path tests. FAT and SD

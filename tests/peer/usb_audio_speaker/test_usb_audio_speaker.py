@@ -78,3 +78,18 @@ def test_usb_audio_speaker_volume_flood(dut, peers):
     dut.expect_exact("MUTE_FLOOD_DONE", timeout=60)
 
     _probe_device(device, "DEVICE_ALIVE .* vol=[0-9]+ mute=[1-9][0-9]*")
+
+
+def test_usb_audio_speaker_per_channel_controls(dut, peers):
+    device = peers["device"]
+
+    _probe_device(device, "DEVICE_ALIVE .*")
+    dut.write("i")
+    dut.expect("HOST_AUDIO addr=[1-9][0-9]* ready=1", timeout=20)
+    dut.write("c")
+    dut.expect_exact(
+        "CHANNEL_CONTROL caps=1 set=1 get=1 mute=1 "
+        "volume=-1536 range=-23040:0:256"
+    )
+    device.expect("DEV_MUTE ch=1 m=1 n=[1-9][0-9]*")
+    device.expect("DEV_VOL ch=1 db=-1536 n=[1-9][0-9]*")

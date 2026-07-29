@@ -44,11 +44,11 @@ public:
   void reset();
 
   bool current(uint8_t entityId, AudioControlSelector selector,
-               uint8_t channel, int32_t &value);
+               uint8_t channel, int32_t &value) const;
   bool setCurrent(uint8_t entityId, AudioControlSelector selector,
                   uint8_t channel, int32_t value);
   bool range(uint8_t entityId, AudioControlSelector selector,
-             uint8_t channel, AudioControlRange &value);
+             uint8_t channel, AudioControlRange &value) const;
 
   size_t sampleRateCount() const { return sampleRateCount_; }
   uint32_t sampleRate(size_t index) const;
@@ -60,17 +60,21 @@ private:
   struct FeatureState {
     uint8_t entityId = 0;
     AudioDirection direction = AudioDirection::Playback;
+    uint8_t channels = 0;
     bool muteSupported = false;
     bool volumeSupported = false;
-    bool muted = false;
-    int16_t volume = 0;
+    bool muted[3] = {};
+    int16_t volume[3] = {};
   };
 
   FeatureState *feature(uint8_t entityId);
+  const FeatureState *feature(uint8_t entityId) const;
   bool sampleRateSupported(uint32_t rate) const;
   bool addSampleRate(uint32_t rate);
-  bool validateMasterChannel(uint8_t channel);
-  void setError(AudioControlError error);
+  bool validateMasterChannel(uint8_t channel) const;
+  bool validateFeatureChannel(const FeatureState &state,
+                              uint8_t channel) const;
+  void setError(AudioControlError error) const;
 
   bool configured_ = false;
   bool clockValid_ = true;
@@ -80,7 +84,7 @@ private:
   size_t sampleRateCount_ = 0;
   FeatureState features_[2] = {};
   size_t featureCount_ = 0;
-  AudioControlError error_ = AudioControlError::NotConfigured;
+  mutable AudioControlError error_ = AudioControlError::NotConfigured;
 };
 
 } // namespace internal
