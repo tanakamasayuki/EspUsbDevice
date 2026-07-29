@@ -8,7 +8,7 @@ def test_composite_cdc_msc_vendor_enumerates(dut, peers):
 
     dut.expect_exact("HOST_CONNECTED vid=303a pid=4023")
 
-    # Three non-HID classes all drawing endpoints from the core allocator:
+    # Three non-HID classes all drawing endpoints from the library allocator:
     # every interface class present and claimed, no duplicate endpoint address.
     dut.write("e")
     dut.expect(r"HOST_ENUM pid=4023 ifcount=\d+ eps=\d+ dup=0 cdc=[1-9]\d* msc=[1-9]\d* vendor=[1-9]\d* claimok=1")

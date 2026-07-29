@@ -73,7 +73,7 @@ static void reportEnumeration()
 static void waitForMsc()
 {
   const uint32_t started = millis();
-  while (!usb.mscReady() && millis() - started < 5000)
+  while (!usb.mscReady(deviceAddress) && millis() - started < 5000)
   {
     delay(10);
   }
@@ -95,6 +95,11 @@ void setup()
                           }
                           deviceAddress = device.address;
                           devicePid = device.pid;
+                          CdcSerial.setAddress(device.address);
+                          while (CdcSerial.available() > 0)
+                          {
+                            CdcSerial.read();
+                          }
                           Serial.printf("HOST_CONNECTED vid=%04x pid=%04x ifcount=%u\n",
                                         device.vid, device.pid, device.configurationInterfaceCount);
                         });
@@ -125,7 +130,7 @@ void loop()
     {
       waitForMsc();
       uint32_t blocks = 0, blockSize = 0;
-      const bool ok = usb.mscCapacity(blocks, blockSize);
+      const bool ok = usb.mscCapacity(blocks, blockSize, deviceAddress);
       Serial.printf("MSC_CAPACITY ok=%u blocks=%lu block_size=%lu\n",
                     ok ? 1 : 0, static_cast<unsigned long>(blocks), static_cast<unsigned long>(blockSize));
     }

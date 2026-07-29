@@ -247,20 +247,22 @@ HID 無し / HID+CDC / HID+MSC / HID+CDC+MSC は Vendor を含まないので `h
 
 ### 複合時の endpoint 予算の上限（S3 実機確定・2026-07）
 
-採番衝突を解消しても、**同時に載せられる class 数には S3 の endpoint 予算という物理上限**がある。
+採番衝突を解消しても、**同時に載せられる endpoint には S3 の物理上限**がある。
 
-- S3 の USB-OTG は `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`。ただし FIFO を消費する IN endpoint の
-  実効上限はさらに小さい。実測では **FIFO 消費 IN が 3 本まで**の複合しか列挙できない
-  （CDC の notification EP は FIFO 非消費でカウント外）。
-- ✅ 列挙可: HID+CDC+MSC（`composite_hid_cdc_msc`。FIFO-IN=HID+CDC data+MSC=3）、
-  CDC+MSC+Vendor（`composite_cdc_msc_vendor`。FIFO-IN=CDC data+MSC+Vendor=3）。
-- ✗ 列挙不可: HID+CDC+MSC+MIDI（FIFO-IN=4）。`device.begin()` は成功するが、host の SET_CONFIGURATION
+- bulk のような双方向 function は、USB 仕様どおり同じ endpoint 番号を IN/OUT で共有する。現在の
+  HID+CDC+MSC は HID=EP1、CDC notification=EP2 IN、CDC data=EP3 duplex、MSC=EP4 duplex となる。
+- S3 の USB-OTG は `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`。IN 側は EP0 を含むため、
+  configuration が同時に開ける非control IN endpointは4本。CDCはnotificationとdataで2本、
+  HID/MIDI/MSC/Vendorは各1本を使う。
+- ✅ 列挙可: HID+CDC+MSC（非control IN=4）、
+  CDC+MSC+Vendor（非control IN=4）。
+- ✗ 列挙不可: HID+CDC+MSC+Vendor（非control IN=5、修正後レイアウトで実測）および
+  HID+CDC+MSC+MIDI（同じく5）。`device.begin()` は成功するが、host の SET_CONFIGURATION
   時に **device が EP0 を STALL**（host 側ログ `USBH: Dev N EP 0 STALL` / `ENUM CHECK_CONFIG FAILED`）。
-  core の `tinyusb_get_free_*` は `CFG_TUD_NUM_IN_EPS=5` を基準に採番を許可するため begin では検知できず、
-  実際に endpoint を開く DWC の FIFO 確保段階で失敗する。
-- 実用上の指針: **S3 では FIFO 消費 IN 3 本（おおむね 3 class、CDC 込みなら CDC+2 class）が上限**。
-  4 class 以上が必要なら P4（`CFG_TUD_NUM_IN_EPS=8`）を使う。これは endpoint 数のハード制約であり、
-  ライブラリの回避対象ではない（begin 時点で予測できないため、必要なら将来 begin で FIFO 見積り警告を出す余地はある）。
+  descriptor生成自体はUSB上妥当なので、現在の`begin()`ではcontroller固有の上限まで判定していない。
+- 実用上の指針: S3では**非control INを合計4本以内**にする。class数だけでは決まらず、CDCは2本として
+  数える。超える構成はP4を使うか、将来controller capabilityをdescriptor validatorへ渡して
+  `begin()`時に明示的に拒否する。
 
 ### 複合時の vendor RX callback が発火しない（原因確定・修正済・実機確認・2026-07）
 

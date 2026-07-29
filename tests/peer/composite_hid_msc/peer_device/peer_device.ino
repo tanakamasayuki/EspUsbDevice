@@ -2,9 +2,9 @@
 #include "EspUsbDevice.h"
 
 // Composite device: HID keyboard + MSC on one EspUsbDevice.
-// Suspected EP-allocation collision case (HID uses a private endpoint
-// counter, MSC draws from the core allocator). Pairs with
-// composite_hid_msc.ino (host). See tests/TEST_PLAN.ja.md.
+// Regression case for the former split allocator: HID and MSC now both use
+// library-owned duplex endpoint numbering. Pairs with composite_hid_msc.ino
+// (host). See tests/TEST_PLAN.ja.md.
 
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);

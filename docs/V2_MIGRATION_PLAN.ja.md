@@ -171,7 +171,7 @@ Gate 0.5:
 作業:
 
 - `DescriptorBuildContext`を追加する。
-- direction別endpoint allocatorを追加する。
+- directionを保持しつつ、同じ番号のIN/OUTをduplexとして共有できるendpoint allocatorを追加する。
 - FS/HSの2つのconfiguration bufferを同じfunction graphから生成する。
 - device qualifier / other-speed configurationを生成する。
 - descriptor validatorを追加する。

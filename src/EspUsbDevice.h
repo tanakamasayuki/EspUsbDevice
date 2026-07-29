@@ -434,7 +434,7 @@ public:
   bool isCdc() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 2; }
-  uint8_t endpointCount() const override { return 3; }
+  uint8_t endpointCount() const override { return 2; }
 
   int available();
   int read();
@@ -521,7 +521,7 @@ public:
   bool isNet() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 2; }         // CDC control + data
-  uint8_t endpointCount() const override { return 3; }          // notif IN + bulk IN/OUT
+  uint8_t endpointCount() const override { return 2; }          // notif IN + bulk duplex
 
   // Set the device's 6-byte MAC address. Call before EspUsbDevice::begin().
   // Defaults to a fixed locally-administered address if not set.
@@ -599,7 +599,7 @@ public:
   bool isMidi() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 2; }
-  uint8_t endpointCount() const override { return 2; }
+  uint8_t endpointCount() const override { return 1; }
 
   bool readPacket(EspUsbDeviceMidiPacket &packet);
   bool writePacket(const EspUsbDeviceMidiPacket &packet);
@@ -790,7 +790,7 @@ public:
   bool isMsc() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
-  uint8_t endpointCount() const override { return 2; }
+  uint8_t endpointCount() const override { return 1; }
 
   void vendorID(const char *value);
   void productID(const char *value);
@@ -960,7 +960,7 @@ public:
 
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
-  uint8_t endpointCount() const override { return 2; }
+  uint8_t endpointCount() const override { return 1; }
   uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD; }
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;
@@ -1044,7 +1044,7 @@ public:
 
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
-  uint8_t endpointCount() const override { return 2; }
+  uint8_t endpointCount() const override { return 1; }
   uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_VENDOR; }
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;

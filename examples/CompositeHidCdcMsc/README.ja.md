@@ -43,9 +43,9 @@ endpoint をこのライブラリ側で構成します。
 
 ## 注意
 
-- これは ESP32-S3 の USB endpoint 予算に収まる最大の複合構成です（FIFO を消費する IN
-  endpoint が keyboard・CDC data-in・MSC bulk-in の 3 本）。4 本目の FIFO-IN class
-  （例: MIDI や bulk Vendor）を足すと S3 の FIFO 予算を超え、enumerate に失敗します。
+- これは ESP32-S3 の非control IN endpoint上限4本に達する構成です
+  （keyboard、CDC notification、CDC data-in、MSC bulk-in）。data endpointのIN/OUTは
+  同じendpoint番号を共有します。MIDIやbulk Vendorを追加するとS3のIN上限を超えます。
   [../../docs/DESIGN_NOTES.ja.md](../../docs/DESIGN_NOTES.ja.md)「複合時の endpoint 予算の上限」
   参照。ESP32-P4 ではより多くの endpoint が使えます。
 - UAC2 Audioも同じcomposite descriptor builderを使いますが、descriptor容量と

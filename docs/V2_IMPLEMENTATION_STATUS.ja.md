@@ -10,10 +10,10 @@
 - Phase 2: 完了。TinyUSB `53f8c53c2`を固定し、選択したdevice sourceを
   ライブラリ自身の設定でbuild。完全snapshotは`third_party`に保持し、Arduinoが見る
   `src`はS2/S3/P4の実コンパイラ依存から得た12 source + 31 headerに限定。
-- Phase 3: runtimeとclass lifecycle実装済み、S3 peer Gate再確認待ち。PHY、rhport、
+- Phase 3: runtimeとclass lifecycle実装済み、S3 peer Gate通過。PHY、rhport、
   TinyUSB task、基本descriptor callbackをライブラリ所有へ移した。`begin()`失敗時は
   開始済みclassを逆順rollbackし、`end()`でcallback registryを解放する。
-- Phase 4: 非Audio classの実装済み、S3 peer Gate再確認待ち。
+- Phase 4: 非Audio classの実装済み、S3/P4実機回帰通過。
 - Phase 5: controller選択とper-speed descriptor実装済み、P4 HS PC実測待ち。
 - Phase 6: Audio format/bandwidth model、entity/stream graph、UAC2 descriptor writer、
   Clock/Feature control request、polling data plane、固定長control/stream event queueを
@@ -63,8 +63,16 @@ other-speed configurationもライブラリ側から返す。
 - Arduino compile: 更新後のdescriptor suiteをS3/P4でPASS。
 - Arduino compile: Vendor/HID、CDC、MIDI、MSC、NCM、compositeをS3でPASS。
 - P4 loopback HID keyboard、CDC、MIDI、MSC、Vendor/WebUSB: PASS。
-- S3 peer HID keyboard: device upload前に設定済み`/dev/ttyACM1`が消失し、
-  3件は環境ERROR。firmwareのtest failureではない。
+- 非Audio横断suiteは98/106 PASSの時点で、複合3構成とP4 keyboard layoutの計8件を
+  切り分けた。Host CDCがupload中のUSB-Serial/JTAG deviceを先に掴む問題をtarget
+  address固定で修正し、layoutのserial capture待ち時間も安定化した。
+- class endpoint allocatorをUSB仕様に合わせ、bulk dataのIN/OUTを同じendpoint番号へ
+  集約した。CDC/NCMはnotification用1番号+data duplex用1番号、MIDI/MSC/Vendor/HIDは
+  duplex 1番号。修正後、該当composite 12件、descriptor/compile/constraint unit 3件、
+  MIDI/MSC/NCM/VendorとP4 loopbackの横断31件を全PASS。
+- S3のHID+CDC+MSC+Vendorも試験し、`begin()`は成功するが非control INが5本となるため
+  SET_CONFIGURATIONでEP0 STALLになることを再確認。S3上限はclass数ではなく、
+  EP0を除くIN endpoint 4本である。
 
 ## link audit
 
@@ -79,10 +87,10 @@ S3 Keyboard ELF/mapでは次を確認した。
 
 ## 次の作業
 
-1. S3 peer portを復旧してPhase 3のHID実機Gateを再確認。
-2. begin/end反復とpartial failure cleanupを検証。
-3. S3のCDC、MIDI、MSC、Vendor、NCM、composite peer testを再実行。
-4. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
-5. Audio + 他class compositeのtarget別descriptor容量とendpoint制約をPeerで確認。
-6. EspUsbHostのUAC2対応後、speaker、microphone、duplexの実streamingとcounterを
+1. controller capabilityをdescriptor validatorへ渡し、S2/S3のIN endpoint超過を
+   SET_CONFIGURATIONより前の`begin()`で具体的に拒否する。
+2. begin/end反復とpartial failure cleanupを追加実機検証。
+3. P4 rhport 0のFS実機試験と、rhport 1をPCへ接続したHS実測。
+4. Audio + 他class compositeのtarget別descriptor容量とendpoint制約をPeerで確認。
+5. EspUsbHostのUAC2対応後、speaker、microphone、duplexの実streamingとcounterを
    共同Peer testで実測。

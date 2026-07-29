@@ -251,38 +251,39 @@ and runtime. Two constraints follow:
 
 #### Target matrix
 
-The HID composite collision (endpoints not registered in the bitmask + interface
-number baked to 0) is **fixed and hardware-verified**: HID now uses EP1 duplex
-with `reserve_endpoints=true` and its interface number is rewritten to the
-core-assigned slot (`docs/DESIGN_NOTES.ja.md`). After the fix every class uses
-the core's dynamic allocator consistently, so **the pairs need not all be tested
-individually — a maximal configuration up to the endpoint budget subsumes them**
+The former HID composite collision is **fixed and hardware-verified**. The
+library now owns interface and endpoint allocation; duplex functions use the
+same endpoint number for IN and OUT. Therefore **the pairs need not all be
+tested individually — a maximal configuration up to the endpoint budget subsumes them**
 (if the top configuration works with `dup=0 / claimok=1`, each of its subset
 pairs does too).
 
 | # | Combination | Result | Basis |
 |---|-------------|--------|-------|
-| 1 | HID + CDC | ✅ hardware OK (`composite_hid_cdc` 4/4) | HID=IF0/EP1, CDC=IF1,2/EP3,4,5 |
-| 3 | HID + MSC | ✅ hardware OK (`composite_hid_msc` 3/3) | after fix MSC=IF0/EP2, HID=IF1/EP1, `dup=0 claimok=1` |
-| 2,4-10 | other non-Audio pairs | ○ (subsumed by the maximal config) | one core allocator, consistent numbering; covered by the triple below |
+| 1 | HID + CDC | ✅ hardware OK (`composite_hid_cdc` 4/4) | library allocator, no duplicate address |
+| 3 | HID + MSC | ✅ hardware OK (`composite_hid_msc` 3/3) | MSC and HID each use one duplex number, `dup=0 claimok=1` |
+| 2,4-10 | other non-Audio pairs | ○ (subsumed by the maximal config) | one library-owned allocator, consistent numbering; covered by the triple below |
 | 11 | Audio + another function | △ target-dependent | Audio + HID/CDC/Vendor descriptor builds pass in `unit/composite_constraints`; Peer enumeration remains after EspUsbHost UAC2 support |
 | — | HID + bulk Vendor | ✅ hardware OK (`composite_hid_vendor` 3/3) | fixed the descriptor duplication (HID blob no longer includes Vendor). `docs/DESIGN_NOTES.ja.md` |
 
-**S3 endpoint budget:** `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5` (FIFO limits
-usable IN to ~3). IN consumption: HID=1 / CDC=2 / MIDI=1 / MSC=1 / Vendor=1. The
-practical ceiling is about 4 classes (matching `MAX_CLASSES=4`).
+**S3 endpoint budget:** `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`. The IN
+count includes EP0, leaving four non-control IN endpoints. IN consumption:
+HID=1 / CDC=2 (notification + data) / MIDI=1 / MSC=1 / Vendor=1. Duplex
+functions share one endpoint number between OUT and IN.
 
 Maximal-configuration tests (stand in for all pairs; all pass on hardware):
 
-- `peer/composite_hid_cdc_msc`: HID + CDC + MSC (3 FIFO-IN = the S3 ceiling).
+- `peer/composite_hid_cdc_msc`: HID + CDC + MSC (4 non-control IN including
+  the CDC notification endpoint = the S3 ceiling).
   `dup=0` / all claimed / keyboard + serial + msc functional; subsumes the
   subset pairs (HID+CDC, HID+MSC, CDC+MSC).
 - `peer/composite_cdc_msc_vendor`: non-HID triple (CDC+MSC+Vendor). Covers Vendor
   (no HID blob, so it avoids the bulk-Vendor duplication issue). Vendor RX is
   driven by the `onRx` callback and the test asserts `onrx>=1` (regression guard
   for the `tud_vendor_rx_cb` signature fix; `docs/DESIGN_NOTES.ja.md`).
-- HID+CDC+MSC+MIDI (4 classes) exceeds the S3 endpoint budget and cannot
-  enumerate (`docs/DESIGN_NOTES.ja.md`). 4+ classes need the P4.
+- HID+CDC+MSC+Vendor and HID+CDC+MSC+MIDI exceed the S3 IN endpoint budget and
+  cannot enumerate (`docs/DESIGN_NOTES.ja.md`). This is endpoint-shape
+  dependent, not a class-count rule; over-budget configurations need the P4.
 
 HID + HID (keyboard + mouse, vendor, etc.) collapses into a single HID interface
 via report IDs and is already covered by `hid_keyboard_mouse` / `hid_vendor`; not

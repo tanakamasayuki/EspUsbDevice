@@ -205,67 +205,55 @@ peer / loopback の実機テストとは別に、全 example が常にコンパ�
 
 #### 現状の構造的制約（テスト設計の前提）
 
-複合は各クラスが core の `tinyusb_enable_interface()` に個別登録する方式です
-（[EspUsbDevice.cpp](../src/EspUsbDevice.cpp) の `begin()`）。ここに 2 つの制約があります。
+複合descriptor、interface番号、endpoint番号はすべてライブラリが所有する。
+Arduino Coreの`tinyusb_enable_interface()`や`tinyusb_get_free_*`は使わない。
 
-1. **Audio は排他**。Audio class がある場合、`classCount_ != 1` または他クラス併用は
-   `begin()` が `ESP_ERR_NOT_SUPPORTED` で失敗する（コードで明示的に禁止）。
-   よって Audio × 任意クラスは全て NG が仕様であり、その NG を回帰テストで固定する。
-2. **endpoint 番号の採番が 3 方式に分裂**していて互いを認識しない。これが複合破綻の
-   最有力原因（仮説）。
-
-   | クラス | interface | EP 採番 | 使う EP 番号 |
-   |--------|-----------|---------|--------------|
-   | HID（統合 1 本） | 1 | ライブラリ独自カウンタ（1 から） | EP1(OUT), EP2(IN) |
-   | CDC | 2 | ベタ書き固定 | EP3(OUT), EP4(IN), EP5(notif) |
-   | MIDI | 2 | core `tinyusb_get_free_*` | 動的 IN+OUT |
-   | MSC | 1 | core `tinyusb_get_free_duplex` | 動的 duplex×1 |
-   | Vendor | 1 | core `tinyusb_get_free_duplex` | 動的 duplex×1 |
-
-   HID の独自カウンタ／CDC の固定値は core アロケータから見えないため、
-   `tinyusb_get_free_*` が同じ EP 番号を再配布すると衝突しうる。加えて S3(FS) の物理 EP は
-   6 本程度、`MAX_CLASSES = 4`。
+- HID複合は1 interface / 1 duplex endpointへreport IDで統合する。
+- CDC/NCMはnotification用1番号とdata duplex用1番号を使う。
+- MIDI/MSC/Vendorと双方向HIDはIN/OUTで同じendpoint番号を共有する。
+- Audioは他functionとのdescriptor buildを許可する。実streamingのPeer検証は
+  EspUsbHostのUAC2対応後に行う。
+- `MAX_CLASSES=4`はAPI上限であり、controllerのendpoint上限とは別。S3は非control
+  IN endpoint 4本までなので、classの組み合わせによっては4class未満でも上限に達する。
 
 #### 対象マトリクス（Audioを含むfunctionの組み合わせ）
 
-破綻予測は上の EP 採番分析による仮説。テストで確定する。
-
-HID の複合衝突（endpoint がビットマスク未登録 + interface number 焼き込み）は **修正済み・実機確認済み**：
-HID を EP1 duplex + `reserve_endpoints=true` にし、HID interface number を core 採番値へ書き換えた
-（`docs/DESIGN_NOTES.ja.md`「複合時の HID 採番衝突」）。修正後は全 class が core の動的採番で一貫するため、
+旧Core依存構造で発生したHIDの採番衝突は**修正済み・実機確認済み**。現在は全classが
+ライブラリ所有allocatorで一貫して採番されるため、
 **全ペアを個別に検証する必要はなく、予算天井まで積んだ最大構成テストが部分集合を包含する**
-（4 クラスが `dup=0 / claimok=1` で機能すれば、その部分集合の各ペアも成立）。
+（最大構成が`dup=0 / claimok=1`で機能すれば、その部分集合の各ペアも成立）。
 
 | # | 組み合わせ | 結果 | 根拠 |
 |---|------------|------|--------------|
-| 1 | HID + CDC | ✅ 実機 OK（`composite_hid_cdc` 4/4） | HID=IF0/EP1、CDC=IF1,2/EP3,4,5 |
-| 3 | HID + MSC | ✅ 実機 OK（`composite_hid_msc` 3/3） | 修正後 MSC=IF0/EP2、HID=IF1/EP1、`dup=0 claimok=1` |
-| 2,4-10 | 上記以外の非 Audio ペア | ○（最大構成で包含） | 単一 core アロケータで一貫採番。下記 quad/triple がカバー |
+| 1 | HID + CDC | ✅ 実機 OK（`composite_hid_cdc` 4/4） | ライブラリ所有allocator、address重複なし |
+| 3 | HID + MSC | ✅ 実機 OK（`composite_hid_msc` 3/3） | MSC/HIDともduplex 1番号、`dup=0 claimok=1` |
+| 2,4-10 | 上記以外の非 Audio ペア | ○（最大構成で包含） | 単一のライブラリ所有allocatorで一貫採番。下記tripleがカバー |
 | 11 | Audio + 他function | △ target依存 | Audio + HID/CDC/Vendorのdescriptor buildは`unit/composite_constraints`でPASS。Peer列挙はEspUsbHost UAC2対応後 |
 | — | HID + bulk Vendor | ✅ 実機 OK（`composite_hid_vendor` 3/3） | descriptor 二重記述を修正（HID blob に Vendor を含めない）。`docs/DESIGN_NOTES.ja.md`「複合時の HID + bulk Vendor 二重記述」 |
 
-**S3 の endpoint 予算**: `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`（FIFO 制約で使える IN は実質 4、CDC 併用時 5）。
-IN 消費は HID=1 / CDC=2 / MIDI=1 / MSC=1 / Vendor=1。同時搭載の上限は約 4 クラス（`MAX_CLASSES=4` とも一致）。
+**S3 の endpoint 予算**: `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`。IN数はEP0を
+含むため、非control INは4本。IN消費はHID=1 / CDC=2（notification + data）/
+MIDI=1 / MSC=1 / Vendor=1。双方向dataはIN/OUTで同じendpoint番号を共有する。
 
 最大構成テスト（全ペアの代替、いずれも実機 pass）:
 
-- `peer/composite_hid_cdc_msc`: HID + CDC + MSC（FIFO-IN 3 本＝S3 の収まる最大）。dup=0 / 全 claim /
+- `peer/composite_hid_cdc_msc`: HID + CDC + MSC（CDC notificationを含む非control IN 4本＝S3上限）。dup=0 / 全 claim /
   keyboard・serial・msc 機能で部分集合（HID+CDC、HID+MSC、CDC+MSC）を包含。
 - `peer/composite_cdc_msc_vendor`: 非 HID triple（CDC+MSC+Vendor）。Vendor カバレッジ（HID blob を読まないので
   bulk Vendor の二重記述 issue を回避）。vendor RX は `onRx` コールバック駆動で echo が往復し、テストは
   `onrx>=1` を検証（`tud_vendor_rx_cb` シグネチャ修正の回帰ガード。`docs/DESIGN_NOTES.ja.md`
   「複合時の vendor RX callback が発火しない」）。
-- HID+CDC+MSC+MIDI（4 クラス）は S3 の endpoint 予算天井を超えて列挙できない（`docs/DESIGN_NOTES.ja.md`
-  「複合時の endpoint 予算の上限」）。4 クラス以上は P4 で。
+- HID+CDC+MSC+VendorとHID+CDC+MSC+MIDIはS3のIN endpoint上限を超えて列挙できない
+  （`docs/DESIGN_NOTES.ja.md`「複合時の endpoint 予算の上限」）。上限はclass数ではなく
+  endpoint構成で決まり、超過する構成はP4を使う。
 
 HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID interface に
 なるため、既に `hid_keyboard_mouse` / `hid_vendor` でカバー済み。ここでは扱わない。
 
 #### レイヤ分担（重要な制約）
 
-CDC/MIDI/MSC/Vendor を含む合成 descriptor と EP 採番は `startTinyUsb=false` では走らず、
-core の `tinyusb_init()` 実行時にしか確定しない。よって byte 単位の unit 検査は HID 統合分に
-限られ、それ以外の合成は実機で列挙して確認する。
+合成descriptorとEP採番は`startTinyUsb=false`でも完結するため、byte単位のunit検査が可能。
+実機Peerではcontroller上限、class driverのclaim、各data planeを追加確認する。
 
 - **unit（S3 単体・host 不要）**
   - `unit/composite_constraints`: `startTinyUsb=false`でAudio + HID/CDC/Vendorの
@@ -290,9 +278,7 @@ core の `tinyusb_init()` 実行時にしか確定しない。よって byte 単
 
 1. `unit/composite_constraints`（Audio複合build / MAX_CLASSESを回帰固定。host不要）。
 2. `peer/composite_hid_cdc`（#1、動く見込みの複合で雛形と共通 util を確立）。
-3. `peer/composite_hid_msc` / `hid_midi` / `hid_vendor`（#2-4、破綻本命）。列挙失敗や
-   EP 重複が出たら `docs/DESIGN_NOTES.ja.md` に「複合時の EP 採番衝突」として記録し、
-   根本対策（HID を core アロケータに寄せる／CDC 固定 EP の動的化）を別 TODO 化。
+3. `peer/composite_hid_msc` / `hid_midi` / `hid_vendor`（#2-4）。
 4. 残り CDC 系 / アロケータ系（#5-10）を順次。
 5. 結果を本ファイルと `docs/DEVELOPMENT_PLAN.ja.md`（composite の可否と制約）へ反映。
 
