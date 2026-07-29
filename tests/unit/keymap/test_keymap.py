@@ -99,8 +99,8 @@ def test_keymap_reverse_lookup():
             "-Wall",
             "-Wextra",
             "-I", str(output),          # espusbdevice_keymap_real.h
-            "-I", str(SRC),             # keymap/*.h tables
             "-I", str(HERE / "stub"),   # class/hid/hid.h stub
+            "-I", str(SRC),             # keymap/*.h tables
             str(HERE / "keymap_test.cpp"),
             "-o", str(binary),
         ],

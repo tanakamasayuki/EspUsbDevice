@@ -24,6 +24,38 @@ USB device / configuration / HID report descriptor の byte 列を検証しま�
 8 bytes に固定します。keyboard + mouse composite は単一 HID interface + report ID 構成で、
 report ID 付き keyboard report に合わせて endpoint MPS を 16 bytes にします。
 
+## `descriptor_model`
+
+v2のdescriptor基盤をhost g++だけで検証します。Arduino/TinyUSB headerには依存せず、
+buffer境界、interface/string採番、direction別endpoint採番、duplex endpoint、重複・上限検出、
+FS/HS configuration descriptorのMPS切替、other-speed configuration、device qualifier、
+HID function writerを確認します。Arduino sketch全体が一時的にcompile不能でも単独実行できます。
+
+## `tinyusb_config`
+
+ライブラリ所有のTinyUSB設定をS2/S3/P4の各target macroでhost compileし、Arduino Coreの
+Kconfigに依存せず全device classが有効になること、S2/S3はFS、P4はFS/HS対応能力として
+compileされること、Audioのcompile-time上限を確認します。controller/root-hub portと
+実際のbus speedはこの設定では固定せず、runtime初期化で選択します。
+
+## `tinyusb_vendor`
+
+Arduino build対象のTinyUSB headerと選択したdevice sourceが、固定commitのarchiveと
+byte-identicalであること、および意図しない`.c`がbuild対象へ増えていないことを確認します。
+
+## `audio_model`
+
+旧Audio実装に依存しないv2のPCM format/bandwidth modelをhost上で検証します。
+mono/stereo、16/24/32 bit、subslot、FS/HS frame rate、clock tolerance、
+isochronous packet上限、software buffer上限、entity graph、UAC2 descriptor、
+Clock/Feature control stateとCUR/RANGE wire formatを確認します。
+
+## `audio_v2_descriptor`
+
+新公開APIの`EspUsbAudioFunction`をS3実機上で構築し、speaker、microphone、duplexの
+configuration descriptorとFS/HS packet sizeを確認します。USB runtimeは開始しないため、
+純粋な公開API・device descriptor統合テストです。
+
 ## `keymap`
 
 board 不要の純粋な host g++ テストです。実行時に layout enum、

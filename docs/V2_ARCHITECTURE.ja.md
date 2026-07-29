@@ -43,6 +43,17 @@ third-partyとして同梱するTinyUSB自身のlicense/copyrightは変更せず
 
 ## 設計原則
 
+### 互換性より単純なmodelを優先する
+
+v2は既存class名やmethod配置を前提に設計しない。既存APIと同じ形が新しいownership modelにも
+適合する場合だけ維持する。
+
+- device、function、stream、serviceを別の責務として扱う
+- registration、configuration、start/stopの順序を全classで統一する
+- callback contextとbuffer lifetimeをAPI contractに含める
+- convenience APIはcore modelの上に薄く構築し、独自状態を持たせない
+- deprecated aliasや互換shimで新旧modelを同居させない
+
 ### USB controller と link speed を分離する
 
 設定で選択するのは実リンク速度ではなく controller である。

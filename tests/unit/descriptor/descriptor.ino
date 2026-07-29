@@ -150,6 +150,12 @@ static void testVendorDescriptor()
   check(epIn[0] == 7 && epIn[1] == 0x05 && epIn[2] == 0x81, "vendor_ep_in_addr");
   check(epOut[3] == 0x02 && epIn[3] == 0x02, "vendor_ep_bulk");
   check(le16(&epOut[4]) == 64 && le16(&epIn[4]) == 64, "vendor_ep_mps");
+
+  const uint8_t *highSpeed =
+      device.configurationDescriptorForSpeed(0, true);
+  check(le16(&highSpeed[18 + 4]) == 512 &&
+            le16(&highSpeed[25 + 4]) == 512,
+        "vendor_hs_ep_mps");
 }
 
 static void testCompositeWithVendorDescriptor()
@@ -194,6 +200,34 @@ static void testStringDescriptors()
   check(device.stringDescriptor(3, 0x0409) == nullptr, "string_serial_null");
 }
 
+static void testClassLifecycle()
+{
+  EspUsbDeviceConfig config;
+  config.startTinyUsb = false;
+
+  EspUsbDevice first;
+  EspUsbDeviceCdcSerial firstCdc(first);
+  check(first.begin(config), "lifecycle_first_begin");
+  first.end();
+
+  EspUsbDevice second;
+  EspUsbDeviceCdcSerial secondCdc(second);
+  check(second.begin(config), "lifecycle_reuse_after_end");
+  second.end();
+
+  // An invalid MSC class registers no callback target and rolls back classes
+  // that were already begun in the same device.
+  EspUsbDevice invalid;
+  EspUsbDeviceCdcSerial invalidCdc(invalid);
+  EspUsbDeviceMsc invalidMsc(invalid);
+  check(!invalid.begin(config), "lifecycle_partial_begin_fails");
+
+  EspUsbDevice recovered;
+  EspUsbDeviceCdcSerial recoveredCdc(recovered);
+  check(recovered.begin(config), "lifecycle_partial_begin_rollback");
+  recovered.end();
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -206,6 +240,7 @@ void setup()
   testVendorDescriptor();
   testCompositeWithVendorDescriptor();
   testStringDescriptors();
+  testClassLifecycle();
   Serial.printf("TEST_END pass=%d fail=%d\n", passCount, failCount);
   Serial.println(failCount == 0 ? "OK" : "NG");
   Serial.flush();

@@ -5,6 +5,8 @@
 #include <Print.h>
 #include <functional>
 #include "espusbdevice_version.h"
+#include "internal/EspUsbAudioControl.h"
+#include "internal/EspUsbAudioDescriptor.h"
 
 #if __has_include(<SD.h>)
 #include <SD.h>
@@ -27,11 +29,13 @@ typedef int esp_err_t;
 #define ESP_ERR_NOT_SUPPORTED 0x106
 #endif
 
-// Note: the device does not select its USB port or speed. On P4 the Arduino core
-// pins the device stack to the HS/UTMI controller, and the actual link speed is
-// negotiated with the host. Endpoint sizes and descriptor variants should follow
-// the negotiated speed, not a sketch-declared value, so there is no port/speed
-// field here. See docs/DESIGN_NOTES.ja.md "P4 USB ポート/PHY の実測整理".
+enum class EspUsbController : uint8_t
+{
+  Auto,
+  FullSpeed,
+  HighSpeed,
+};
+
 enum EspUsbDeviceKeyboardLayout : uint16_t
 {
   ESP_USB_DEVICE_KEYBOARD_LAYOUT_ZH_TW = 0x0404,
@@ -67,6 +71,7 @@ struct EspUsbDeviceConfig
   bool webusbEnabled = false;
   const char *webusbUrl = nullptr;
   bool startTinyUsb = true;
+  EspUsbController controller = EspUsbController::Auto;
 };
 
 static constexpr uint8_t ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK = 0x01;
@@ -372,11 +377,11 @@ public:
 
   const uint8_t *deviceDescriptor();
   const uint8_t *configurationDescriptor(uint8_t index);
-  // Byte length / interface count of ONLY the HID interface descriptors inside
-  // configDescriptor_ (excludes the 9-byte config header and any trailing
-  // non-HID interfaces such as bulk Vendor). The composite HID loader copies
-  // exactly this slice so a Vendor interface that also lives in configDescriptor_
-  // is not duplicated (it is enabled separately via the core's vendor loader).
+  const uint8_t *configurationDescriptorForSpeed(uint8_t index, bool highSpeed);
+  const uint8_t *deviceQualifierDescriptor();
+  const uint8_t *otherSpeedConfigurationDescriptor(uint8_t index, bool currentHighSpeed);
+  // Byte length / interface count of only the HID interface descriptors inside
+  // configDescriptor_ (excluding the configuration header and other functions).
   uint16_t hidInterfacesLength() const;
   uint8_t hidInterfaceCount() const;
   const uint16_t *stringDescriptor(uint8_t index, uint16_t langid);
@@ -396,6 +401,7 @@ private:
   friend class EspUsbDeviceHidSystemControl;
   friend class EspUsbDeviceVendor;
   friend class EspUsbDeviceAudio;
+  friend class EspUsbAudioFunction;
   friend class EspUsbDeviceNet;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
@@ -414,6 +420,7 @@ private:
   uint8_t classReportId(uint8_t classInstance) const;
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
   void setLastError(esp_err_t error);
+  void removeClass(EspUsbDeviceClass *deviceClass);
 
   EspUsbDeviceConfig config_;
   EspUsbDeviceClass *classes_[MAX_CLASSES] = {};
@@ -424,6 +431,9 @@ private:
   esp_err_t lastError_ = ESP_OK;
   uint8_t deviceDescriptor_[18] = {};
   uint8_t configDescriptor_[MAX_CONFIG_DESCRIPTOR] = {};
+  uint8_t configDescriptorHighSpeed_[MAX_CONFIG_DESCRIPTOR] = {};
+  uint8_t otherSpeedDescriptor_[MAX_CONFIG_DESCRIPTOR] = {};
+  uint8_t deviceQualifierDescriptor_[10] = {};
   uint8_t hidReportDescriptor_[MAX_HID_REPORT_DESCRIPTOR] = {};
   uint16_t configDescriptorLength_ = 0;
   uint16_t hidInterfacesLength_ = 0;
@@ -435,9 +445,10 @@ private:
 class EspUsbDeviceClass
 {
 public:
-  virtual ~EspUsbDeviceClass() = default;
+  virtual ~EspUsbDeviceClass();
   virtual bool begin() { return true; }
   virtual bool afterDeviceStarted() { return true; }
+  virtual void end() {}
   virtual bool isHid() const { return true; }
   virtual bool isCdc() const { return false; }
   virtual bool isMidi() const { return false; }
@@ -446,6 +457,14 @@ public:
   virtual bool isAudio() const { return false; }
   virtual bool isNet() const { return false; }
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
+  virtual uint16_t configurationDescriptorForSpeed(
+      uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
+      uint8_t endpointNumber, bool highSpeed)
+  {
+    (void)capacity;
+    return configurationDescriptor(dst, interfaceNumber, endpointNumber,
+                                   highSpeed ? 512 : 64);
+  }
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
   virtual uint8_t hidReportId() const { return 0; }
@@ -473,9 +492,11 @@ public:
   using RxCallback = std::function<void(size_t)>;
 
   explicit EspUsbDeviceCdcSerial(EspUsbDevice &device);
+  ~EspUsbDeviceCdcSerial() override;
 
   bool begin() override;
   bool afterDeviceStarted() override;
+  void end() override;
   bool isHid() const override { return false; }
   bool isCdc() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
@@ -519,6 +540,7 @@ public:
   ~EspUsbDeviceVendor() override;
 
   bool begin() override;
+  void end() override;
   bool isHid() const override { return false; }
   bool isVendor() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
@@ -549,9 +571,7 @@ private:
 // CDC-NCM (USB network / "USB Ethernet") device function. Presents the device
 // to a USB host as a network adapter. Phase 1 exposes raw Ethernet frames via
 // onFrame() / sendFrame(); lwIP integration (a netif + DHCP server) is layered
-// on top separately. NCM is registered through the core's USB_INTERFACE_CUSTOM
-// slot (the core has no dedicated NET interface enum); TinyUSB's built-in netd
-// class driver claims the emitted CDC-NCM descriptors.
+// on top separately.
 class EspUsbDeviceNet : public EspUsbDeviceClass
 {
 public:
@@ -563,6 +583,7 @@ public:
 
   bool begin() override;
   bool afterDeviceStarted() override;
+  void end() override;
   bool isHid() const override { return false; }
   bool isNet() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
@@ -637,8 +658,10 @@ class EspUsbDeviceMidi : public EspUsbDeviceClass
 {
 public:
   explicit EspUsbDeviceMidi(EspUsbDevice &device);
+  ~EspUsbDeviceMidi() override;
 
   bool begin() override;
+  void end() override;
   bool isHid() const override { return false; }
   bool isMidi() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
@@ -706,13 +729,113 @@ private:
   EspUsbDeviceAudioEventCallback eventCallback_;
 };
 
+enum class EspUsbAudioProtocol : uint8_t
+{
+  Uac1,
+  Uac2,
+};
+
+struct EspUsbAudioFormat
+{
+  uint32_t sampleRate = 48000;
+  uint8_t subslotBytes = 2;
+  uint8_t validBits = 16;
+};
+
+class EspUsbAudioFunction;
+
+class EspUsbAudioPlaybackStream
+{
+public:
+  bool channels(uint8_t count);
+  uint8_t channels() const { return channels_; }
+  bool addFormat(const EspUsbAudioFormat &format);
+  int available() const;
+  size_t read(void *data, size_t length);
+
+private:
+  friend class EspUsbAudioFunction;
+  explicit EspUsbAudioPlaybackStream(EspUsbAudioFunction &function)
+      : function_(function) {}
+
+  EspUsbAudioFunction &function_;
+  uint8_t channels_ = 2;
+};
+
+class EspUsbAudioCaptureStream
+{
+public:
+  bool channels(uint8_t count);
+  uint8_t channels() const { return channels_; }
+  bool addFormat(const EspUsbAudioFormat &format);
+  size_t write(const void *data, size_t length);
+
+private:
+  friend class EspUsbAudioFunction;
+  explicit EspUsbAudioCaptureStream(EspUsbAudioFunction &function)
+      : function_(function) {}
+
+  EspUsbAudioFunction &function_;
+  uint8_t channels_ = 1;
+};
+
+class EspUsbAudioFunction : public EspUsbDeviceClass
+{
+public:
+  explicit EspUsbAudioFunction(EspUsbDevice &device);
+  ~EspUsbAudioFunction() override;
+
+  bool protocol(EspUsbAudioProtocol protocol);
+  EspUsbAudioProtocol protocol() const { return protocol_; }
+  EspUsbAudioPlaybackStream &addPlaybackStream();
+  EspUsbAudioCaptureStream &addCaptureStream();
+  bool hasPlaybackStream() const { return playbackEnabled_; }
+  bool hasCaptureStream() const { return captureEnabled_; }
+
+  bool begin() override;
+  void end() override;
+  bool isHid() const override { return false; }
+  bool isAudio() const override { return true; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber,
+                                   uint8_t endpointNumber,
+                                   uint16_t endpointSize) override;
+  uint16_t configurationDescriptorForSpeed(
+      uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
+      uint8_t endpointNumber, bool highSpeed) override;
+  uint8_t interfaceCount() const override;
+  uint8_t endpointCount() const override;
+
+  bool handleGetEntityRequest(uint8_t rhport, const void *request);
+  bool handleSetEntityRequest(const void *request, const uint8_t *data);
+  uint32_t currentSampleRate() const;
+
+private:
+  friend class EspUsbAudioPlaybackStream;
+  friend class EspUsbAudioCaptureStream;
+
+  bool addFormat(espusb::internal::AudioDirection direction,
+                 uint8_t channels, const EspUsbAudioFormat &format);
+  bool buildGraph(uint8_t interfaceNumber, uint8_t endpointNumber);
+
+  EspUsbAudioProtocol protocol_ = EspUsbAudioProtocol::Uac2;
+  bool playbackEnabled_ = false;
+  bool captureEnabled_ = false;
+  EspUsbAudioPlaybackStream playback_{*this};
+  EspUsbAudioCaptureStream capture_{*this};
+  espusb::internal::AudioFunctionModel model_;
+  espusb::internal::AudioFunctionGraph graph_;
+  espusb::internal::AudioControlState controls_;
+};
+
 class EspUsbDeviceMsc : public EspUsbDeviceClass
 {
 public:
   explicit EspUsbDeviceMsc(EspUsbDevice &device);
+  ~EspUsbDeviceMsc() override;
 
   bool begin() override;
   bool begin(uint32_t blockCount, uint16_t blockSize);
+  void end() override;
   bool isHid() const override { return false; }
   bool isMsc() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
