@@ -6,9 +6,8 @@ EspUsbDevice v2 vendors a selected TinyUSB device-stack source snapshot so its
 USB configuration and runtime do not depend on Arduino-ESP32's prebuilt
 `libarduino_tinyusb`.
 
-- Upstream: https://github.com/hathach/tinyusb
-- Commit: `53f8c53c2cbd73a91a172f1ae35e9abc00eb5075`
-- Version macros: `0.21.0`
+- Pin metadata: `UPSTREAM.json` (repository, full commit SHA, TinyUSB version,
+  reviewed Arduino-ESP32 baseline, and selection reason)
 - License: MIT
 - Arduino build tree: only the selected `.c` files and their S2/S3/P4
   transitive headers under the library `src/` directory
@@ -16,13 +15,6 @@ USB configuration and runtime do not depend on Arduino-ESP32's prebuilt
 - Verification cache: the pinned upstream tarball and its 43 selected files are
   downloaded on demand under ignored `.upstream-cache/`
 - Local patches: none at initial import
-
-This is the same TinyUSB commit recorded by the Arduino-ESP32 3.3.11 S2, S3,
-and P4 tool packages:
-
-```text
-tinyusb: master 53f8c53c2
-```
 
 The verification cache is downloaded from the canonical
 [`hathach/tinyusb`](https://github.com/hathach/tinyusb) repository.
@@ -69,15 +61,51 @@ upstream files are not patched. `src/tusb_config.h` and
 
 ## Update rules
 
-- Pin updates to a full upstream commit, not a moving branch or version string.
-- Keep upstream copyright/SPDX headers unchanged.
-- Record every local patch in this file.
-- Run `python3 tools/verify_tinyusb_vendor.py` to verify that the Arduino build
-  tree matches `BUILD_FILES.txt`, is byte-identical to the pinned upstream
-  commit, and contains only the selected sources and headers. Use `--refresh`
-  to discard and download the ignored verification cache again.
-- Regenerate the build manifest from clean S2, S3, and P4 compiler dependency
-  files whenever the TinyUSB commit, enabled class set, or target set changes.
-- Run the host descriptor tests, S2/S3/P4 compile tests, link-map symbol audit,
-  and the complete hardware pytest suite before accepting an update.
-- Do not copy Arduino-ESP32's `esp32-hal-tinyusb` integration into this tree.
+### Review cadence
+
+- Review the pin whenever the supported Arduino-ESP32 baseline changes. Prefer
+  the TinyUSB commit recorded by that core's S2, S3, and P4 tool packages.
+- Also review it before each major/minor EspUsbDevice release and at least once
+  per quarter when neither the core nor the library release cadence triggers a
+  review. A review does not require an update.
+- Update between those reviews only for a relevant upstream bug, security fix,
+  required USB feature, or target support. Record any deliberate divergence
+  from the core-bundled commit in `UPSTREAM.json` `selection_reason`.
+- Pin a full upstream commit, never a moving branch or version string.
+
+### Update procedure
+
+1. Install/select the new Arduino-ESP32 baseline and inspect the `tinyusb:`
+   entries in the S2, S3, and P4 tool-package `versions.txt` files. They must be
+   considered separately; do not assume every target uses the same commit.
+2. Edit `UPSTREAM.json`: full `commit`, `tinyusb_version`,
+   `reviewed_with_arduino_esp32`, and `selection_reason`. Changing the commit
+   changes the cache directory, so the next verification/update command
+   downloads that commit automatically.
+3. Run `python3 tools/verify_tinyusb_vendor.py`. A new pin normally reports
+   modified selected files after populating the cache; that failure is the
+   expected review point.
+4. Run `python3 tools/update_tinyusb_vendor.py` for a dry-run file list, review
+   the upstream changes, then run
+   `python3 tools/update_tinyusb_vendor.py --apply`.
+5. Clean-compile the complete example matrix for S2, S3, and P4. If compiler
+   dependencies changed, regenerate `BUILD_FILES.txt` from clean dependency
+   files, copy any newly required upstream headers, remove no-longer-used ones,
+   and repeat the compile until all three targets are clean.
+
+   ```sh
+   cd tests
+   uv run --env-file .env pytest examples_compile/ --clean -vv
+   ```
+
+6. Run `python3 tools/verify_tinyusb_vendor.py` again. It must pass
+   byte-for-byte before testing on hardware.
+7. Run the complete hardware suite:
+
+   ```sh
+   uv run --env-file .env pytest --clean
+   ```
+
+8. Review the full diff, upstream license/SPDX headers, link-map symbol audit,
+   and provenance. Keep upstream headers unchanged and record every local patch
+   here. Do not copy Arduino-ESP32's `esp32-hal-tinyusb` integration.

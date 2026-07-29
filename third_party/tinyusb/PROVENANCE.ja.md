@@ -6,9 +6,8 @@ EspUsbDevice v2は、USB設定とruntimeをArduino-ESP32のprebuilt
 `libarduino_tinyusb`へ依存させないため、TinyUSB device stackの選択済みsourceを
 同梱します。
 
-- Upstream: https://github.com/hathach/tinyusb
-- Commit: `53f8c53c2cbd73a91a172f1ae35e9abc00eb5075`
-- Version macro: `0.21.0`
+- Pin metadata: `UPSTREAM.json`（repository、full commit SHA、TinyUSB version、
+  確認したArduino-ESP32 baseline、選定理由）
 - License: MIT
 - Arduino build tree: 選択済み`.c` fileと、S2/S3/P4で必要になるtransitive
   headerだけをlibraryの`src/`以下へ配置
@@ -16,13 +15,6 @@ EspUsbDevice v2は、USB設定とruntimeをArduino-ESP32のprebuilt
 - Verification cache: 固定したupstream tarballと選択済み43 fileを、検証時だけ
   ignoredな`.upstream-cache/`以下へ取得
 - 初回import時のlocal patch: なし
-
-このcommitはArduino-ESP32 3.3.11のS2、S3、P4 tool packageに記録されている
-TinyUSB commitと同じです。
-
-```text
-tinyusb: master 53f8c53c2
-```
 
 検証用cacheはcanonical upstreamである
 [`hathach/tinyusb`](https://github.com/hathach/tinyusb)から取得します。
@@ -68,16 +60,46 @@ patchを加えていません。`src/tusb_config.h`と
 
 ## 更新ルール
 
+### 見直す頻度
+
+- 対応するArduino-ESP32 baselineを変更するたびにpinを見直す。原則として、そのcoreの
+  S2/S3/P4 tool packageに記録されたTinyUSB commitを優先する。
+- EspUsbDeviceのmajor/minor release前にも見直す。core更新もreleaseもない場合は、
+  少なくとも四半期に1回upstreamのrelease、bug fix、security情報を確認する。
+  「見直し」は必ずしも「更新」を意味しない。
+- それ以外で更新するのは、関係するupstream bug/security fix、必要なUSB機能、
+  target対応がある場合に限る。core同梱commitから意図的に外す場合は、
+  `UPSTREAM.json`の`selection_reason`へ理由を記録する。
 - moving branchやversion文字列ではなく、upstreamのfull commit SHAへ固定する。
-- upstreamのcopyright / SPDX headerを変更しない。
-- local patchを加える場合は、すべてこの文書へ記録する。
-- `python3 tools/verify_tinyusb_vendor.py`を実行し、Arduino build treeが
-  `BUILD_FILES.txt`と一致すること、固定upstream commitとbyte-identicalであること、
-  選択したsource/header以外を含まないことを確認する。
-- local verification cacheを破棄して再取得する場合は
-  `python3 tools/verify_tinyusb_vendor.py --refresh`を使用する。
-- TinyUSB commit、enableするclass、対応targetのいずれかを変更した場合は、S2/S3/P4の
-  clean compiler dependencyからbuild manifestを再生成する。
-- 更新を受け入れる前にhost descriptor test、S2/S3/P4 compile test、link-map symbol
-  audit、完全な実機pytest suiteを実行する。
-- Arduino-ESP32の`esp32-hal-tinyusb` integrationはこのtreeへcopyしない。
+
+### 更新手順
+
+1. 新しいArduino-ESP32 baselineをinstall/selectし、S2/S3/P4 tool packageそれぞれの
+   `versions.txt`にある`tinyusb:`行を確認する。全targetが同じcommitとは仮定しない。
+2. `UPSTREAM.json`のfull `commit`、`tinyusb_version`、
+   `reviewed_with_arduino_esp32`、`selection_reason`を更新する。commitを変えるとcache
+   directoryも変わるため、次のverify/update commandで新しいcommitが自動取得される。
+3. `python3 tools/verify_tinyusb_vendor.py`を実行する。新しいpinではcacheを取得した後、
+   選択済みfileの差分により通常は失敗する。この失敗を差分reviewの開始点とする。
+4. `python3 tools/update_tinyusb_vendor.py`で反映対象fileをdry-run表示してupstream差分を
+   reviewし、問題なければ`python3 tools/update_tinyusb_vendor.py --apply`を実行する。
+5. S2/S3/P4の全example matrixをclean compileする。compiler dependencyが変わった場合は
+   clean dependency fileから`BUILD_FILES.txt`を再生成し、新しく必要なupstream headerを
+   追加し、不要になったfileを削除して、3 targetすべてが通るまでcompileを繰り返す。
+
+   ```sh
+   cd tests
+   uv run --env-file .env pytest examples_compile/ --clean -vv
+   ```
+
+6. `python3 tools/verify_tinyusb_vendor.py`を再実行する。実機testへ進む前に
+   byte-for-byteで成功しなければならない。
+7. 完全な実機suiteを実行する。
+
+   ```sh
+   uv run --env-file .env pytest --clean
+   ```
+
+8. full diff、upstream license/SPDX header、link-map symbol audit、provenanceを確認する。
+   upstream headerは変更せず、local patchを加える場合はすべてこの文書へ記録する。
+   Arduino-ESP32の`esp32-hal-tinyusb` integrationはこのtreeへcopyしない。

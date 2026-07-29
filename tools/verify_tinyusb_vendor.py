@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import shutil
 import tarfile
 import urllib.error
@@ -11,9 +13,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-UPSTREAM_COMMIT = "53f8c53c2cbd73a91a172f1ae35e9abc00eb5075"
+METADATA = ROOT / "third_party" / "tinyusb" / "UPSTREAM.json"
+UPSTREAM = json.loads(METADATA.read_text(encoding="utf-8"))
+UPSTREAM_COMMIT = UPSTREAM["commit"]
+UPSTREAM_REPOSITORY = UPSTREAM["repository"]
 UPSTREAM_URL = (
-    "https://codeload.github.com/hathach/tinyusb/tar.gz/" + UPSTREAM_COMMIT
+    f"https://codeload.github.com/{UPSTREAM_REPOSITORY}/tar.gz/"
+    + UPSTREAM_COMMIT
 )
 CACHE = ROOT / "third_party" / "tinyusb" / ".upstream-cache" / UPSTREAM_COMMIT
 ARCHIVE = CACHE / "src"
@@ -76,6 +82,30 @@ def manifest_files() -> set[str]:
     return set(entries)
 
 
+def validate_metadata() -> None:
+    if UPSTREAM.get("schema") != 1:
+        raise ValueError(f"unsupported schema in {METADATA}")
+    if not re.fullmatch(r"[0-9a-f]{40}", UPSTREAM_COMMIT):
+        raise ValueError(f"commit in {METADATA} must be a full lowercase SHA")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", UPSTREAM_REPOSITORY):
+        raise ValueError(f"repository in {METADATA} must use owner/name form")
+
+
+def tinyusb_version(path: Path) -> str:
+    content = path.read_text(encoding="utf-8")
+    values = []
+    for macro in ("MAJOR", "MINOR", "REVISION"):
+        match = re.search(
+            rf"^#define\s+TUSB_VERSION_{macro}\s+(\d+)\s*$",
+            content,
+            re.MULTILINE,
+        )
+        if not match:
+            raise ValueError(f"TUSB_VERSION_{macro} not found in {path}")
+        values.append(match.group(1))
+    return ".".join(values)
+
+
 def download_tarball() -> None:
     CACHE.mkdir(parents=True, exist_ok=True)
     temporary = TARBALL.with_suffix(".tmp")
@@ -96,7 +126,8 @@ def populate_upstream_cache(expected_files: set[str]) -> None:
     if not TARBALL.is_file():
         download_tarball()
 
-    prefix = f"tinyusb-{UPSTREAM_COMMIT}/src/"
+    repository_name = UPSTREAM_REPOSITORY.rsplit("/", 1)[-1]
+    prefix = f"{repository_name}-{UPSTREAM_COMMIT}/src/"
     try:
         with tarfile.open(TARBALL, "r:gz") as archive:
             members = {member.name: member for member in archive.getmembers()}
@@ -120,6 +151,11 @@ def populate_upstream_cache(expected_files: set[str]) -> None:
 
 def main() -> int:
     args = parse_args()
+    try:
+        validate_metadata()
+    except ValueError as exc:
+        print(exc)
+        return 1
     if args.refresh and CACHE.exists():
         shutil.rmtree(CACHE)
 
@@ -146,6 +182,17 @@ def main() -> int:
     except RuntimeError as exc:
         print(exc)
         return 1
+
+    expected_version = UPSTREAM.get("tinyusb_version")
+    try:
+        upstream_version = tinyusb_version(ARCHIVE / "tusb_option.h")
+        if expected_version != upstream_version:
+            errors.append(
+                f"UPSTREAM.json tinyusb_version is {expected_version!r}, "
+                f"but pinned upstream reports {upstream_version!r}"
+            )
+    except ValueError as exc:
+        errors.append(str(exc))
 
     for relative in sorted(build_files):
         archived = ARCHIVE / relative

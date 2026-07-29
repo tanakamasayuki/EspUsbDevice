@@ -45,7 +45,7 @@ left to runtime initialization.
 
 ## `tinyusb_vendor`
 
-Checks that the TinyUSB headers and selected device sources in the Arduino build
+Checks that the TinyUSB pin metadata, headers, and selected device sources in the Arduino build
 tree remain byte-identical to the pinned archive, and that no unintended `.c`
 file has entered the build.
 

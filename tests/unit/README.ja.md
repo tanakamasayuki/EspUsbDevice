@@ -40,7 +40,7 @@ compileされること、Audioのcompile-time上限を確認します。controll
 
 ## `tinyusb_vendor`
 
-Arduino build対象のTinyUSB headerと選択したdevice sourceが、固定commitのarchiveと
+TinyUSB pin metadata、Arduino build対象のheader、選択したdevice sourceが固定commitと
 byte-identicalであること、および意図しない`.c`がbuild対象へ増えていないことを確認します。
 
 ## `audio_model`
