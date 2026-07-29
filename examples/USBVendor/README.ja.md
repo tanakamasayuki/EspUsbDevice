@@ -46,9 +46,10 @@ PC から扱う場合は libusb、WinUSB、WebUSB などの Host 側実装が必
 - `UsbVendor.onRx(callback)` は bulk OUT の受信時に呼ばれます。
 - `UsbVendor.onControlRequest(callback)` は EP0 の vendor request を受け取ります。
 - `UsbVendor.sendControlResponse(request, data, length)` は control transfer に応答します。
-- `config.webusbEnabled` は Arduino-ESP32 TinyUSB core の WebUSB BOS descriptor を有効にします。
-- `config.webusbUrl` は WebUSB landing page URL です。`https://` は core 側の URL descriptor scheme
-  ではなく、文字列としてそのまま扱われるため、まずは host/browser 側で期待する形式を確認してください。
+- `config.webusbEnabled` はこのライブラリの WebUSB BOS descriptor と、この vendor function
+  がある場合の Microsoft OS 2.0 WinUSB descriptor を有効にします。
+- `config.webusbUrl` は WebUSB landing page URL です。`http://` / `https://` は WebUSB URL
+  descriptor の scheme field として符号化されます。
 
 ## VendorHID との違い
 
@@ -58,9 +59,9 @@ PC から扱う場合は libusb、WinUSB、WebUSB などの Host 側実装が必
 
 ## 注意
 
-- WebUSB / Microsoft OS 2.0 descriptor の実体は Arduino-ESP32 TinyUSB core が生成します。
-- `EspUsbDevice` 側では URL や独自 request callback を扱います。vendor code や Microsoft OS 2.0
-  descriptor の細かい差し替え API はまだありません。
+- Microsoft OS 2.0 descriptor は composite descriptor builder が実際に割り当てた vendor
+  interface 番号を対象にします。`EspUsbDeviceVendor` がない構成では広告しません。
+- vendor code、GUID、Microsoft OS 2.0 descriptor の細かい差し替え API はまだありません。
 
 ## 関連
 

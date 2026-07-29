@@ -11,6 +11,7 @@ def test_loopback_usb_vendor(dut):
     dut.expect_exact("VENDOR_CONTROL_IN ok=1 len=18 data=EspUsbDeviceVendor")
     dut.expect_exact("VENDOR_CONTROL_OUT 1")
     dut.expect("WEBUSB_URL ok=1 len=[1-9][0-9]* found=1")
+    dut.expect_exact("MS_OS_20 ok=1 len=178 interface=1 winusb=1")
     dut.expect("DEVICE_STATUS rx=4 control=[1-9][0-9]*")
     dut.expect_exact("TEST_END ok")
     assert dut.expect_exact(["OK", "NG"]) == b"OK"

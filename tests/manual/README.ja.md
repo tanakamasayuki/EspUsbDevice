@@ -82,11 +82,10 @@ peer テストと違い、ボードの USB-OTG ポートを（peer host ボー�
 注意:
 
 - Host OS によっては kernel driver detach、permission、udev rule、WinUSB driver binding が必要。
-- `EspUsbDevice` は WebUSB URL を設定できるが、vendor code や Microsoft OS 2.0 descriptor の
-  内容差し替え API はまだ持たない。
-- Arduino-ESP32 TinyUSB core は WebUSB 有効時に Microsoft OS 2.0 descriptor も返す。
-  GUID などの内容は core 側既定値になる。
-- この確認は Host OS / browser / driver の状態に依存するため、自動テストではなく manual に置く。
+- `EspUsbDevice` が WebUSB / Microsoft OS 2.0 descriptor を生成するが、vendor code、GUID、
+  内容を差し替える API はまだ持たない。
+- descriptor byte列とvendor control応答は自動テストする。実際のbrowser動作とWindows driver
+  bindingはHost OS / browser / driver状態に依存するためmanualで確認する。
 
 ## `examples/MSCFatRamDisk`
 

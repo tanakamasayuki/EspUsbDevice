@@ -190,6 +190,29 @@ static bool webUsbUrl()
   return ok && found;
 }
 
+static bool microsoftOs20()
+{
+  uint8_t buffer[178] = {};
+  size_t actualLength = 0;
+  const bool ok = usb.vendorControlIn(
+      0x02, 0, 0x0007, buffer, sizeof(buffer), &actualLength, deviceAddress);
+  const bool headerOk =
+      actualLength == sizeof(buffer) &&
+      buffer[0] == 10 && buffer[1] == 0 &&
+      buffer[8] == sizeof(buffer) && buffer[9] == 0;
+  const bool interfaceOk =
+      headerOk && buffer[18] == 8 && buffer[19] == 0 &&
+      buffer[20] == 2 && buffer[21] == 0 && buffer[22] == 0;
+  const bool winUsbOk =
+      interfaceOk && memcmp(&buffer[30], "WINUSB", 6) == 0;
+  Serial.printf("MS_OS_20 ok=%u len=%u interface=%u winusb=%u\n",
+                ok ? 1 : 0,
+                static_cast<unsigned>(actualLength),
+                interfaceOk ? 1 : 0,
+                winUsbOk ? 1 : 0);
+  return ok && headerOk && interfaceOk && winUsbOk;
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -297,6 +320,7 @@ void setup()
   ok = ok && controlOutOk;
 
   ok = ok && webUsbUrl();
+  ok = ok && microsoftOs20();
 
   Serial.printf("DEVICE_STATUS rx=%lu control=%lu\n",
                 static_cast<unsigned long>(rxCount),

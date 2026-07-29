@@ -182,6 +182,66 @@ static void testCompositeWithVendorDescriptor()
   check(cfg[50 + 2] == 0x02 && cfg[57 + 2] == 0x82, "composite_vendor_eps");
 }
 
+static void testWebUsbAndMicrosoftOs20Descriptors()
+{
+  EspUsbDevice device;
+  EspUsbDeviceHidKeyboard keyboard(device);
+  EspUsbDeviceVendor vendor(device);
+  EspUsbDeviceConfig config;
+  config.webusbEnabled = true;
+  config.webusbUrl = "https://example.com/espusbdevice";
+  config.startTinyUsb = false;
+
+  check(device.begin(config), "webusb_ms_os_begin");
+  check(le16(&device.deviceDescriptor()[2]) == 0x0201,
+        "webusb_device_usb_version");
+
+  const uint8_t *bos = device.bosDescriptor();
+  check(bos != nullptr && device.bosDescriptorLength() == 57,
+        "webusb_bos_length");
+  check(bos && bos[0] == 5 && bos[1] == 0x0f &&
+            le16(&bos[2]) == 57 && bos[4] == 2,
+        "webusb_bos_header");
+  check(bos && bos[5] == 24 && bos[6] == 0x10 &&
+            bos[7] == 0x05 && bos[27] == 0x01 && bos[28] == 0x01,
+        "webusb_platform_capability");
+  check(bos && bos[29] == 28 && bos[30] == 0x10 &&
+            bos[31] == 0x05 && le16(&bos[53]) == 178 &&
+            bos[55] == 0x02,
+        "ms_os_20_platform_capability");
+
+  const uint8_t *ms = device.microsoftOs20Descriptor();
+  check(ms != nullptr && device.microsoftOs20DescriptorLength() == 178,
+        "ms_os_20_length");
+  check(ms && le16(&ms[0]) == 10 && le16(&ms[2]) == 0 &&
+            le16(&ms[8]) == 178,
+        "ms_os_20_set_header");
+  check(ms && le16(&ms[10]) == 8 && le16(&ms[12]) == 1 &&
+            le16(&ms[16]) == 168,
+        "ms_os_20_configuration_subset");
+  check(ms && le16(&ms[18]) == 8 && le16(&ms[20]) == 2 &&
+            ms[22] == 1 && le16(&ms[24]) == 160,
+        "ms_os_20_vendor_interface");
+  check(ms && le16(&ms[26]) == 20 && le16(&ms[28]) == 3 &&
+            memcmp(&ms[30], "WINUSB", 6) == 0,
+        "ms_os_20_winusb_id");
+  check(ms && le16(&ms[46]) == 132 && le16(&ms[48]) == 4 &&
+            le16(&ms[50]) == 7 && le16(&ms[52]) == 42 &&
+            le16(&ms[96]) == 80,
+        "ms_os_20_registry_property");
+
+  EspUsbDevice webUsbOnly;
+  EspUsbDeviceHidKeyboard webUsbKeyboard(webUsbOnly);
+  check(webUsbOnly.begin(config), "webusb_without_vendor_begin");
+  const uint8_t *webUsbOnlyBos = webUsbOnly.bosDescriptor();
+  check(webUsbOnlyBos && webUsbOnly.bosDescriptorLength() == 29 &&
+            le16(&webUsbOnlyBos[2]) == 29 && webUsbOnlyBos[4] == 1,
+        "webusb_without_vendor_bos");
+  check(webUsbOnly.microsoftOs20Descriptor() == nullptr &&
+            webUsbOnly.microsoftOs20DescriptorLength() == 0,
+        "ms_os_20_without_vendor_absent");
+}
+
 static void testStringDescriptors()
 {
   EspUsbDevice device;
@@ -278,6 +338,7 @@ void setup()
   testCompositeDescriptor();
   testVendorDescriptor();
   testCompositeWithVendorDescriptor();
+  testWebUsbAndMicrosoftOs20Descriptors();
   testStringDescriptors();
   testClassLifecycle();
   testRuntimeLifecycle();

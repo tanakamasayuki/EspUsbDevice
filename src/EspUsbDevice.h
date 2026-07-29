@@ -315,6 +315,10 @@ public:
   const uint8_t *configurationDescriptorForSpeed(uint8_t index, bool highSpeed);
   const uint8_t *deviceQualifierDescriptor();
   const uint8_t *otherSpeedConfigurationDescriptor(uint8_t index, bool currentHighSpeed);
+  const uint8_t *bosDescriptor() const;
+  uint16_t bosDescriptorLength() const;
+  const uint8_t *microsoftOs20Descriptor() const;
+  uint16_t microsoftOs20DescriptorLength() const;
   // Byte length / interface count of only the HID interface descriptors inside
   // configDescriptor_ (excluding the configuration header and other functions).
   uint16_t hidInterfacesLength() const;
@@ -341,8 +345,11 @@ private:
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
   static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
+  static constexpr size_t MAX_BOS_DESCRIPTOR = 57;
+  static constexpr size_t MS_OS_20_DESCRIPTOR_SIZE = 178;
 
   bool buildDescriptors();
+  void buildWebUsbDescriptors();
   bool validateControllerEndpoints(const uint8_t *descriptor,
                                    uint16_t length);
   bool compositeHid() const;
@@ -370,8 +377,13 @@ private:
   uint8_t configDescriptorHighSpeed_[MAX_CONFIG_DESCRIPTOR] = {};
   uint8_t otherSpeedDescriptor_[MAX_CONFIG_DESCRIPTOR] = {};
   uint8_t deviceQualifierDescriptor_[10] = {};
+  uint8_t bosDescriptor_[MAX_BOS_DESCRIPTOR] = {};
+  uint8_t microsoftOs20Descriptor_[MS_OS_20_DESCRIPTOR_SIZE] = {};
   uint8_t hidReportDescriptor_[MAX_HID_REPORT_DESCRIPTOR] = {};
   uint16_t configDescriptorLength_ = 0;
+  uint16_t bosDescriptorLength_ = 0;
+  uint16_t microsoftOs20DescriptorLength_ = 0;
+  uint8_t vendorInterfaceNumber_ = 0xff;
   uint16_t hidInterfacesLength_ = 0;
   uint8_t hidInterfaceCount_ = 0;
   uint16_t hidReportDescriptorLength_ = 0;

@@ -99,12 +99,14 @@ HID report ではなく class/vendor interface descriptor と control transfer �
      user callback に渡し、Device 情報取得や mode 切替に使えるようにする。
    - unit descriptor test と build-only example。
 2. WebUSB landing URL: 対応済み
-   - `EspUsbDeviceConfig::webusbEnabled` / `webusbUrl` で Arduino-ESP32 TinyUSB core の
-     WebUSB BOS / URL descriptor を有効化する。
+   - `EspUsbDeviceConfig::webusbEnabled` / `webusbUrl` でライブラリ自身の WebUSB BOS /
+     URL descriptor を有効化する。
    - `peer/usb_vendor` で Host から landing URL を読み出す自動テストを追加済み。
    - browser / libusb / WinUSB での確認は `tests/manual` の手順で扱う。
-3. Windows 用 descriptor: 一部対応
-   - Arduino-ESP32 TinyUSB core は WebUSB 有効時に Microsoft OS 2.0 descriptor も返す。
+3. Windows 用 descriptor: 基本対応済み
+   - WebUSB と `EspUsbDeviceVendor` が有効な場合、ライブラリが Microsoft OS 2.0
+     descriptorを返す。Compositeで割り当てたvendor interface番号も自動反映する。
+   - descriptor内容はunit test、vendor request応答はP4 loopbackで自動検証する。
    - `EspUsbDevice` 側で GUID や descriptor 内容を差し替える API は未実装。
 
 `VendorHID` は HID report 経由の簡易独自通信として維持します。`EspUsbDeviceVendor` は

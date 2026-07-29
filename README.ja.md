@@ -249,8 +249,10 @@ USB ネットワーク（CDC-NCM）:
   するには FAT RAM disk helper または SD card などを使います。
 - flash / SPIFFS / LittleFS を USB MSC として直接公開することは標準方針にしません。
 - SD card を MSC として Host に公開している間は、ESP32 側で同じ card の file API を使わないでください。
-- WebUSB / Microsoft OS 2.0 descriptor の基本応答は Arduino-ESP32 TinyUSB core に依存します。
-  custom vendor code、GUID、Microsoft OS 2.0 descriptor 内容の差し替え API は未実装です。
+- WebUSB / Microsoft OS 2.0 descriptor はこのライブラリが生成します。WebUSB と
+  `USBVendor` を有効にすると、実際に割り当てた vendor interface に対する固定の WinUSB
+  compatible ID と device interface GUID を Windows へ返します。custom vendor code、
+  GUID、descriptor 内容の差し替え API は未実装です。
 
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。
