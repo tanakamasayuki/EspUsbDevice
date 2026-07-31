@@ -391,11 +391,39 @@ Lock 状態を取るために slot を占有すると、スケッチ側から LE
   「最新値を誰が読めるか」。getter なら本ライブラリに listener 基盤を新設せずに済み、EspBle の HID Device 側
   `onOutputReport()` が単一 slot である現状（= Device 側同士の一貫性）も崩さない。`onOutputReport` /
   `onProtocol` の listener 化自体は将来の選択肢として残す（観測系なので EspUsbHost の切り分けでは対象内）。
-- **callback の有無に関係なく更新する。** `onHidSetReport()` で report を組んだ直後に保存し、callback は
-  その後に呼ぶ。callback 未設定時に早期 return する旧構造のままだと状態が更新されない。
-- **`begin()` で初期化する。** 再 enumeration 後に前回セッションの LED を現在値として読ませない。
+- **callback の有無に関係なく更新する。** `onHidSetReport()` で raw byte を保存してから callback を呼ぶ。
+  callback 未設定時に早期 return する旧構造のままだと状態が更新されない。
+- **値返しにする（参照ではない）。** `onHidSetReport()` が走るのは TinyUSB device task
+  （`internal/EspUsbTinyUsbRuntime.cpp` が `espusb-device` task で `tud_task()` を回している）で、
+  `ledState()` を呼ぶのはスケッチの task。参照を返すと**他 task が書き換える実体**を読ませることになる。
+  保持するのは raw LED byte 1 個を `std::atomic<uint8_t>` で、`ledState()` はその 1 回の load から
+  report を組み立てる。これでフィールドが途中状態で混ざる（leds は新しいが capsLock は古い）ことが
+  原理的に起きない。EspBle も同じ理由で値返し（そちらは stack task から書かれ mutex で保護）。
+- **bus attach / detach でクリアする。** `begin()` だけでは足りない。抜線・再挿入でオブジェクトは生き残る。
 - **Host が最初の output report を送るまでは全 false。** 「Host が全 LED off と言った」状態と区別できないが、
   区別のための flag は API を増やす割に用途が薄いので持たない（外付け LED 用途では差が無い）。
+
+### bus attach / detach での host 向け状態のクリア（2026-07）
+
+`tud_mount_cb` / `tud_umount_cb` を実装し、`EspUsbDeviceClass::onBusAttached()` / `onBusDetached()`
+（既定 no-op）へ配送する。keyboard はこれを受けて LED 状態と NKRO 保持状態を捨てる。
+
+- **なぜ必要か（stuck key）。** 状態ベースの呼び出し側には「重複送信の抑制は自分の責務、比較対象は
+  `heldState()`」と案内している。抜線・再挿入を挟んで chord が残っていると、その比較が「前回と同じだから
+  送らない」と判断する一方 Host は何も押していないので、**解消しない stuck key** になる。EspBle も同じ理由で
+  切断時に `heldState()` をクリアしており（`EspBle/docs/REPLY_ESPBLE_LED_STATE.ja.md`）、そちらの指摘で
+  こちらの穴も見つかった。
+- **両方の hook が必要。** `tud_umount_cb` は `SET_CONFIGURATION 0` / deinit / （VBUS sensing のある
+  ボードでのみ）抜線で呼ばれる。**素の bus reset では呼ばれない**ので、VBUS sensing の無いボードで
+  再挿入すると umount を経ずに再 enumeration へ進む。常に発火する `tud_mount_cb`
+  （`SET_CONFIGURATION n`）側でもクリアして穴を閉じる。mount 時点では Host は「何も押されていない・
+  LED 未設定」と認識しているので、どちらで消しても正しい。
+- **NKRO 保持状態は USB task からは消さない。** `onBusAttached()` / `onBusDetached()` は USB task で走る。
+  そこで `nkroState_` を触ると書き手が 2 つになり、`heldState()` が返す参照が競合する。USB task は
+  atomic flag を立てるだけにして、実際のクリアはスケッチ側 task の入口
+  （`sendReport` / `pressUsage` / `releaseUsage` / `releaseAll` / `heldState`）で `applyPendingBusChange()`
+  が行う。これで `nkroState_` の書き手はスケッチ task 1 つのままなので、`heldState()` は参照を返せる
+  （EspBle 側も `heldState()` は参照のまま）。LED は atomic byte 1 個なので USB task から直接クリアできる。
 
 ### N-key rollover（NKRO・opt-in・2026-07）
 
