@@ -30,6 +30,7 @@ EspUsbDeviceHidSystemControl	KEYWORD1
 EspUsbDeviceConfig	KEYWORD1
 EspUsbDeviceKeyboardLayout	KEYWORD1
 EspUsbDeviceBootKeyboardReport	KEYWORD1
+EspUsbDeviceNkroKeyboardReport	KEYWORD1
 EspUsbDeviceHidKeyboardOutputReport	KEYWORD1
 EspUsbDeviceBootMouseReport	KEYWORD1
 EspUsbDeviceGamepadReport	KEYWORD1
@@ -65,6 +66,8 @@ tapKey	KEYWORD2
 setLayout	KEYWORD2
 layout	KEYWORD2
 enableNkro	KEYWORD2
+heldState	KEYWORD2
+isDown	KEYWORD2
 nkroEnabled	KEYWORD2
 onOutputReport	KEYWORD2
 onFeatureReport	KEYWORD2

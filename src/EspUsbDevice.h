@@ -196,7 +196,82 @@ struct EspUsbDeviceBootKeyboardReport
 {
   uint8_t modifiers = 0;
   uint8_t reserved = 0;
+  // Up to six held usages, one per slot (0 = empty). A usage array, not a
+  // bitmap - see EspUsbDeviceNkroKeyboardReport::bitmap.
   uint8_t keys[6] = {};
+};
+
+// Full NKRO keyboard state in one report: modifier byte + a bitmap of usages
+// 0x00-0xDF. Modifier usages 0xE0-0xE7 live in `modifiers`, not the bitmap, and
+// press() / release() route them there automatically, so callers do not have to
+// tell the two apart. Sizes differ from the Host side on purpose: EspUsbHost's
+// EspUsbHostKeyboardState covers 0x00-0xFF (32 bytes) because it reads whatever
+// a keyboard declares, while a device is bounded by its own report descriptor.
+struct EspUsbDeviceNkroKeyboardReport
+{
+  static constexpr size_t BitmapSize = 28;
+  static constexpr uint8_t MaxBitmapUsage = 0xdf;
+
+  uint8_t modifiers = 0;
+  // A bitmap, not a usage array: bit (usage & 7) of byte (usage >> 3) is the
+  // state of that usage. EspUsbDeviceBootKeyboardReport::keys[6] holds usages
+  // instead, which is why the two carry different names - the same assignment
+  // would compile against either and silently mean something else.
+  uint8_t bitmap[BitmapSize] = {};
+
+  void clear()
+  {
+    modifiers = 0;
+    for (size_t index = 0; index < BitmapSize; index++)
+    {
+      bitmap[index] = 0;
+    }
+  }
+
+  // Returns false when the usage is above MaxBitmapUsage and is not a modifier
+  // (0xE0-0xE7), i.e. this report cannot represent it.
+  bool press(uint8_t usage)
+  {
+    if (usage >= 0xe0 && usage <= 0xe7)
+    {
+      modifiers |= static_cast<uint8_t>(1u << (usage - 0xe0));
+      return true;
+    }
+    if (usage > MaxBitmapUsage)
+    {
+      return false;
+    }
+    bitmap[usage >> 3] |= static_cast<uint8_t>(1u << (usage & 7));
+    return true;
+  }
+
+  bool release(uint8_t usage)
+  {
+    if (usage >= 0xe0 && usage <= 0xe7)
+    {
+      modifiers = static_cast<uint8_t>(modifiers & ~(1u << (usage - 0xe0)));
+      return true;
+    }
+    if (usage > MaxBitmapUsage)
+    {
+      return false;
+    }
+    bitmap[usage >> 3] = static_cast<uint8_t>(bitmap[usage >> 3] & ~(1u << (usage & 7)));
+    return true;
+  }
+
+  bool isDown(uint8_t usage) const
+  {
+    if (usage >= 0xe0 && usage <= 0xe7)
+    {
+      return (modifiers & static_cast<uint8_t>(1u << (usage - 0xe0))) != 0;
+    }
+    if (usage > MaxBitmapUsage)
+    {
+      return false;
+    }
+    return (bitmap[usage >> 3] & static_cast<uint8_t>(1u << (usage & 7))) != 0;
+  }
 };
 
 struct EspUsbDeviceHidKeyboardOutputReport
@@ -998,6 +1073,13 @@ public:
 
   bool begin() override;
   bool sendReport(const EspUsbDeviceBootKeyboardReport &report, uint32_t timeoutMs = 100);
+  // Sends the whole held-key state as one report. Requires enableNkro() before
+  // EspUsbDevice::begin(); fails otherwise (a missing enableNkro() is a setup
+  // mistake, and folding the state down would make every seventh key vanish
+  // silently). Still folds down to the 6-key boot format when the host selected
+  // boot protocol, which is a host-driven runtime condition the sketch cannot
+  // control. The boot-report overload above stays valid and keeps working.
+  bool sendReport(const EspUsbDeviceNkroKeyboardReport &report, uint32_t timeoutMs = 100);
   bool pressUsage(uint8_t usage, uint8_t modifiers = 0, uint32_t holdMs = 10);
   bool pressKey(char key, uint32_t timeoutMs = 100);
   bool tapUsage(uint8_t usage, uint8_t modifiers = 0, uint32_t holdMs = 10);
@@ -1019,6 +1101,13 @@ public:
   void enableNkro(bool enable = true);
   bool nkroEnabled() const;
 
+  // The state the host was last told about (NKRO only; stays cleared while NKRO
+  // is off, since 6KRO keeps its held state as the boot report instead). Lets a
+  // state-based caller suppress duplicate sends and resynchronise without a
+  // shadow copy or a releaseAll(). While the host selected boot protocol this is
+  // the requested state, not the bytes on the wire - those are folded to 6 keys.
+  const EspUsbDeviceNkroKeyboardReport &heldState() const;
+
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 1; }
@@ -1031,15 +1120,18 @@ public:
 
 private:
   bool asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const;
-  void setKeyBit(uint8_t usage, bool pressed);
+  // Put nkroState_ on the wire. Every NKRO send goes through here so the bitmap
+  // layout and the boot-protocol fold-down live in one place.
   bool sendNkroReport(uint32_t timeoutMs = 100);
 
   EspUsbDeviceBootKeyboardReport report_;
   EspUsbDeviceKeyboardLayout layout_ = ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US;
   uint8_t protocol_ = 1;
   bool nkroEnabled_ = false;
-  uint8_t nkroModifiers_ = 0;
-  uint8_t nkroBitmap_[28] = {};  // usages 0x00-0xDF, 1 bit each
+  // The held-key state while NKRO is on. Holding the public report type itself
+  // keeps the bitmap layout and the modifier routing defined in exactly one
+  // place, and lets heldState() hand out a reference.
+  EspUsbDeviceNkroKeyboardReport nkroState_;
   OutputReportCallback outputCallback_;
   ProtocolCallback protocolCallback_;
 };

@@ -55,13 +55,26 @@ void loop()
     return;
   }
 
-  // Hold all ten keys down at the same time, then release them together.
+  // Hold all ten keys down at the same time, then release them together. The
+  // whole held-key state travels as ONE report, so the host sees the chord
+  // appear at once. Calling pressUsage() ten times would work too, but it sends
+  // ten reports and the host would observe the keys arriving one by one.
+  EspUsbDeviceNkroKeyboardReport report;
   for (size_t i = 0; i < sizeof(chord); i++)
   {
-    keyboard.pressUsage(chord[i]);
+    report.press(chord[i]);
   }
+  // Modifier usages (0xE0-0xE7) are routed into report.modifiers, not the
+  // bitmap, so press() takes them like any other key. 0xE1 is Left Shift.
+  report.press(0xe1);
+  keyboard.sendReport(report);
   delay(200);
   keyboard.releaseAll();
+
+  // heldState() is what the host was last told, so a state-driven sketch can
+  // diff against it instead of keeping its own copy.
+  Serial.printf("after releaseAll: A still down? %s\n",
+                keyboard.heldState().isDown(ESP_USB_HID_KEY_A) ? "yes" : "no");
 
   Serial.printf("sent %u-key chord (protocol=%s)\n",
                 (unsigned)sizeof(chord),

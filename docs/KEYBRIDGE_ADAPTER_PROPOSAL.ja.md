@@ -1,5 +1,14 @@
 # EspUsbDevice NKRO 状態送信 API / output report listener 仕様案
 
+## 状態
+
+- **項目①（NKRO 状態送信 API）: 実装済み。** 提案どおり `EspUsbDeviceNkroKeyboardReport` +
+  `sendReport()` overload + `heldState()`、内部状態の `nkroState_` 一本化、`setKeyBit()` 廃止、
+  増分 API のエラー化と `releaseUsage()` の modifier クリアまで入れた。host unit test は
+  `tests/unit/nkro_report`。実機 peer test は EspUsbHost の bitmap パース待ちで follow-up（TODO に記載）。
+  以下は設計判断の記録として残す。
+- **項目②（LED 状態の getter）: 未実装。** 低優先の TODO として保留。
+
 ## 目的
 
 `EspUsbDeviceHidKeyboard` に、保持キー全体を 1 回で送る公開 API を追加する。あわせて Host からの LED 状態をスケッチ側から観測できるようにする。

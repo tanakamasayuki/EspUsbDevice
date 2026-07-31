@@ -218,6 +218,29 @@ Keyboard:
   report covering usages `0x00`-`0xDF` (International/LANG keys included, so JIS
   layouts work) that holds any number of keys at once, with automatic 6-key boot
   fallback for BIOS. Off by default.
+- `keyboard.sendReport(EspUsbDeviceNkroKeyboardReport)` sends the **whole
+  held-key state as one report**. Use it to hold seven or more keys, or to write
+  the complete state every cycle - the incremental `pressUsage()` /
+  `releaseUsage()` API emits one report per changed key, which splits a chord into
+  separate presses. Fails unless `enableNkro()` was called.
+- `EspUsbDeviceNkroKeyboardReport` carries `modifiers` plus a 28-byte `bitmap` of
+  usages `0x00`-`MaxBitmapUsage` (`0xDF`), operated with `clear()` / `press()` /
+  `release()` / `isDown()`. Modifier usages `0xE0`-`0xE7` sit outside the bitmap,
+  so `press()` / `release()` route them into `modifiers` and callers never have to
+  tell the two apart. They return false only for a usage this report cannot
+  represent (above `0xDF` and not a modifier).
+- Naming rule: **a member holding a bitmap is `bitmap`, a member holding an array
+  of usages is `keys`**. The 6KRO `EspUsbDeviceBootKeyboardReport::keys[6]` is a
+  usage array, and `keys[0] = 0x04` would mean something different against each
+  type while still compiling, so the two names are kept apart. Sibling libraries
+  `EspUsbHost` and `EspBle` follow the same rule. Bitmap sizes are deliberately
+  **asymmetric**: the host side covers usages `0x00`-`0xFF` (32 bytes) while a
+  device is bounded by its own report descriptor (`0x00`-`0xDF`, 28 bytes).
+- `keyboard.heldState()` returns the NKRO state the host was last told about, for
+  suppressing duplicate sends and for resynchronising without a `releaseAll()`
+  (the library never suppresses repeats itself). While the host selected boot
+  protocol this is the requested state, not the bytes on the wire, which are
+  folded down to 6 keys.
 
 Mouse:
 

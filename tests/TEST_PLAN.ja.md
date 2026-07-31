@@ -56,6 +56,7 @@ tests/
 | FS/HS endpoint MPS | ✅ `descriptor` | 予定 | 予定 | 予定 | |
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` 通常/逆port | | |
 | HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard` | ✅ `hid_keyboard` 通常/逆port | | 任意 |
+| HID keyboard NKRO 状態 report | ✅ `nkro_report`（struct の bitmap/modifier/境界） | 未実装（EspUsbHost の bitmap parse 対応後） | 未実装 | | ✅ `examples/KeyboardNKRO` |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | build済み `hid_mouse` | | |
 | keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | build済み `hid_keyboard_mouse` | | |
 | custom HID report descriptor | 予定 | ✅ `custom_hid` | ✅ `custom_hid` | | |
@@ -333,6 +334,7 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 40. ✅ `peer/composite_hid_vendor`（HID + bulk Vendor、descriptor 二重記述の修正 → 3/3）
 41. ✅ `peer/composite_hid_audio`（UAC1 Audio + HIDを同時claim、keyboard + PCM → 3/3）
 42. ✅ `unit/dependency_boundary`（Arduino Core TinyUSB依存とAudio provenanceの回帰scan）
+43. ✅ `unit/nkro_report`（NKRO 状態 report struct の bitmap レイアウト / modifier 振り分け / 境界。host g++）
 
 ## 合格条件
 

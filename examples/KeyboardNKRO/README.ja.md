@@ -14,7 +14,9 @@ N-key rollover（NKRO）対応の USB HID keyboard を作る例です。boot rep
 ## 動作内容
 
 - `device.begin()` の前に `keyboard.enableNkro()` で NKRO を有効化します。
-- 10キーを同時に押下（6キー boot report では不可能）し、まとめて解放します。
+- 10キー + Left Shift を `EspUsbDeviceNkroKeyboardReport` に組み、状態全体を
+  **1レポート**で送ります（6キー boot report では不可能）。その後まとめて解放します。
+- `keyboard.heldState()` を読み、Host へ最後に伝えた状態を表示します。
 - Host が boot protocol（BIOS）を要求した場合は自動で6キー形式に畳んで応答します。
 
 ## この例での NKRO の仕組み
@@ -33,6 +35,18 @@ N-key rollover（NKRO）対応の USB HID keyboard を作る例です。boot rep
 
 - `keyboard.enableNkro()` で NKRO を有効化します。`device.begin()` の前に呼びます。
 - `keyboard.nkroEnabled()` は NKRO が有効かを返します。
+- `keyboard.sendReport(nkroReport)` は保持キー全体を1レポートで送ります。複数キーが
+  同時に変化する場合、あるいは毎周期にキー集合全体を計算する設計では、こちらを使います
+  （下の増分 API は1キーの変化ごとに1レポートになるため、Host には chord が1キーずつ
+  届きます）。
+- `EspUsbDeviceNkroKeyboardReport` は `modifiers` と28バイトの `bitmap` を持ち、
+  `press(usage)` / `release(usage)` / `isDown(usage)` / `clear()` で操作します。
+  modifier usage `0xE0`-`0xE7`（Left Shift は `0xE1`）は自動的に `modifiers` へ入ります。
+  `press()` が false を返すのは、このレポートで表現できない usage（`0xDF` 超で
+  modifier でもないもの）のときだけです。
+- `keyboard.heldState()` は Host へ最後に伝えた状態を返します。状態が変わっていない
+  ときの送信を省く（ライブラリ側では抑制しません）、`releaseAll()` によらず再同期する、
+  といった用途に使えます。
 - `keyboard.pressUsage(usage, modifiers)` / `keyboard.releaseUsage(usage)` は
   個別キーを押下・解放します。NKRO では任意数を同時押下できます。
 - `keyboard.releaseAll()` は押下中の全キーを解放します。
@@ -43,7 +57,9 @@ N-key rollover（NKRO）対応の USB HID keyboard を作る例です。boot rep
 
 ```text
 USB NKRO keyboard ready (nkro=1)
+after releaseAll: A still down? no
 sent 10-key chord (protocol=report)
+after releaseAll: A still down? no
 sent 10-key chord (protocol=report)
 ```
 

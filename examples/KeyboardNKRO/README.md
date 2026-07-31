@@ -14,8 +14,10 @@ held down at the same time, instead of the 6-key limit of the boot report.
 ## What It Does
 
 - Enables NKRO with `keyboard.enableNkro()` before `device.begin()`
-- Holds a 10-key chord at once (impossible with the 6-key boot report), then
-  releases all keys together
+- Builds a 10-key chord plus Left Shift in an `EspUsbDeviceNkroKeyboardReport` and
+  sends the whole state as ONE report (impossible with the 6-key boot report),
+  then releases all keys together
+- Reads `keyboard.heldState()` back to show what the host was last told
 - Still answers boot protocol (BIOS) with the 6-key format automatically
 
 ## How NKRO Works Here
@@ -35,6 +37,18 @@ held down at the same time, instead of the 6-key limit of the boot report.
 
 - `keyboard.enableNkro()` turns on NKRO. Call it before `device.begin()`.
 - `keyboard.nkroEnabled()` reports whether NKRO is active.
+- `keyboard.sendReport(nkroReport)` sends the whole held-key state as one report.
+  Prefer it when several keys change together, or when your sketch computes the
+  complete key set each cycle: the incremental API below emits one report per
+  changed key, so the host sees a chord arrive key by key.
+- `EspUsbDeviceNkroKeyboardReport` holds `modifiers` plus a 28-byte `bitmap` and is
+  operated with `press(usage)` / `release(usage)` / `isDown(usage)` / `clear()`.
+  Modifier usages `0xE0`-`0xE7` (Left Shift is `0xE1`) go into `modifiers`
+  automatically. `press()` returns false only for usages above `0xDF` that are not
+  modifiers, which this report cannot represent.
+- `keyboard.heldState()` returns the state the host was last told about — useful to
+  skip sending an unchanged state (the library does not do that for you) or to
+  resynchronise without `releaseAll()`.
 - `keyboard.pressUsage(usage, modifiers)` / `keyboard.releaseUsage(usage)` hold
   and release individual keys; with NKRO any number can be held at once.
 - `keyboard.releaseAll()` releases every held key.
@@ -45,7 +59,9 @@ held down at the same time, instead of the 6-key limit of the boot report.
 
 ```text
 USB NKRO keyboard ready (nkro=1)
+after releaseAll: A still down? no
 sent 10-key chord (protocol=report)
+after releaseAll: A still down? no
 sent 10-key chord (protocol=report)
 ```
 

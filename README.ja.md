@@ -200,6 +200,26 @@ Keyboard:
   `0x00`-`0xDF` をカバーする bitmap レポート（International/LANG キーも含むので JIS
   レイアウトも通る）で任意数のキーを同時押下でき、BIOS 向けに6キー boot へ自動 fallback
   します。既定は無効です。
+- `keyboard.sendReport(EspUsbDeviceNkroKeyboardReport)` は**保持キー全体を1レポートで**
+  送ります。7キー以上の同時押下、あるいは毎周期に状態全体を書く用途はこちらです
+  （`pressUsage()` / `releaseUsage()` の増分 API では1キーの変化ごとに1レポートになり、
+  同時押し・同時離しが分割されます）。`enableNkro()` 前だと失敗します。
+- `EspUsbDeviceNkroKeyboardReport` は `modifiers` と usage `0x00`-`MaxBitmapUsage`
+  (`0xDF`) の28-byte `bitmap` を持ち、`clear()` / `press()` / `release()` / `isDown()`
+  で操作します。modifier usage `0xE0`-`0xE7` は bitmap 範囲外なので `press()` / `release()`
+  が `modifiers` へ振り分け、呼び出し側は usage の区別を意識しません。`press()` / `release()`
+  が false を返すのは、このレポートで表現できない usage（`0xDF` 超で modifier でもない）
+  のときだけです。
+- **bitmap を持つメンバは `bitmap`、usage の配列を持つメンバは `keys`** という規則です。
+  6KRO の `EspUsbDeviceBootKeyboardReport::keys[6]` は usage 配列で、`keys[0] = 0x04` が
+  型によって別の意味になり取り違えてもコンパイルが通るため名前を分けています。姉妹
+  ライブラリ `EspUsbHost` / `EspBle` も同じ規則です。bitmap のサイズは Host 側が
+  usage `0x00`-`0xFF` の32 byte、Device 側が report descriptor の宣言範囲に合わせた
+  `0x00`-`0xDF` の28 byte で**非対称**です。
+- `keyboard.heldState()` は Host へ最後に伝えた NKRO 状態を返します。同一状態の再送抑制と、
+  `releaseAll()` によらない再同期に使えます（ライブラリ側では再送を抑制しません）。
+  Boot protocol 選択中は「要求した状態」であって電波上のバイト列ではありません
+  （6キーへ畳まれるため）。
 
 Mouse:
 

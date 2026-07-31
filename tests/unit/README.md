@@ -84,6 +84,22 @@ tableSize fix (`/` and `?` on International1, usage 0x87). The keymap tables in
 `src/keymap/*.h` are byte-identical to EspUsbHost's, whose forward direction is
 covered by that library's own keymap test.
 
+## `nkro_report`
+
+This is a pure host g++ test (no board required) for the NKRO held-key state
+`EspUsbDeviceNkroKeyboardReport`. The struct is header-only, so the test extracts
+it verbatim from `src/EspUsbDevice.h` at run time and compiles it, checking the
+bitmap layout (bit `usage & 7` of byte `usage >> 3`), the routing of modifier
+usages `0xE0`-`0xE7` into `modifiers`, the `MaxBitmapUsage` (`0xDF`) boundary with
+`0xE8` and above rejected, ten simultaneous keys, `clear()`, and copy semantics.
+The extraction fails loudly if the struct ever starts depending on Arduino or
+TinyUSB, since the host build would no longer be meaningful. Same technique as
+`keymap`, so the test cannot drift away from the shipped struct. The
+boot-protocol fold-down and the "no `enableNkro()` -> fail" rule belong to
+`EspUsbDeviceHidKeyboard`, which cannot be host-compiled; they have no automated
+coverage yet, since a peer/loopback NKRO suite first needs EspUsbHost to parse the
+bitmap report.
+
 ## `fat_ramdisk`
 
 This verifies host-independent `EspUsbDeviceMscFatRamDisk` logic:

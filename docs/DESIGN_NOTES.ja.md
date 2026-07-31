@@ -396,9 +396,37 @@ Arduino 標準 keyboard API は `write(char)` のような文字入力 API が�
 - **エンドポイント**: bitmap レポートは 29B(複合は +Report ID で 30B)。1転送に収めるため、`hidInEndpointSize()`
   仮想関数で NKRO 時 32B を要求し、単独パス（`configurationDescriptor`）と複合パス（共有 HID EP のサイズ計算）の
   両方で wMaxPacketSize を引き上げる。`CFG_TUD_HID_EP_BUFSIZE=64`(=`CONFIG_TINYUSB_HID_BUFSIZE`) 以内なので安全。
-- **状態モデル**: NKRO 有効時は `nkroModifiers_` + `nkroBitmap_[28]` が正の状態。`pressUsage/releaseUsage/
-  releaseAll` はビット操作、`sendReport(boot)` は渡された 6KRO を bitmap 状態に取り込む（`write()/tapKey()` など
-  文字 helper もそのまま動く）。既定は無効で、6KRO の既存挙動・descriptor は一切変えない。
+- **状態モデル**: NKRO 有効時は公開型そのものを持つ `nkroState_`（`EspUsbDeviceNkroKeyboardReport`）が正の状態。
+  bitmap レイアウトと modifier 振り分け（`0xE0`-`0xE7`）の定義を1箇所に閉じるため、private の `setKeyBit()` は
+  廃止して `pressUsage/releaseUsage/releaseAll` も `nkroState_.press()/.release()/.clear()` を通す。
+  `sendReport(boot)` は渡された 6KRO を bitmap 状態に取り込む（`write()/tapKey()` など文字 helper もそのまま動く）。
+  全 NKRO 送信は private `sendNkroReport()` の1本に集約。既定は無効で、6KRO の既存挙動・descriptor は一切変えない。
+- **状態送信 API**（2026-07 追加）: `sendReport(const EspUsbDeviceNkroKeyboardReport &)` で保持キー全体を1レポートで
+  送る。状態ベースの統合レイヤ（ESP32KeyBridge の `OutputAdapter::write(KeySet)`）は毎周期にキー集合全体を渡す契約で、
+  増分 API に合わせると差分計算とライブラリ内部状態の同期が呼び出し側に要り、1キーの変化ごとに1レポートで
+  同時押し・同時離しが分割される。`heldState()` で最後に Host へ伝えた状態を公開し、shadow copy 無しで差分・再同期が
+  できるようにした（`releaseAll()` 以外の復旧手段が無い状態を解消）。
+- **重複送信は抑制しない**: 毎周期呼ばれる契約なので同一状態が連投されるが、ライブラリ側で「前回と同じなら送らない」を
+  隠し持つと `releaseAll()` や boot protocol 切替を挟んだあとの再同期が読めなくなる。抑制は呼び出し側の責務とし、
+  比較対象として `heldState()` を提供する。
+- **`enableNkro()` 未実行時は失敗、boot protocol 時は畳む**: 同じ「NKRO の形では送れない状況」で挙動を分ける基準は
+  責任の所在。boot protocol の選択は Host 主導の実行時条件でスケッチに責任が無いため送れる形へ畳む。`enableNkro()`
+  忘れは構成の誤りで、畳んで成功させると7キー目以降が恒久的に無言で消えるため失敗させる（`nkroEnabled()` で事前判定可）。
+- **boot fold-down の内容**: 押した順ではなく **usage 番号の小さい順**に先頭6個を採り、7キー以上でも
+  `ErrorRollOver`(`0x01`) は返さない。BIOS/UEFI で7キー同時押しを識別させる要求が実用上無く、Host 自身が boot を
+  選んでいるため「妥当な何かを送る」方が失敗より良い、という妥協を意図的に固定したもの。
+- **命名規則**: bitmap を持つメンバは `bitmap`、usage の配列を持つメンバは `keys`。`keys[0] = 0x04` が型によって
+  「usage 0x04 が押されている」と「usage 3 と 5 が押されている」の別の意味になり、取り違えてもコンパイルが通る。
+  姉妹3ライブラリ共通の決定（`EspBle/docs/DECISIONS.ja.md` 19）で、`EspUsbHost` も `EspUsbHostKeyboardState` を
+  `bitmap`/`changedBitmap` へ改名済み（2.7.0）。EspUsbDevice では bitmap を持つ公開メンバが本 struct が最初なので
+  既存 API の改名は不要（`EspUsbDeviceBootKeyboardReport::keys[6]` は usage 配列なのでそのままで正しい）。
+  bitmap サイズは Host 側32 byte（`0x00`-`0xFF`）／Device 側28 byte（`0x00`-`0xDF`）で非対称。Device 側は
+  report descriptor が宣言する範囲に縛られるため。
+- **増分 API のエラー化**: 旧 `setKeyBit()` は範囲外 usage を黙って無視していた。`press()`/`release()` の戻り値を
+  そのまま `pressUsage()`/`releaseUsage()` の失敗にする（EspBle も同じ形。`DECISIONS.ja.md` 20）。あわせて
+  `releaseUsage()` が modifier usage を落とさなかった穴も解消した（`release()` が `modifiers` 側もクリアする）。
+- **検証**: struct の bitmap レイアウト・modifier 振り分け・境界（`0xE8` 以上を拒否）は host g++ の
+  `tests/unit/nkro_report`（実ヘッダから struct を抽出してコンパイル）でカバー。
 - **未検証**: 2台 peer テストは sibling の `EspUsbHost` が NKRO bitmap をパースできるか次第。現状は `onHIDInput`
   の生バイトで確認する想定（専用 peer テストは EspUsbHost 対応後に追加）。
 
