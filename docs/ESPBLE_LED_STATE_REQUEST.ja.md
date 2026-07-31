@@ -1,4 +1,8 @@
-# EspBle HID Device: LED 状態 getter の追加依頼（1.0.0 リリース前）
+# EspBle HID Device: LED 状態 getter の追加依頼（1.0.0 リリース前）— **対応済み・記録として保存**
+
+結果: 依頼項目はすべて EspBle 1.0.0 前に対応済み。戻り値は参照ではなく値、Lock フラグはメンバ、
+`setLeds()` が唯一の設定経路。経緯と最終的な差分は `docs/ESPBLE_LED_STATE_REPLY_NOTES.ja.md` を参照。
+以下は依頼時点の原文。
 
 依頼元: EspUsbDevice / ESP32KeyBridge
 関連: EspUsbDevice `docs/KEYBRIDGE_ADAPTER_PROPOSAL.ja.md` 項目②、`EspBle/docs/DECISIONS.ja.md` 19-22（NKRO 側の対称化）

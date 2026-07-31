@@ -68,6 +68,7 @@ layout	KEYWORD2
 enableNkro	KEYWORD2
 heldState	KEYWORD2
 ledState	KEYWORD2
+setLeds	KEYWORD2
 isDown	KEYWORD2
 nkroEnabled	KEYWORD2
 onOutputReport	KEYWORD2

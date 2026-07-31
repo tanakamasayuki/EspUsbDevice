@@ -3730,17 +3730,13 @@ const EspUsbDeviceNkroKeyboardReport &EspUsbDeviceHidKeyboard::heldState() const
   return nkroState_;
 }
 
-// Expand a raw LED byte into the public report. Used by both the callback path
-// and ledState(), so the two can never disagree about what a bit means.
+// Expand a raw LED byte into the public report. Both the callback path and
+// ledState() go through EspUsbDeviceHidKeyboardOutputReport::setLeds(), so the
+// two can never disagree about what a bit means.
 static EspUsbDeviceHidKeyboardOutputReport makeKeyboardOutputReport(uint8_t leds)
 {
   EspUsbDeviceHidKeyboardOutputReport report;
-  report.leds = leds;
-  report.numLock = leds & ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK;
-  report.capsLock = leds & ESP_USB_DEVICE_KEYBOARD_LED_CAPS_LOCK;
-  report.scrollLock = leds & ESP_USB_DEVICE_KEYBOARD_LED_SCROLL_LOCK;
-  report.compose = leds & ESP_USB_DEVICE_KEYBOARD_LED_COMPOSE;
-  report.kana = leds & ESP_USB_DEVICE_KEYBOARD_LED_KANA;
+  report.setLeds(leds);
   return report;
 }
 
