@@ -1,3 +1,14 @@
+"""USB MIDI peer test, EspUsbDevice-repo copy.
+
+DUT = the USB host (EspUsbHost, ``usb_midi.ino``); the peer = the EspUsbDevice
+MIDI device (``peer_device/``).
+
+``test_usb_midi_device_is_supported`` was added with the move to EspUsbHost
+2.7.0: recognising a MIDI streaming interface in ``EspUsbHostDeviceInfo::supported``
+arrived in 2.6.0, so with the previously pinned 2.5.2 a MIDI-only device could not
+be asserted to enumerate as supported.
+"""
+
 def test_usb_midi_device_to_host(dut, peers):
     device = peers["device"]
 
@@ -73,3 +84,23 @@ def test_usb_midi_sysex_host_to_device(dut, peers):
     dut.expect_exact("MIDI_TX_SYSEX 1")
     device.expect_exact("DEVICE_RX cin=04 status=f0 data1=125 data2=1")
     device.expect_exact("DEVICE_RX cin=06 status=02 data1=247 data2=0")
+
+
+def test_usb_midi_device_is_supported(dut, peers):
+    """A MIDI-only device must enumerate as supported, with its two interfaces.
+
+    EspUsbDeviceMidi publishes an Audio Control + MIDI Streaming pair and nothing
+    else - no HID, CDC, MSC or vendor interface. Until EspUsbHost 2.6.0 counted a
+    MIDI interface, `supported` was false for exactly this device, so a sketch
+    gating on that flag would have ignored it.
+    """
+    device = peers["device"]
+    device.write("?")
+    device.expect_exact("DEVICE_READY")
+
+    # Re-read the connect line from the boot banner rather than replugging.
+    dut.write("i")
+    m = dut.expect(r"DEVICE_INFO vid=303a pid=4017 supported=(\d) interfaces=(\d+)", timeout=10)
+    assert int(m.group(1)) == 1, m.group(0)
+    # AudioControl + MIDIStreaming.
+    assert int(m.group(2)) == 2, m.group(0)

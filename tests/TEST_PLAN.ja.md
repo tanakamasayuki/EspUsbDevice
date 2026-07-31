@@ -65,9 +65,9 @@ tests/
 | system control HID | 予定 | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
+| USB MIDI | | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認） | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
-| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
+| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 未実装 | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
 | Core依存境界 | ✅ `dependency_boundary` | | | | |
@@ -154,7 +154,10 @@ FS Host で確保できるよう notification 8 bytes、bulk data 64 bytes と�
 
 `peer/usb_midi` は `EspUsbDeviceMidi` の最初の USB MIDI テストです。Device -> Host /
 Host -> Device の channel voice message と、Host -> Device の短い SysEx packet 分割を
-検証します。default profile は released Host を使い、`s3_peer_local` は Host 側未リリース
+検証します。あわせて MIDI 単機能の device が `EspUsbHostDeviceInfo::supported` で supported として
+列挙され、interface が AudioControl + MIDIStreaming の 2 本であることを確認します（Host 側が MIDI
+interface を supported に数えるのは EspUsbHost 2.6.0 から。それ以前は unsupported 扱いだったため
+検証できませんでした）。default profile は released Host を使い、`s3_peer_local` は Host 側未リリース
 修正の任意確認にだけ使います。
 
 `loopback/usb_midi` は同じ観点を P4 1台構成で確認します。SysEx は複数 packet が同じ
@@ -174,6 +177,12 @@ bulk OUT -> Device -> bulk IN echo、application vendor control IN/OUT、WebUSB 
 確認します。descriptor unit testではWebUSB / Microsoft OS 2.0 BOS capability、descriptor set
 の長さ、WinUSB compatible ID、registry property、割り当てたvendor interface番号を検証します。
 `loopback/usb_vendor`ではvendor requestからMicrosoft OS 2.0 descriptor set全体を読み出します。
+さらに Host 側が EspUsbHost 2.7.0 になってから使える 2.5.3 の API で、`vendorOpen()` が実際に開いた
+bulk pipe（endpoint address と packet size）が device の宣言と一致すること、ちょうど 1 packet 分
+（64 byte）の書き込みに自動 ZLP が続いたときに device が 64 byte を 1 回の read として受け取り
+その後も endpoint が使えること、queue で連続投入した 4 packet 全てが device へ届くことを確認します。
+前者 2 つは device 受信側の packet 境界の検証で、`tests/manual` の P4 HS test が device 送信側で
+確認している内容の対になります。
 default profile は released Host を使い、`s3_peer_local` は Host 側未リリース修正の任意確認に
 だけ使います。実際のWindows driver bindingとbrowser動作はHost OS / browser / driver状態に
 依存するため、`tests/manual`で確認します。
