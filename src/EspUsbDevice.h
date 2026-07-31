@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <Print.h>
+#include <atomic>
 #include <functional>
 #include "espusbdevice_version.h"
 #include "internal/EspUsbAudioControl.h"
@@ -402,6 +403,8 @@ public:
   const uint8_t *hidReportDescriptor(uint8_t instance);
   void handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length);
   void handleHidSetProtocol(uint8_t instance, uint8_t protocol);
+  void handleBusAttached();
+  void handleBusDetached();
 
 private:
   friend class EspUsbDeviceClass;
@@ -499,6 +502,17 @@ public:
   virtual uint16_t hidInEndpointSize() const { return 0; }
   virtual void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) {}
   virtual void onHidSetProtocol(uint8_t protocol) { (void)protocol; }
+  // Bus state changed, so anything the class believes the host currently knows is
+  // no longer true and cached host-facing state must be dropped.
+  //
+  // Both hooks are needed. onBusDetached() runs on SET_CONFIGURATION 0, deinit,
+  // and - only on boards that sense VBUS - unplug. A bare bus reset does not
+  // reach it, so replugging a board without VBUS sensing goes straight to
+  // re-enumeration; onBusAttached() (SET_CONFIGURATION n) is what always fires
+  // and closes that gap. At mount the host knows nothing is held and has set no
+  // LEDs, so clearing there is correct either way.
+  virtual void onBusAttached() {}
+  virtual void onBusDetached() {}
 
 protected:
   friend class EspUsbDevice;
@@ -1095,8 +1109,17 @@ public:
   // when an integration layer owns the single callback slot. LEDs are state, not
   // an event, so polling this is enough; the callback stays single-slot.
   // Everything reads false until the host sends its first output report (hosts
-  // typically do so right after enumeration and whenever a Lock key is pressed).
-  const EspUsbDeviceHidKeyboardOutputReport &ledState() const;
+  // typically do so right after enumeration and whenever a Lock key is pressed),
+  // and the state is cleared on bus reset / unplug so a previous session's LEDs
+  // are never read back as current.
+  //
+  // Returns by value, not by reference: the host writes this from the TinyUSB
+  // device task while the sketch reads it from its own task, so a reference would
+  // hand out an object another task mutates. The raw LED byte is stored
+  // atomically and the returned report is built from that one read, which makes a
+  // torn combination of fields impossible. EspBle's ledState() returns by value
+  // for the same reason.
+  EspUsbDeviceHidKeyboardOutputReport ledState() const;
   void onProtocol(ProtocolCallback callback);
   uint8_t protocol() const;
 
@@ -1124,9 +1147,12 @@ public:
   uint16_t hidInEndpointSize() const override;
   void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) override;
   void onHidSetProtocol(uint8_t protocol) override;
+  void onBusAttached() override;
+  void onBusDetached() override;
 
 private:
   bool asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const;
+  void resetHostFacingState();
   // Put nkroState_ on the wire. Every NKRO send goes through here so the bitmap
   // layout and the boot-protocol fold-down live in one place.
   bool sendNkroReport(uint32_t timeoutMs = 100);
@@ -1139,7 +1165,11 @@ private:
   // keeps the bitmap layout and the modifier routing defined in exactly one
   // place, and lets heldState() hand out a reference.
   EspUsbDeviceNkroKeyboardReport nkroState_;
-  EspUsbDeviceHidKeyboardOutputReport ledState_;
+  // Raw LED byte as the host last set it. One atomic byte rather than the whole
+  // report struct, because the writer is the TinyUSB device task and the reader
+  // is the sketch: a single store/load cannot be observed half-applied, so
+  // ledState() can rebuild the flags from one read without a lock.
+  std::atomic<uint8_t> ledsRaw_{0};
   OutputReportCallback outputCallback_;
   ProtocolCallback protocolCallback_;
 };

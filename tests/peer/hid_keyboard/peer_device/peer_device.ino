@@ -25,7 +25,8 @@ static void installOutputReportCallback()
 static void printLedState()
 {
   // Polled state, not the callback. Must track the host even with no callback.
-  const EspUsbDeviceHidKeyboardOutputReport &state = keyboard.ledState();
+  // ledState() returns by value (the USB task writes it), so take a copy.
+  const EspUsbDeviceHidKeyboardOutputReport state = keyboard.ledState();
   Serial.printf("LED_STATE numlock=%u capslock=%u scrolllock=%u raw=0x%02x\n",
                 state.numLock ? 1 : 0,
                 state.capsLock ? 1 : 0,

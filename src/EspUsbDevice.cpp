@@ -432,6 +432,22 @@ void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol)
   }
 }
 
+void tud_mount_cb(void)
+{
+  if (g_activeDevice)
+  {
+    g_activeDevice->handleBusAttached();
+  }
+}
+
+void tud_umount_cb(void)
+{
+  if (g_activeDevice)
+  {
+    g_activeDevice->handleBusDetached();
+  }
+}
+
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
 {
   if (itf == 0 && g_activeCdcSerial)
@@ -1092,6 +1108,29 @@ void EspUsbDevice::handleHidSetProtocol(uint8_t instance, uint8_t protocol)
   if (instance < classCount_ && classes_[instance])
   {
     classes_[instance]->onHidSetProtocol(protocol);
+  }
+}
+
+void EspUsbDevice::handleBusAttached()
+{
+  // Every class hears this, composite or not: the bus is shared by all of them.
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i])
+    {
+      classes_[i]->onBusAttached();
+    }
+  }
+}
+
+void EspUsbDevice::handleBusDetached()
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i])
+    {
+      classes_[i]->onBusDetached();
+    }
   }
 }
 
@@ -3420,9 +3459,7 @@ EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbD
 
 bool EspUsbDeviceHidKeyboard::begin()
 {
-  // A fresh enumeration means the host has not told us anything yet; the LEDs it
-  // reported to a previous session must not be read back as current.
-  ledState_ = EspUsbDeviceHidKeyboardOutputReport();
+  resetHostFacingState();
   return true;
 }
 
@@ -3684,6 +3721,20 @@ const EspUsbDeviceNkroKeyboardReport &EspUsbDeviceHidKeyboard::heldState() const
   return nkroState_;
 }
 
+// Expand a raw LED byte into the public report. Used by both the callback path
+// and ledState(), so the two can never disagree about what a bit means.
+static EspUsbDeviceHidKeyboardOutputReport makeKeyboardOutputReport(uint8_t leds)
+{
+  EspUsbDeviceHidKeyboardOutputReport report;
+  report.leds = leds;
+  report.numLock = leds & ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK;
+  report.capsLock = leds & ESP_USB_DEVICE_KEYBOARD_LED_CAPS_LOCK;
+  report.scrollLock = leds & ESP_USB_DEVICE_KEYBOARD_LED_SCROLL_LOCK;
+  report.compose = leds & ESP_USB_DEVICE_KEYBOARD_LED_COMPOSE;
+  report.kana = leds & ESP_USB_DEVICE_KEYBOARD_LED_KANA;
+  return report;
+}
+
 void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
 {
   (void)reportId;
@@ -3691,27 +3742,48 @@ void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportTyp
   {
     return;
   }
-  EspUsbDeviceHidKeyboardOutputReport report;
-  report.leds = data[0];
-  report.numLock = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK;
-  report.capsLock = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_CAPS_LOCK;
-  report.scrollLock = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_SCROLL_LOCK;
-  report.compose = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_COMPOSE;
-  report.kana = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_KANA;
-  // Record the state before dispatching, so ledState() is readable even when
+  // Record the raw byte before dispatching, so ledState() is readable even when
   // nothing took the callback slot - or when the callback belongs to an
-  // integration layer and the sketch also wants to light an external LED.
-  ledState_ = report;
+  // integration layer and the sketch also wants to light an external LED. One
+  // atomic store, so a reader on another task cannot see it half-applied.
+  ledsRaw_.store(data[0], std::memory_order_relaxed);
   if (!outputCallback_)
   {
     return;
   }
-  outputCallback_(report);
+  outputCallback_(makeKeyboardOutputReport(data[0]));
 }
 
-const EspUsbDeviceHidKeyboardOutputReport &EspUsbDeviceHidKeyboard::ledState() const
+EspUsbDeviceHidKeyboardOutputReport EspUsbDeviceHidKeyboard::ledState() const
 {
-  return ledState_;
+  // Built from a single load, so the flags always describe one host report.
+  return makeKeyboardOutputReport(ledsRaw_.load(std::memory_order_relaxed));
+}
+
+void EspUsbDeviceHidKeyboard::onBusAttached()
+{
+  resetHostFacingState();
+}
+
+void EspUsbDeviceHidKeyboard::onBusDetached()
+{
+  resetHostFacingState();
+}
+
+void EspUsbDeviceHidKeyboard::resetHostFacingState()
+{
+  // The host knows nothing is held and has reported no LEDs, so neither may be
+  // read back from the previous session.
+  //
+  // Dropping the held keys is not cosmetic. A state-based caller is told to
+  // suppress duplicate sends by comparing against heldState() (see the NKRO
+  // section of docs/DESIGN_NOTES.ja.md). If a chord survived a replug, that
+  // comparison would say "same as last time, skip the send" while the host holds
+  // nothing - a stuck key that never resolves. EspBle clears its equivalent state
+  // on disconnect for the same reason.
+  nkroState_.clear();
+  report_ = EspUsbDeviceBootKeyboardReport();
+  ledsRaw_.store(0, std::memory_order_relaxed);
 }
 
 void EspUsbDeviceHidKeyboard::onHidSetProtocol(uint8_t protocol)
