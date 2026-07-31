@@ -385,7 +385,9 @@ Arduino 標準 keyboard API は `write(char)` のような文字入力 API が�
 
 `onOutputReport()` は単一 slot の `std::function` なので、統合レイヤ（ESP32KeyBridge の出力 adapter など）が
 Lock 状態を取るために slot を占有すると、スケッチ側から LED を読む手段が無くなっていた。`ledState()` で
-最新の output report を公開して解決する。
+最新の output report を公開して解決する。名前を `leds()` にしなかったのは、返す struct のメンバが `leds`
+（raw byte）なので `keyboard.leds().leds` になってしまうため。`ledState().capsLock` / `ledState().leds` は
+どちらも素直に読める。
 
 - **listener 化しない。** LED は event ではなく**状態**で、競合しているのは「1回の通知を誰が消費するか」ではなく
   「最新値を誰が読めるか」。getter なら本ライブラリに listener 基盤を新設せずに済み、EspBle の HID Device 側
@@ -415,7 +417,7 @@ Lock 状態を取るために slot を占有すると、スケッチ側から LE
 - **なぜ必要か（stuck key）。** 状態ベースの呼び出し側には「重複送信の抑制は自分の責務、比較対象は
   `heldState()`」と案内している。抜線・再挿入を挟んで chord が残っていると、その比較が「前回と同じだから
   送らない」と判断する一方 Host は何も押していないので、**解消しない stuck key** になる。EspBle も同じ理由で
-  切断時に `heldState()` をクリアしており（`EspBle/docs/REPLY_ESPBLE_LED_STATE.ja.md`）、そちらの指摘で
+  切断時に `heldState()` をクリアしており（`EspBle/docs/DECISIONS.ja.md` HID 23〜28）、そちらの指摘で
   こちらの穴も見つかった。
 - **両方の hook が必要。** `tud_umount_cb` は `SET_CONFIGURATION 0` / deinit / （VBUS sensing のある
   ボードでのみ）抜線で呼ばれる。**素の bus reset では呼ばれない**ので、VBUS sensing の無いボードで
@@ -480,6 +482,44 @@ Lock 状態を取るために slot を占有すると、スケッチ側から LE
   8キー chord の**キーコード集合の一致**（数だけでなく識別）と、International/LANG（JIS）の高 usage
   `0x87`-`0x91` が全て届くこと（bitmap が `0x00`-`0xDF` 全域であることの証明）を見る。
   状態送信 API（1レポートで7キー以上）は同 suite の `s` コマンドで追加検証する。
+
+### 姉妹ライブラリとの HID keyboard API 対称性（2026-07 に確定）
+
+`EspUsbDevice`（USB Device）・`EspBle`（BLE HID Device）・`EspUsbHost`（USB Host）は、ESP32KeyBridge から
+入力 adapter / 出力 adapter として同時に使われる。**同じ概念が別の形をしていると、adapter を書くたびに
+差分を覚える必要が出る**ため、上記 NKRO / LED の各項目は 3 者で形を揃えて決めた。EspBle は 1.0.0 未リリース
+だったので、破壊的変更を含めてこの期間に揃えている（`EspBle/docs/DECISIONS.ja.md` HID 19〜28 に相手側の記録）。
+
+揃っているもの:
+
+| | EspUsbDevice | EspBle |
+|---|---|---|
+| NKRO 状態型 | `EspUsbDeviceNkroKeyboardReport` | `EspBleHidKeyboardNkroReport` |
+| メンバ | `modifiers` / `bitmap[28]` | 同左 |
+| 操作 | `clear` / `press` / `release` / `isDown` | 同左 |
+| 状態送信 | `sendReport(report, timeoutMs)` | `sendReport(report)` |
+| 保持状態の公開 | `heldState()`（参照） | 同左 |
+| 未有効時 | 失敗 | 失敗（`InvalidState`） |
+| Boot protocol 時 | 6 キーへ畳む | 同左 |
+| 重複送信の抑制 | しない（呼び出し側の責務） | 同左 |
+| LED 状態 | `ledState()`（値返し） | 同左 |
+| Lock フラグ | bool メンバ | 同左 |
+| ビット→フラグ変換 | `setLeds()` の 1 箇所 | 同左 |
+| 命名規則 | bitmap は `bitmap` / usage 配列は `keys` | 同左（`EspUsbHost` も同じ） |
+
+意図的に揃えないもの:
+
+| 項目 | EspUsbDevice | EspBle | 理由 |
+|---|---|---|---|
+| `sendReport()` の `timeoutMs` | あり | なし | BLE は notify なので送信 timeout の概念が違う |
+| bitmap サイズ | 28 byte（`0x00`-`0xDF`） | 同左。ただし Host 側は 32 byte（`0x00`-`0xFF`） | Device は自分の report descriptor が宣言する範囲に縛られ、Host は相手の宣言を読むだけ |
+| LED 状態の保持 | `std::atomic<uint8_t>` 1 個 | mutex + struct | EspBle の output report は `connectionId` を持ち単一 byte へ畳めない |
+| `ledState()` の callback に対する先行 | 起きない | 起きうる（最大 1 回の `update()`） | EspBle は stack callback で値を queue へ積み `update()` で配送する設計。EspUsbDevice は `onHidSetReport()` 内で保存と dispatch を連続実行 |
+| 切断時のクリア | 遅延（USB task が atomic flag → スケッチ task で実クリア） | 直接クリア（`update()` = loop task） | EspUsbDevice は `tud_task()` を自前 task で回すため、そこで `nkroState_` を触ると書き手が 2 つになる。EspBle は配送が必ず loop task 側 |
+| 複数 Host | 該当なし | `connectionId` 付き・最後に書いた Host の値 | USB は Host 1 台 |
+
+いずれも「同じ問題に対して backend ごとの正しい解が違う」ケースで、**公開 API の形は揃っているので利用側からは
+差が見えない**。この対称性を崩す変更を片方だけに入れないこと。
 
 ## 設計方針
 
