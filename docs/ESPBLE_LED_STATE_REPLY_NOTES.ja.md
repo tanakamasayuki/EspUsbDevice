@@ -1,7 +1,36 @@
-# EspBle からの返答への応答（LED 状態 getter）
+# EspBle からの返答への応答（LED 状態 getter）— **決着済み**
 
 対象: `EspBle/docs/REPLY_ESPBLE_LED_STATE.ja.md`
 関連: `docs/ESPBLE_LED_STATE_REQUEST.ja.md`、`docs/KEYBRIDGE_ADAPTER_PROPOSAL.ja.md` 項目②
+
+## 決着（2026-07-31）
+
+EspBle からの再返答で全項目が閉じた。EspBle 側の対応:
+
+- 値返しの根拠の訂正を受け入れ（task 境界は USB 側にもある、という指摘を認めた）
+- 確認事項への回答: EspBle の切断時クリアは `update()` 契機＝loop task で走るので競合しない。
+  「stack callback ではユーザ callback を実行せず値をコピーして queue へ積み、配送は必ず `update()`」
+  という基本設計の帰結。したがって BLE 側に遅延クリアは不要（USB 側の遅延クリアは妥当と評価された）
+- **Lock フラグをメンバへ変更**（破壊的）。EspBle 内部でも Host 側 `EspBleHidKeyboardState` がメンバ、
+  Device 側 `EspBleHidKeyboardOutputReport` がメソッドで不統一だったため、こちらの形が採用された
+- **`setLeds(uint8_t)` を唯一の設定経路として追加**。`leds` とフラグが食い違う状態を作れなくする
+
+### これを受けた EspUsbDevice 側の追随
+
+`EspUsbDeviceHidKeyboardOutputReport::setLeds(uint8_t)` を追加し、ライブラリ内の生成経路
+（`makeKeyboardOutputReport()`）をこれ経由にした。ビットの意味を決める場所が struct の中の 1 箇所になり、
+**公開 struct の形も EspBle と同一**になる（それまでは「ビット意味の単一化」を file-local な static 関数で
+やっていたので、利用者から見える形が揃っていなかった）。
+
+### 揃えない差（合意済み・利用側から見えない）
+
+| 項目 | EspBle | EspUsbDevice | 理由 |
+|---|---|---|---|
+| 保持の実装 | mutex + struct | `atomic<uint8_t>` | EspBle は `connectionId` を持つので単一 byte へ畳めない |
+| callback に対する先行 | 起きうる（最大 1 回の `update()`） | 起きない | queue 配送モデルの差。両者 SPEC に明記 |
+| 切断時クリア | 直接クリア（loop task） | 遅延クリア（atomic flag） | `tud_task()` を自前 task で回す構成の差 |
+
+以下は返答時点の原文。
 
 ## 結論
 

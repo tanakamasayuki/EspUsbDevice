@@ -400,6 +400,10 @@ Lock 状態を取るために slot を占有すると、スケッチ側から LE
   report を組み立てる。これでフィールドが途中状態で混ざる（leds は新しいが capsLock は古い）ことが
   原理的に起きない。EspBle も同じ理由で値返し（そちらは stack task から書かれ mutex で保護）。
 - **bus attach / detach でクリアする。** `begin()` だけでは足りない。抜線・再挿入でオブジェクトは生き残る。
+- **ビットとフラグの対応は `EspUsbDeviceHidKeyboardOutputReport::setLeds()` の 1 箇所だけ。** ライブラリは
+  フィールドを直接代入せず、callback へ渡す report も `ledState()` が返す report もこれを通す。
+  EspBle も同じ形（`EspBleHidKeyboardOutputReport::setLeds()`）で、Lock フラグが両ライブラリとも
+  bool メンバに揃った（EspBle 側は 1.0.0 前に メソッド → メンバの破壊的変更で追随）。
 - **Host が最初の output report を送るまでは全 false。** 「Host が全 LED off と言った」状態と区別できないが、
   区別のための flag は API を増やす割に用途が薄いので持たない（外付け LED 用途では差が無い）。
 

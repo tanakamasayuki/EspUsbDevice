@@ -275,6 +275,8 @@ struct EspUsbDeviceNkroKeyboardReport
   }
 };
 
+// Host LED (Lock) state, as delivered to onOutputReport() and returned by
+// EspUsbDeviceHidKeyboard::ledState().
 struct EspUsbDeviceHidKeyboardOutputReport
 {
   uint8_t leds = 0;
@@ -283,6 +285,19 @@ struct EspUsbDeviceHidKeyboardOutputReport
   bool scrollLock = false;
   bool compose = false;
   bool kana = false;
+
+  // The one place that decides which bit means what, so `leds` and the flags
+  // cannot disagree. The library never assigns the fields directly. Same role as
+  // EspBleHidKeyboardOutputReport::setLeds().
+  void setLeds(uint8_t value)
+  {
+    leds = value;
+    numLock = value & ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK;
+    capsLock = value & ESP_USB_DEVICE_KEYBOARD_LED_CAPS_LOCK;
+    scrollLock = value & ESP_USB_DEVICE_KEYBOARD_LED_SCROLL_LOCK;
+    compose = value & ESP_USB_DEVICE_KEYBOARD_LED_COMPOSE;
+    kana = value & ESP_USB_DEVICE_KEYBOARD_LED_KANA;
+  }
 };
 
 struct EspUsbDeviceBootMouseReport
