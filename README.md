@@ -215,12 +215,17 @@ Keyboard:
   `sendReport()` keep raw HID usage/report control available.
 - `keyboard.onOutputReport(callback)` receives host LED output reports.
 - `keyboard.ledState()` returns the latest host LED state
-  (`EspUsbDeviceHidKeyboardOutputReport`). It is updated whether or not a callback
-  is installed, so a sketch can read Lock state even when an integration layer owns
-  the single `onOutputReport()` slot - lighting an external Caps Lock LED, say.
-  LEDs are state rather than an event, so polling is enough and the callback stays
-  single-slot. Everything reads false until the host sends its first output report,
-  and `begin()` resets it.
+  (`EspUsbDeviceHidKeyboardOutputReport`) **by value**. It is updated whether or not
+  a callback is installed, so a sketch can read Lock state even when an integration
+  layer owns the single `onOutputReport()` slot - lighting an external Caps Lock LED,
+  say. LEDs are state rather than an event, so polling is enough and the callback
+  stays single-slot. Everything reads false until the host sends its first output
+  report, and the state is cleared on bus reset / unplug.
+  By value rather than by reference because the TinyUSB device task writes it while
+  the sketch reads it from its own task: a reference would hand out an object another
+  task mutates. The raw LED byte is stored atomically and the report is built from
+  one read, so a torn combination of fields is impossible. EspBle's `ledState()`
+  returns by value for the same reason.
 - `keyboard.enableNkro()` (before `begin()`) switches to N-key rollover: a bitmap
   report covering usages `0x00`-`0xDF` (International/LANG keys included, so JIS
   layouts work) that holds any number of keys at once, with automatic 6-key boot

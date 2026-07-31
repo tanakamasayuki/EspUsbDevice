@@ -3459,12 +3459,16 @@ EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbD
 
 bool EspUsbDeviceHidKeyboard::begin()
 {
-  resetHostFacingState();
+  nkroState_.clear();
+  report_ = EspUsbDeviceBootKeyboardReport();
+  ledsRaw_.store(0, std::memory_order_relaxed);
+  busChangePending_.store(false, std::memory_order_relaxed);
   return true;
 }
 
 bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceBootKeyboardReport &report, uint32_t timeoutMs)
 {
+  applyPendingBusChange();
   if (nkroEnabled_)
   {
     // Adopt the supplied 6-key report as the full held-key state, then emit it in
@@ -3486,6 +3490,7 @@ bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceBootKeyboardReport &r
 
 bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceNkroKeyboardReport &report, uint32_t timeoutMs)
 {
+  applyPendingBusChange();
   // Without enableNkro() the interface only ever declared the 6-key boot report,
   // so this state cannot go out as-is. Fail instead of folding it down: unlike
   // the boot-protocol path below, this is a setup mistake in the sketch, and
@@ -3504,6 +3509,7 @@ bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceNkroKeyboardReport &r
 bool EspUsbDeviceHidKeyboard::pressUsage(uint8_t usage, uint8_t modifiers, uint32_t holdMs)
 {
   (void)holdMs;
+  applyPendingBusChange();
   if (nkroEnabled_)
   {
     // press() rejects usages this report cannot carry (above 0xDF and not a
@@ -3576,6 +3582,7 @@ bool EspUsbDeviceHidKeyboard::write(const char *text, uint32_t interKeyDelayMs)
 
 bool EspUsbDeviceHidKeyboard::releaseUsage(uint8_t usage, uint32_t timeoutMs)
 {
+  applyPendingBusChange();
   if (nkroEnabled_)
   {
     // release() clears modifier usages from `modifiers` too, so releasing a
@@ -3599,6 +3606,7 @@ bool EspUsbDeviceHidKeyboard::releaseUsage(uint8_t usage, uint32_t timeoutMs)
 
 bool EspUsbDeviceHidKeyboard::releaseAll(uint32_t timeoutMs)
 {
+  applyPendingBusChange();
   if (nkroEnabled_)
   {
     nkroState_.clear();
@@ -3718,6 +3726,7 @@ bool EspUsbDeviceHidKeyboard::sendNkroReport(uint32_t timeoutMs)
 
 const EspUsbDeviceNkroKeyboardReport &EspUsbDeviceHidKeyboard::heldState() const
 {
+  applyPendingBusChange();
   return nkroState_;
 }
 
@@ -3760,30 +3769,33 @@ EspUsbDeviceHidKeyboardOutputReport EspUsbDeviceHidKeyboard::ledState() const
   return makeKeyboardOutputReport(ledsRaw_.load(std::memory_order_relaxed));
 }
 
+// Both hooks run on the TinyUSB device task.
 void EspUsbDeviceHidKeyboard::onBusAttached()
 {
-  resetHostFacingState();
+  ledsRaw_.store(0, std::memory_order_relaxed);
+  busChangePending_.store(true, std::memory_order_relaxed);
 }
 
 void EspUsbDeviceHidKeyboard::onBusDetached()
 {
-  resetHostFacingState();
+  ledsRaw_.store(0, std::memory_order_relaxed);
+  busChangePending_.store(true, std::memory_order_relaxed);
 }
 
-void EspUsbDeviceHidKeyboard::resetHostFacingState()
+void EspUsbDeviceHidKeyboard::applyPendingBusChange() const
 {
-  // The host knows nothing is held and has reported no LEDs, so neither may be
-  // read back from the previous session.
-  //
-  // Dropping the held keys is not cosmetic. A state-based caller is told to
-  // suppress duplicate sends by comparing against heldState() (see the NKRO
-  // section of docs/DESIGN_NOTES.ja.md). If a chord survived a replug, that
-  // comparison would say "same as last time, skip the send" while the host holds
-  // nothing - a stuck key that never resolves. EspBle clears its equivalent state
-  // on disconnect for the same reason.
+  if (!busChangePending_.exchange(false, std::memory_order_relaxed))
+  {
+    return;
+  }
+  // The host knows nothing is held, so the previous session's keys must not be
+  // read back. This is not cosmetic: a state-based caller is told to suppress
+  // duplicate sends by comparing against heldState() (see the NKRO section of
+  // docs/DESIGN_NOTES.ja.md). If a chord survived a replug, that comparison would
+  // say "same as last time, skip the send" while the host holds nothing - a stuck
+  // key that never resolves. EspBle clears its equivalent state on disconnect for
+  // the same reason.
   nkroState_.clear();
-  report_ = EspUsbDeviceBootKeyboardReport();
-  ledsRaw_.store(0, std::memory_order_relaxed);
 }
 
 void EspUsbDeviceHidKeyboard::onHidSetProtocol(uint8_t protocol)

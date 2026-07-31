@@ -197,10 +197,15 @@ Keyboard:
   `sendReport()` で raw HID usage / report 制御もできます。
 - `keyboard.onOutputReport(callback)` は Host からの LED output report を受け取ります。
 - `keyboard.ledState()` は Host からの最新 LED 状態（`EspUsbDeviceHidKeyboardOutputReport`）を
-  返します。callback の有無に関係なく更新されるので、統合レイヤが `onOutputReport()` の
+  **値で**返します。callback の有無に関係なく更新されるので、統合レイヤが `onOutputReport()` の
   単一 slot を占有していてもスケッチ側から Lock 状態を読めます（外付け Caps Lock LED を
   光らせる、など）。LED は event ではなく状態なので polling で足り、callback は単一 slot の
-  ままです。Host が最初の output report を送るまでは全て false で、`begin()` で初期化されます。
+  ままです。Host が最初の output report を送るまでは全て false で、bus reset / 抜線でも
+  クリアされます。
+  参照ではなく値を返すのは、この値を書くのが TinyUSB device task で、読むのはスケッチの
+  task だからです（参照を返すと他 task が書き換える実体を読むことになる）。raw LED byte を
+  atomic に保持し、1 回の読み出しから report を組み立てるので、フィールドが途中状態で
+  混ざることはありません。EspBle の `ledState()` も同じ理由で値返しです。
 - `keyboard.enableNkro()`（`begin()` の前）で N-key rollover に切り替えます。usages
   `0x00`-`0xDF` をカバーする bitmap レポート（International/LANG キーも含むので JIS
   レイアウトも通る）で任意数のキーを同時押下でき、BIOS 向けに6キー boot へ自動 fallback

@@ -1152,7 +1152,10 @@ public:
 
 private:
   bool asciiToUsage(char key, uint8_t &usage, uint8_t &modifiers) const;
-  void resetHostFacingState();
+  // Apply a bus attach/detach that the USB task flagged. Called from the sketch's
+  // task at the head of every entry point that touches the held-key state, so
+  // that state keeps exactly one writer and heldState() can hand out a reference.
+  void applyPendingBusChange() const;
   // Put nkroState_ on the wire. Every NKRO send goes through here so the bitmap
   // layout and the boot-protocol fold-down live in one place.
   bool sendNkroReport(uint32_t timeoutMs = 100);
@@ -1163,13 +1166,19 @@ private:
   bool nkroEnabled_ = false;
   // The held-key state while NKRO is on. Holding the public report type itself
   // keeps the bitmap layout and the modifier routing defined in exactly one
-  // place, and lets heldState() hand out a reference.
-  EspUsbDeviceNkroKeyboardReport nkroState_;
+  // place, and lets heldState() hand out a reference. Mutable because the const
+  // heldState() may have to apply a pending bus change before returning it.
+  mutable EspUsbDeviceNkroKeyboardReport nkroState_;
   // Raw LED byte as the host last set it. One atomic byte rather than the whole
   // report struct, because the writer is the TinyUSB device task and the reader
   // is the sketch: a single store/load cannot be observed half-applied, so
   // ledState() can rebuild the flags from one read without a lock.
   std::atomic<uint8_t> ledsRaw_{0};
+  // Set by the USB task when the bus attached or detached; consumed by the
+  // sketch's task in applyPendingBusChange(). The held-key state is NOT cleared
+  // from the USB task: that would give it a second writer and make the reference
+  // returned by heldState() racy.
+  mutable std::atomic<bool> busChangePending_{false};
   OutputReportCallback outputCallback_;
   ProtocolCallback protocolCallback_;
 };
