@@ -95,10 +95,9 @@ usages `0xE0`-`0xE7` into `modifiers`, the `MaxBitmapUsage` (`0xDF`) boundary wi
 The extraction fails loudly if the struct ever starts depending on Arduino or
 TinyUSB, since the host build would no longer be meaningful. Same technique as
 `keymap`, so the test cannot drift away from the shipped struct. The
-boot-protocol fold-down and the "no `enableNkro()` -> fail" rule belong to
-`EspUsbDeviceHidKeyboard`, which cannot be host-compiled; they have no automated
-coverage yet, since a peer/loopback NKRO suite first needs EspUsbHost to parse the
-bitmap report.
+boot-protocol fold-down, the "no `enableNkro()` -> fail" rule, and the bytes that
+actually reach a host belong to `EspUsbDeviceHidKeyboard`, which cannot be
+host-compiled; `tests/peer/hid_keyboard_nkro` covers those on hardware.
 
 ## `fat_ramdisk`
 

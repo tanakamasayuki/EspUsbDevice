@@ -214,6 +214,13 @@ Keyboard:
 - `keyboard.tapUsage()`, `pressUsage()`, `releaseUsage()`, `releaseAll()`, and
   `sendReport()` keep raw HID usage/report control available.
 - `keyboard.onOutputReport(callback)` receives host LED output reports.
+- `keyboard.ledState()` returns the latest host LED state
+  (`EspUsbDeviceHidKeyboardOutputReport`). It is updated whether or not a callback
+  is installed, so a sketch can read Lock state even when an integration layer owns
+  the single `onOutputReport()` slot - lighting an external Caps Lock LED, say.
+  LEDs are state rather than an event, so polling is enough and the callback stays
+  single-slot. Everything reads false until the host sends its first output report,
+  and `begin()` resets it.
 - `keyboard.enableNkro()` (before `begin()`) switches to N-key rollover: a bitmap
   report covering usages `0x00`-`0xDF` (International/LANG keys included, so JIS
   layouts work) that holds any number of keys at once, with automatic 6-key boot

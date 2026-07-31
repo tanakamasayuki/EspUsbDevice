@@ -29,6 +29,8 @@ keyboard LED output report を扱う例です。
 - `keyboard.tapUsage(usage, modifiers)` は raw HID usage を1回送信します。
 - `keyboard.pressUsage(usage, modifiers)` / `keyboard.releaseUsage(usage)` は
   boot keyboard report を直接制御します。
+- `keyboard.ledState()` は Host からの最新 LED 状態を返します。callback 未設定でも更新される
+  ので、外付け Caps Lock LED は polling で駆動できます。
 - `keyboard.onOutputReport(callback)` は Host からの keyboard LED report を受け取ります。
 
 ## Layout
@@ -66,7 +68,7 @@ Device 側は Host 側 keymap table を逆引きし、Host が `usage/modifier` 
 ```text
 USB keyboard ready
 LEDS num=0 caps=1 scroll=0 raw=0x02
-last_leds=0x02
+last_leds=0x02 caps=1
 ```
 
 ## 関連

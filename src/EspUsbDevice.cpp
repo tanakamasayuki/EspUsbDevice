@@ -3420,6 +3420,9 @@ EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbD
 
 bool EspUsbDeviceHidKeyboard::begin()
 {
+  // A fresh enumeration means the host has not told us anything yet; the LEDs it
+  // reported to a previous session must not be read back as current.
+  ledState_ = EspUsbDeviceHidKeyboardOutputReport();
   return true;
 }
 
@@ -3684,7 +3687,7 @@ const EspUsbDeviceNkroKeyboardReport &EspUsbDeviceHidKeyboard::heldState() const
 void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
 {
   (void)reportId;
-  if (reportType != ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT || !data || length < 1 || !outputCallback_)
+  if (reportType != ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT || !data || length < 1)
   {
     return;
   }
@@ -3695,7 +3698,20 @@ void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportTyp
   report.scrollLock = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_SCROLL_LOCK;
   report.compose = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_COMPOSE;
   report.kana = report.leds & ESP_USB_DEVICE_KEYBOARD_LED_KANA;
+  // Record the state before dispatching, so ledState() is readable even when
+  // nothing took the callback slot - or when the callback belongs to an
+  // integration layer and the sketch also wants to light an external LED.
+  ledState_ = report;
+  if (!outputCallback_)
+  {
+    return;
+  }
   outputCallback_(report);
+}
+
+const EspUsbDeviceHidKeyboardOutputReport &EspUsbDeviceHidKeyboard::ledState() const
+{
+  return ledState_;
 }
 
 void EspUsbDeviceHidKeyboard::onHidSetProtocol(uint8_t protocol)

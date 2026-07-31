@@ -84,9 +84,9 @@ bitmap レイアウト（bit `usage & 7` / byte `usage >> 3`)、modifier usage `
 10キー同時押下、`clear()`、コピー意味論を確認します。struct が Arduino / TinyUSB へ
 依存し始めた場合はテスト側の抽出が成立しなくなるため、抽出時に検出して失敗させます。
 `keymap` と同じ方式で、テストとライブラリが乖離しないようにしています。
-boot protocol への畳み込みと `enableNkro()` 未実行時の失敗は host コンパイルできない
-`EspUsbDeviceHidKeyboard` 側の挙動で、まだ自動テストはありません（peer / loopback の
-NKRO suite は EspUsbHost が bitmap レポートをパースできるようになってから）。
+boot protocol への畳み込み、`enableNkro()` 未実行時の失敗、実際に Host へ届くバイト列は
+host コンパイルできない `EspUsbDeviceHidKeyboard` 側の挙動なので、実機の
+`tests/peer/hid_keyboard_nkro` でカバーします。
 
 ## `fat_ramdisk`
 

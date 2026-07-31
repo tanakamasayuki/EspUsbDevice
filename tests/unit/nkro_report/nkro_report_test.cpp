@@ -10,10 +10,9 @@
 //
 // What is covered here is everything that does not need a USB bus: the bitmap
 // layout, the 0xE0-0xE7 modifier routing, and the MaxBitmapUsage boundary. The
-// boot-protocol fold-down and the "no enableNkro() -> fail" rule live in
-// EspUsbDeviceHidKeyboard, which cannot be compiled on the host; they have no
-// automated coverage yet, because a peer/loopback NKRO suite needs EspUsbHost to
-// parse the bitmap report first (see docs/DESIGN_NOTES.ja.md, NKRO section).
+// boot-protocol fold-down, the "no enableNkro() -> fail" rule and the actual
+// bytes on the wire live in EspUsbDeviceHidKeyboard, which cannot be compiled on
+// the host; those are covered on hardware by tests/peer/hid_keyboard_nkro.
 
 #include <cstdint>
 #include <cstddef>

@@ -1090,6 +1090,13 @@ public:
   void setLayout(EspUsbDeviceKeyboardLayout layout);
   EspUsbDeviceKeyboardLayout layout() const;
   void onOutputReport(OutputReportCallback callback);
+  // Latest LED output report from the host. Updated whether or not an
+  // onOutputReport() callback is installed, so a sketch can read Lock state even
+  // when an integration layer owns the single callback slot. LEDs are state, not
+  // an event, so polling this is enough; the callback stays single-slot.
+  // Everything reads false until the host sends its first output report (hosts
+  // typically do so right after enumeration and whenever a Lock key is pressed).
+  const EspUsbDeviceHidKeyboardOutputReport &ledState() const;
   void onProtocol(ProtocolCallback callback);
   uint8_t protocol() const;
 
@@ -1132,6 +1139,7 @@ private:
   // keeps the bitmap layout and the modifier routing defined in exactly one
   // place, and lets heldState() hand out a reference.
   EspUsbDeviceNkroKeyboardReport nkroState_;
+  EspUsbDeviceHidKeyboardOutputReport ledState_;
   OutputReportCallback outputCallback_;
   ProtocolCallback protocolCallback_;
 };
