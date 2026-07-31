@@ -63,8 +63,8 @@ tests/
 | Runtime lifecycle | ✅ `descriptor` (100 begin/end + partial failure recovery) | | | | |
 | FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | planned | |
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal/reverse ports | | |
-| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal/reverse ports | | optional |
-| HID keyboard NKRO state report | ✅ `nkro_report` (struct bitmap/modifier/boundaries) | pending (needs EspUsbHost bitmap parsing) | pending | | ✅ `examples/KeyboardNKRO` |
+| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` (callback + `ledState()`, tracked with no callback installed) | ✅ `hid_keyboard` normal/reverse ports | | optional |
+| HID keyboard NKRO | ✅ `nkro_report` (struct bitmap/modifier/boundaries) | ✅ `hid_keyboard_nkro` (exact 8-key chord, JIS high usages, whole state in one report, `heldState()`, refusal without `enableNkro()`) | pending | | ✅ `examples/KeyboardNKRO` |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | | |
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
 | Custom HID report descriptor | planned | ✅ `custom_hid` | ✅ `custom_hid` | | |

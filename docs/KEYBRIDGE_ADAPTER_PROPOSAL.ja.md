@@ -4,10 +4,11 @@
 
 - **項目①（NKRO 状態送信 API）: 実装済み。** 提案どおり `EspUsbDeviceNkroKeyboardReport` +
   `sendReport()` overload + `heldState()`、内部状態の `nkroState_` 一本化、`setKeyBit()` 廃止、
-  増分 API のエラー化と `releaseUsage()` の modifier クリアまで入れた。host unit test は
-  `tests/unit/nkro_report`。実機 peer test は EspUsbHost の bitmap パース待ちで follow-up（TODO に記載）。
-  以下は設計判断の記録として残す。
-- **項目②（LED 状態の getter）: 未実装。** 低優先の TODO として保留。
+  増分 API のエラー化と `releaseUsage()` の modifier クリアまで入れた。検証は host unit test
+  `tests/unit/nkro_report` と実機 peer test `tests/peer/hid_keyboard_nkro`。
+- **項目②（LED 状態の getter）: 実装済み。** `ledState()` を追加。検証は
+  `tests/peer/hid_keyboard`（callback あり／なしの両方で Host の LED 状態に追従すること）。
+- 以下は設計判断の記録として残す。
 
 ## 目的
 
@@ -172,7 +173,7 @@ EspBle の 6 キー版 `sendReport()` は本ライブラリと同じ構造・同
 
 **EspUsbDevice 側だけが未実装の状態。** 対称性が崩れると、複数ライブラリを併用する利用者が毎回差分を意識することになる。
 
-## 項目②: LED 状態の観測（listener 化は保留）
+## 項目②: LED 状態の観測（実装済み。listener 化は保留）
 
 ### 現状と要求元の状況
 
@@ -188,9 +189,13 @@ public:
   // Latest LED output report from the host. Updated regardless of whether an
   // onOutputReport() callback is installed, so a sketch can read Lock state even
   // when an integration layer owns the callback slot.
-  const EspUsbDeviceHidKeyboardOutputReport &leds() const;
+  const EspUsbDeviceHidKeyboardOutputReport &ledState() const;
 };
 ```
+
+名前は `leds()` ではなく `ledState()` にした。返すのは `EspUsbDeviceHidKeyboardOutputReport` で、
+その中のメンバが `leds`（raw byte）なので、`leds()` だと `keyboard.leds().leds` になって読めない。
+`keyboard.ledState().capsLock` / `keyboard.ledState().leds` なら両方素直に読める。
 
 現状 `EspUsbDeviceHidKeyboardOutputReport`（`EspUsbDevice.h`）は callback 引数としてしか存在せず、最新値を保持するメンバも getter も無い。`onHidSetReport()` で組み立てている report をメンバに保存し、callback の有無に関係なく更新してから callback を呼ぶだけで済む。
 
@@ -227,14 +232,19 @@ EspUsbHost の仕様案で定めた切り分け（**観測系は listener 化可
 - 既存 boot report `sendReport()` の挙動が変わらないこと（回帰）
 - NKRO 有効時、7 キー以上を含む report を 1 回送って Host 側が全キーを認識すること
 
-**最後の項目（実機 peer test）は現時点で blocked。** `docs/DESIGN_NOTES.ja.md` の NKRO 節が既に「2 台 peer テストは sibling の `EspUsbHost` が NKRO bitmap をパースできるか次第」と記録しているとおりで、実際 NKRO の peer / loopback テストは 1 本も無い。本件の検証も同じ依存にぶつかる。
+**最後の項目（実機 peer test）は `tests/peer/hid_keyboard_nkro` で実施済み。** この suite は
+本提案より前から存在し、`EspUsbHost` は `keyboardUsesBitmapReport()` で bitmap レポートを識別できる
+（`docs/DESIGN_NOTES.ja.md` の NKRO 節に残っていた「未検証・EspUsbHost 対応次第」は古い記述だった）。
+状態送信 API 用に次を追加した。
 
-したがって段取りは次のとおり。
+- `s` コマンド: 10 usages + Left Shift を 1 レポートで送り、Host 側で 10 個の bitmap キーが届くこと、
+  各 PRESS が modifier byte に Left Shift を載せていること、device 側 `heldState()` が一致すること、
+  `releaseAll()` が bitmap と modifier の両方を落とすことを確認する
+- `x` コマンド: `enableNkro()` していない keyboard で状態 overload が失敗すること
 
-1. まず `onHIDInput` の生バイト（29 byte の modifier + bitmap）で 7 キー以上が乗っていることを確認する
-2. 正式な peer test（Host 側で全キーが key event として認識される）は **EspUsbHost の NKRO bitmap パース対応後の follow-up** とし、TODO に残す
-
-EspBle 側は Host / Device 双方が NKRO bitmap を扱えるため既に peer 検証済み（`tests/peer/hid_keyboard_nkro`）。USB 側だけがこの穴を持つ。
+なお **EspUsbHost の NKRO 経路は bitmap ビットだけを key event へ差分展開し、modifier byte は
+`event.modifiers` に載せる**（`0xE0`-`0xE7` 用の PRESS 行は出ない）。そのため modifier の検証は
+PRESS 行数ではなく `mod=` フィールドで行う。DUT sketch にこのフィールドを追加した。
 
 ## 波及
 

@@ -381,6 +381,22 @@ Arduino 標準 keyboard API は `write(char)` のような文字入力 API が�
 
 `EspUsbDevice` では、文字 API は上位レイヤとして扱い、基本は raw HID usage / report を直接扱うべきです。
 
+### LED output report の観測（`ledState()`・2026-07）
+
+`onOutputReport()` は単一 slot の `std::function` なので、統合レイヤ（ESP32KeyBridge の出力 adapter など）が
+Lock 状態を取るために slot を占有すると、スケッチ側から LED を読む手段が無くなっていた。`ledState()` で
+最新の output report を公開して解決する。
+
+- **listener 化しない。** LED は event ではなく**状態**で、競合しているのは「1回の通知を誰が消費するか」ではなく
+  「最新値を誰が読めるか」。getter なら本ライブラリに listener 基盤を新設せずに済み、EspBle の HID Device 側
+  `onOutputReport()` が単一 slot である現状（= Device 側同士の一貫性）も崩さない。`onOutputReport` /
+  `onProtocol` の listener 化自体は将来の選択肢として残す（観測系なので EspUsbHost の切り分けでは対象内）。
+- **callback の有無に関係なく更新する。** `onHidSetReport()` で report を組んだ直後に保存し、callback は
+  その後に呼ぶ。callback 未設定時に早期 return する旧構造のままだと状態が更新されない。
+- **`begin()` で初期化する。** 再 enumeration 後に前回セッションの LED を現在値として読ませない。
+- **Host が最初の output report を送るまでは全 false。** 「Host が全 LED off と言った」状態と区別できないが、
+  区別のための flag は API を増やす割に用途が薄いので持たない（外付け LED 用途では差が無い）。
+
 ### N-key rollover（NKRO・opt-in・2026-07）
 
 `EspUsbDeviceHidKeyboard::enableNkro()`（`begin()` 前）で NKRO に切り替えられる。設計上のポイント:
@@ -427,8 +443,11 @@ Arduino 標準 keyboard API は `write(char)` のような文字入力 API が�
   `releaseUsage()` が modifier usage を落とさなかった穴も解消した（`release()` が `modifiers` 側もクリアする）。
 - **検証**: struct の bitmap レイアウト・modifier 振り分け・境界（`0xE8` 以上を拒否）は host g++ の
   `tests/unit/nkro_report`（実ヘッダから struct を抽出してコンパイル）でカバー。
-- **未検証**: 2台 peer テストは sibling の `EspUsbHost` が NKRO bitmap をパースできるか次第。現状は `onHIDInput`
-  の生バイトで確認する想定（専用 peer テストは EspUsbHost 対応後に追加）。
+- **peer 検証**: `tests/peer/hid_keyboard_nkro` が実機で検証済み。`EspUsbHost` は
+  `keyboardUsesBitmapReport()` で bitmap レポートを識別できるので、host 役として使える。この suite は
+  8キー chord の**キーコード集合の一致**（数だけでなく識別）と、International/LANG（JIS）の高 usage
+  `0x87`-`0x91` が全て届くこと（bitmap が `0x00`-`0xDF` 全域であることの証明）を見る。
+  状態送信 API（1レポートで7キー以上）は同 suite の `s` コマンドで追加検証する。
 
 ## 設計方針
 

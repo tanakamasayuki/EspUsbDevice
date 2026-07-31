@@ -29,6 +29,8 @@ raw HID usage IDs, and keyboard LED output reports.
 - `keyboard.tapUsage(usage, modifiers)` sends one raw HID usage.
 - `keyboard.pressUsage(usage, modifiers)` / `keyboard.releaseUsage(usage)` give
   direct control over boot keyboard reports.
+- `keyboard.ledState()` returns the latest host LED state and is updated even with
+  no callback installed, so an external Caps Lock LED can be driven by polling.
 - `keyboard.onOutputReport(callback)` receives keyboard LED reports from the
   host.
 
@@ -67,7 +69,7 @@ Supported layout constants:
 ```text
 USB keyboard ready
 LEDS num=0 caps=1 scroll=0 raw=0x02
-last_leds=0x02
+last_leds=0x02 caps=1
 ```
 
 ## See Also

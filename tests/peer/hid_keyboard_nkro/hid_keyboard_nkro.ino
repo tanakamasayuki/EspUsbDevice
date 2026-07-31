@@ -42,7 +42,11 @@ void setup()
                      {
                        maxSimultaneous = pressedCount;
                      }
-                     Serial.printf("PRESS keycode=0x%02x n=%d\n", event.keycode, pressedCount);
+                     // modifiers matters for the state-report test: EspUsbHost emits key
+                     // events for bitmap bits only, so a modifier usage (0xE0-0xE7)
+                     // shows up here rather than as its own PRESS line.
+                     Serial.printf("PRESS keycode=0x%02x n=%d mod=0x%02x\n",
+                                   event.keycode, pressedCount, event.modifiers);
                    }
                    else
                    {
