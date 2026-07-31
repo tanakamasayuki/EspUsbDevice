@@ -3429,13 +3429,13 @@ bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceBootKeyboardReport &r
   {
     // Adopt the supplied 6-key report as the full held-key state, then emit it in
     // whatever format the active protocol needs (NKRO bitmap or boot fallback).
-    nkroModifiers_ = report.modifiers;
-    memset(nkroBitmap_, 0, sizeof(nkroBitmap_));
+    nkroState_.clear();
+    nkroState_.modifiers = report.modifiers;
     for (size_t i = 0; i < sizeof(report.keys); i++)
     {
       if (report.keys[i])
       {
-        setKeyBit(report.keys[i], true);
+        nkroState_.press(report.keys[i]);
       }
     }
     return sendNkroReport(timeoutMs);
@@ -3444,13 +3444,35 @@ bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceBootKeyboardReport &r
   return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.classReportId(hidInstance_), &report_, sizeof(report_), timeoutMs);
 }
 
+bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceNkroKeyboardReport &report, uint32_t timeoutMs)
+{
+  // Without enableNkro() the interface only ever declared the 6-key boot report,
+  // so this state cannot go out as-is. Fail instead of folding it down: unlike
+  // the boot-protocol path below, this is a setup mistake in the sketch, and
+  // quietly dropping the seventh key onwards would never be noticed. Callers can
+  // check nkroEnabled() beforehand.
+  if (!nkroEnabled_)
+  {
+    return false;
+  }
+  // Replace the incremental state so a later pressUsage() / releaseUsage() sees
+  // what the host was actually told.
+  nkroState_ = report;
+  return sendNkroReport(timeoutMs);
+}
+
 bool EspUsbDeviceHidKeyboard::pressUsage(uint8_t usage, uint8_t modifiers, uint32_t holdMs)
 {
   (void)holdMs;
   if (nkroEnabled_)
   {
-    nkroModifiers_ |= modifiers;
-    setKeyBit(usage, true);
+    // press() rejects usages this report cannot carry (above 0xDF and not a
+    // modifier); surface that instead of dropping the key silently.
+    if (!nkroState_.press(usage))
+    {
+      return false;
+    }
+    nkroState_.modifiers |= modifiers;
     return sendNkroReport();
   }
   report_.modifiers = modifiers;
@@ -3516,7 +3538,13 @@ bool EspUsbDeviceHidKeyboard::releaseUsage(uint8_t usage, uint32_t timeoutMs)
 {
   if (nkroEnabled_)
   {
-    setKeyBit(usage, false);
+    // release() clears modifier usages from `modifiers` too, so releasing a
+    // modifier actually lets go of it instead of leaving it held until
+    // releaseAll().
+    if (!nkroState_.release(usage))
+    {
+      return false;
+    }
     return sendNkroReport(timeoutMs);
   }
   for (size_t i = 0; i < sizeof(report_.keys); i++)
@@ -3533,8 +3561,7 @@ bool EspUsbDeviceHidKeyboard::releaseAll(uint32_t timeoutMs)
 {
   if (nkroEnabled_)
   {
-    nkroModifiers_ = 0;
-    memset(nkroBitmap_, 0, sizeof(nkroBitmap_));
+    nkroState_.clear();
     return sendNkroReport(timeoutMs);
   }
   report_ = EspUsbDeviceBootKeyboardReport();
@@ -3605,6 +3632,12 @@ uint16_t EspUsbDeviceHidKeyboard::hidInEndpointSize() const
 void EspUsbDeviceHidKeyboard::enableNkro(bool enable)
 {
   nkroEnabled_ = enable;
+  if (!enable)
+  {
+    // Keep heldState() honest: the NKRO state means nothing in 6KRO mode, where
+    // report_ carries the held keys instead.
+    nkroState_.clear();
+  }
 }
 
 bool EspUsbDeviceHidKeyboard::nkroEnabled() const
@@ -3612,39 +3645,24 @@ bool EspUsbDeviceHidKeyboard::nkroEnabled() const
   return nkroEnabled_;
 }
 
-void EspUsbDeviceHidKeyboard::setKeyBit(uint8_t usage, bool pressed)
-{
-  // Usages 0xE0-0xE7 are modifiers (their own byte); the bitmap covers 0x00-0xDF.
-  if (usage > 0xdf)
-  {
-    return;
-  }
-  const uint8_t byteIndex = static_cast<uint8_t>(usage >> 3);
-  const uint8_t bitMask = static_cast<uint8_t>(1u << (usage & 0x07));
-  if (pressed)
-  {
-    nkroBitmap_[byteIndex] |= bitMask;
-  }
-  else
-  {
-    nkroBitmap_[byteIndex] = static_cast<uint8_t>(nkroBitmap_[byteIndex] & ~bitMask);
-  }
-}
-
 bool EspUsbDeviceHidKeyboard::sendNkroReport(uint32_t timeoutMs)
 {
   const uint8_t runtime = device_.classRuntimeInstance(hidInstance_);
   const uint8_t reportId = device_.classReportId(hidInstance_);
   // Boot protocol (BIOS) ignores the report descriptor and requires the fixed
-  // 6-key boot report, so fold the bitmap down to the first 6 held usages.
+  // 6-key boot report, so fold the bitmap down to 6 held usages. These are the
+  // six lowest usage numbers, not the six pressed most recently, and no
+  // ErrorRollOver (0x01) is reported when more are held: identifying a 7-key
+  // chord in a BIOS is not a real requirement, and the host asked for boot
+  // protocol itself, so sending something valid beats failing.
   if (protocol_ == 0)
   {
     EspUsbDeviceBootKeyboardReport boot;
-    boot.modifiers = nkroModifiers_;
+    boot.modifiers = nkroState_.modifiers;
     size_t slot = 0;
-    for (uint16_t usage = 0; usage <= 0xdf && slot < sizeof(boot.keys); usage++)
+    for (uint16_t usage = 0; usage <= EspUsbDeviceNkroKeyboardReport::MaxBitmapUsage && slot < sizeof(boot.keys); usage++)
     {
-      if (nkroBitmap_[usage >> 3] & (1u << (usage & 0x07)))
+      if (nkroState_.isDown(static_cast<uint8_t>(usage)))
       {
         boot.keys[slot++] = static_cast<uint8_t>(usage);
       }
@@ -3652,10 +3670,15 @@ bool EspUsbDeviceHidKeyboard::sendNkroReport(uint32_t timeoutMs)
     report_ = boot;
     return device_.sendHidReport(runtime, reportId, &report_, sizeof(report_), timeoutMs);
   }
-  uint8_t buffer[1 + sizeof(nkroBitmap_)];
-  buffer[0] = nkroModifiers_;
-  memcpy(&buffer[1], nkroBitmap_, sizeof(nkroBitmap_));
+  uint8_t buffer[1 + EspUsbDeviceNkroKeyboardReport::BitmapSize];
+  buffer[0] = nkroState_.modifiers;
+  memcpy(&buffer[1], nkroState_.bitmap, sizeof(nkroState_.bitmap));
   return device_.sendHidReport(runtime, reportId, buffer, sizeof(buffer), timeoutMs);
+}
+
+const EspUsbDeviceNkroKeyboardReport &EspUsbDeviceHidKeyboard::heldState() const
+{
+  return nkroState_;
 }
 
 void EspUsbDeviceHidKeyboard::onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)

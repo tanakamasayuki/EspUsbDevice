@@ -64,6 +64,7 @@ tests/
 | FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | planned | |
 | HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal/reverse ports | | |
 | HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal/reverse ports | | optional |
+| HID keyboard NKRO state report | ✅ `nkro_report` (struct bitmap/modifier/boundaries) | pending (needs EspUsbHost bitmap parsing) | pending | | ✅ `examples/KeyboardNKRO` |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | | |
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
 | Custom HID report descriptor | planned | ✅ `custom_hid` | ✅ `custom_hid` | | |
@@ -370,6 +371,7 @@ enumerating on real hardware.
 40. ✅ `peer/composite_hid_vendor` (HID + bulk Vendor, descriptor-duplication fix → 3/3)
 41. ✅ `peer/composite_hid_audio` (UAC1 Audio + HID, claimed together; keyboard + PCM → 3/3)
 42. ✅ `unit/dependency_boundary` (Arduino Core TinyUSB dependency and Audio provenance regression scan)
+43. ✅ `unit/nkro_report` (NKRO state report struct: bitmap layout, modifier routing, boundaries; host g++)
 
 ## Acceptance Rules
 
