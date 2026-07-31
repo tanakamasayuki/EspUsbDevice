@@ -187,6 +187,85 @@ void loop()
     {
       Serial.printf("VENDOR_CONTROL_OUT %u\n", connected && usb.vendorControlOut(0x11, 0, 0, nullptr, 0, deviceAddress) ? 1 : 0);
     }
+    else if (command == 'e')
+    {
+      // Endpoints/packet sizes as vendorOpen() actually opened them (EspUsbHost
+      // 2.5.3). The 'i' command above reports the descriptor; this reports the
+      // pipes, so a mismatch between what the device declares and what the host
+      // driver opened is visible.
+      Serial.printf("VENDOR_PIPES in=0x%02x out=0x%02x in_mps=%u out_mps=%u\n",
+                    usb.vendorInEndpoint(deviceAddress),
+                    usb.vendorOutEndpoint(deviceAddress),
+                    usb.vendorInPacketSize(deviceAddress),
+                    usb.vendorOutPacketSize(deviceAddress));
+    }
+    else if (command == 'z')
+    {
+      // Write exactly one full packet. A transfer whose length is a multiple of
+      // wMaxPacketSize does not terminate itself, so without the trailing ZLP the
+      // device cannot tell the transfer ended. Auto ZLP (2.5.3) appends it.
+      const uint16_t mps = usb.vendorOutPacketSize(deviceAddress);
+      usb.vendorSetAutoZlp(true, deviceAddress);
+      static uint8_t payload[512];
+      const size_t length = mps > sizeof(payload) ? sizeof(payload) : mps;
+      for (size_t i = 0; i < length; i++)
+      {
+        payload[i] = static_cast<uint8_t>('A' + (i % 26));
+      }
+      const bool ok = connected && usb.vendorWrite(payload, length, deviceAddress);
+      Serial.printf("VENDOR_WRITE_MPS ok=%u len=%u zlp=%u\n",
+                    ok ? 1 : 0,
+                    static_cast<unsigned>(length),
+                    usb.vendorAutoZlp(deviceAddress) ? 1 : 0);
+      usb.vendorSetAutoZlp(false, deviceAddress);
+    }
+    else if (command == 'q')
+    {
+      // Queued bulk OUT (2.5.3): four back-to-back full-packet transfers with no
+      // round trip between them, which is the pattern that stresses the device's
+      // OUT FIFO and onRx handling hardest.
+      const uint16_t mps = usb.vendorOutPacketSize(deviceAddress);
+      const size_t frames = 4;
+      size_t submitted = 0;
+      size_t bytes = 0;
+      bool ok = connected && usb.vendorWriteQueueBegin(4, mps, deviceAddress);
+      for (size_t f = 0; ok && f < frames; f++)
+      {
+        size_t capacity = 0;
+        uint8_t *slot = usb.vendorWriteAcquire(&capacity, 1000, deviceAddress);
+        if (!slot)
+        {
+          ok = false;
+          break;
+        }
+        const size_t length = capacity < mps ? capacity : mps;
+        for (size_t i = 0; i < length; i++)
+        {
+          slot[i] = static_cast<uint8_t>('a' + (f % 26));
+        }
+        if (!usb.vendorWriteSubmit(slot, length, deviceAddress))
+        {
+          ok = false;
+          break;
+        }
+        submitted++;
+        bytes += length;
+      }
+      // Drain before ending the queue so the counters the device reports are for
+      // transfers that actually completed.
+      const uint32_t start = millis();
+      while (usb.vendorWritePending(deviceAddress) > 0 && millis() - start < 2000)
+      {
+        delay(1);
+      }
+      const size_t pending = usb.vendorWritePending(deviceAddress);
+      usb.vendorWriteQueueEnd(deviceAddress);
+      Serial.printf("VENDOR_QUEUE ok=%u frames=%u bytes=%u pending=%u\n",
+                    ok ? 1 : 0,
+                    static_cast<unsigned>(submitted),
+                    static_cast<unsigned>(bytes),
+                    static_cast<unsigned>(pending));
+    }
     else if (command == 'u')
     {
       uint8_t buffer[64] = {};

@@ -73,9 +73,9 @@ tests/
 | System control HID | planned | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | | ✅ `usb_midi` | ✅ `usb_midi` | | |
+| USB MIDI | | ✅ `usb_midi` (MIDI-only device also enumerates as supported) | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
-| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
+| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
 | Core dependency boundary | ✅ `dependency_boundary` | | | | |
@@ -170,8 +170,12 @@ endpoints.
 
 `peer/usb_midi` is the first USB MIDI test for `EspUsbDeviceMidi`. It verifies
 Device -> Host and Host -> Device channel voice messages, plus short Host ->
-Device SysEx packet splitting. The default profile uses the released Host
-version. `s3_peer_local` is only for optional pre-release validation of
+Device SysEx packet splitting. It also checks that a MIDI-only device enumerates
+as supported in `EspUsbHostDeviceInfo::supported` with its two interfaces
+(AudioControl + MIDIStreaming); the host only started counting a MIDI interface
+towards that flag in EspUsbHost 2.6.0, so this device used to enumerate as
+unsupported and the check was not possible. The default profile uses the released
+Host version. `s3_peer_local` is only for optional pre-release validation of
 unreleased Host-side fixes.
 
 `loopback/usb_midi` verifies the same behavior on one P4. SysEx packets can be
@@ -194,6 +198,13 @@ landing URL reads. Descriptor unit tests validate the WebUSB and Microsoft OS
 2.0 BOS capabilities, descriptor-set lengths, WinUSB compatible ID, registry
 property, and allocated vendor-interface number. `loopback/usb_vendor` also
 reads the complete Microsoft OS 2.0 descriptor set through its vendor request.
+Three further checks use EspUsbHost 2.5.3 APIs, available since the host side of
+the rig moved to 2.7.0: the bulk pipes `vendorOpen()` actually opened match the
+endpoint addresses and 64-byte packet sizes the device declares; a write of
+exactly one full packet followed by an automatic ZLP arrives as a single complete
+64-byte read and leaves the endpoint usable; and four queued back-to-back
+full-packet writes all reach the sketch. The first two are the device-receive half
+of the packet boundary the P4 HS manual test covers on the device-send side.
 The default profile uses the released Host version.
 `s3_peer_local` is only for optional pre-release validation of unreleased
 Host-side fixes. Actual Windows driver binding and browser behavior remain in

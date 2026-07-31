@@ -2,6 +2,13 @@
 
 EspUsbHost usb;
 
+// Latched from the connect event so the test can re-read the device's identity
+// without forcing a replug.
+static uint16_t connectedVid = 0;
+static uint16_t connectedPid = 0;
+static bool connectedSupported = false;
+static uint8_t connectedInterfaces = 0;
+
 void setup()
 {
   Serial.begin(115200);
@@ -9,7 +16,19 @@ void setup()
 
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
                         {
-                          Serial.printf("HOST_CONNECTED vid=%04x pid=%04x\n", device.vid, device.pid);
+                          // supported / interfaces are reported so the test can check that a
+                          // MIDI-only device counts as supported. Before EspUsbHost 2.6.0 the
+                          // flag was built from HID / CDC / audio / MSC / vendor-serial
+                          // detection only, so this device enumerated as unsupported.
+                          connectedVid = device.vid;
+                          connectedPid = device.pid;
+                          connectedSupported = device.supported;
+                          connectedInterfaces = device.configurationInterfaceCount;
+                          Serial.printf("HOST_CONNECTED vid=%04x pid=%04x supported=%u interfaces=%u\n",
+                                        device.vid,
+                                        device.pid,
+                                        device.supported ? 1 : 0,
+                                        device.configurationInterfaceCount);
                         });
 
   usb.onMidiMessage([](const EspUsbHostMidiMessage &message)
@@ -33,7 +52,15 @@ void loop()
   if (Serial.available() > 0)
   {
     char command = Serial.read();
-    if (command == 'n')
+    if (command == 'i')
+    {
+      Serial.printf("DEVICE_INFO vid=%04x pid=%04x supported=%u interfaces=%u\n",
+                    connectedVid,
+                    connectedPid,
+                    connectedSupported ? 1 : 0,
+                    connectedInterfaces);
+    }
+    else if (command == 'n')
     {
       Serial.printf("MIDI_TX_NOTE_ON %u\n", usb.midiSendNoteOn(0, 60, 100) ? 1 : 0);
     }

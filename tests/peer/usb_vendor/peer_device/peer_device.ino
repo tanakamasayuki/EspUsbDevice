@@ -5,6 +5,12 @@ EspUsbDeviceVendor Vendor(device);
 
 static volatile uint32_t rxCount = 0;
 static volatile uint32_t controlCount = 0;
+static volatile uint32_t rxLastChunk = 0;
+static volatile uint32_t rxChunks = 0;
+// Echo is what the transfer tests observe, but it doubles as backpressure: a
+// bulk-OUT burst nobody reads back would fill the device TX path and change what
+// the RX test is measuring. The 'e' command turns it off for those cases.
+static volatile bool echoEnabled = true;
 
 static void processVendorRx()
 {
@@ -18,9 +24,14 @@ static void processVendorRx()
       break;
     }
     rxCount += chunk;
-    Vendor.write(reinterpret_cast<const uint8_t *>("echo:"), 5);
-    Vendor.write(buffer, chunk);
-    Vendor.flush();
+    rxChunks++;
+    rxLastChunk = chunk;
+    if (echoEnabled)
+    {
+      Vendor.write(reinterpret_cast<const uint8_t *>("echo:"), 5);
+      Vendor.write(buffer, chunk);
+      Vendor.flush();
+    }
     available = Vendor.available();
   }
 }
@@ -74,6 +85,25 @@ void loop()
       Serial.printf("DEVICE_STATUS rx=%lu control=%lu\n",
                     static_cast<unsigned long>(rxCount),
                     static_cast<unsigned long>(controlCount));
+    }
+    else if (command == 'b')
+    {
+      Serial.printf("DEVICE_RX_BYTES rx=%lu chunks=%lu last=%lu\n",
+                    static_cast<unsigned long>(rxCount),
+                    static_cast<unsigned long>(rxChunks),
+                    static_cast<unsigned long>(rxLastChunk));
+    }
+    else if (command == 'e')
+    {
+      echoEnabled = !echoEnabled;
+      Serial.printf("DEVICE_ECHO %u\n", echoEnabled ? 1 : 0);
+    }
+    else if (command == 'z')
+    {
+      rxCount = 0;
+      rxChunks = 0;
+      rxLastChunk = 0;
+      Serial.println("DEVICE_RX_RESET");
     }
   }
   delay(1);
