@@ -416,6 +416,60 @@ int main()
             responseStorage[6] == 0x80,
         "uac2_clock_range_response");
 
+  // Linux (snd_usb_audio) reads the sub-range count first with wLength = 2,
+  // then re-reads the full list. A short IN request must be answered with
+  // min(wLength, payload), never stalled.
+  response.reset();
+  request.length = 2;
+  requestError = AudioRequestError::UnknownEntity;
+  check(writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                request, response, &requestError) &&
+            requestError == AudioRequestError::None &&
+            response.size() == 2 &&
+            read16(responseStorage) == 1,
+        "uac2_clock_range_short_read");
+
+  response.reset();
+  request.length = 64;
+  check(writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                request, response) &&
+            response.size() == 14 &&
+            read16(responseStorage) == 1,
+        "uac2_clock_range_oversized_read");
+
+  response.reset();
+  request.length = 1;
+  check(!writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                 request, response, &requestError) &&
+            requestError == AudioRequestError::InvalidLength,
+        "uac2_clock_range_undersized_rejected");
+
+  response.reset();
+  request.request = 0x01;
+  request.length = 2;
+  check(writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                request, response) &&
+            response.size() == 2 &&
+            responseStorage[0] == 0x80 &&
+            responseStorage[1] == 0xbb,
+        "uac2_clock_cur_short_read");
+
+  response.reset();
+  request.length = 8;
+  check(writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                request, response) &&
+            response.size() == 4 &&
+            read32(responseStorage) == 48000,
+        "uac2_clock_cur_oversized_read");
+
+  response.reset();
+  request.length = 0;
+  check(!writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                 request, response, &requestError) &&
+            requestError == AudioRequestError::InvalidLength,
+        "uac2_clock_cur_zero_length_rejected");
+
+  request.request = 0x02;
   response.reset();
   request.entityId = captureFeature;
   request.selector = 0x02;
@@ -428,6 +482,31 @@ int main()
             read16(responseStorage + 6) == 0x0100,
         "uac2_volume_range_response");
 
+  response.reset();
+  request.length = 2;
+  check(writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                request, response) &&
+            response.size() == 2 &&
+            read16(responseStorage) == 1,
+        "uac2_volume_range_short_read");
+
+  response.reset();
+  request.length = 32;
+  check(writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                request, response) &&
+            response.size() == 8 &&
+            read16(responseStorage) == 1 &&
+            read16(responseStorage + 2) == 0xa600,
+        "uac2_volume_range_oversized_read");
+
+  response.reset();
+  request.length = 1;
+  check(!writeUac2EntityResponse(controls, duplexGraph.controlInterface,
+                                 request, response, &requestError) &&
+            requestError == AudioRequestError::InvalidLength,
+        "uac2_volume_range_undersized_rejected");
+
+  response.reset();
   request.request = 0x01;
   request.length = 2;
   const uint8_t minusTwelveDb[] = {0x00, 0xf4};

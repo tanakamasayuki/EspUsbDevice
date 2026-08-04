@@ -665,8 +665,10 @@ bool EspUsbAudioFunction::handleGetEntityRequest(uint8_t rhport,
         static_cast<uint8_t>(value & 0xff),
         static_cast<uint8_t>((value >> 8) & 0xff),
     };
+    // wLength bounds what the host accepts; TinyUSB clips the data stage to
+    // min(wLength, responseLength), so only a zero-length read is invalid.
     const uint16_t responseLength = selector == 1 ? 1 : 2;
-    if (request->wLength != responseLength)
+    if (request->wLength == 0)
     {
       return false;
     }

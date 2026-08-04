@@ -112,6 +112,19 @@ bool DescriptorBuffer::patchU16(size_t offset, uint16_t value)
   return true;
 }
 
+bool DescriptorBuffer::truncate(size_t size)
+{
+  if (!ok())
+  {
+    return false;
+  }
+  if (size < size_)
+  {
+    size_ = size;
+  }
+  return true;
+}
+
 DescriptorLayout::DescriptorLayout(EndpointLimits limits) : limits_(limits)
 {
   if (limits_.maxEndpointNumber == 0 || limits_.maxEndpointNumber > 15 ||

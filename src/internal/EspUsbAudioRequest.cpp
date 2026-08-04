@@ -115,11 +115,9 @@ bool writeUac2EntityResponse(AudioControlState &state,
   int32_t current = 0;
   if (request.request == REQUEST_CUR)
   {
-    const uint16_t expected =
-        selector == AudioControlSelector::SampleRate
-            ? 4
-            : (selector == AudioControlSelector::Volume ? 2 : 1);
-    if (request.length != expected)
+    // wLength is the host's buffer size, not an exact request: answer with
+    // min(wLength, payload) instead of stalling on a mismatch.
+    if (request.length == 0)
     {
       setError(error, AudioRequestError::InvalidLength);
       return false;
@@ -146,8 +144,9 @@ bool writeUac2EntityResponse(AudioControlState &state,
     if (!ok)
     {
       setError(error, AudioRequestError::BufferOverflow);
+      return false;
     }
-    return ok;
+    return response.truncate(request.length);
   }
 
   if (request.request != REQUEST_RANGE ||
@@ -160,8 +159,9 @@ bool writeUac2EntityResponse(AudioControlState &state,
 
   if (selector == AudioControlSelector::SampleRate)
   {
-    const size_t expected = 2U + state.sampleRateCount() * 12U;
-    if (request.length != expected)
+    // Hosts such as Linux read wNumSubRanges with wLength = 2 before asking
+    // for the whole list, so anything down to the 2 byte header is valid.
+    if (request.length < 2)
     {
       setError(error, AudioRequestError::InvalidLength);
       return false;
@@ -181,11 +181,11 @@ bool writeUac2EntityResponse(AudioControlState &state,
         return false;
       }
     }
-    return true;
+    return response.truncate(request.length);
   }
 
   AudioControlRange range;
-  if (request.length != 8)
+  if (request.length < 2)
   {
     setError(error, AudioRequestError::InvalidLength);
     return false;
@@ -203,7 +203,7 @@ bool writeUac2EntityResponse(AudioControlState &state,
                                   : AudioRequestError::BufferOverflow);
     return false;
   }
-  return true;
+  return response.truncate(request.length);
 }
 
 bool applyUac2EntityRequest(AudioControlState &state,

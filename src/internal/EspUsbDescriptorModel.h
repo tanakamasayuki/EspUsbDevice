@@ -49,6 +49,8 @@ public:
   bool writeU16(uint16_t value);
   bool patchU8(size_t offset, uint8_t value);
   bool patchU16(size_t offset, uint16_t value);
+  // Drops trailing bytes so the buffer holds at most `size` bytes.
+  bool truncate(size_t size);
 
   const uint8_t *data() const { return storage_; }
   uint8_t *data() { return storage_; }
