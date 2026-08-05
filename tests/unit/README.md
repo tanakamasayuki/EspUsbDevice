@@ -26,6 +26,16 @@ for both FS and HS. Keyboard + mouse composite uses one HID interface with
 report IDs and 16-byte endpoint MPS so the report-ID-prefixed keyboard report
 fits in one interrupt packet.
 
+## `ccid_descriptor`
+
+Host g++ test for the CCID interface and class descriptor. The descriptor
+builder is pure byte assembly with no Arduino or TinyUSB dependency, so it is
+extracted from `src/EspUsbDeviceCcid.cpp` at test time (as `keymap` does) and
+compiled on the host - the assertions run against the shipped code. It checks
+every CCID class descriptor field, most importantly the exchange level a host
+reads to decide between TPDUs and APDUs, and that the interrupt endpoint sits
+one above the bulk pair in both standalone and composite placement.
+
 ## `descriptor_model`
 
 Exercises the v2 descriptor foundation using host g++ only, without Arduino or

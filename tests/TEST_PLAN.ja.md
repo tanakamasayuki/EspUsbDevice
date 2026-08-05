@@ -68,6 +68,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認） | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
+| CCID スマートカードリーダー | ✅ `ccid_descriptor`（interface / class descriptor の byte 列） | ✅ `usb_ccid` class descriptor、ICC 3 状態、ATR、APDU / escape / parameters / abort、挿抜通知 | 未実装 | | ✅ `examples/SmartCardReader` |
 | USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 未実装 | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
 | Core依存境界 | ✅ `dependency_boundary` | | | | |

@@ -44,6 +44,7 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `usb_midi`: USB MIDI。channel voice message と短い SysEx の Host -> Device packet 分割が S3 2台構成で通過済み。
 - `usb_msc`: USB Mass Storage。単一 LUN RAM disk の capacity / inquiry / read / write / error path が S3 2台構成で通過済み。
 - `usb_vendor`: vendor-specific interface。interface / bulk endpoint 列挙、bulk echo、application vendor control IN/OUT、WebUSB landing URL 読み出しが S3 2台構成で通過済み。
+- `usb_ccid`: USB CCID スマートカードリーダー（device）を EspUsbHost host（DUT）で駆動。Host が解釈する class descriptor（1 slot、T=1、short APDU exchange level）、スケッチが slot を操作したときの ICC 3 状態、活性化時の ATR、カード自身の 6D00 を含む APDU のやり取り、escape と GetParameters、ABORT 手順、そして device 側から唯一自発的に送る interrupt endpoint の挿抜通知を検証する。
 - `usb_ncm`: USB CDC-NCM ネットワークデバイス（device）を EspUsbHost host（DUT）で駆動。EspUsbHost リポジトリ側のコピーとは観点を変え、(1) 列挙ディスクリプタの詳細（control/data インターフェース分離・active alt・方向付き3エンドポイント）、(2) トランスポート層のフレームカウンタ（1回の転送で双方向にフレームが動き TX 失敗ゼロ、DHCP リースがゲートウェイ .1 でない実クライアントアドレス）、(3) デバイス側視点（デバイス自身の web server が host のリクエストを処理したこと）を検証する。
 - `usb_audio_speaker`: USB Audio speaker sink（Host → Device）。Host から Device への speaker PCM 受信が S3 2台構成で通過済み（UAC1 / FS）。
   logical channelのmute/volume capability、SET/GET、range、Device event通知も検証する。

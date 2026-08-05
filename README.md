@@ -52,6 +52,8 @@ Owning this boundary makes the following possible:
   vendor interface.
 - Configure enabled classes and TinyUSB buffers independently of
   Arduino-ESP32's prebuilt `CFG_TUD_*` values.
+- Add a class TinyUSB itself does not implement - CCID - through its
+  application class-driver hook, without patching the vendored sources.
 - Tear down and reinitialize the runtime without falling back to `USB.begin()`
   or `esp32-hal-tinyusb`.
 
@@ -59,7 +61,8 @@ Owning this boundary makes the following possible:
 
 This release covers HID keyboard / mouse / gamepad / consumer / system / custom /
 vendor HID, CDC ACM, USB MIDI, MSC, USBVendor, USB Audio (speaker / microphone),
-a CDC-NCM network device, and multi-function composite devices.
+a CDC-NCM network device, a CCID smart card reader, and multi-function
+composite devices.
 
 Typical use cases:
 
@@ -72,6 +75,8 @@ Typical use cases:
   deferred until the matching EspUsbHost UAC2 implementation is ready.
 - Present the board as a USB network adapter (CDC-NCM), with optional lwIP/DHCP
   so a PC can reach a page or API on the device over USB.
+- Present the board as a USB smart card reader (CCID) whose card is implemented
+  by the sketch, and answer APDUs from a PC/SC host.
 - Combine several of the above as one composite device.
 
 ## Design Goals
@@ -109,6 +114,8 @@ available:
   available by explicit selection; UAC2 streaming validation is still pending.
 - CDC-NCM network device with raw-frame API and optional lwIP/esp_netif
   integration (DHCP server / client / static address).
+- CCID smart card reader with one slot: sketch-supplied ATR, APDU and escape
+  callbacks, and slot change notifications.
 - Multi-function composite devices (e.g. HID + CDC + MSC on one device).
 - Serial command sketches for pytest-embedded peer and loopback tests.
 
@@ -200,6 +207,8 @@ User-facing sketches are documented in [examples/README.md](examples/README.md).
   storage.
 - `UsbNetwork`: CDC-NCM network device with a DHCP server and a web page at
   `http://192.168.7.1/` reachable over USB.
+- `SmartCardReader`: CCID smart card reader with an emulated card that answers
+  Get UID and an echo instruction.
 - `CompositeHidCdcMsc`: HID keyboard + CDC serial + MSC FAT RAM disk as one
   composite device.
 
@@ -334,6 +343,24 @@ and TinyUSB's public driver API. The old Espressif USBAudioCard-derived source
 was deleted rather than carried forward. See
 [Audio source provenance](docs/V2_AUDIO_PROVENANCE.ja.md).
 
+## CCID (Smart Card Reader) APIs
+
+- `EspUsbDeviceCcid` presents the board as a USB CCID reader with one slot
+  (`bInterfaceClass` 0x0b, bulk IN/OUT plus an interrupt IN for slot changes).
+  The card behind the slot is the sketch's.
+- `insertCard(atr, length)` / `removeCard()` decide whether a card is present
+  and what ATR `IccPowerOn` answers with; both notify the host over the
+  interrupt endpoint. `cardPresent()` / `cardPowered()` report the slot state.
+- `onApdu(callback)` answers each exchange: the callback receives the APDU and
+  writes the answer including SW1SW2, so the sketch decides what the card is.
+  Without a callback the device answers 6D00 like a card that does not know the
+  instruction. `onEscape(callback)` is the same for vendor-specific
+  `PC_to_RDR_Escape` traffic, and `onPower(callback)` reports activation.
+- The device answers the slot-status, activation, parameter, and abort messages
+  itself, so a conforming host needs no help from the sketch for them.
+- Callbacks run in the TinyUSB device task: return promptly and do not call back
+  into USB from them.
+
 ## Network / Composite APIs
 
 USB network (CDC-NCM):
@@ -384,6 +411,11 @@ Composite:
   core (it would need a core rebuild); NCM is supported natively by modern hosts.
   A device reaching the internet through the PC needs host-side bridging/NAT and
   is out of scope; use the ESP's own Wi-Fi for that.
+- The CCID reader is one slot, T=1, short APDU level exchange. Chaining,
+  extended APDUs, PIN pad / secure entry, mechanical slots, and clock / data-rate
+  negotiation are out of scope - the class descriptor declares none of them, so a
+  conforming host never asks. The largest CCID message is 271 bytes
+  (`ESP_USB_DEVICE_CCID_BUFFER_SIZE` raises it).
 - Composite devices are bounded by the ESP32-S3 endpoint budget and the
   configuration-descriptor capacity. Audio composite constraints are still
   being validated on the Device side.

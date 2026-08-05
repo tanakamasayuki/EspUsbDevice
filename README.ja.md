@@ -44,13 +44,15 @@ forkしたわけではありません。選択したfile、pin、license、更�
 - compositeのinterface/endpointを一括採番し、controllerごとに不可能な構成をPHY開始前に拒否する。
 - 実際に割り当てたvendor interface用のWebUSB / Microsoft OS 2.0 descriptorを生成する。
 - enableするclassとTinyUSB bufferをArduino-ESP32 prebuiltの`CFG_TUD_*`値から独立して設定する。
+- TinyUSB自身が実装していないclass（CCID）を、同梱sourceに手を入れずapplication
+  class driver hookから追加する。
 - `USB.begin()`や`esp32-hal-tinyusb`へfallbackせずruntimeを終了・再初期化する。
 
 ## リリース範囲
 
 このリリースでは、HID keyboard / mouse / gamepad / consumer / system / custom / vendor HID、
 CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC-NCM
-ネットワークデバイス、多機能な複合デバイスを扱えます。
+ネットワークデバイス、CCID スマートカードリーダー、多機能な複合デバイスを扱えます。
 
 代表的な用途:
 
@@ -62,6 +64,8 @@ CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC
   UAC2 descriptor/controlは明示選択でき、peer streaming検証はEspUsbHost側のUAC2対応後に行う。
 - ボードを USB ネットワークアダプタ（CDC-NCM）として見せ、任意で lwIP/DHCP を有効にして
   PC が USB 経由でデバイス上のページや API にアクセスできるようにする。
+- ボードを USB スマートカードリーダー（CCID）として見せ、カードの中身をスケッチで実装して
+  PC/SC ホストからの APDU に応答する。
 - 上記を組み合わせて 1 つの複合デバイスにする。
 
 ## 設計目標
@@ -96,6 +100,8 @@ loopback テストで確認できる範囲を広げています。
   streaming検証は未完了です。
 - CDC-NCM ネットワークデバイス（生フレーム API と、任意の lwIP/esp_netif 統合＝DHCP
   サーバ / クライアント / 静的アドレス）。
+- CCID スマートカードリーダー（1 slot、スケッチが与える ATR、APDU / escape callback、
+  カード挿抜通知）。
 - 多機能な複合デバイス（例: HID + CDC + MSC を 1 台に）。
 - pytest-embedded peer / loopback テスト用の serial command sketch。
 
@@ -184,6 +190,7 @@ void loop()
 - `MSCSdCard`: SPI SD card を Host へ USB storage として公開する Mass Storage Class。
 - `UsbNetwork`: DHCP サーバと `http://192.168.7.1/` の Web ページを持つ CDC-NCM
   ネットワークデバイス（USB 経由でアクセス）。
+- `SmartCardReader`: Get UID と echo 命令に応答する擬似カードを持つ CCID スマートカードリーダー。
 - `CompositeHidCdcMsc`: HID keyboard + CDC serial + MSC FAT RAM disk を 1 台にした複合デバイス。
 
 ## HID Keyboard / Mouse APIs
@@ -301,6 +308,23 @@ class requestをtest済みですが、end-to-end UAC2 streamingはまだ対応�
 Espressif USBAudioCard由来sourceを継続改変せず削除しています。詳細は
 [Audio source provenance](docs/V2_AUDIO_PROVENANCE.ja.md)を参照してください。
 
+## CCID（スマートカードリーダー）APIs
+
+- `EspUsbDeviceCcid` はボードを 1 slot の USB CCID リーダーとして見せます
+  （`bInterfaceClass` 0x0b、bulk IN/OUT と挿抜通知用の interrupt IN）。
+  slot の中のカードはスケッチが実装します。
+- `insertCard(atr, length)` / `removeCard()` がカードの有無と `IccPowerOn` で返す ATR を
+  決め、いずれも interrupt endpoint で Host へ通知します。状態は `cardPresent()` /
+  `cardPowered()` で読めます。
+- `onApdu(callback)` が各 exchange に応答します。callback は APDU を受け取り SW1SW2 を
+  含む応答を書くので、カードの正体を決めるのはスケッチです。callback 未設定時は、命令を
+  知らないカードと同じ 6D00 を返します。`onEscape(callback)` は vendor 固有の
+  `PC_to_RDR_Escape` 用、`onPower(callback)` は活性化の通知です。
+- slot status、活性化、parameter、abort の各メッセージはライブラリ側で応答するので、
+  仕様に従う Host に対してスケッチ側の対応は不要です。
+- callback は TinyUSB device task で実行されます。長く止めず、中から USB API を
+  呼び返さないでください。
+
 ## Network / Composite APIs
 
 USB ネットワーク（CDC-NCM）:
@@ -343,6 +367,10 @@ USB ネットワーク（CDC-NCM）:
   UAC2のend-to-end streamingは未検証です。I2S、codec、DACなどのデバイス接続は
   このライブラリの責務外です。
 - ネットワークデバイスは CDC-NCM のみです。CDC-ECM は Arduino-ESP32 core で無効（有効化には core 再ビルドが必要）で、NCM は最近のホスト OS が標準対応します。デバイスが PC 経由でインターネットに抜けるにはホスト側のブリッジ/NAT が必要でスコープ外です（その用途は ESP 自身の Wi-Fi を使用）。
+- CCID リーダーは 1 slot、T=1、short APDU level exchange です。chaining、extended APDU、
+  PIN pad / secure entry、mechanical slot、clock / data rate の交渉は範囲外で、class
+  descriptor でも非対応と宣言するため仕様に従う Host は要求しません。CCID メッセージの
+  上限は 271 byte です（`ESP_USB_DEVICE_CCID_BUFFER_SIZE` で拡張）。
 - 複合デバイスはESP32-S3のUSB endpoint予算とconfiguration descriptor容量で制限されます。
   Audioを含む複合構成はDevice側descriptor制約の確認中です。
 - MSC は block device と filesystem を分けて扱います。Host から通常の drive として mount

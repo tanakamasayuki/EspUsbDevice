@@ -305,6 +305,19 @@ See [UsbNetwork/README.md](UsbNetwork/README.md) for details.
 - For raw Ethernet frames without an IP stack, use `onFrame()` / `sendFrame()`.
 - Device side is CDC-NCM only (CDC-ECM is not enabled in the core).
 
+## SmartCardReader
+
+USB CCID smart card reader whose card is implemented by the sketch.
+See [SmartCardReader/README.md](SmartCardReader/README.md) for details.
+
+- Register `EspUsbDeviceCcid`; the board enumerates as a reader with one slot,
+  and a PC/SC host (pcsc_scan, Windows' Smart Card service, EspUsbHost's `ccid*`
+  API) can list it, activate the card, and exchange APDUs.
+- `insertCard(atr, length)` / `removeCard()` drive card presence; the emulated
+  card answers the PC/SC Get UID pseudo APDU and an echo instruction.
+- 'i' and 'r' on the serial monitor put the card in and take it out, which the
+  host sees as slot change notifications.
+
 ## Notes
 
 - Connect the USB-device-capable ESP32-S3 or similar board to a USB host.
