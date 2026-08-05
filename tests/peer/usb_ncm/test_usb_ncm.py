@@ -77,6 +77,37 @@ def _wait_device_link(device, timeout=15):
         time.sleep(0.1)
 
 
+def _leased(stats):
+    """True when the host holds a real client lease (not the device's own .1)."""
+    return stats["ip"].startswith("192.168.7.") and stats["ip"] != "192.168.7.1"
+
+
+def _wait_for_lease(dut, device, timeout=30):
+    """Poll the host until the device's DHCP server has handed it an address.
+
+    Polling the counters rather than waiting for the one-shot lease line also
+    covers the case where an earlier test attached the netif but the handshake
+    never completed - and it means the failure can report both sides' state
+    instead of a bare timeout, which is the difference between "flaky" and
+    knowing which direction stopped moving frames.
+    """
+    deadline = time.monotonic() + timeout
+    stats = _read_stats(dut)
+    while not _leased(stats):
+        if time.monotonic() >= deadline:
+            device.write("s")
+            try:
+                device_stats = _text(device.expect(DEVICE_STATS_RE, timeout=5).group(0))
+            except Exception:  # noqa: BLE001 - diagnostics only
+                device_stats = "device did not answer"
+            raise AssertionError(
+                f"no DHCP lease within {timeout}s: host={stats} device={device_stats}"
+            )
+        time.sleep(1)
+        stats = _read_stats(dut)
+    return stats
+
+
 def _ensure_attached(dut, device):
     """Bring the DHCP-client netif up regardless of prior test state.
 
@@ -91,8 +122,8 @@ def _ensure_attached(dut, device):
     if stats["netif"] == 0:
         dut.write("a")
         dut.expect(r"NETWORK_ATTACH ok=\d")
-        dut.expect(r"ip=192\.168\.7\.\d", timeout=30)
-        stats = _read_stats(dut)
+    if not _leased(stats):
+        stats = _wait_for_lease(dut, device)
     return stats
 
 
