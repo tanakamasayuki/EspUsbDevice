@@ -408,9 +408,20 @@ static bool ccidd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result,
     return true;
   }
 
+  if (ep_addr == g_driver.endpointNotify)
+  {
+    // The endpoint is free again: send the slot state if a change was dropped
+    // while this notification was waiting to be polled.
+    if (g_activeCcid)
+    {
+      g_activeCcid->handleNotifyComplete();
+    }
+    return true;
+  }
+
   if (ep_addr != g_driver.endpointOut)
   {
-    return true; // interrupt IN completion: nothing to follow up
+    return true;
   }
 
   if (result != XFER_RESULT_SUCCESS)
@@ -703,7 +714,22 @@ void EspUsbDeviceCcid::notifySlotState()
       CCID_RDR_TO_PC_NOTIFY_SLOT_CHANGE,
       static_cast<uint8_t>((cardPresent_ ? 0x01 : 0x00) | 0x02),
   };
-  espUsbCcidDriverNotify(message, sizeof(message));
+  // The endpoint holds one notification at a time and only frees up when the
+  // host polls it - which it does not do at all until it opens the interface, so
+  // the very first notification can sit there for a long time. A card that moves
+  // in the meantime must not be lost: remember that the host is behind, and send
+  // the state it ends up in once the endpoint is free (handleNotifyComplete()).
+  notifyPending_ = !espUsbCcidDriverNotify(message, sizeof(message));
+}
+
+void EspUsbDeviceCcid::handleNotifyComplete()
+{
+  if (!notifyPending_)
+  {
+    return;
+  }
+  notifyPending_ = false;
+  notifySlotState();
 }
 
 size_t EspUsbDeviceCcid::writeHeader(uint8_t messageType, uint32_t dataLength, uint8_t slot,

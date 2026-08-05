@@ -808,6 +808,8 @@ public:
   void handleOverrun(uint8_t messageType, uint8_t slot, uint8_t sequence);
   // Internal: CCID class request ABORT for this slot / sequence.
   void handleAbort(uint8_t slot, uint8_t sequence);
+  // Internal: the interrupt IN endpoint finished a slot change notification.
+  void handleNotifyComplete();
 
 private:
   size_t writeHeader(uint8_t messageType, uint32_t dataLength, uint8_t slot,
@@ -828,6 +830,9 @@ private:
   uint8_t atrLength_ = 0;
   std::atomic<bool> cardPresent_{false};
   std::atomic<bool> cardPowered_{false};
+  // A slot change happened while the interrupt endpoint still had an unpolled
+  // notification on it, so the host has not been told the current state yet.
+  std::atomic<bool> notifyPending_{false};
   bool aborted_ = false; // an ABORT request is pending for the current slot
 
   uint8_t response_[ESP_USB_DEVICE_CCID_BUFFER_SIZE] = {};
