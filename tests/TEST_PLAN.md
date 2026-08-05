@@ -77,7 +77,7 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | CCID smart card reader | ✅ `ccid_descriptor` (interface / class descriptor bytes) | ✅ `usb_ccid` class descriptor, ICC states, ATR, APDU / escape / parameters / abort, slot change notifications | not implemented | | ✅ `examples/SmartCardReader` |
-| USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
+| USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`, UAC2 `usb_audio_uac2` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
 | Core dependency boundary | ✅ `dependency_boundary` | | | | |
 | examples compile | ✅ `examples_compile` all declared S2/S3/P4 profiles | | | | |
@@ -142,9 +142,10 @@ First additions:
 CDC ACM, MIDI, MSC, USBVendor, and Audio require matching Device classes.
 EspUsbDevice-based counterparts for `peer/usb_serial`, `peer/usb_midi`,
 `peer/usb_msc`, `peer/usb_vendor`, and `peer/usb_audio_speaker` are in place.
-Audio is automated through UAC1 peer tests on S3. UAC1 is the library default;
-UAC2 is an explicit protocol selection and its streaming validation remains
-deferred until a matching Host implementation is available. There is currently
+Audio is automated through peer tests on S3. UAC1 is the library default; UAC2 is
+an explicit protocol selection and is covered end to end by `peer/usb_audio_uac2`
+against an EspUsbHost 2.7.1 UAC2 host (device-side control state, Clock Source
+rate request, both streaming directions, feedback endpoint). There is currently
 no one-board P4 loopback Audio test, but Audio is no longer tied implicitly to
 either P4 or high speed. `peer/usb_audio_microphone` covers the USB Audio source
 (microphone) direction: the device streams generated PCM and the host verifies
@@ -375,6 +376,7 @@ enumerating on real hardware.
 32. (no `loopback/usb_audio`: not implemented; UAC1 Audio is covered by Peer tests)
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
+34a. ✅ `peer/usb_audio_uac2` (UAC2 end to end: device control state, Clock Source rate, both directions, feedback)
 35. ✅ `unit/composite_constraints` (Audio composite builds / MAX_CLASSES)
 36. ✅ `peer/composite_hid_cdc` (composite template + shared util, 4/4)
 37. ✅ `peer/composite_hid_msc` (found → fixed the HID numbering collision → 3/3; `docs/DESIGN_NOTES.ja.md`)

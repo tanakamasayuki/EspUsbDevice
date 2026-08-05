@@ -71,8 +71,8 @@ Typical use cases:
 - Expose RAM disks, FAT RAM disks, or SD cards as USB MSC devices.
 - Build non-HID vendor-specific bulk/control interfaces.
 - Read and write validated UAC1 Playback/Capture PCM through bounded FIFOs.
-  UAC2 descriptor/control support is selectable; peer streaming validation is
-  deferred until the matching EspUsbHost UAC2 implementation is ready.
+  UAC2 is selectable and is covered end to end by the `peer/usb_audio_uac2`
+  two-board test against an EspUsbHost 2.7.1 UAC2 host.
 - Present the board as a USB network adapter (CDC-NCM), with optional lwIP/DHCP
   so a PC can reach a page or API on the device over USB.
 - Present the board as a USB smart card reader (CCID) whose card is implemented
@@ -110,8 +110,9 @@ available:
 - USB MSC block device and SCSI callbacks.
 - USBVendor bulk IN/OUT, control requests, and WebUSB landing URL.
 - UAC1-default Audio Playback/Capture polling I/O, per-channel mute/volume
-  state, control events, and stream stats. UAC2 descriptor/control support is
-  available by explicit selection; UAC2 streaming validation is still pending.
+  state, control events, and stream stats. UAC2 is available by explicit
+  selection, with Clock Source rate control, the UAC2 Feature Unit layout, and
+  both streaming directions covered by a peer test.
 - CDC-NCM network device with raw-frame API and optional lwIP/esp_netif
   integration (DHCP server / client / static address).
 - CCID smart card reader with one slot: sketch-supplied ATR, APDU and escape
@@ -334,9 +335,13 @@ capture.addFormat({48000, 1, 2, 16});
 UAC1 is the default and is covered by S3 speaker, microphone, and duplex peer
 streaming tests, including control changes and 16/24/32-bit
 descriptor/transfer coverage. UAC2 is selected with
-`EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`; its descriptors and
-class requests are tested, but end-to-end UAC2 streaming is intentionally not
-claimed yet.
+`EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`. Its descriptors, Clock
+Source sample-rate control, Feature Unit mute/volume (master and per logical
+channel), and both isochronous directions - including the asynchronous playback
+interface's explicit feedback endpoint - are covered by the `peer/usb_audio_uac2`
+two-board test against an EspUsbHost UAC2 host. A UAC2 function declares one
+sample rate per direction: the descriptor builder emits a single alternate
+setting, so the Clock Source has one rate to report.
 
 The new Audio source was independently designed from USB Audio specifications
 and TinyUSB's public driver API. The old Espressif USBAudioCard-derived source
@@ -404,8 +409,9 @@ Composite:
   `USBHIDKeyboard`, `USBHIDMouse`, or other built-in USB device classes.
 - USB Audio uses `EspUsbAudioFunction` for Playback/Capture. UAC1 is the
   compatibility-oriented default; select UAC2 explicitly with
-  `EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`. UAC2 end-to-end
-  streaming is not validated yet. I2S, codecs, DACs, and other audio hardware
+  `EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`. A UAC2 function
+  declares exactly one sample rate and one alternate setting per direction, so a
+  host cannot switch rates on it. I2S, codecs, DACs, and other audio hardware
   are outside this library's responsibility.
 - The network device is CDC-NCM only. CDC-ECM is not enabled in the Arduino-ESP32
   core (it would need a core rebuild); NCM is supported natively by modern hosts.

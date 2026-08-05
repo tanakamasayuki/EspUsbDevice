@@ -76,8 +76,8 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   `test_usb_audio_speaker_volume_flood`
   reproduces a real-Windows failure mode by blasting a burst of rapid volume /
   mute SET_CUR changes (like dragging the volume slider) and asserts the device
-  keeps running without rebooting. UAC2 streaming remains a later Host peer
-  gate; it is not required by these UAC1 tests.
+  keeps running without rebooting. UAC2 is covered separately by
+  `usb_audio_uac2`.
 
 - `usb_audio_microphone`: USB Audio source / microphone (device -> host). The
   device streams a generated sawtooth to the host; the host starts the input
@@ -90,5 +90,16 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   mic stream reaches the host and is non-silent. UAC1 / full speed on the
   two-board S3 setup.
 
+- `usb_audio_uac2`: USB Audio Class 2.0 headset driven by an EspUsbHost 2.7.1
+  UAC2 host. A different angle from the EspUsbHost-repo copy, which asserts what
+  the host learned: here the assertions are on the device - the control state the
+  host wrote is read back through the device's own getters and events (master and
+  logical channel of the Feature Unit), the sample rate is accepted on the Clock
+  Source entity rather than a UAC1 endpoint request, exactly two streams exist
+  (the asynchronous playback interface's feedback IN endpoint is not a third), and
+  both isochronous directions carry PCM while the feedback endpoint paces the
+  host. UAC2 declares one rate per direction, so rate switching is not covered.
+
 Audio follow-up work remains for long playback, real speaker-output checks, real
-microphone-capture input, and (optionally) a two-board P4 HS peer for UAC2 coverage.
+microphone-capture input, and (optionally) a two-board P4 HS peer for high-speed
+Audio coverage.

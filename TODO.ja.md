@@ -1,6 +1,8 @@
 # TODO
 
-- [ ] （任意）P4 2台 HS peer 構成で UAC2/HS の Audio を自動テスト化する。
+- [x] UAC2 の peer テスト。`tests/peer/usb_audio_uac2`（S3 2台・FS）を追加し、EspUsbHost 2.7.1 の UAC2 host に対して end-to-end でカバーした（実機 2 台での実行は未実施）。device 側の control 状態（Feature Unit の master / logical channel）、Clock Source entity への sample rate request、双方向 streaming、explicit feedback endpoint による pacing を検証する。rate 切り替えは descriptor builder が方向ごとに alternate setting を 1 つしか出さないため対象外。
+- [ ] （任意）P4 2台 HS peer 構成で HS の Audio を自動テスト化する。UAC2 自体は S3 の FS peer で検証済みなので、残るのは HS リンク上の isochronous packet サイズと interval の検証。
+- [ ] （検討）UAC2 で 1 方向あたり複数 sample rate を宣言できるようにする。現状 descriptor builder は 1 stream = 1 format 固定（`UnsupportedFormatCount`）で、Clock Source の `RANGE` は複数 subrange を返せる実装がありながら 1 つしか出せない。実装すれば peer テストで rate 切り替えも検証できる。
 - [ ] 実 PC/HS 対応マイルストーンで endpoint の per-speed descriptor 化（FS=64 / HS bulk=512、device_qualifier / other_speed 対応）。現状は全 class FS 固定で、P4 を実 HS ホストに繋ぐと bulk が非準拠。`docs/DESIGN_NOTES.ja.md`「bulk エンドポイントサイズと HS 準拠」参照。
 - [ ] USB Audio composite device。HID / CDC / MIDI などとの複合化可否と制約を確認する。
 - [x] 複合時の HID 採番衝突の修正（実機確認済み）。(1) HID を EP1 duplex + `reserve_endpoints=true` で core のビットマスクに登録、(2) `espUsbDeviceLoadHidDescriptor` で HID interface number を core 採番値へ書き換え。HID+MSC が 3/3 pass。`docs/DESIGN_NOTES.ja.md`「複合時の HID 採番衝突」、`tests/peer/composite_hid_msc` 参照。

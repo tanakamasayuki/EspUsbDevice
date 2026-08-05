@@ -61,7 +61,7 @@ CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC
 - RAM disk、FAT RAM disk、SD card を USB MSC として公開する。
 - HID ではない vendor-specific bulk/control interface を作る。
 - 実転送を検証済みのUAC1 Audio Playback/Capture PCMをbounded FIFO経由で読み書きする。
-  UAC2 descriptor/controlは明示選択でき、peer streaming検証はEspUsbHost側のUAC2対応後に行う。
+  UAC2は明示選択でき、EspUsbHost 2.7.1のUAC2 hostに対する2台テスト `peer/usb_audio_uac2` でend-to-endにカバー。
 - ボードを USB ネットワークアダプタ（CDC-NCM）として見せ、任意で lwIP/DHCP を有効にして
   PC が USB 経由でデバイス上のページや API にアクセスできるようにする。
 - ボードを USB スマートカードリーダー（CCID）として見せ、カードの中身をスケッチで実装して
@@ -96,8 +96,8 @@ loopback テストで確認できる範囲を広げています。
 - USB MSC block device と SCSI callback。
 - USBVendor bulk IN/OUT、control request、WebUSB landing URL。
 - UAC1 defaultのAudio Playback/Capture polling I/O、チャンネル別mute/volume state、
-  control event、stream stats。UAC2 descriptor/controlは明示選択でき、UAC2
-  streaming検証は未完了です。
+  control event、stream stats。UAC2は明示選択でき、Clock Sourceによるrate制御、
+  UAC2のFeature Unit layout、双方向streamingをpeer testで検証済みです。
 - CDC-NCM ネットワークデバイス（生フレーム API と、任意の lwIP/esp_netif 統合＝DHCP
   サーバ / クライアント / 静的アドレス）。
 - CCID スマートカードリーダー（1 slot、スケッチが与える ATR、APDU / escape callback、
@@ -301,8 +301,12 @@ capture.addFormat({48000, 1, 2, 16});
 
 UAC1はdefaultで、S3のspeaker、microphone、duplex Peer streaming、control変更、
 16/24/32-bit descriptor/transferを検証済みです。UAC2は
-`EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`で選択でき、descriptorと
-class requestをtest済みですが、end-to-end UAC2 streamingはまだ対応済みと扱いません。
+`EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`で選択します。descriptor、
+Clock Sourceによるsample rate制御、Feature Unitのmute/volume（masterとlogical
+channel）、非同期playback interfaceのexplicit feedback endpointを含む双方向
+streamingを、EspUsbHostのUAC2 hostに対する2台テスト `peer/usb_audio_uac2` で
+検証済みです。UAC2 functionが宣言するsample rateは方向ごとに1つです（descriptor
+builderがalternate settingを1つだけ出力するため、Clock Sourceが報告するrateも1つ）。
 
 新Audio sourceはUSB Audio仕様とTinyUSB公開driver APIから独立設計しました。旧
 Espressif USBAudioCard由来sourceを継続改変せず削除しています。詳細は
@@ -364,7 +368,8 @@ USB ネットワーク（CDC-NCM）:
 - USB Audioは`EspUsbAudioFunction`によるPlayback/Capture実装です。互換性重視の
   UAC1がdefaultで、UAC2は
   `EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2)`で明示選択します。
-  UAC2のend-to-end streamingは未検証です。I2S、codec、DACなどのデバイス接続は
+  UAC2 functionは方向ごとにsample rate 1つ・alternate setting 1つを宣言するため、
+  Hostからrateを切り替えることはできません。I2S、codec、DACなどのデバイス接続は
   このライブラリの責務外です。
 - ネットワークデバイスは CDC-NCM のみです。CDC-ECM は Arduino-ESP32 core で無効（有効化には core 再ビルドが必要）で、NCM は最近のホスト OS が標準対応します。デバイスが PC 経由でインターネットに抜けるにはホスト側のブリッジ/NAT が必要でスコープ外です（その用途は ESP 自身の Wi-Fi を使用）。
 - CCID リーダーは 1 slot、T=1、short APDU level exchange です。chaining、extended APDU、
