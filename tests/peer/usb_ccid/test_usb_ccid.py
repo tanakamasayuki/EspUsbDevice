@@ -10,10 +10,32 @@ endpoint's slot change notifications. EspUsbHost 2.7.1's ccid* API is the
 instrument.
 """
 
+import pexpect
+
 # The ATR the device answers IccPowerOn with: the PC/SC synthetic ATR for a
 # MIFARE Classic 1K, so the host can also name the card from it.
 CARD_ATR = "3b8f8001804f0ca000000306030001000000006a"
 CARD_UID = "04112233"
+
+
+def _expect_events(dut, pattern, retries=15, timeout=2):
+    """Poll the host's slot-change counters until `pattern` matches.
+
+    A notification is not a reply: the device queues it on its interrupt IN
+    endpoint and the host picks it up on its next poll, one bInterval (16 ms)
+    later plus however long the host takes to re-arm. A single read right after
+    the card moved can therefore run ahead of the event, so poll instead of
+    assuming the counters are already up to date.
+    """
+    last = None
+    for _ in range(retries):
+        dut.write("n")
+        try:
+            dut.expect(pattern, timeout=timeout)
+            return
+        except pexpect.TIMEOUT as err:
+            last = err
+    raise last
 
 
 def _open(dut, device, *, card: bool):
@@ -189,5 +211,4 @@ def test_usb_ccid_slot_change_notifications(dut, peers):
     dut.write("s")
     dut.expect_exact("CCID_STATUS ok=1 icc=inactive present=1 active=0 command=0 error=0x00")
 
-    dut.write("n")
-    dut.expect(r"CCID_EVENTS inserted=[1-9]\d* removed=[1-9]\d* present=1")
+    _expect_events(dut, r"CCID_EVENTS inserted=[1-9]\d* removed=[1-9]\d* present=1")

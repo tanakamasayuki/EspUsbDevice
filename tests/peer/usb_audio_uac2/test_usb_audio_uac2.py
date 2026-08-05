@@ -50,13 +50,25 @@ def _sync(dut, device):
 
 
 def _device_state(device):
+    """The device's own view of its control state, as {field: str}.
+
+    pytest-embedded matches against the raw serial stream, so the groups come
+    back as bytes; they are decoded here rather than at every comparison.
+    """
     device.write("s")
-    return device.expect(
+    match = device.expect(
         r"UAC2_STATE proto=(\w+) rate=(\d+) master_mute=(\d) master_vol=(-?\d+) "
         r"ch1_mute=(\d) ch1_vol=(-?\d+) cap_mute=(\d) cap_vol=(-?\d+) "
         r"range=(-?\d+:-?\d+:-?\d+)",
         timeout=10,
     )
+    fields = (
+        "proto", "rate", "master_mute", "master_vol",
+        "ch1_mute", "ch1_vol", "cap_mute", "cap_vol", "range",
+    )
+    state = {name: match.group(i + 1).decode() for i, name in enumerate(fields)}
+    state["line"] = match.group(0).decode()
+    return state
 
 
 def test_usb_audio_uac2_enumeration(dut, peers):
@@ -104,9 +116,9 @@ def test_usb_audio_uac2_enumeration(dut, peers):
     dut.write("v")
     dut.expect_exact("AUDIO_VOLUME_RANGE ok=1 min=-23040 max=0 res=256")
     state = _device_state(device)
-    assert state.group(1) == "uac2", state.group(0)
-    assert state.group(2) == "48000", state.group(0)
-    assert state.group(9) == VOLUME_RANGE, state.group(0)
+    assert state["proto"] == "uac2", state["line"]
+    assert state["rate"] == "48000", state["line"]
+    assert state["range"] == VOLUME_RANGE, state["line"]
 
 
 def test_usb_audio_uac2_control_state_round_trip(dut, peers):
@@ -132,26 +144,26 @@ def test_usb_audio_uac2_control_state_round_trip(dut, peers):
     device.expect(r"DEV_VOL ch=1 db=-3072 n=[1-9]\d*")
 
     state = _device_state(device)
-    assert state.group(4) == "-1536", state.group(0)  # master volume
-    assert state.group(5) == "1", state.group(0)      # channel 1 muted
-    assert state.group(6) == "-3072", state.group(0)  # channel 1 volume
+    assert state["master_vol"] == "-1536", state["line"]
+    assert state["ch1_mute"] == "1", state["line"]
+    assert state["ch1_vol"] == "-3072", state["line"]
     # The host addressed "the first Feature Unit"; that has to be the playback
     # one, or the assertions above would have been about the microphone.
-    assert state.group(7) == "0", state.group(0)      # capture unit untouched
-    assert state.group(8) == "0", state.group(0)
+    assert state["cap_mute"] == "0", state["line"]
+    assert state["cap_vol"] == "0", state["line"]
 
     # Master mute, then unmute, so the streaming test below runs unmuted.
     dut.write("M")
     dut.expect_exact("AUDIO_MUTE set=1 get=1 muted=1")
     device.expect(r"DEV_MUTE ch=0 m=1 n=[1-9]\d*")
     state = _device_state(device)
-    assert state.group(3) == "1", state.group(0)
+    assert state["master_mute"] == "1", state["line"]
 
     dut.write("U")
     dut.expect_exact("AUDIO_UNMUTE clear=1 get=1 muted=0")
     device.expect(r"DEV_MUTE ch=0 m=0 n=[1-9]\d*")
     state = _device_state(device)
-    assert state.group(3) == "0", state.group(0)
+    assert state["master_mute"] == "0", state["line"]
 
 
 def test_usb_audio_uac2_clock_source_request(dut, peers):
@@ -173,7 +185,7 @@ def test_usb_audio_uac2_clock_source_request(dut, peers):
     dut.expect_exact("AUDIO_RATE_SET 1")
 
     state = _device_state(device)
-    assert state.group(2) == "48000", state.group(0)
+    assert state["rate"] == "48000", state["line"]
 
 
 def test_usb_audio_uac2_streaming_both_directions(dut, peers):
