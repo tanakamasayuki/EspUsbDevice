@@ -10,6 +10,8 @@ endpoint's slot change notifications. EspUsbHost 2.7.1's ccid* API is the
 instrument.
 """
 
+import time
+
 import pexpect
 
 # The ATR the device answers IccPowerOn with: the PC/SC synthetic ATR for a
@@ -194,21 +196,36 @@ def test_usb_ccid_slot_change_notifications(dut, peers):
 
     RDR_to_PC_NotifySlotChange on the interrupt endpoint is the only part of the
     device that speaks without being asked, so nothing else covers that endpoint.
+
+    Two things shape how this has to be written. The host reports a *change*
+    against what it believes the slot holds, and it updates that belief from
+    every RDR_to_PC response as well as from notifications - so a GetSlotStatus
+    between the card moving and the notification arriving would bring the host up
+    to date silently and the notification would no longer be a change to report.
+    Hence no bulk command runs inside the loop below. And because the starting
+    belief depends on what earlier tests left behind, the card is toggled twice:
+    that yields at least one insertion and one removal event either way.
     """
     device = peers["device"]
     _open(dut, device, card=True)
+    # _open() moved the card too; let its notification land before counting.
+    time.sleep(0.3)
 
     dut.write("z")
     dut.expect_exact("CCID_EVENTS_RESET")
 
-    device.write("r")
-    device.expect_exact("DEVICE_CARD inserted=0 present=0")
-    dut.write("s")
-    dut.expect_exact("CCID_STATUS ok=1 icc=absent present=0 active=0 command=0 error=0x00")
-
-    device.write("i")
-    device.expect_exact("DEVICE_CARD inserted=1 present=1")
-    dut.write("s")
-    dut.expect_exact("CCID_STATUS ok=1 icc=inactive present=1 active=0 command=0 error=0x00")
+    for command in ("r", "i", "r", "i"):
+        device.write(command)
+        device.expect(r"DEVICE_CARD inserted=\d present=\d")
+        # Let the notification be polled (bInterval is 16 ms) before moving the
+        # card again: the endpoint holds one notification at a time, so a second
+        # change arriving first would replace the state in flight rather than
+        # queue behind it.
+        time.sleep(0.3)
 
     _expect_events(dut, r"CCID_EVENTS inserted=[1-9]\d* removed=[1-9]\d* present=1")
+
+    # Now that the events have been observed, the bulk path must agree that the
+    # card ended up back in the slot.
+    dut.write("s")
+    dut.expect_exact("CCID_STATUS ok=1 icc=inactive present=1 active=0 command=0 error=0x00")
