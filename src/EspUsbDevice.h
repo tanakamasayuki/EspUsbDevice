@@ -367,6 +367,40 @@ struct EspUsbDeviceVendorControlRequest
   const void *rawRequest = nullptr;
 };
 
+// --- CCID (USB smart card reader, bInterfaceClass 0x0b) --------------------
+
+// Low two bits of bStatus in the RDR_to_PC responses this device sends. Same
+// values as EspUsbHost's EspUsbHostCcidIccStatus - they are the wire encoding.
+enum EspUsbDeviceCcidIccStatus : uint8_t
+{
+  ESP_USB_DEVICE_CCID_ICC_ACTIVE = 0,   // card present and activated
+  ESP_USB_DEVICE_CCID_ICC_INACTIVE = 1, // card present, not activated
+  ESP_USB_DEVICE_CCID_ICC_ABSENT = 2,   // no card in the slot
+};
+
+// bError values this device reports (CCID 1.1 Table 6.2-2). Values 0..127 are
+// the index of the offending byte in the command message, so 0 - the index of
+// bMessageType - is how a reader says "that message type is not supported".
+enum EspUsbDeviceCcidError : uint8_t
+{
+  ESP_USB_DEVICE_CCID_ERROR_CMD_NOT_SUPPORTED = 0x00,
+  ESP_USB_DEVICE_CCID_ERROR_BAD_SLOT = 0x05, // index of bSlot
+  ESP_USB_DEVICE_CCID_ERROR_HW_ERROR = 0xfb,
+  ESP_USB_DEVICE_CCID_ERROR_XFR_OVERRUN = 0xfc,
+  ESP_USB_DEVICE_CCID_ERROR_ICC_MUTE = 0xfe,
+  ESP_USB_DEVICE_CCID_ERROR_CMD_ABORTED = 0xff,
+};
+
+// Longest ATR ISO 7816-3 allows (TS + T0 + 15 interface + 15 historical + TCK).
+static constexpr size_t ESP_USB_DEVICE_CCID_MAX_ATR = 33;
+
+// Largest CCID message (10-byte header + abData) the device accepts or sends.
+// The default covers short APDU level exchange (10 + 261) with room to spare;
+// raise it with a build flag if a sketch answers with more.
+#ifndef ESP_USB_DEVICE_CCID_BUFFER_SIZE
+#define ESP_USB_DEVICE_CCID_BUFFER_SIZE 320
+#endif
+
 struct EspUsbDeviceMidiPacket
 {
   uint8_t header = 0;
@@ -434,6 +468,7 @@ private:
   friend class EspUsbDeviceVendor;
   friend class EspUsbAudioFunction;
   friend class EspUsbDeviceNet;
+  friend class EspUsbDeviceCcid;
   static constexpr size_t MAX_CLASSES = 4;
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
@@ -704,6 +739,101 @@ private:
   uint32_t cfgIp_ = 0;           // network byte order; 0 => use defaults in beginNetwork()
   uint32_t cfgGateway_ = 0;
   uint32_t cfgNetmask_ = 0;
+};
+
+// USB CCID smart card reader function. The device side of what EspUsbHost's
+// ccid* API drives: it presents one bulk CCID slot (bInterfaceClass 0x0b,
+// subclass 0, protocol 0) and answers the PC_to_RDR messages itself. The card
+// behind the slot is the sketch's: insertCard() decides whether a card is there
+// and what ATR it answers with, and onApdu() answers the exchanges.
+//
+// Scope: one slot, T=1, short APDU level exchange. Chaining, PIN pad / secure
+// entry, and clock / data-rate negotiation are out - the device declares it
+// supports none of them, so a conforming host never asks.
+class EspUsbDeviceCcid : public EspUsbDeviceClass
+{
+public:
+  // Answer one exchange. Write the response into `response` (at most `capacity`
+  // bytes) and return its length; return 0 to fail the command, which the host
+  // sees as command status FAILED with bError = ICC_MUTE.
+  //
+  // For onApdu() the buffers are the APDU and its answer including SW1SW2 - the
+  // device does not add or interpret a status word. Runs in the TinyUSB device
+  // task: no blocking, and no USB calls back into this object.
+  using ApduCallback = std::function<size_t(const uint8_t *apdu, size_t length,
+                                            uint8_t *response, size_t capacity)>;
+  // PC_to_RDR_Escape payload in, RDR_to_PC_Escape payload out. Same contract.
+  using EscapeCallback = ApduCallback;
+  // The host activated (true) or deactivated (false) the card in the slot.
+  using PowerCallback = std::function<void(bool on)>;
+
+  explicit EspUsbDeviceCcid(EspUsbDevice &device);
+  ~EspUsbDeviceCcid() override;
+
+  bool begin() override;
+  void end() override;
+  bool isHid() const override { return false; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 2; } // bulk duplex + interrupt IN
+  void onBusAttached() override;
+  void onBusDetached() override;
+
+  // --- The card in the slot ---
+  // Put a card in the slot and set the ATR IccPowerOn answers with. `length`
+  // must be 2..ESP_USB_DEVICE_CCID_MAX_ATR. Notifies the host over the
+  // interrupt endpoint when the device is mounted. Call from the sketch task.
+  bool insertCard(const uint8_t *atr, size_t length);
+  void removeCard();
+  bool cardPresent() const;
+  // True once the host has activated the card with IccPowerOn.
+  bool cardPowered() const;
+  size_t atr(uint8_t *buffer, size_t capacity) const;
+
+  void onApdu(ApduCallback callback);
+  void onEscape(EscapeCallback callback);
+  void onPower(PowerCallback callback);
+
+  // True while the host has the CCID interface configured.
+  bool mounted() const;
+  // PC_to_RDR messages answered, XfrBlock exchanges answered, and the message
+  // type of the last command. Diagnostics for tests and examples.
+  uint32_t commandCount() const;
+  uint32_t apduCount() const;
+  uint8_t lastMessageType() const;
+
+  // Internal: a complete PC_to_RDR message arrived (TinyUSB device task).
+  void handleMessage(const uint8_t *message, size_t length);
+  // Internal: a message longer than the device's buffer arrived and was dropped.
+  void handleOverrun(uint8_t messageType, uint8_t slot, uint8_t sequence);
+  // Internal: CCID class request ABORT for this slot / sequence.
+  void handleAbort(uint8_t slot, uint8_t sequence);
+
+private:
+  size_t writeHeader(uint8_t messageType, uint32_t dataLength, uint8_t slot,
+                     uint8_t sequence, uint8_t iccStatus, uint8_t commandStatus,
+                     uint8_t error, uint8_t parameter);
+  void sendStatus(uint8_t messageType, uint8_t slot, uint8_t sequence,
+                  uint8_t commandStatus, uint8_t error, uint8_t parameter);
+  void sendData(uint8_t messageType, uint8_t slot, uint8_t sequence,
+                const uint8_t *data, size_t length, uint8_t parameter);
+  uint8_t iccStatus() const;
+  void notifySlotState();
+
+  ApduCallback apduCallback_;
+  EscapeCallback escapeCallback_;
+  PowerCallback powerCallback_;
+
+  uint8_t atr_[ESP_USB_DEVICE_CCID_MAX_ATR] = {};
+  uint8_t atrLength_ = 0;
+  std::atomic<bool> cardPresent_{false};
+  std::atomic<bool> cardPowered_{false};
+  bool aborted_ = false; // an ABORT request is pending for the current slot
+
+  uint8_t response_[ESP_USB_DEVICE_CCID_BUFFER_SIZE] = {};
+  std::atomic<uint32_t> commandCount_{0};
+  std::atomic<uint32_t> apduCount_{0};
+  std::atomic<uint8_t> lastMessageType_{0};
 };
 
 class EspUsbDeviceMidi : public EspUsbDeviceClass

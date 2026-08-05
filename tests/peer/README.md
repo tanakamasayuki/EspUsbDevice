@@ -56,6 +56,12 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 - `usb_vendor`: vendor-specific interface. Interface / bulk endpoint
   enumeration, bulk echo, application vendor control IN/OUT, and WebUSB landing
   URL reads pass on the two-board S3 setup.
+- `usb_ccid`: USB CCID smart card reader (device) driven by an EspUsbHost host
+  (DUT). Covers the class descriptor the host parses (one slot, T=1, short APDU
+  exchange level), the three ICC states as the sketch drives the slot, ATR
+  delivery on activation, APDU exchanges including a card-level 6D00, escape and
+  GetParameters, the ABORT sequence, and the interrupt endpoint's slot change
+  notifications - the only part of the device that speaks unprompted.
 - `usb_ncm`: USB CDC-NCM network device (device) driven by an EspUsbHost host
   (DUT). Deliberately a different angle from the EspUsbHost-repo copy: it checks
   the enumerated descriptor detail (separate control/data interfaces, active

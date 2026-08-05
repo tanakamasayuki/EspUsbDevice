@@ -193,4 +193,5 @@ manual 確認に残す範囲:
 9. FirmwareMSC は FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example として検討する。
 10. all-in-one composite example は `CompositeHidCdcMsc`（HID+CDC+MSC）を追加済み。4-in-1（+Vendor）は S3 の endpoint 予算超のため P4 対応時に検討する。
 11. CDC-NCM ネットワークデバイス（`EspUsbDeviceNet` + esp_netif/DHCP、`UsbNetwork` example、`tests/manual/usb_ncm`）は実 PC で確認済み。sibling の `EspUsbHost` NCM 実装が出来次第、2 台 peer テストを追加する。
-12. P4 probe の結果を整理し、port / speed / PHY の制約を設計メモへ反映する。
+12. CCID スマートカードリーダー（`EspUsbDeviceCcid`、`SmartCardReader` example、`tests/peer/usb_ccid`、`tests/unit/ccid_descriptor`）を追加済み。EspUsbHost 2.7.1 の CCID host API が相手。実機 2 台での peer 実行は未実施。
+13. P4 probe の結果を整理し、port / speed / PHY の制約を設計メモへ反映する。

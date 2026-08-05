@@ -38,6 +38,7 @@
 | `AudioCard` | `AudioSpeaker` / `AudioSpeakerM5` | 一部対応 | 最小 speaker sink と M5 speaker 連携例。I2S bridge / codec はこのライブラリの責務外。 |
 | `CompositeDevice` | `CompositeHidCdcMsc` ほか | 一部対応 | HID+CDC+MSC の複合 example あり。4-in-1（+Vendor）は S3 の endpoint 予算超で未作成（P4 が必要）。 |
 | P4 port選択 | `P4HighSpeedDevice` / `P4FullSpeedDevice` | 対応済み | rhport、UTMI/FS接続先、GPIO26/27既定とGPIO24/25 swap、VBUS/CC注意を記載。 |
+| （標準に無し） | `SmartCardReader` | 新規 | Arduino-ESP32 標準に無い CCID スマートカードリーダー（1 slot、スケッチが実装するカード）。 |
 | （標準に無し） | `UsbNetwork` | 新規 | Arduino-ESP32 標準に無い CDC-NCM ネットワークデバイス（生フレーム + 任意の lwIP/esp_netif、DHCP サーバ/クライアント/静的）。 |
 
 ## 現在の EspUsbDevice examples
@@ -67,6 +68,7 @@
 | `MSCFatRamDisk` | FAT RAM disk file handoff | 低 |
 | `MSCSdCard` | SD card as USB storage | 低-中 |
 | `UsbNetwork` | CDC-NCM ネットワークデバイス（DHCP + HTTP、`http://192.168.7.1/`） | 中 |
+| `SmartCardReader` | CCID スマートカードリーダー（擬似カードが Get UID / echo に応答） | 中 |
 | `CompositeHidCdcMsc` | HID + CDC + MSC の複合デバイス | 中 |
 
 MSC は準備コストが高く、利用頻度も HID / CDC / MIDI より低いため、追加強化の優先度は下げます。

@@ -24,6 +24,15 @@ USB device / configuration / HID report descriptor の byte 列を検証しま�
 8 bytes に固定します。keyboard + mouse composite は単一 HID interface + report ID 構成で、
 report ID 付き keyboard report に合わせて endpoint MPS を 16 bytes にします。
 
+## `ccid_descriptor`
+
+CCID の interface / class descriptor を host g++ で検証します。descriptor 生成は
+Arduino / TinyUSB に依存しない純粋な byte 組み立てなので、`keymap` と同様に
+`src/EspUsbDeviceCcid.cpp` から実行時に抜き出して host でコンパイルします（出荷コード
+そのものを検証します）。CCID class descriptor の全フィールド——特に Host が TPDU と
+APDU のどちらを送るか決める exchange level——と、単体構成・複合構成のいずれでも
+interrupt endpoint が bulk pair の 1 つ上に来ることを確認します。
+
 ## `descriptor_model`
 
 v2のdescriptor基盤をhost g++だけで検証します。Arduino/TinyUSB headerには依存せず、

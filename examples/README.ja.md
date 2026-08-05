@@ -265,6 +265,18 @@ HID keyboard + CDC serial + MSC FAT RAM disk を 1 つの `EspUsbDevice` に載�
 - IP スタック無しの生フレームは `onFrame()` / `sendFrame()`。
 - デバイス側は CDC-NCM のみ（CDC-ECM は core で無効）。
 
+## SmartCardReader
+
+カードの中身をスケッチで実装する USB CCID スマートカードリーダーの例です。
+詳しくは [SmartCardReader/README.ja.md](SmartCardReader/README.ja.md) を参照してください。
+
+- `EspUsbDeviceCcid` を登録すると 1 slot のリーダーとして列挙され、PC/SC ホスト
+  （pcsc_scan、Windows のスマートカードサービス、EspUsbHost の `ccid*` API）から
+  カードの活性化と APDU のやり取りができます。
+- `insertCard(atr, length)` / `removeCard()` でカードの有無を切り替えます。擬似カードは
+  PC/SC の Get UID 疑似 APDU と echo 命令に応答します。
+- シリアルモニタの 'i' / 'r' でカードを出し入れすると、Host には挿抜通知として届きます。
+
 ## 注意
 
 - USB device として使う側の ESP32-S3 などを USB host に接続してください。

@@ -76,6 +76,7 @@ tests/
 | USB MIDI | | ✅ `usb_midi` (MIDI-only device also enumerates as supported) | ✅ `usb_midi` | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
+| CCID smart card reader | ✅ `ccid_descriptor` (interface / class descriptor bytes) | ✅ `usb_ccid` class descriptor, ICC states, ATR, APDU / escape / parameters / abort, slot change notifications | not implemented | | ✅ `examples/SmartCardReader` |
 | USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
 | Core dependency boundary | ✅ `dependency_boundary` | | | | |

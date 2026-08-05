@@ -483,6 +483,46 @@ Lock 状態を取るために slot を占有すると、スケッチ側から LE
   `0x87`-`0x91` が全て届くこと（bitmap が `0x00`-`0xDF` 全域であることの証明）を見る。
   状態送信 API（1レポートで7キー以上）は同 suite の `s` コマンドで追加検証する。
 
+### CCID スマートカードリーダー（`EspUsbDeviceCcid`・2026-08）
+
+USB CCID（`bInterfaceClass` 0x0b）のスマートカードリーダーを device 側に追加した。EspUsbHost 2.7.1 が
+CCID host API（`ccid*`）を実装したので、その相手側を自動テストできるようにするのが直接の動機。
+
+**責務の分割:** リーダーがライブラリ、カードがスケッチ。CCID プロトコル（slot status、活性化、ATR の返却、
+parameters、abort、未知 message への応答）はクラスが持ち、スケッチは `insertCard()` / `removeCard()` で
+カードの有無と ATR を決め、`onApdu()` で exchange に答える。「カードの正体」はライブラリが決めるべきもの
+ではないので、既定の `onApdu()` 未設定時は命令を知らないカードと同じ `6D00` を返すだけにしてある。
+
+**TinyUSB に CCID driver が無い問題.** 同梱 TinyUSB は upstream verbatim（`tools/verify_tinyusb_vendor.py`
+が byte 一致を検証する）なので、`src/class/` に driver を足す選択肢は無い。TinyUSB が用意している
+application class driver hook（`usbd_app_driver_get_cb`）から登録する。
+
+**hook を間接化した理由（footprint）.** arduino-cli はライブラリの全 object を個別にリンカへ渡すため、
+「使わないファイルは archive から引かれない」という前提が成立しない。`usbd_app_driver_get_cb` は `usbd.c`
+から参照される＝常に到達可能なので、そこで CCID driver を直接名指しすると `--gc-sections` でも落ちず、
+CCID を使わないスケッチにも driver 一式が残る（実測 +2396 byte flash）。そこで hook は
+`internal/EspUsbDeviceAppDriver` に置いてポインタを読むだけにし、そのポインタは `EspUsbDeviceCcid::begin()`
+が設定する。こうすると driver への参照はクラスからしか無くなり、クラスを使わないスケッチでは gc される
+（残るのは hook 本体の 16 byte）。message buffer を `.bss` ではなく `begin()` でヒープ確保しているのも
+同じ理由。**同種の「TinyUSB に無い class」を今後足すときは、必ずこの registry 経由にすること。**
+
+**wire 上の選択:**
+
+- 1 slot、T=1、short APDU level exchange（`dwFeatures` bit 17）。short APDU にしたのは、Host が TPDU 分割を
+  せずそのまま APDU を投げてくる＝スケッチ側が ISO 7816 の TPDU 層を実装せずに済むため。
+- `dwMaxCCIDMessageLength` は 271（10 + 261）。buffer は `ESP_USB_DEVICE_CCID_BUFFER_SIZE`（既定 320）で、
+  超える message は `XFR_OVERRUN` として返す（無視すると Host が bSeq 待ちで固まる）。
+- 未対応の message type は STALL ではなく `bError = 0` の `CMD_NOT_SUPPORTED` で返す。CCID の bError は
+  0..127 が「問題のあるバイトの index」で、0 は `bMessageType` そのものを指す。
+- interrupt IN（`RDR_to_PC_NotifySlotChange`）は device 側から唯一自発的に送るもの。`insertCard()` /
+  `removeCard()` と mount 時に送る。mount 時に送るのは、カードが入ったまま enumerate された Host が
+  ポーリングせずに状態を知れるようにするため。
+- endpoint は bulk duplex + interrupt IN の 2 番号（`endpointCount() == 2`）。interrupt は bulk の 1 つ上。
+
+**スレッド:** `onApdu()` / `onEscape()` / `onPower()` は TinyUSB device task で走る。カード状態は
+`std::atomic` で持ち、`insertCard()` は ATR を書いてから present を立てる順序にしてあるので、device task が
+中途半端な ATR を読むことはない（そのためだけに mutex を持たない）。
+
 ### 姉妹ライブラリとの HID keyboard API 対称性（2026-07 に確定）
 
 `EspUsbDevice`（USB Device）・`EspBle`（BLE HID Device）・`EspUsbHost`（USB Host）は、ESP32KeyBridge から
