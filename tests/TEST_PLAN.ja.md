@@ -69,7 +69,7 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | CCID スマートカードリーダー | ✅ `ccid_descriptor`（interface / class descriptor の byte 列） | ✅ `usb_ccid` class descriptor、ICC 3 状態、ATR、APDU / escape / parameters / abort、挿抜通知 | 未実装 | | ✅ `examples/SmartCardReader` |
-| USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset` | 未実装 | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
+| USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`、UAC2 `usb_audio_uac2` | 未実装 | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
 | Core依存境界 | ✅ `dependency_boundary` | | | | |
 | examples compile | ✅ `examples_compile` 宣言済みS2/S3/P4全profile | | | | |
@@ -133,8 +133,9 @@ USB 仕様上または Arduino-ESP32 / TinyUSB runtime 上の制約として説�
 CDC ACM、MIDI、MSC、USBVendor、Audio は Device 側 class 実装が必要です。
 `peer/usb_serial`、`peer/usb_midi`、`peer/usb_msc`、`peer/usb_vendor`、`peer/usb_audio_speaker` は
 EspUsbDevice 実装へ移行済みです。Audio は S3 の UAC1 peer testで自動化済みです。
-UAC1をライブラリのdefaultとし、UAC2はconstructorで明示選択します。UAC2のstreaming検証は
-対応するHost実装が揃った後に行います。P4 1台のloopback Audio testは現時点で未実装ですが、
+UAC1をライブラリのdefaultとし、UAC2はconstructorで明示選択します。UAC2はEspUsbHost 2.7.1の
+UAC2 hostに対する `peer/usb_audio_uac2` でend-to-end検証済みです（device側control状態、
+Clock Sourceへのrate request、双方向streaming、feedback endpoint）。P4 1台のloopback Audio testは現時点で未実装ですが、
 AudioをP4やHSへ暗黙に固定する設計ではありません。`peer/usb_audio_microphone` が USB Audio source
 （マイク）方向をカバー：device が生成 PCM をストリームし、Host が device → Host 受信を検証（S3, UAC1）。
 `peer/usb_audio_headset` が両方向同時（1台で speaker + microphone）をカバー。
@@ -336,6 +337,7 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 32. （`loopback/usb_audio` は未実装。UAC1 AudioはPeer testでカバー）
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
+34a. ✅ `peer/usb_audio_uac2`（UAC2 end-to-end: device側control状態、Clock Sourceへのrate request、双方向、feedback）
 35. ✅ `unit/composite_constraints`（Audio複合build / MAX_CLASSES）
 36. ✅ `peer/composite_hid_cdc`（複合の雛形 + 共通 util、4/4）
 37. ✅ `peer/composite_hid_msc`（HID 採番衝突の発見 → 修正 → 3/3。`docs/DESIGN_NOTES.ja.md`）

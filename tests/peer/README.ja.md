@@ -50,7 +50,7 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   logical channelのmute/volume capability、SET/GET、range、Device event通知も検証する。
   `test_usb_audio_speaker_volume_flood` は、実 Windows で volume スライダーをドラッグしたときのように volume / mute の
   SET_CUR を高速連打し、デバイスが再起動せず動き続けることを検証する（実機不具合の再現テスト）。
-  UAC2 streamingは後続のHost peer gateとし、このUAC1 testの要件には含めない。
+  UAC2は `usb_audio_uac2` で別途カバーする。
 
 - `usb_audio_microphone`: USB Audio source（マイク、Device → Host）。device が生成した sawtooth を Host へストリームし、
   Host 側で入力ストリームを開始して device → Host の PCM が届き無音でないことを検証する。S3 2台構成の UAC1 / FS。
@@ -59,4 +59,11 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   enumerate/開始でき、Host が送った speaker PCM を device が受信し、device の mic ストリームが Host に届き無音でないこと。
   S3 2台構成の UAC1 / FS。
 
-Audio の残作業は長時間再生、実音確認、実マイク入力の取り込み、（任意で）UAC2 検証用の P4 2台 HS peer です。
+- `usb_audio_uac2`: USB Audio Class 2.0 headset を EspUsbHost 2.7.1 の UAC2 host で駆動。EspUsbHost リポジトリ側のコピー
+  （Host が何を読み取れたかを検証する）とは観点を変え、device 側を検証する：Host が書いた control 状態を device 自身の
+  getter と event で読み戻して一致を確認（Feature Unit の master と logical channel）、sample rate が UAC1 の endpoint
+  request ではなく Clock Source entity で受け付けられること、stream がちょうど 2 本であること（非同期 playback interface の
+  feedback IN endpoint が 3 本目に見えないこと）、feedback endpoint が Host を pacing しつつ双方向に PCM が流れること。
+  UAC2 は方向ごとに rate 1 つのため rate 切り替えは対象外。
+
+Audio の残作業は長時間再生、実音確認、実マイク入力の取り込み、（任意で）HS Audio 検証用の P4 2台 peer です。
