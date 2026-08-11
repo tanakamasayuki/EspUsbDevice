@@ -284,6 +284,12 @@ USB MIDI:
 - `EspUsbDeviceMidi` sends 4-byte USB-MIDI event packets.
 - Use helpers such as `noteOn()`, `noteOff()`, and `controlChange()` together
   with raw `writePacket()`.
+- `EspUsbDeviceMidi(device, cableCount)` exposes up to 16 cables, each of which
+  the host sees as a separate MIDI port. The default is 1. Cables share one pair
+  of bulk endpoints and are addressed by the 0-based `cable` argument on every
+  helper, or by the high nibble of `EspUsbDeviceMidiPacket::header`. Sending on a
+  cable at or above `cableCount()` fails rather than landing on another port.
+- Per-cable names are not implemented; the host names the ports itself.
 
 MSC:
 

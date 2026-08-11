@@ -470,7 +470,13 @@ private:
   friend class EspUsbDeviceNet;
   friend class EspUsbDeviceCcid;
   static constexpr size_t MAX_CLASSES = 4;
-  static constexpr size_t MAX_CONFIG_DESCRIPTOR = 256;
+  // Sized for the largest descriptor the library can emit: a 16-cable MIDI
+  // function is 572 bytes on its own (34 head + 30 * 16 jacks + 29 * 2
+  // endpoints), plus the 9-byte configuration header and room for one more
+  // small function alongside it. Three buffers of this size are held per
+  // device, so it is not free - anything larger returns a clean build failure
+  // from configurationDescriptorForSpeed() rather than overrunning.
+  static constexpr size_t MAX_CONFIG_DESCRIPTOR = 704;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
   static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
   static constexpr size_t MAX_BOS_DESCRIPTOR = 57;
@@ -844,7 +850,14 @@ private:
 class EspUsbDeviceMidi : public EspUsbDeviceClass
 {
 public:
-  explicit EspUsbDeviceMidi(EspUsbDevice &device);
+  // USB MIDI 1.0 addresses cables with a 4-bit field, so one interface carries
+  // at most 16.
+  static constexpr uint8_t MAX_CABLES = 16;
+
+  // cableCount is clamped to 1..MAX_CABLES. Each cable appears to the host as a
+  // separate MIDI port; they all share one pair of bulk endpoints, multiplexed
+  // by the cable number in each packet header.
+  explicit EspUsbDeviceMidi(EspUsbDevice &device, uint8_t cableCount = 1);
   ~EspUsbDeviceMidi() override;
 
   bool begin() override;
@@ -852,22 +865,37 @@ public:
   bool isHid() const override { return false; }
   bool isMidi() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint16_t configurationDescriptorForSpeed(
+      uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
+      uint8_t endpointNumber, bool highSpeed) override;
+  // Cables multiplex one bulk pair, so neither count depends on cableCount().
   uint8_t interfaceCount() const override { return 2; }
   uint8_t endpointCount() const override { return 1; }
 
+  uint8_t cableCount() const { return cableCount_; }
+  // Bytes configurationDescriptor() will write, so callers can size a buffer
+  // before asking for the descriptor.
+  uint16_t descriptorLength() const;
+
   bool readPacket(EspUsbDeviceMidiPacket &packet);
   bool writePacket(const EspUsbDeviceMidiPacket &packet);
-  bool noteOn(uint8_t channel, uint8_t note, uint8_t velocity);
-  bool noteOff(uint8_t channel, uint8_t note, uint8_t velocity);
-  bool controlChange(uint8_t channel, uint8_t control, uint8_t value);
-  bool programChange(uint8_t channel, uint8_t program);
-  bool polyPressure(uint8_t channel, uint8_t note, uint8_t pressure);
-  bool channelPressure(uint8_t channel, uint8_t pressure);
-  bool pitchBend(uint8_t channel, uint16_t value);
+  // cable is 0-based (0..cableCount()-1) and matches the high nibble of
+  // EspUsbDeviceMidiPacket::header. Sending to a cable the host was never told
+  // about fails instead of silently landing on another port.
+  bool noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable = 0);
+  bool noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable = 0);
+  bool controlChange(uint8_t channel, uint8_t control, uint8_t value, uint8_t cable = 0);
+  bool programChange(uint8_t channel, uint8_t program, uint8_t cable = 0);
+  bool polyPressure(uint8_t channel, uint8_t note, uint8_t pressure, uint8_t cable = 0);
+  bool channelPressure(uint8_t channel, uint8_t pressure, uint8_t cable = 0);
+  bool pitchBend(uint8_t channel, uint16_t value, uint8_t cable = 0);
 
 private:
   static uint8_t status(uint8_t codeIndex, uint8_t channel);
   static uint8_t clamp7(uint8_t value);
+  static uint8_t header(uint8_t codeIndex, uint8_t cable);
+
+  uint8_t cableCount_ = 1;
 };
 
 struct EspUsbAudioFormat
