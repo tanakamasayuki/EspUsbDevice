@@ -57,6 +57,14 @@ REQUIRED_MIDI_MACROS = (
     "TUD_MIDI_DESCRIPTOR",
 )
 
+# The library's own one-directional jack templates, for cables that exist in only
+# one direction. TinyUSB has no equivalent - its jack macro always emits all four.
+REQUIRED_LIBRARY_MACROS = (
+    "MIDI_ONE_WAY_JACK_LEN",
+    "MIDI_DESC_JACK_IN_ONLY",
+    "MIDI_DESC_JACK_OUT_ONLY",
+)
+
 
 def _brace_match(text: str, signature: str) -> str:
     """Return signature + body for a function, located by a substring of its
@@ -119,10 +127,15 @@ def _generate_real_header(dest: Path) -> None:
 
     source = (SRC / "EspUsbDevice.cpp").read_text()
 
-    # The two methods read the cableCount_ member; a file-scope variable stands in
-    # for it so the bodies can be lifted verbatim.
+    for name in REQUIRED_LIBRARY_MACROS:
+        parts.append(_extract_define(source, name))
+    parts.append("")
+
+    # The methods read the two cable-count members; file-scope variables stand in
+    # for them so the bodies can be lifted verbatim.
     parts += [
-        "static uint8_t cableCount_ = 1;",
+        "static uint8_t inCableCount_ = 1;",
+        "static uint8_t outCableCount_ = 1;",
         "",
         _brace_match(source, "uint16_t EspUsbDeviceMidi::descriptorLength()")
         .replace("EspUsbDeviceMidi::descriptorLength", "midiDescriptorLength")

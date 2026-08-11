@@ -26,8 +26,11 @@ def expect_both(dut, first_message, second_message):
 
 
 def test_loopback_usb_midi_cables(dut):
-    # 34 head + 30 per cable + 17 per endpoint descriptor, twice.
-    dut.expect_exact(f"DEVICE_READY fs cables={CABLE_COUNT} bytes=188")
+    # 34 head + 30 per cable + 17 per endpoint descriptor, twice. The counts are
+    # printed per direction because they need not agree; this device is symmetric.
+    dut.expect_exact(
+        f"DEVICE_READY fs cables={CABLE_COUNT}/{CABLE_COUNT} bytes=188"
+    )
     dut.expect_exact("HOST_DEVICE")
 
     # Device to host, one note per cable. The note number tracks the cable so a

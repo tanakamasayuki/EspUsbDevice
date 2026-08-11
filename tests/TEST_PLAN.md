@@ -73,7 +73,7 @@ tests/
 | System control HID | planned | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | ✅ `midi_descriptor` (multi-cable descriptor bytes, 1..16 cables) | ✅ `usb_midi` (MIDI-only device also enumerates as supported), `usb_midi_cables` (4 cables, not yet run) | ✅ `usb_midi`, `usb_midi_cables` (4 cables, not yet run) | | |
+| USB MIDI | ✅ `midi_descriptor` (descriptor bytes for every symmetric and asymmetric cable-count pair) | ✅ `usb_midi` (MIDI-only device also enumerates as supported), ✅ `usb_midi_cables` (asymmetric 4-in / 5-out: Host-decoded counts and directions, interleave, SysEx) | ✅ `usb_midi`, ✅ `usb_midi_cables` (4 cables symmetric) | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | CCID smart card reader | ✅ `ccid_descriptor` (interface / class descriptor bytes) | ✅ `usb_ccid` class descriptor, ICC states, ATR, APDU / escape / parameters / abort, slot change notifications | not implemented | | ✅ `examples/SmartCardReader` |
@@ -190,12 +190,44 @@ device. The descriptor is the whole of the feature, so it is checked field by
 field on the host for all 16 cable counts - a wrong cable count still enumerates
 and still passes traffic, it just shows the host the wrong number of ports. The
 two hardware tests then check that a packet's cable number survives the wire in
-both directions. `peer/usb_midi_cables` additionally asserts the cable count
-EspUsbHost decoded from the descriptors, which is the only check that the device
-really advertised its cables rather than echoing a cable number back; that needs
-EspUsbHost's unreleased `getMidiPortInfo()`, so its only profile is
-`s3_peer_local`. Both hardware tests compile but have not been run on hardware
-yet.
+both directions. `peer/usb_midi_cables` goes further because it is the only rig
+that can see what the Host decoded. It checks the cable counts `getMidiPortInfo()`
+reports both *before* any MIDI traffic and again after traffic has been seen on
+every cable, so a count accumulated from observed packets rather than read from the
+descriptors fails. It also covers several packets on different cables inside one
+bulk transfer (a cable decoded once per transfer instead of once per packet pairs
+them up wrongly) and SysEx on a non-zero cable, where the cable is repeated on every
+packet of the message. `getMidiPortInfo()` is unreleased, so its only profile is
+`s3_peer_local`.
+
+**Its peer is asymmetric - 4 cables device-to-host, 5 host-to-device - because
+that is the only way to check which endpoint's count belongs to which direction.**
+The class names embedded jacks from the device's side, the opposite of the endpoint
+direction they belong to, so a Host that swaps the two is invisible to a symmetric
+device and to any round trip (a received packet's cable number comes from its own
+header). The measured `in=4 out=5` is the proof. The same asymmetry is what makes the
+send helpers' bound observable: they are bounded by `inCableCount()`, so a cable that
+exists only for receiving is refused.
+
+**Not sixteen cables, because 5 per direction is the most this Host stack can
+enumerate.** The ESP-IDF USB Host refuses a configuration descriptor longer than its
+enumeration control transfer, and `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` is 256
+in the precompiled Arduino libraries with no way to raise it from a sketch. Measured
+on the rig: this 4/5 device is 204 bytes of MIDI descriptor plus the 9-byte
+configuration header = 213 and enumerates; a symmetric 6-cable device is 261 and
+fails with `ENUM: Configuration descriptor larger than control transfer max length` /
+`CHECK_SHORT_CONFIG_DESC FAILED`, with nothing downstream reachable. All 16 counts
+are legal USB and a PC host takes them, which is why `unit/midi_descriptor` covers
+every combination and this test cannot.
+
+Two cases stay uncovered there, both for the same reason - `EspUsbDeviceMidi` cannot
+produce the device that would show them: a CS_ENDPOINT belonging to a non-MIDI
+endpoint (a composite Audio + MIDI device, which is what would expose a leaking
+direction latch), and a device with two MIDI Streaming interfaces.
+
+Note when re-running these: the first run after the peer's cable count changes can
+log an enumeration error from the *previous* firmware, because the DUT boots before
+the peer is reflashed. A second run is clean.
 
 `peer/usb_msc` is the first USB Mass Storage test for `EspUsbDeviceMsc`. It uses
 a single-LUN RAM disk and verifies capacity, inquiry, max LUN, sense, test unit
@@ -399,9 +431,9 @@ enumerating on real hardware.
 41. ✅ `peer/composite_hid_audio` (UAC1 Audio + HID, claimed together; keyboard + PCM → 3/3)
 42. ✅ `unit/dependency_boundary` (Arduino Core TinyUSB dependency and Audio provenance regression scan)
 43. ✅ `unit/nkro_report` (NKRO state report struct: bitmap layout, modifier routing, boundaries; host g++)
-44. ✅ `unit/midi_descriptor` (multi-cable MIDI descriptor bytes for 1..16 cables, and 1 cable still matching `TUD_MIDI_DESCRIPTOR()`; host g++)
-45. `loopback/usb_midi_cables` (4-cable MIDI, cable number preserved both directions; compiles, not yet run on hardware)
-46. `peer/usb_midi_cables` (4-cable MIDI plus the cable count the Host decoded; needs EspUsbHost's unreleased `getMidiPortInfo()`, so `--profile s3_peer_local`; compiles, not yet run on hardware)
+44. ✅ `unit/midi_descriptor` (multi-cable MIDI descriptor bytes for every symmetric and asymmetric cable-count pair, and 1 cable still matching `TUD_MIDI_DESCRIPTOR()`; host g++)
+45. ✅ `loopback/usb_midi_cables` (4-cable MIDI, cable number preserved both directions)
+46. ✅ `peer/usb_midi_cables` (asymmetric 4-in / 5-out MIDI, which is what pins each direction; Host-decoded counts before and after traffic, every cable both directions, interleaved cables in one transfer, SysEx on a non-zero cable, a receive-only cable refused for sending; needs EspUsbHost's unreleased `getMidiPortInfo()`, so `--profile s3_peer_local`)
 
 ## Acceptance Rules
 

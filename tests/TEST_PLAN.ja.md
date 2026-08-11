@@ -65,7 +65,7 @@ tests/
 | system control HID | 予定 | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | ✅ `midi_descriptor`（cable 1..16 本の descriptor byte） | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認）、`usb_midi_cables`（4 cable、実機未実行） | ✅ `usb_midi`、`usb_midi_cables`（4 cable、実機未実行） | | |
+| USB MIDI | ✅ `midi_descriptor`（対称・非対称すべての cable 数の組み合わせの descriptor byte） | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認）、✅ `usb_midi_cables`（非対称 4-in / 5-out: Host 側 cable 数と方向 / interleave / SysEx） | ✅ `usb_midi`、✅ `usb_midi_cables`（対称 4 cable） | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | CCID スマートカードリーダー | ✅ `ccid_descriptor`（interface / class descriptor の byte 列） | ✅ `usb_ccid` class descriptor、ICC 3 状態、ATR、APDU / escape / parameters / abort、挿抜通知 | 未実装 | | ✅ `examples/SmartCardReader` |
@@ -171,11 +171,38 @@ MIDI を対象にします（上記2つは既定の 1 cable を引き続きカ�
 この機能の実質すべてなので、cable 16 通りすべてについて host 側でフィールド単位に検証
 します——cable 数を間違えても enumerate は成功し通信も通り、Host に見える port 数だけが
 違うためです。実機テスト2件は、packet の cable 番号が双方向で保たれることを確認します。
-`peer/usb_midi_cables` はさらに EspUsbHost が descriptor から読み取った cable 数も検証
-します。device が実際に cable を申告したことを示せるのはこの検証だけです（受信 message の
-cable 番号は packet header をそのまま読んだ値なので、1 cable の descriptor でも一致して
-しまいます）。これには EspUsbHost の未リリースの `getMidiPortInfo()` が必要なため、profile は
-`s3_peer_local` のみです。実機テスト2件はコンパイルは通っていますが、実機では未実行です。
+`peer/usb_midi_cables` は Host が何を読み取ったかを確認できる唯一の構成なので、より
+踏み込んでいます。`getMidiPortInfo()` の cable 数を **MIDI 通信の前**と、全 cable に通信を
+流した後の両方で検証するので、descriptor からではなく観測した packet から数を積み上げる
+実装なら失敗します。さらに、1 回の bulk transfer に異なる cable の packet を複数入れる場合
+（cable を packet 単位ではなく transfer 単位で読むと組み合わせがずれます）と、0 以外の cable
+での SysEx（cable は message の全 packet に繰り返し載ります）もカバーします。
+`getMidiPortInfo()` は未リリースのため、profile は `s3_peer_local` のみです。
+
+**peer が非対称（device → Host 4 本、Host → device 5 本）なのは、どちらの endpoint の数が
+どちらの方向に入るかを確認できる唯一の方法だからです。** クラス仕様は embedded jack を
+endpoint の方向とは逆向きに命名するため、Host が 2 方向を入れ替えていても対称な device では
+検出できず、往復テストでも検出できません（受信 packet の cable 番号はその packet 自身の
+header から読むためです）。実測した `in=4 out=5` がその証拠になります。同じ非対称性により、
+送信 helper の上限が `inCableCount()` であること（受信専用 cable への送信が失敗すること）も
+確認できます。
+
+**16 本ではないのは、この Host スタックが enumerate できる上限が方向あたり 5 本だからです。**
+ESP-IDF の USB Host は enumeration の control transfer より長い configuration descriptor を
+拒否し、`CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` は Arduino のプリコンパイル済み
+ライブラリで 256 固定、スケッチからは変更できません。実測値: この 4/5 device は MIDI
+descriptor 204 byte + configuration header 9 byte = 213 byte で enumerate でき、対称 6 cable は
+261 byte で `ENUM: Configuration descriptor larger than control transfer max length` /
+`CHECK_SHORT_CONFIG_DESC FAILED` となり、以降の検証に到達できません。16 本まで USB 仕様上は
+正当で PC の Host は受け付けるため、全組み合わせは `unit/midi_descriptor` 側でカバーしています。
+
+この構成でカバーできない項目が 2 つあり、いずれも `EspUsbDeviceMidi` がその device を
+作れないことが理由です——MIDI 以外の endpoint に付く CS_ENDPOINT（Audio + MIDI の composite。
+方向 latch の漏れが出るのはここです）と、MS インターフェースを 2 つ持つ device。
+
+再実行時の注意: peer の cable 数を変えた直後の 1 回目は、DUT が peer の再書き込み前に起動する
+ため、前のファームウェアによる enumeration エラーがログに残ることがあります。2 回目は
+クリーンになります。
 
 `peer/usb_msc` は `EspUsbDeviceMsc` の最初の USB Mass Storage テストです。単一 LUN の
 RAM disk として、capacity / inquiry / max LUN / sense / test unit ready / synchronize cache /
@@ -358,9 +385,9 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 41. ✅ `peer/composite_hid_audio`（UAC1 Audio + HIDを同時claim、keyboard + PCM → 3/3）
 42. ✅ `unit/dependency_boundary`（Arduino Core TinyUSB依存とAudio provenanceの回帰scan）
 43. ✅ `unit/nkro_report`（NKRO 状態 report struct の bitmap レイアウト / modifier 振り分け / 境界。host g++）
-44. ✅ `unit/midi_descriptor`（cable 1..16 本の複数 cable MIDI descriptor byte、および 1 cable が `TUD_MIDI_DESCRIPTOR()` と一致すること。host g++）
-45. `loopback/usb_midi_cables`（4 cable MIDI、cable 番号が双方向で保たれること。コンパイル済み・実機未実行）
-46. `peer/usb_midi_cables`（4 cable MIDI と Host が読み取った cable 数。EspUsbHost の未リリース `getMidiPortInfo()` が必要なため `--profile s3_peer_local`。コンパイル済み・実機未実行）
+44. ✅ `unit/midi_descriptor`（対称・非対称すべての cable 数の組み合わせの descriptor byte、および 1 cable が `TUD_MIDI_DESCRIPTOR()` と一致すること。host g++）
+45. ✅ `loopback/usb_midi_cables`（4 cable MIDI、cable 番号が双方向で保たれること）
+46. ✅ `peer/usb_midi_cables`（非対称 4-in / 5-out MIDI＝方向を確定できる構成: 通信前後の Host 側 cable 数、全 cable の双方向、1 transfer 内の cable 混在、0 以外の cable での SysEx、受信専用 cable への送信が失敗すること。EspUsbHost の未リリース `getMidiPortInfo()` が必要なため `--profile s3_peer_local`）
 
 ## 合格条件
 

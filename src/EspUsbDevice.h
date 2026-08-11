@@ -858,6 +858,12 @@ public:
   // separate MIDI port; they all share one pair of bulk endpoints, multiplexed
   // by the cable number in each packet header.
   explicit EspUsbDeviceMidi(EspUsbDevice &device, uint8_t cableCount = 1);
+  // The two directions need not have the same number of cables. Both are named
+  // from the host's point of view, as USB endpoint directions and EspUsbHost's
+  // EspUsbHostMidiPortInfo are: IN is device to host (what this device sends),
+  // OUT is host to device (what it receives). Beware that the MIDI class document
+  // names embedded jacks the other way round, from the device's side.
+  EspUsbDeviceMidi(EspUsbDevice &device, uint8_t inCableCount, uint8_t outCableCount);
   ~EspUsbDeviceMidi() override;
 
   bool begin() override;
@@ -872,16 +878,18 @@ public:
   uint8_t interfaceCount() const override { return 2; }
   uint8_t endpointCount() const override { return 1; }
 
-  uint8_t cableCount() const { return cableCount_; }
+  // Cables this device sends on / receives on, host-view as above.
+  uint8_t inCableCount() const { return inCableCount_; }
+  uint8_t outCableCount() const { return outCableCount_; }
   // Bytes configurationDescriptor() will write, so callers can size a buffer
   // before asking for the descriptor.
   uint16_t descriptorLength() const;
 
   bool readPacket(EspUsbDeviceMidiPacket &packet);
   bool writePacket(const EspUsbDeviceMidiPacket &packet);
-  // cable is 0-based (0..cableCount()-1) and matches the high nibble of
-  // EspUsbDeviceMidiPacket::header. Sending to a cable the host was never told
-  // about fails instead of silently landing on another port.
+  // cable is 0-based (0..inCableCount()-1, since these all send) and matches the
+  // high nibble of EspUsbDeviceMidiPacket::header. Sending to a cable the host was
+  // never told about fails instead of silently landing on another port.
   bool noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable = 0);
   bool noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable = 0);
   bool controlChange(uint8_t channel, uint8_t control, uint8_t value, uint8_t cable = 0);
@@ -895,7 +903,8 @@ private:
   static uint8_t clamp7(uint8_t value);
   static uint8_t header(uint8_t codeIndex, uint8_t cable);
 
-  uint8_t cableCount_ = 1;
+  uint8_t inCableCount_ = 1;
+  uint8_t outCableCount_ = 1;
 };
 
 struct EspUsbAudioFormat
