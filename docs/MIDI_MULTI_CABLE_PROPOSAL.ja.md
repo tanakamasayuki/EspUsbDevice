@@ -1,6 +1,6 @@
 # EspUsbDevice MIDI 複数 cable 対応 仕様案
 
-> **状態: 実装済み（cable 数対応のみ。cable 名は未実装）。** 統合ライブラリ
+> **状態: 実装済み（cable 数と方向別 cable 数。cable 名は未実装）。** 統合ライブラリ
 > `/home/mt/dev/EspMidi/` からの要求。既存 API を変えない純粋な追加として設計している。
 >
 > 提案内容をコードと照合した結果と、実装時に提案から変えた点を末尾の
@@ -186,13 +186,95 @@ if 連鎖に、Net が有効なときだけ index 4 が MAC 文字列として�
 - `tests/unit/midi_descriptor`: 実際の descriptor 生成コードを g++ でコンパイルし、
   cable 16 通りすべてについて全フィールドを検証する。1 cable のときは
   `TUD_MIDI_DESCRIPTOR()` と byte 単位で一致することも確認する。
-- `tests/loopback/usb_midi_cables` / `tests/peer/usb_midi_cables`: 4 cable の device を
-  実機で双方向に検証する。既存の `usb_midi` は既定の 1 cable を引き続きカバーする。
-- device が実際に cable を申告したことを実機で示せるのは、EspUsbHost が descriptor から
-  読み取った cable 数(`getMidiPortInfo()`)だけである。これは EspUsbHost 側で未リリース
-  のため、peer test の profile は `s3_peer_local` のみとした。
+- `tests/loopback/usb_midi_cables`: 4 cable の device を P4 1 台で双方向に検証する。
+- `tests/peer/usb_midi_cables`: **非対称**(device → Host 4 本、Host → device 5 本)の
+  device を 2 台構成で検証する。device が実際に cable を申告したことを実機で示せるのは、
+  EspUsbHost が descriptor から読み取った cable 数(`getMidiPortInfo()`)だけなので、これを
+  **MIDI 通信の前**と全 cable に通信を流した後の両方で確認する(観測した packet から数を
+  積み上げる実装なら失敗する)。さらに 1 回の bulk transfer に異なる cable の packet を複数
+  入れる場合、0 以外の cable での SysEx、受信専用 cable への送信が失敗することもカバーする。
+  非対称にした理由は後述。`getMidiPortInfo()` が未リリースのため profile は `s3_peer_local` のみ。
+  16 ではなく 5 が上限なのは後述の Host 側制約による。
+- 既存の `usb_midi` は既定の 1 cable を引き続きカバーする。
 
-**実機テスト2件はコンパイルのみ確認済みで、実機では未実行。**
+peer test でカバーできない項目が 2 つ残る。いずれも `EspUsbDeviceMidi` がその device を
+作れないためで、将来の composite peer sketch に委ねている。
+
+- **MIDI 以外の endpoint に付く CS_ENDPOINT。** Audio の isochronous endpoint にも付くので、
+  方向 latch の漏れが出るのは Audio + MIDI の composite である。
+- **MS インターフェースを 2 つ持つ device。** `EspUsbDeviceMidi` は 1 device に 1 つしか
+  持てない。
+
+### 追加実装: 方向別の cable 数
+
+当初は提案どおり cable 数を 1 つだけ受けていたが、それでは **Host 側の方向マッピングを
+検証できない**ことが分かったため、`EspUsbDeviceMidi(device, inCableCount, outCableCount)`
+を追加した。
+
+クラス仕様は embedded jack を **device 側から見て**命名するので、bulk **IN** endpoint に付く
+CS_ENDPOINT が列挙するのは Embedded MIDI **OUT** Jack である。したがって Host が 2 方向を
+入れ替えていても、対称な device では気付けない。往復テストでも気付けない——受信 message の
+cable 番号は、その packet 自身の header から読んだ値だからである。**非対称な device だけが
+この区別を可視化できる。**
+
+名前は Host から見た方向に揃えた(USB の endpoint 方向、および EspUsbHost の
+`EspUsbHostMidiPortInfo` と同じ)。IN が device → Host、OUT が Host → device である。
+送信 helper の上限は `inCableCount()` なので、受信専用の cable への送信は失敗する。
+
+descriptor 側の実装:
+
+- 両方向に存在する cable は `TUD_MIDI_DESC_JACK_DESC` の 4 jack 一組(30 バイト)をそのまま
+  使う。よって対称な構成のバイト列は変わらない。
+- 片方向だけの cable は、TinyUSB の jack マクロが必ず 4 jack を出力してしまうため使えない。
+  本ライブラリ側の `MIDI_DESC_JACK_IN_ONLY` / `MIDI_DESC_JACK_OUT_ONLY` で、その方向に必要な
+  2 jack(external + embedded、15 バイト)だけを出力する。embedded jack には必ず source が
+  必要なので、対になる external jack は残す。
+- jack ID は従来と同じ per-cable の式から採るので、欠けた方向の ID は単に使われない。
+  jack ID に求められるのは一意性であって連続性ではない。
+- MS header の `wTotalLength` は、`TUD_MIDI_DESC_HEAD` が単一の cable 数から算出するため
+  非対称を表現できない。実際に書いた長さで上書きする。対称時は同じ値になり、それは
+  1 cable が `TUD_MIDI_DESCRIPTOR()` と byte 単位で一致するテストが保証している。
+
+実機結果: 4-in / 5-out の device に対し EspUsbHost は `MIDI_PORT_INFO ok=1 in=4 out=5 iface=1`
+を返した。方向マッピングは正しい。
+
+### 実機で判明した Host 側の制約: EspUsbHost では 5 cable が上限
+
+最初は peer test を 16 cable で組んだが、device が enumerate せず全滅した。
+
+```text
+E (9791) ENUM: Configuration descriptor larger than control transfer max length
+E (9791) ENUM: [0:0] CHECK_SHORT_CONFIG_DESC FAILED
+```
+
+ESP-IDF の USB Host は、enumeration の control transfer より長い configuration descriptor を
+拒否する。`CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` は Arduino のプリコンパイル済み
+ライブラリで **256 固定**（USB Host 対応の全ターゲットの sdkconfig で確認）で、スケッチから
+変更する手段が無い。
+
+実機で測った境界は次のとおり。
+
+| cable 数 | MIDI descriptor | +config header | EspUsbHost |
+| --- | --- | --- | --- |
+| 4-in / 5-out | 204 | 213 | enumerate する |
+| 5 | 220 | 229 | enumerate する |
+| 6 | 252 | 261 | `CHECK_SHORT_CONFIG_DESC FAILED` |
+| 16 | 572 | 581 | `CHECK_SHORT_CONFIG_DESC FAILED` |
+
+6 cable のとき device 側は `DEVICE_READY cables=6 bytes=252` を出しており、descriptor の生成は
+成功している。拒否しているのは Host である。また device がまったく現れないので、部分的に
+enumerate されるようなケースでもない。
+
+したがって:
+
+- **本ライブラリ側の制約ではない。** 16 cable は USB 仕様上正当で、PC の Host は受け付ける。
+  descriptor の byte 検証は `tests/unit/midi_descriptor` が 16 通りすべてカバーしている。
+- **EspUsbHost と組み合わせる構成では 5 cable が上限。** EspMidi が USB Device 側と USB Host
+  側を同一構成で繋ぐ場合、ここが効く。README に記載した。
+- MIDI に限らず、descriptor が長い function すべてに当てはまる（16 cable + 他 class の
+  composite なら、なおさら早く当たる）。
+
+実機テスト 2 件は実行済み（`peer/usb_midi_cables` 10 件、`loopback/usb_midi_cables` 1 件、いずれもパス）。既存の `peer/usb_midi`(6 件) と `loopback/usb_midi`(1 件) も回帰確認済み。
 
 ### 提案の残りの前提について
 

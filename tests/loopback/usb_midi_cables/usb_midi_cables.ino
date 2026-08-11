@@ -202,8 +202,9 @@ void setup()
     Serial.println("NG");
     return;
   }
-  Serial.printf("DEVICE_READY fs cables=%u bytes=%u\n",
-                DeviceMIDI.cableCount(),
+  Serial.printf("DEVICE_READY fs cables=%u/%u bytes=%u\n",
+                DeviceMIDI.inCableCount(),
+                DeviceMIDI.outCableCount(),
                 DeviceMIDI.descriptorLength());
 
   if (!waitFor(deviceConnected, 30000))

@@ -287,9 +287,22 @@ USB MIDI:
 - `EspUsbDeviceMidi(device, cableCount)` exposes up to 16 cables, each of which
   the host sees as a separate MIDI port. The default is 1. Cables share one pair
   of bulk endpoints and are addressed by the 0-based `cable` argument on every
-  helper, or by the high nibble of `EspUsbDeviceMidiPacket::header`. Sending on a
-  cable at or above `cableCount()` fails rather than landing on another port.
+  helper, or by the high nibble of `EspUsbDeviceMidiPacket::header`.
+- `EspUsbDeviceMidi(device, inCableCount, outCableCount)` gives the two directions
+  different cable counts, as many real MIDI interfaces have. Both names are
+  host-view, like USB endpoint directions and EspUsbHost's `EspUsbHostMidiPortInfo`:
+  IN is device to host (what the device sends), OUT is host to device. `noteOn()`
+  and the other send helpers are bounded by `inCableCount()`, so a cable that
+  exists only for receiving is refused rather than landing on another port.
 - Per-cable names are not implemented; the host names the ports itself.
+- Pairing with an ESP-IDF USB host (EspUsbHost) caps the cable count at **5**.
+  That host refuses a configuration descriptor longer than its enumeration control
+  transfer, and `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` is 256 in the
+  precompiled Arduino libraries with no way to raise it from a sketch. 5 cables is
+  229 bytes including the configuration header and enumerates; 6 is 261 and fails
+  with `CHECK_SHORT_CONFIG_DESC FAILED`, measured in
+  `tests/peer/usb_midi_cables`. All 16 are legal USB and a PC host takes them; the
+  limit is the host stack, not this library.
 
 MSC:
 

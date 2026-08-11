@@ -2536,17 +2536,26 @@ bool EspUsbDeviceNet::beginNetwork()
 #endif
 }
 
-EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device, uint8_t cableCount) : EspUsbDeviceClass(device)
+static uint8_t midiClampCableCount(uint8_t cableCount)
 {
   if (cableCount < 1)
   {
-    cableCount = 1;
+    return 1;
   }
-  else if (cableCount > MAX_CABLES)
-  {
-    cableCount = MAX_CABLES;
-  }
-  cableCount_ = cableCount;
+  return cableCount > EspUsbDeviceMidi::MAX_CABLES ? EspUsbDeviceMidi::MAX_CABLES : cableCount;
+}
+
+EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device, uint8_t cableCount) : EspUsbDeviceClass(device)
+{
+  inCableCount_ = midiClampCableCount(cableCount);
+  outCableCount_ = inCableCount_;
+}
+
+EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device, uint8_t inCableCount, uint8_t outCableCount)
+    : EspUsbDeviceClass(device)
+{
+  inCableCount_ = midiClampCableCount(inCableCount);
+  outCableCount_ = midiClampCableCount(outCableCount);
 }
 
 EspUsbDeviceMidi::~EspUsbDeviceMidi()
@@ -2572,60 +2581,125 @@ void EspUsbDeviceMidi::end()
   }
 }
 
+// TinyUSB's TUD_MIDI_DESC_JACK_DESC() always emits all four jacks of a cable, so
+// it can only describe a cable that exists in both directions. These two emit the
+// pair a one-directional cable needs, keeping the same field layout, jack ID
+// formula and In-jacks-before-Out-jacks order as that macro.
+//
+// An embedded jack always takes its data from an external jack of the opposite
+// name, which is what makes the jack graph complete: a host that walks it must not
+// find an embedded jack with no source.
+#define MIDI_ONE_WAY_JACK_LEN (6 + 9)
+
+// Device to host only: the embedded OUT jack the bulk IN endpoint will list, fed
+// by an external IN jack.
+#define MIDI_DESC_JACK_IN_ONLY(_cablenum) \
+  /* MS In Jack (External) */ \
+  6, TUSB_DESC_CS_INTERFACE, MIDI_CS_INTERFACE_IN_JACK, MIDI_JACK_EXTERNAL, TUD_MIDI_JACKID_IN_EXT(_cablenum), 0, \
+  /* MS Out Jack (Embedded), connected to In Jack External */ \
+  9, TUSB_DESC_CS_INTERFACE, MIDI_CS_INTERFACE_OUT_JACK, MIDI_JACK_EMBEDDED, TUD_MIDI_JACKID_OUT_EMB(_cablenum), 1, TUD_MIDI_JACKID_IN_EXT(_cablenum), 1, 0
+
+// Host to device only: the embedded IN jack the bulk OUT endpoint will list,
+// feeding an external OUT jack.
+#define MIDI_DESC_JACK_OUT_ONLY(_cablenum) \
+  /* MS In Jack (Embedded) */ \
+  6, TUSB_DESC_CS_INTERFACE, MIDI_CS_INTERFACE_IN_JACK, MIDI_JACK_EMBEDDED, TUD_MIDI_JACKID_IN_EMB(_cablenum), 0, \
+  /* MS Out Jack (External), connected to In Jack Embedded */ \
+  9, TUSB_DESC_CS_INTERFACE, MIDI_CS_INTERFACE_OUT_JACK, MIDI_JACK_EXTERNAL, TUD_MIDI_JACKID_OUT_EXT(_cablenum), 1, TUD_MIDI_JACKID_IN_EMB(_cablenum), 1, 0
+
 uint16_t EspUsbDeviceMidi::descriptorLength() const
 {
+  // Cables present in both directions get the full four-jack group; the surplus
+  // cables of the longer direction only need the two jacks of that direction.
+  const uint8_t both = inCableCount_ < outCableCount_ ? inCableCount_ : outCableCount_;
+  const uint8_t surplus = static_cast<uint8_t>(
+      (inCableCount_ > outCableCount_ ? inCableCount_ : outCableCount_) - both);
   return static_cast<uint16_t>(TUD_MIDI_DESC_HEAD_LEN +
-                               TUD_MIDI_DESC_JACK_LEN * cableCount_ +
-                               TUD_MIDI_DESC_EP_LEN(cableCount_) * 2);
+                               TUD_MIDI_DESC_JACK_LEN * both +
+                               MIDI_ONE_WAY_JACK_LEN * surplus +
+                               TUD_MIDI_DESC_EP_LEN(outCableCount_) +
+                               TUD_MIDI_DESC_EP_LEN(inCableCount_));
 }
 
 // TUD_MIDI_DESCRIPTOR() is hardcoded to one cable, so the pieces it is built
-// from are emitted here instead. Every one of them is already parameterized by
-// the cable count - including the MS header's wTotalLength and each MS endpoint
-// descriptor's bNumEmbMIDIJack - so the only thing that changes per cable is how
-// many jack descriptors and trailing jack IDs get written.
+// from are emitted here instead. Most of them are already parameterized by the
+// cable count - including each MS endpoint descriptor's bNumEmbMIDIJack - so what
+// changes per cable is how many jack descriptors and trailing jack IDs get
+// written.
+//
+// The class document names embedded jacks from the device's side, which is the
+// opposite of the endpoint direction they belong to: the bulk IN endpoint (device
+// to host) carries the Embedded MIDI OUT Jacks, and the bulk OUT endpoint the
+// Embedded MIDI IN Jacks. Hence inCableCount_ pairs with JACKID_OUT_EMB below.
 uint16_t EspUsbDeviceMidi::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
   if (!dst || endpointNumber == 0)
   {
     return 0;
   }
-  const uint8_t cables = cableCount_;
+  const uint8_t inCables = inCableCount_;
+  const uint8_t outCables = outCableCount_;
+  const uint8_t both = inCables < outCables ? inCables : outCables;
   const uint8_t epOut = endpointNumber;
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   uint16_t offset = 0;
 
   {
-    const uint8_t head[] = {TUD_MIDI_DESC_HEAD(interfaceNumber, 0, cables)};
+    // The macro derives wTotalLength from a single cable count, which cannot
+    // describe an asymmetric interface, so it is overwritten below with the
+    // length this function actually writes. For a symmetric interface the two
+    // agree, which tests/unit/midi_descriptor asserts by comparing the one-cable
+    // output against TUD_MIDI_DESCRIPTOR() byte for byte.
+    const uint8_t head[] = {TUD_MIDI_DESC_HEAD(interfaceNumber, 0, inCables)};
     memcpy(&dst[offset], head, sizeof(head));
     offset = static_cast<uint16_t>(offset + sizeof(head));
   }
   // Descriptor cable numbers are 1-based; the packet header's cable field is
   // 0-based, so cable N here is what a packet addresses as N-1.
-  for (uint8_t cable = 1; cable <= cables; cable++)
+  for (uint8_t cable = 1; cable <= both; cable++)
   {
     const uint8_t jack[] = {TUD_MIDI_DESC_JACK_DESC(cable, 0)};
     memcpy(&dst[offset], jack, sizeof(jack));
     offset = static_cast<uint16_t>(offset + sizeof(jack));
   }
+  // Cables that exist in one direction only. Jack IDs keep coming from the same
+  // per-cable formula, so the IDs of the missing direction are simply skipped -
+  // jack IDs have to be unique, not contiguous.
+  for (uint8_t cable = static_cast<uint8_t>(both + 1); cable <= inCables; cable++)
   {
-    const uint8_t out[] = {TUD_MIDI_DESC_EP(epOut, endpointSize, cables)};
+    const uint8_t jack[] = {MIDI_DESC_JACK_IN_ONLY(cable)};
+    memcpy(&dst[offset], jack, sizeof(jack));
+    offset = static_cast<uint16_t>(offset + sizeof(jack));
+  }
+  for (uint8_t cable = static_cast<uint8_t>(both + 1); cable <= outCables; cable++)
+  {
+    const uint8_t jack[] = {MIDI_DESC_JACK_OUT_ONLY(cable)};
+    memcpy(&dst[offset], jack, sizeof(jack));
+    offset = static_cast<uint16_t>(offset + sizeof(jack));
+  }
+  {
+    const uint8_t out[] = {TUD_MIDI_DESC_EP(epOut, endpointSize, outCables)};
     memcpy(&dst[offset], out, sizeof(out));
     offset = static_cast<uint16_t>(offset + sizeof(out));
   }
-  for (uint8_t cable = 1; cable <= cables; cable++)
+  for (uint8_t cable = 1; cable <= outCables; cable++)
   {
     dst[offset++] = TUD_MIDI_JACKID_IN_EMB(cable);
   }
   {
-    const uint8_t in[] = {TUD_MIDI_DESC_EP(epIn, endpointSize, cables)};
+    const uint8_t in[] = {TUD_MIDI_DESC_EP(epIn, endpointSize, inCables)};
     memcpy(&dst[offset], in, sizeof(in));
     offset = static_cast<uint16_t>(offset + sizeof(in));
   }
-  for (uint8_t cable = 1; cable <= cables; cable++)
+  for (uint8_t cable = 1; cable <= inCables; cable++)
   {
     dst[offset++] = TUD_MIDI_JACKID_OUT_EMB(cable);
   }
+  // wTotalLength covers the MS header and everything after it, and sits in the
+  // last two bytes of the head.
+  const uint16_t msTotal = static_cast<uint16_t>(offset - (TUD_MIDI_DESC_HEAD_LEN - 7));
+  dst[TUD_MIDI_DESC_HEAD_LEN - 2] = static_cast<uint8_t>(msTotal & 0xff);
+  dst[TUD_MIDI_DESC_HEAD_LEN - 1] = static_cast<uint8_t>(msTotal >> 8);
   return offset;
 }
 
@@ -2665,7 +2739,7 @@ bool EspUsbDeviceMidi::writePacket(const EspUsbDeviceMidiPacket &packet)
 
 bool EspUsbDeviceMidi::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable)
 {
-  if (cable >= cableCount_)
+  if (cable >= inCableCount_)
   {
     return false;
   }
@@ -2675,7 +2749,7 @@ bool EspUsbDeviceMidi::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, u
 
 bool EspUsbDeviceMidi::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable)
 {
-  if (cable >= cableCount_)
+  if (cable >= inCableCount_)
   {
     return false;
   }
@@ -2685,7 +2759,7 @@ bool EspUsbDeviceMidi::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, 
 
 bool EspUsbDeviceMidi::controlChange(uint8_t channel, uint8_t control, uint8_t value, uint8_t cable)
 {
-  if (cable >= cableCount_)
+  if (cable >= inCableCount_)
   {
     return false;
   }
@@ -2695,7 +2769,7 @@ bool EspUsbDeviceMidi::controlChange(uint8_t channel, uint8_t control, uint8_t v
 
 bool EspUsbDeviceMidi::programChange(uint8_t channel, uint8_t program, uint8_t cable)
 {
-  if (cable >= cableCount_)
+  if (cable >= inCableCount_)
   {
     return false;
   }
@@ -2705,7 +2779,7 @@ bool EspUsbDeviceMidi::programChange(uint8_t channel, uint8_t program, uint8_t c
 
 bool EspUsbDeviceMidi::polyPressure(uint8_t channel, uint8_t note, uint8_t pressure, uint8_t cable)
 {
-  if (cable >= cableCount_)
+  if (cable >= inCableCount_)
   {
     return false;
   }
@@ -2715,7 +2789,7 @@ bool EspUsbDeviceMidi::polyPressure(uint8_t channel, uint8_t note, uint8_t press
 
 bool EspUsbDeviceMidi::channelPressure(uint8_t channel, uint8_t pressure, uint8_t cable)
 {
-  if (cable >= cableCount_)
+  if (cable >= inCableCount_)
   {
     return false;
   }
@@ -2725,7 +2799,7 @@ bool EspUsbDeviceMidi::channelPressure(uint8_t channel, uint8_t pressure, uint8_
 
 bool EspUsbDeviceMidi::pitchBend(uint8_t channel, uint16_t value, uint8_t cable)
 {
-  if (cable >= cableCount_)
+  if (cable >= inCableCount_)
   {
     return false;
   }

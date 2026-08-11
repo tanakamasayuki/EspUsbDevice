@@ -259,9 +259,21 @@ USB MIDI:
 - `EspUsbDeviceMidi(device, cableCount)` で最大 16 本の cable を公開できます。Host からは
   cable ごとに別々の MIDI port として見えます。既定は 1 本です。cable は 1 組の bulk endpoint
   を共有し、各 helper の 0 始まりの `cable` 引数、または `EspUsbDeviceMidiPacket::header` の
-  上位 nibble で指定します。`cableCount()` 以上の cable への送信は、他の port に載ることなく
+  上位 nibble で指定します。
+- `EspUsbDeviceMidi(device, inCableCount, outCableCount)` で方向ごとに異なる cable 数を
+  指定できます（実際の MIDI インターフェースでは非対称が普通です）。名前はどちらも Host から
+  見た方向で、USB の endpoint 方向や EspUsbHost の `EspUsbHostMidiPortInfo` と同じです——
+  IN が device → Host（device が送る側）、OUT が Host → device です。`noteOn()` などの送信
+  helper の上限は `inCableCount()` なので、受信専用の cable への送信は、他の port に載ることなく
   失敗します。
 - cable ごとの名前付けは未実装です（port 名は Host 側が付けます）。
+- ESP-IDF の USB Host（EspUsbHost）と組み合わせる場合、cable 数の上限は **5 本**です。
+  この Host は enumeration の control transfer より長い configuration descriptor を拒否し、
+  `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` は Arduino のプリコンパイル済みライブラリで
+  256 固定、スケッチからは変更できません。5 cable は configuration header を含めて 229 byte で
+  enumerate でき、6 cable は 261 byte で `CHECK_SHORT_CONFIG_DESC FAILED` になります
+  （`tests/peer/usb_midi_cables` で実測）。16 本は USB 仕様上は正当で PC の Host は受け付けます。
+  制約は Host スタック側にあり、本ライブラリ側ではありません。
 
 MSC:
 
