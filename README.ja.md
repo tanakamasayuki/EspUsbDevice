@@ -256,6 +256,12 @@ USB MIDI:
 
 - `EspUsbDeviceMidi` は 4 byte USB-MIDI event packet を送信します。
 - `noteOn()`、`noteOff()`、`controlChange()` などの helper と `writePacket()` を併用できます。
+- `EspUsbDeviceMidi(device, cableCount)` で最大 16 本の cable を公開できます。Host からは
+  cable ごとに別々の MIDI port として見えます。既定は 1 本です。cable は 1 組の bulk endpoint
+  を共有し、各 helper の 0 始まりの `cable` 引数、または `EspUsbDeviceMidiPacket::header` の
+  上位 nibble で指定します。`cableCount()` 以上の cable への送信は、他の port に載ることなく
+  失敗します。
+- cable ごとの名前付けは未実装です（port 名は Host 側が付けます）。
 
 MSC:
 

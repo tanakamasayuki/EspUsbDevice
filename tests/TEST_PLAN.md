@@ -73,7 +73,7 @@ tests/
 | System control HID | planned | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | | ✅ `usb_midi` (MIDI-only device also enumerates as supported) | ✅ `usb_midi` | | |
+| USB MIDI | ✅ `midi_descriptor` (multi-cable descriptor bytes, 1..16 cables) | ✅ `usb_midi` (MIDI-only device also enumerates as supported), `usb_midi_cables` (4 cables, not yet run) | ✅ `usb_midi`, `usb_midi_cables` (4 cables, not yet run) | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | CCID smart card reader | ✅ `ccid_descriptor` (interface / class descriptor bytes) | ✅ `usb_ccid` class descriptor, ICC states, ATR, APDU / escape / parameters / abort, slot change notifications | not implemented | | ✅ `examples/SmartCardReader` |
@@ -183,6 +183,19 @@ unreleased Host-side fixes.
 `loopback/usb_midi` verifies the same behavior on one P4. SysEx packets can be
 read in the same poll pass, so the test asserts that both expected packets were
 observed rather than waiting for each packet strictly one at a time.
+
+`unit/midi_descriptor`, `loopback/usb_midi_cables` and `peer/usb_midi_cables`
+cover multi-cable MIDI; the two above keep covering the default single-cable
+device. The descriptor is the whole of the feature, so it is checked field by
+field on the host for all 16 cable counts - a wrong cable count still enumerates
+and still passes traffic, it just shows the host the wrong number of ports. The
+two hardware tests then check that a packet's cable number survives the wire in
+both directions. `peer/usb_midi_cables` additionally asserts the cable count
+EspUsbHost decoded from the descriptors, which is the only check that the device
+really advertised its cables rather than echoing a cable number back; that needs
+EspUsbHost's unreleased `getMidiPortInfo()`, so its only profile is
+`s3_peer_local`. Both hardware tests compile but have not been run on hardware
+yet.
 
 `peer/usb_msc` is the first USB Mass Storage test for `EspUsbDeviceMsc`. It uses
 a single-LUN RAM disk and verifies capacity, inquiry, max LUN, sense, test unit
@@ -386,6 +399,9 @@ enumerating on real hardware.
 41. ✅ `peer/composite_hid_audio` (UAC1 Audio + HID, claimed together; keyboard + PCM → 3/3)
 42. ✅ `unit/dependency_boundary` (Arduino Core TinyUSB dependency and Audio provenance regression scan)
 43. ✅ `unit/nkro_report` (NKRO state report struct: bitmap layout, modifier routing, boundaries; host g++)
+44. ✅ `unit/midi_descriptor` (multi-cable MIDI descriptor bytes for 1..16 cables, and 1 cable still matching `TUD_MIDI_DESCRIPTOR()`; host g++)
+45. `loopback/usb_midi_cables` (4-cable MIDI, cable number preserved both directions; compiles, not yet run on hardware)
+46. `peer/usb_midi_cables` (4-cable MIDI plus the cable count the Host decoded; needs EspUsbHost's unreleased `getMidiPortInfo()`, so `--profile s3_peer_local`; compiles, not yet run on hardware)
 
 ## Acceptance Rules
 

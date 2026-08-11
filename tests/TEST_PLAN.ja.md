@@ -65,7 +65,7 @@ tests/
 | system control HID | 予定 | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| USB MIDI | | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認） | ✅ `usb_midi` | | |
+| USB MIDI | ✅ `midi_descriptor`（cable 1..16 本の descriptor byte） | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認）、`usb_midi_cables`（4 cable、実機未実行） | ✅ `usb_midi`、`usb_midi_cables`（4 cable、実機未実行） | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
 | CCID スマートカードリーダー | ✅ `ccid_descriptor`（interface / class descriptor の byte 列） | ✅ `usb_ccid` class descriptor、ICC 3 状態、ATR、APDU / escape / parameters / abort、挿抜通知 | 未実装 | | ✅ `examples/SmartCardReader` |
@@ -165,6 +165,17 @@ interface を supported に数えるのは EspUsbHost 2.6.0 から。それ以�
 `loopback/usb_midi` は同じ観点を P4 1台構成で確認します。SysEx は複数 packet が同じ
 poll で読めるため、packet 順の逐次待ちではなく、必要な packet を両方観測したことを
 assert します。
+
+`unit/midi_descriptor`、`loopback/usb_midi_cables`、`peer/usb_midi_cables` は複数 cable の
+MIDI を対象にします（上記2つは既定の 1 cable を引き続きカバーします）。descriptor が
+この機能の実質すべてなので、cable 16 通りすべてについて host 側でフィールド単位に検証
+します——cable 数を間違えても enumerate は成功し通信も通り、Host に見える port 数だけが
+違うためです。実機テスト2件は、packet の cable 番号が双方向で保たれることを確認します。
+`peer/usb_midi_cables` はさらに EspUsbHost が descriptor から読み取った cable 数も検証
+します。device が実際に cable を申告したことを示せるのはこの検証だけです（受信 message の
+cable 番号は packet header をそのまま読んだ値なので、1 cable の descriptor でも一致して
+しまいます）。これには EspUsbHost の未リリースの `getMidiPortInfo()` が必要なため、profile は
+`s3_peer_local` のみです。実機テスト2件はコンパイルは通っていますが、実機では未実行です。
 
 `peer/usb_msc` は `EspUsbDeviceMsc` の最初の USB Mass Storage テストです。単一 LUN の
 RAM disk として、capacity / inquiry / max LUN / sense / test unit ready / synchronize cache /
@@ -347,6 +358,9 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 41. ✅ `peer/composite_hid_audio`（UAC1 Audio + HIDを同時claim、keyboard + PCM → 3/3）
 42. ✅ `unit/dependency_boundary`（Arduino Core TinyUSB依存とAudio provenanceの回帰scan）
 43. ✅ `unit/nkro_report`（NKRO 状態 report struct の bitmap レイアウト / modifier 振り分け / 境界。host g++）
+44. ✅ `unit/midi_descriptor`（cable 1..16 本の複数 cable MIDI descriptor byte、および 1 cable が `TUD_MIDI_DESCRIPTOR()` と一致すること。host g++）
+45. `loopback/usb_midi_cables`（4 cable MIDI、cable 番号が双方向で保たれること。コンパイル済み・実機未実行）
+46. `peer/usb_midi_cables`（4 cable MIDI と Host が読み取った cable 数。EspUsbHost の未リリース `getMidiPortInfo()` が必要なため `--profile s3_peer_local`。コンパイル済み・実機未実行）
 
 ## 合格条件
 

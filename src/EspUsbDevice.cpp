@@ -2536,8 +2536,17 @@ bool EspUsbDeviceNet::beginNetwork()
 #endif
 }
 
-EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device) : EspUsbDeviceClass(device)
+EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device, uint8_t cableCount) : EspUsbDeviceClass(device)
 {
+  if (cableCount < 1)
+  {
+    cableCount = 1;
+  }
+  else if (cableCount > MAX_CABLES)
+  {
+    cableCount = MAX_CABLES;
+  }
+  cableCount_ = cableCount;
 }
 
 EspUsbDeviceMidi::~EspUsbDeviceMidi()
@@ -2563,19 +2572,75 @@ void EspUsbDeviceMidi::end()
   }
 }
 
+uint16_t EspUsbDeviceMidi::descriptorLength() const
+{
+  return static_cast<uint16_t>(TUD_MIDI_DESC_HEAD_LEN +
+                               TUD_MIDI_DESC_JACK_LEN * cableCount_ +
+                               TUD_MIDI_DESC_EP_LEN(cableCount_) * 2);
+}
+
+// TUD_MIDI_DESCRIPTOR() is hardcoded to one cable, so the pieces it is built
+// from are emitted here instead. Every one of them is already parameterized by
+// the cable count - including the MS header's wTotalLength and each MS endpoint
+// descriptor's bNumEmbMIDIJack - so the only thing that changes per cable is how
+// many jack descriptors and trailing jack IDs get written.
 uint16_t EspUsbDeviceMidi::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
   if (!dst || endpointNumber == 0)
   {
     return 0;
   }
+  const uint8_t cables = cableCount_;
   const uint8_t epOut = endpointNumber;
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
-  const uint8_t descriptor[] = {
-      TUD_MIDI_DESCRIPTOR(interfaceNumber, 0, epOut, epIn, endpointSize),
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
+  uint16_t offset = 0;
+
+  {
+    const uint8_t head[] = {TUD_MIDI_DESC_HEAD(interfaceNumber, 0, cables)};
+    memcpy(&dst[offset], head, sizeof(head));
+    offset = static_cast<uint16_t>(offset + sizeof(head));
+  }
+  // Descriptor cable numbers are 1-based; the packet header's cable field is
+  // 0-based, so cable N here is what a packet addresses as N-1.
+  for (uint8_t cable = 1; cable <= cables; cable++)
+  {
+    const uint8_t jack[] = {TUD_MIDI_DESC_JACK_DESC(cable, 0)};
+    memcpy(&dst[offset], jack, sizeof(jack));
+    offset = static_cast<uint16_t>(offset + sizeof(jack));
+  }
+  {
+    const uint8_t out[] = {TUD_MIDI_DESC_EP(epOut, endpointSize, cables)};
+    memcpy(&dst[offset], out, sizeof(out));
+    offset = static_cast<uint16_t>(offset + sizeof(out));
+  }
+  for (uint8_t cable = 1; cable <= cables; cable++)
+  {
+    dst[offset++] = TUD_MIDI_JACKID_IN_EMB(cable);
+  }
+  {
+    const uint8_t in[] = {TUD_MIDI_DESC_EP(epIn, endpointSize, cables)};
+    memcpy(&dst[offset], in, sizeof(in));
+    offset = static_cast<uint16_t>(offset + sizeof(in));
+  }
+  for (uint8_t cable = 1; cable <= cables; cable++)
+  {
+    dst[offset++] = TUD_MIDI_JACKID_OUT_EMB(cable);
+  }
+  return offset;
+}
+
+uint16_t EspUsbDeviceMidi::configurationDescriptorForSpeed(
+    uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
+    uint8_t endpointNumber, bool highSpeed)
+{
+  // A 16-cable descriptor is 572 bytes, so unlike the fixed-size functions this
+  // one can genuinely outgrow the buffer. Fail before writing rather than after.
+  if (descriptorLength() > capacity)
+  {
+    return 0;
+  }
+  return configurationDescriptor(dst, interfaceNumber, endpointNumber,
+                                 highSpeed ? 512 : 64);
 }
 
 bool EspUsbDeviceMidi::readPacket(EspUsbDeviceMidiPacket &packet)
@@ -2598,55 +2663,88 @@ bool EspUsbDeviceMidi::writePacket(const EspUsbDeviceMidiPacket &packet)
 #endif
 }
 
-bool EspUsbDeviceMidi::noteOn(uint8_t channel, uint8_t note, uint8_t velocity)
+bool EspUsbDeviceMidi::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable)
 {
-  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, status(ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, channel), clamp7(note), clamp7(velocity)};
+  if (cable >= cableCount_)
+  {
+    return false;
+  }
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, cable), status(ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, channel), clamp7(note), clamp7(velocity)};
   return writePacket(packet);
 }
 
-bool EspUsbDeviceMidi::noteOff(uint8_t channel, uint8_t note, uint8_t velocity)
+bool EspUsbDeviceMidi::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable)
 {
-  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, status(ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, channel), clamp7(note), clamp7(velocity)};
+  if (cable >= cableCount_)
+  {
+    return false;
+  }
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, cable), status(ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, channel), clamp7(note), clamp7(velocity)};
   return writePacket(packet);
 }
 
-bool EspUsbDeviceMidi::controlChange(uint8_t channel, uint8_t control, uint8_t value)
+bool EspUsbDeviceMidi::controlChange(uint8_t channel, uint8_t control, uint8_t value, uint8_t cable)
 {
-  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, status(ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, channel), clamp7(control), clamp7(value)};
+  if (cable >= cableCount_)
+  {
+    return false;
+  }
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, cable), status(ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, channel), clamp7(control), clamp7(value)};
   return writePacket(packet);
 }
 
-bool EspUsbDeviceMidi::programChange(uint8_t channel, uint8_t program)
+bool EspUsbDeviceMidi::programChange(uint8_t channel, uint8_t program, uint8_t cable)
 {
-  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, status(ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, channel), clamp7(program), 0};
+  if (cable >= cableCount_)
+  {
+    return false;
+  }
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, cable), status(ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, channel), clamp7(program), 0};
   return writePacket(packet);
 }
 
-bool EspUsbDeviceMidi::polyPressure(uint8_t channel, uint8_t note, uint8_t pressure)
+bool EspUsbDeviceMidi::polyPressure(uint8_t channel, uint8_t note, uint8_t pressure, uint8_t cable)
 {
-  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, status(ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, channel), clamp7(note), clamp7(pressure)};
+  if (cable >= cableCount_)
+  {
+    return false;
+  }
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, cable), status(ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, channel), clamp7(note), clamp7(pressure)};
   return writePacket(packet);
 }
 
-bool EspUsbDeviceMidi::channelPressure(uint8_t channel, uint8_t pressure)
+bool EspUsbDeviceMidi::channelPressure(uint8_t channel, uint8_t pressure, uint8_t cable)
 {
-  EspUsbDeviceMidiPacket packet = {ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, status(ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, channel), clamp7(pressure), 0};
+  if (cable >= cableCount_)
+  {
+    return false;
+  }
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, cable), status(ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, channel), clamp7(pressure), 0};
   return writePacket(packet);
 }
 
-bool EspUsbDeviceMidi::pitchBend(uint8_t channel, uint16_t value)
+bool EspUsbDeviceMidi::pitchBend(uint8_t channel, uint16_t value, uint8_t cable)
 {
+  if (cable >= cableCount_)
+  {
+    return false;
+  }
   if (value > 16383)
   {
     value = 16383;
   }
   EspUsbDeviceMidiPacket packet = {
-      ESP_USB_DEVICE_MIDI_CIN_PITCH_BEND_CHANGE,
+      header(ESP_USB_DEVICE_MIDI_CIN_PITCH_BEND_CHANGE, cable),
       status(ESP_USB_DEVICE_MIDI_CIN_PITCH_BEND_CHANGE, channel),
       static_cast<uint8_t>(value & 0x7f),
       static_cast<uint8_t>((value >> 7) & 0x7f),
   };
   return writePacket(packet);
+}
+
+uint8_t EspUsbDeviceMidi::header(uint8_t codeIndex, uint8_t cable)
+{
+  return static_cast<uint8_t>((cable << 4) | (codeIndex & 0x0f));
 }
 
 uint8_t EspUsbDeviceMidi::status(uint8_t codeIndex, uint8_t channel)

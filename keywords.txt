@@ -112,6 +112,8 @@ programChange	KEYWORD2
 polyPressure	KEYWORD2
 channelPressure	KEYWORD2
 pitchBend	KEYWORD2
+cableCount	KEYWORD2
+descriptorLength	KEYWORD2
 vendorID	KEYWORD2
 productID	KEYWORD2
 productRevision	KEYWORD2
