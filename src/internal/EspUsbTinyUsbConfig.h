@@ -44,21 +44,21 @@
 // nothing can feed again, which killed CDC-NCM device-to-host traffic within
 // seconds. DMA mode does not use that path.
 //
-// It is enabled only where it is coherent without cache maintenance. S2/S3
-// reach internal SRAM without an L1 data cache. P4 does not
-// (SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE), and TinyUSB's ESP32 cache hooks in
-// dwc2_esp32.h compile out unless soc_caps.h reaches that header - it does not,
-// which is why enabling DMA there does not trip the header's own
-// CFG_TUD_MEM_DCACHE_LINE_SIZE #error. P4 would therefore run DMA with no cache
-// maintenance at all, so it stays on slave mode until that is audited and the
-// NCM soak has been run on P4 hardware.
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-#define CFG_TUD_DWC2_DMA_ENABLE 0
-#define CFG_TUD_DWC2_SLAVE_ENABLE 1
-#else
+// Cache coherency is upstream's problem here and upstream solves it: P4 is the
+// only target of the three that reaches internal SRAM through an L1 data cache,
+// and tusb_mcu.h turns dcache maintenance on for it precisely when DMA is on
+// (CFG_TUD_MEM_DCACHE_ENABLE_DEFAULT = CFG_TUD_DWC2_DMA_ENABLE, line size 64,
+// matching CONFIG_CACHE_L1_CACHE_LINE_SIZE). TUD_EPBUF_TYPE_DEF then aligns and
+// pads every endpoint buffer to a whole cache line, so no DMA buffer shares a
+// line with anything else. S2/S3 have no such cache and need none of it.
+//
+// Both modes are compiled in rather than one being selected here, because
+// dma_device_enabled() picks between them at run time from the controller's own
+// GHWCFG2.arch. A core without internal DMA - which no ESP32 target is known to
+// be, but which cannot be verified for S2 without the hardware - then falls back
+// to slave mode instead of being left with no transfer path at all.
 #define CFG_TUD_DWC2_DMA_ENABLE 1
-#define CFG_TUD_DWC2_SLAVE_ENABLE 0
-#endif
+#define CFG_TUD_DWC2_SLAVE_ENABLE 1
 
 // Compile one instance of every device class supported by the v2 function
 // model. Whether an instance appears in a device is decided by its descriptor
