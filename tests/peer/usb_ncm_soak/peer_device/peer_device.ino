@@ -20,26 +20,56 @@
 // include path.
 extern "C" bool tud_network_can_xmit(uint16_t size);
 
-// TEMPORARY INVESTIGATION HOOK, matching the one in src/class/net/ncm_device.c.
-// v[0..3] = xmit free / ready / tinyusb / glue NTB pointers, v[4] = datagram
-// index into the glue NTB, v[5] = itf_data_alt, v[6] = ep_in busy,
-// v[7] = NTBs dropped by the free list, v[8] = NTBs dropped by the ready list,
-// v[9] = times no free NTB was available, v[10] = ep_in, v[11] = ep_size,
-// v[12] = times the usbd task ran netd_xfer_cb() while another task was inside
-// tud_network_xmit(), v[13] = total netd_xfer_cb() calls.
-extern "C" void espusb_ncm_dbg_state(uint32_t *v);
-extern "C" const char *espusb_ncm_dbg_tx_task_name(void);
-
-// The stall leaves TinyUSB believing an IN transfer is still in flight. Reading
-// the dwc2 IN endpoint registers says who is actually waiting for whom:
-// DIEPCTL.EPENA == 1 means the device armed the endpoint and is waiting for an
-// IN token, i.e. the host stopped polling. EPENA == 0 while TinyUSB still
-// thinks the endpoint is busy means the transfer was lost on the device side.
+// Dumps the dwc2 IN endpoint registers directly, so it needs nothing from the
+// library. This is what identified the original failure: with the driver in
+// slave (FIFO) mode the transmitter ended up with EPENA=1 and packets still
+// outstanding, an empty TxFIFO, and its DIEPEMPMSK refill bit already cleared -
+// a transfer that can never be fed again. Keeping the dump makes a regression
+// recognisable at a glance instead of just "throughput went to zero".
+//
+// The register base is ESP32-S3's; this test only runs on the S3 peer profiles.
+#if !defined(CONFIG_IDF_TARGET_ESP32S3)
+#error "usb_ncm_soak peer_device expects an ESP32-S3 (dwc2 register base)"
+#endif
 static const uint32_t USB_OTG_BASE = 0x60080000;
 #define DWC2_REG(off) (*reinterpret_cast<volatile uint32_t *>(USB_OTG_BASE + (off)))
 #define DWC2_DIEPCTL(n) DWC2_REG(0x900 + 0x20 * (n))
 #define DWC2_DIEPINT(n) DWC2_REG(0x908 + 0x20 * (n))
 #define DWC2_DIEPTSIZ(n) DWC2_REG(0x910 + 0x20 * (n))
+#define DWC2_DTXFSTS(n) DWC2_REG(0x918 + 0x20 * (n))
+
+static void reportDwc2()
+{
+  Serial.printf("DWC2_GLOBAL gintsts=%08lx gintmsk=%08lx daint=%08lx daintmsk=%08lx "
+                "diepempmsk=%08lx\n",
+                static_cast<unsigned long>(DWC2_REG(0x014)),
+                static_cast<unsigned long>(DWC2_REG(0x018)),
+                static_cast<unsigned long>(DWC2_REG(0x818)),
+                static_cast<unsigned long>(DWC2_REG(0x81c)),
+                static_cast<unsigned long>(DWC2_REG(0x834)));
+  for (uint8_t n = 0; n < 5; n++)
+  {
+    const uint32_t ctl = DWC2_DIEPCTL(n);
+    if ((ctl & (1u << 15)) == 0 && n != 0)
+    {
+      continue; // endpoint not active
+    }
+    const uint32_t tsiz = DWC2_DIEPTSIZ(n);
+    Serial.printf("DWC2_EP%u ctl=%08lx epena=%lu naksts=%lu stall=%lu int=%08lx "
+                  "tsiz=%08lx pktcnt=%lu xfrsiz=%lu dtxfsts=%08lx empmsk=%lu\n",
+                  n,
+                  static_cast<unsigned long>(ctl),
+                  static_cast<unsigned long>((ctl >> 31) & 1),
+                  static_cast<unsigned long>((ctl >> 17) & 1),
+                  static_cast<unsigned long>((ctl >> 21) & 1),
+                  static_cast<unsigned long>(DWC2_DIEPINT(n)),
+                  static_cast<unsigned long>(tsiz),
+                  static_cast<unsigned long>((tsiz >> 19) & 0x3ff),
+                  static_cast<unsigned long>(tsiz & 0x7ffff),
+                  static_cast<unsigned long>(DWC2_DTXFSTS(n)),
+                  static_cast<unsigned long>((DWC2_REG(0x834) >> n) & 1));
+  }
+}
 
 EspUsbDevice device;
 EspUsbDeviceNet net(device);
@@ -58,43 +88,6 @@ static uint32_t sourceWriteFails = 0;
 static uint32_t lastTickMs = 0;
 static uint32_t lastTickBytes = 0;
 static bool ticking = false;
-
-static void reportDwc2(const char *tag, uint8_t epIn)
-{
-  const uint8_t n = epIn & 0x0f;
-  const uint32_t ctl = DWC2_DIEPCTL(n);
-  Serial.printf("%s ep=%u diepctl=%08lx epena=%lu naksts=%lu stall=%lu "
-                "diepint=%08lx dieptsiz=%08lx gintsts=%08lx gintmsk=%08lx daint=%08lx\n",
-                tag, n,
-                static_cast<unsigned long>(ctl),
-                static_cast<unsigned long>((ctl >> 31) & 1),
-                static_cast<unsigned long>((ctl >> 17) & 1),
-                static_cast<unsigned long>((ctl >> 21) & 1),
-                static_cast<unsigned long>(DWC2_DIEPINT(n)),
-                static_cast<unsigned long>(DWC2_DIEPTSIZ(n)),
-                static_cast<unsigned long>(DWC2_REG(0x014)),
-                static_cast<unsigned long>(DWC2_REG(0x018)),
-                static_cast<unsigned long>(DWC2_REG(0x818)));
-}
-
-static void reportNcmState(const char *tag)
-{
-  uint32_t v[14] = {};
-  espusb_ncm_dbg_state(v);
-  Serial.printf("%s free=%08lx ready=%08lx tinyusb=%08lx glue=%08lx ndx=%lu "
-                "alt=%lu epBusy=%lu freeDrops=%lu readyDrops=%lu noFree=%lu\n",
-                tag,
-                static_cast<unsigned long>(v[0]), static_cast<unsigned long>(v[1]),
-                static_cast<unsigned long>(v[2]), static_cast<unsigned long>(v[3]),
-                static_cast<unsigned long>(v[4]), static_cast<unsigned long>(v[5]),
-                static_cast<unsigned long>(v[6]), static_cast<unsigned long>(v[7]),
-                static_cast<unsigned long>(v[8]), static_cast<unsigned long>(v[9]));
-  Serial.printf("DEVICE_RACE txTask=%s overlaps=%lu xferCbs=%lu\n",
-                espusb_ncm_dbg_tx_task_name(),
-                static_cast<unsigned long>(v[12]),
-                static_cast<unsigned long>(v[13]));
-  reportDwc2("DEVICE_DWC2", static_cast<uint8_t>(v[10]));
-}
 
 static void reportState(const char *tag)
 {
@@ -212,26 +205,14 @@ void loop()
     const uint32_t delta = sourceBytes - lastTickBytes;
     lastTickBytes = sourceBytes;
     lastTickMs = millis();
-    uint32_t v[14] = {};
-    espusb_ncm_dbg_state(v);
     // Deliberately no tud_network_can_xmit() here: it is not a pure query, it
-    // also tries to start a transfer, which would add another foreign-task
-    // caller to the very race under investigation. espusb_ncm_dbg_state() only
-    // reads.
-    Serial.printf("DEVICE_TICK bytes=%lu delta=%lu writeFails=%lu "
-                  "free=%08lx ready=%08lx tinyusb=%08lx glue=%08lx epBusy=%lu "
-                  "freeDrops=%lu readyDrops=%lu noFree=%lu heap=%lu\n",
+    // also tries to start a transfer, and calling it every second from the
+    // Arduino task would be exactly the foreign-task entry into TinyUSB this
+    // test exists to catch. It is only sampled on demand, after the soak.
+    Serial.printf("DEVICE_TICK bytes=%lu delta=%lu writeFails=%lu heap=%lu\n",
                   static_cast<unsigned long>(sourceBytes),
                   static_cast<unsigned long>(delta),
                   static_cast<unsigned long>(sourceWriteFails),
-                  static_cast<unsigned long>(v[0]),
-                  static_cast<unsigned long>(v[1]),
-                  static_cast<unsigned long>(v[2]),
-                  static_cast<unsigned long>(v[3]),
-                  static_cast<unsigned long>(v[6]),
-                  static_cast<unsigned long>(v[7]),
-                  static_cast<unsigned long>(v[8]),
-                  static_cast<unsigned long>(v[9]),
                   static_cast<unsigned long>(esp_get_free_heap_size()));
     if (!sourceClient.connected())
     {
@@ -257,7 +238,10 @@ void loop()
     else if (command == 's')
     {
       reportState("DEVICE_STATE");
-      reportNcmState("DEVICE_NCM");
+    }
+    else if (command == 'x')
+    {
+      reportDwc2();
     }
   }
 }

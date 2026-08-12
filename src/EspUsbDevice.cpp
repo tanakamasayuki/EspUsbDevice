@@ -2090,70 +2090,133 @@ bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, con
 
 #if ESP_USB_DEVICE_HAS_TINYUSB
 // Shared TX path used by both the sendFrame() raw API and the esp_netif transmit
-// callback. `tud_network_xmit` only *records* the ref/len; the actual copy runs
-// later in the usbd task via handleXmit() (tud_network_xmit_cb). So we:
-//  (1) serialize with a mutex (TinyUSB net is not reentrant),
-//  (2) copy into a persistent internal buffer that stays valid until handleXmit
-//      runs — the caller's buffer (a stack buffer, or an lwIP pbuf freed the
-//      moment we return / time out) must NOT be handed to tud_network_xmit, and
-//  (3) wait (bounded) for handleXmit to signal completion.
-// TEMPORARY INVESTIGATION HOOK - see src/class/net/ncm_device.c. Revert before
-// committing.
-extern "C" volatile uint32_t espusb_ncm_dbg_tx_in_progress;
-extern "C" char espusb_ncm_dbg_tx_task[16];
+// callback.
+//
+// TinyUSB requires that its device API be called from the same context as
+// tud_task() (see device/usbd.h). tud_network_xmit() is not an exception: it
+// copies the datagram via tud_network_xmit_cb() and then goes all the way to
+// usbd_edpt_xfer() in the caller's context. Calling it from lwIP's tcpip task,
+// as this path used to, therefore races the usbd task on the dwc2 endpoint and
+// FIFO state. Under a sustained device->host stream the two overlap constantly
+// (measured: ~70% of transfer completions landed inside such a call), and the
+// IN endpoint eventually ends up armed with packets to send but an empty FIFO.
+// No completion interrupt ever arrives, the NTB is never returned to the pool,
+// and tud_network_can_xmit() stays false forever — the USB network is dead
+// until reboot.
+//
+// So producers only ever copy the frame into a pooled buffer and hand it to the
+// usbd task through a queue; espUsbDeviceNetDrainTx() below does every TinyUSB
+// call, from the usbd task, in espusb::internal's tud_task() loop. The copy also
+// keeps callers free to pass a stack buffer or an lwIP pbuf that is released the
+// moment we return.
+static constexpr size_t NET_TX_FRAME_MAX = 1600;
+// Deep enough to absorb the burst lwIP hands us between two usbd task turns
+// without so much buffering that TCP loses its feedback signal. Four slots is
+// ~6.4 KB.
+static constexpr size_t NET_TX_SLOTS = 4;
+// How long a producer waits for a free slot before reporting the frame as
+// dropped. Dropping is the correct backpressure here: TCP retransmits, whereas
+// blocking the tcpip task stalls every other interface with it.
+static constexpr TickType_t NET_TX_ACQUIRE_TIMEOUT = pdMS_TO_TICKS(20);
 
-static SemaphoreHandle_t g_netTxMutex = nullptr;
-static SemaphoreHandle_t g_netTxDone = nullptr;
-static uint8_t g_netTxBuf[1600];
+struct EspUsbDeviceNetTxSlot
+{
+  uint16_t len;
+  uint8_t data[NET_TX_FRAME_MAX];
+};
+
+static EspUsbDeviceNetTxSlot *g_netTxSlots = nullptr;
+static QueueHandle_t g_netTxPending = nullptr; // producer -> usbd task
+static QueueHandle_t g_netTxFree = nullptr;    // usbd task -> producer
+
+static bool espUsbDeviceNetTxInit()
+{
+  if (g_netTxPending && g_netTxFree && g_netTxSlots)
+  {
+    return true;
+  }
+  if (!g_netTxSlots)
+  {
+    g_netTxSlots = static_cast<EspUsbDeviceNetTxSlot *>(
+        calloc(NET_TX_SLOTS, sizeof(EspUsbDeviceNetTxSlot)));
+  }
+  if (!g_netTxPending)
+  {
+    g_netTxPending = xQueueCreate(NET_TX_SLOTS, sizeof(EspUsbDeviceNetTxSlot *));
+  }
+  if (!g_netTxFree)
+  {
+    g_netTxFree = xQueueCreate(NET_TX_SLOTS, sizeof(EspUsbDeviceNetTxSlot *));
+    if (g_netTxFree && g_netTxSlots)
+    {
+      for (size_t i = 0; i < NET_TX_SLOTS; i++)
+      {
+        EspUsbDeviceNetTxSlot *slot = &g_netTxSlots[i];
+        xQueueSend(g_netTxFree, &slot, 0);
+      }
+    }
+  }
+  return g_netTxSlots && g_netTxPending && g_netTxFree;
+}
+
+// Intentionally no teardown: the pool outlives any single EspUsbDeviceNet, and
+// freeing it would race the usbd task draining the queue. It is one allocation
+// for the lifetime of the process, as the old static transmit buffer was.
 
 static bool espUsbDeviceNetTxFrame(const uint8_t *data, uint16_t len)
 {
-  if (!data || len == 0 || len > sizeof(g_netTxBuf))
+  if (!data || len == 0 || len > NET_TX_FRAME_MAX)
   {
     return false;
   }
-  if (!g_netTxMutex)
-  {
-    g_netTxMutex = xSemaphoreCreateMutex();
-  }
-  if (!g_netTxDone)
-  {
-    g_netTxDone = xSemaphoreCreateBinary();
-  }
-  if (!g_netTxMutex || !g_netTxDone)
+  if (!espUsbDeviceNetTxInit())
   {
     return false;
   }
-  xSemaphoreTake(g_netTxMutex, portMAX_DELAY);
-  bool ok = false;
-  // TEMPORARY INVESTIGATION HOOK - not for release. Marks the window in which
-  // this (non-usbd) task is inside TinyUSB, so netd_xfer_cb() on the usbd task
-  // can count how often the two actually overlap. Revert before committing.
-  espusb_ncm_dbg_tx_in_progress++;
+
+  EspUsbDeviceNetTxSlot *slot = nullptr;
+  if (xQueueReceive(g_netTxFree, &slot, NET_TX_ACQUIRE_TIMEOUT) != pdTRUE)
   {
-    const char *name = pcTaskGetName(nullptr);
-    strncpy(espusb_ncm_dbg_tx_task, name ? name : "?", sizeof(espusb_ncm_dbg_tx_task) - 1);
+    return false; // transmitter is behind; drop and let TCP retransmit
   }
-  // Wait (bounded) for a free transmit slot. can_xmit stays false while a prior
-  // (possibly timed-out) xmit is still pending, so g_netTxBuf is not overwritten
-  // until that xmit's handleXmit has copied it out — no corruption, no UAF.
-  for (int i = 0; i < 100 && !tud_network_can_xmit(len); i++)
+  memcpy(slot->data, data, len);
+  slot->len = len;
+  if (xQueueSend(g_netTxPending, &slot, 0) != pdTRUE)
   {
-    vTaskDelay(1);
+    xQueueSend(g_netTxFree, &slot, 0);
+    return false;
   }
-  if (tud_network_can_xmit(len))
-  {
-    memcpy(g_netTxBuf, data, len);
-    xSemaphoreTake(g_netTxDone, 0); // drop any stale completion
-    tud_network_xmit(g_netTxBuf, len);
-    // handleXmit() (usbd task) copies g_netTxBuf out, then signals g_netTxDone.
-    ok = (xSemaphoreTake(g_netTxDone, pdMS_TO_TICKS(100)) == pdTRUE);
-  }
-  espusb_ncm_dbg_tx_in_progress--; // TEMPORARY INVESTIGATION HOOK
-  xSemaphoreGive(g_netTxMutex);
-  return ok;
+  return true;
 }
 #endif
+
+// Hands queued frames to TinyUSB. Called only from the usbd task, between
+// tud_task() turns - this is the one place in the library that may call the
+// tud_network_* API.
+extern "C" void espUsbDeviceNetDrainTx(void)
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (!g_netTxPending)
+  {
+    return;
+  }
+  EspUsbDeviceNetTxSlot *slot = nullptr;
+  while (xQueuePeek(g_netTxPending, &slot, 0) == pdTRUE)
+  {
+    if (!tud_network_can_xmit(slot->len))
+    {
+      // All NTBs are in flight. Leave the frame queued; the next turn (or the
+      // transfer-complete callback that frees an NTB) picks it up.
+      break;
+    }
+    // Synchronous in current TinyUSB: copies through tud_network_xmit_cb() and
+    // starts the transfer before returning, so the slot is reusable right after.
+    tud_network_xmit(slot->data, slot->len);
+    xQueueReceive(g_netTxPending, &slot, 0);
+    xQueueSend(g_netTxFree, &slot, 0);
+  }
+#endif
+}
 
 #if ESP_USB_DEVICE_HAS_ESP_NETIF
 static esp_netif_driver_base_t g_netDriverBase = {};
@@ -2309,11 +2372,10 @@ bool EspUsbDeviceNet::sendFrame(const uint8_t *data, size_t length)
   {
     return false;
   }
-  // Copies `data` into an internal buffer and serializes with the same mutex as
-  // the esp_netif TX path, so the caller may pass a stack/temporary buffer and
-  // this is safe to mix with beginNetwork(). tud_network_xmit copies the frame
-  // out asynchronously in the usbd task (see espUsbDeviceNetTxFrame), so passing
-  // the caller's buffer directly would be a use-after-free.
+  // Copies `data` into a pooled buffer and queues it for the usbd task, exactly
+  // like the esp_netif TX path, so the caller may pass a stack/temporary buffer
+  // and this is safe to mix with beginNetwork(). Returns false when the queue is
+  // full, i.e. the transmitter has not kept up.
   return espUsbDeviceNetTxFrame(data, static_cast<uint16_t>(length));
 #else
   (void)data;
@@ -2362,14 +2424,9 @@ uint16_t EspUsbDeviceNet::handleXmit(uint8_t *dst, void *ref, uint16_t arg)
   {
     return 0;
   }
+  // Runs inside tud_network_xmit(), i.e. on the usbd task, with `ref` pointing
+  // at the queued slot espUsbDeviceNetDrainTx() passed in.
   memcpy(dst, ref, arg);
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  // Unblock espUsbDeviceNetTxFrame(): the frame has been copied out.
-  if (g_netTxDone)
-  {
-    xSemaphoreGive(g_netTxDone);
-  }
-#endif
   return arg;
 }
 
@@ -2455,18 +2512,12 @@ bool EspUsbDeviceNet::beginNetwork()
     return false;
   }
 
-  if (!g_netTxMutex)
-  {
-    g_netTxMutex = xSemaphoreCreateMutex();
-  }
-  if (!g_netTxDone)
-  {
-    g_netTxDone = xSemaphoreCreateBinary();
-  }
-  if (!g_netTxMutex || !g_netTxDone)
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (!espUsbDeviceNetTxInit())
   {
     return false;
   }
+#endif
 
   // Defaults: 192.168.7.1 / gw 192.168.7.1 / mask 255.255.255.0 (network order).
   const uint32_t defIp = static_cast<uint32_t>(IPAddress(192, 168, 7, 1));
