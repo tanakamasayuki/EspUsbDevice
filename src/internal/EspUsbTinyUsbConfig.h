@@ -61,18 +61,13 @@
 // endpoint DMAs from address 0 and the host receives garbage. Enable exactly
 // one.
 //
-// S2 keeps slave mode: whether its controller reports internal DMA cannot be
-// checked without the hardware, and because the choice is compile-time there is
-// no run-time fallback if it does not - the device would simply have no
-// transfer path. S3 and P4 are both measured. The cost is that S2 keeps the
-// stall, which needs an S2 board to fix responsibly.
-#if defined(CONFIG_IDF_TARGET_ESP32S2)
-#define CFG_TUD_DWC2_DMA_ENABLE 0
-#define CFG_TUD_DWC2_SLAVE_ENABLE 1
-#else
+// Every target here has the internal DMA that dma_device_enabled() looks for:
+// ESP-IDF records each core's configuration in soc/usb_dwc_cfg.h, and S2 and S3
+// both carry OTG_ARCHITECTURE 2, which is GHWCFG2_ARCH_INTERNAL_DMA. S3 and P4
+// are measured on hardware; S2 has only that constant and a compile check
+// behind it.
 #define CFG_TUD_DWC2_DMA_ENABLE 1
 #define CFG_TUD_DWC2_SLAVE_ENABLE 0
-#endif
 
 // Compile one instance of every device class supported by the v2 function
 // model. Whether an instance appears in a device is decided by its descriptor

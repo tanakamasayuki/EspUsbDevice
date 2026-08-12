@@ -28,13 +28,8 @@ static_assert(CFG_TUH_ENABLED == 0, "host stack must not be compiled");
 // lives at address 0.
 static_assert(CFG_TUD_DWC2_DMA_ENABLE + CFG_TUD_DWC2_SLAVE_ENABLE == 1,
               "DWC2 transfer modes are mutually exclusive");
-#if defined(CONFIG_IDF_TARGET_ESP32S2)
-static_assert(CFG_TUD_DWC2_DMA_ENABLE == 0,
-              "S2 internal DMA support is unverified and has no run-time fallback");
-#else
 static_assert(CFG_TUD_DWC2_DMA_ENABLE == 1,
               "device DMA avoids the slave-mode FIFO refill stall");
-#endif
 static_assert(CFG_TUD_CDC == 1 && CFG_TUD_MSC == 1 && CFG_TUD_HID == 1,
               "non-Audio classes must be library-owned");
 static_assert(CFG_TUD_MIDI == 1 && CFG_TUD_VENDOR == 1 && CFG_TUD_NCM == 1,
