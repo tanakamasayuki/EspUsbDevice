@@ -268,6 +268,8 @@ static void xmit_put_ntb_into_free_list(xmit_ntb_t *free_ntb) {
     }
   }
   TU_LOG_DRV("(EE) xmit_put_ntb_into_free_list - no entry in free list\n");// this should not happen
+  extern uint32_t espusb_ncm_dbg_free_list_drops; // TEMPORARY INVESTIGATION HOOK
+  espusb_ncm_dbg_free_list_drops++;
 } // xmit_put_ntb_into_free_list
 
 /**
@@ -293,6 +295,14 @@ static void xmit_put_ntb_into_ready_list(xmit_ntb_t *ready_ntb) {
   TU_LOG_DRV("xmit_put_ntb_into_ready_list(%p) %d\n", ready_ntb, ready_ntb->nth.wBlockLength);
 
 #if XMIT_NTB_N == 1
+  {
+    extern uint32_t espusb_ncm_dbg_ready_list_drops; // TEMPORARY INVESTIGATION HOOK
+    // With one NTB this assignment silently overwrites, so a non-NULL slot here
+    // means an NTB was just lost.
+    if (ncm_interface.xmit_ready_ntb[0] != NULL && ncm_interface.xmit_ready_ntb[0] != ready_ntb) {
+      espusb_ncm_dbg_ready_list_drops++;
+    }
+  }
   ncm_interface.xmit_ready_ntb[0] = ready_ntb;
 #else
   if (ncm_interface.xmit_ready_count >= XMIT_NTB_N) {
@@ -435,6 +445,8 @@ static bool xmit_setup_next_glue_ntb(void) {
   ncm_interface.xmit_glue_ntb = xmit_get_free_ntb();// get next buffer (if any)
   if (ncm_interface.xmit_glue_ntb == NULL) {
     TU_LOG_DRV("  xmit_setup_next_glue_ntb - nothing free\n");// should happen rarely
+    extern uint32_t espusb_ncm_dbg_no_free_ntb; // TEMPORARY INVESTIGATION HOOK
+    espusb_ncm_dbg_no_free_ntb++;
     return false;
   }
 
@@ -929,6 +941,16 @@ uint16_t netd_open(uint8_t rhport, tusb_desc_interface_t const *itf_desc, uint16
 bool netd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
   (void) result;
 
+  { // TEMPORARY INVESTIGATION HOOK
+    extern volatile uint32_t espusb_ncm_dbg_tx_in_progress;
+    extern uint32_t espusb_ncm_dbg_overlaps;
+    extern uint32_t espusb_ncm_dbg_xfer_cbs;
+    espusb_ncm_dbg_xfer_cbs++;
+    if (espusb_ncm_dbg_tx_in_progress != 0) {
+      espusb_ncm_dbg_overlaps++;
+    }
+  }
+
   if (ep_addr == ncm_interface.ep_out) {
     // new NTB received
     // - make the NTB valid
@@ -1081,5 +1103,39 @@ bool netd_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t 
 
   return true;
 } // netd_control_xfer_cb
+
+//-----------------------------------------------------------------------------
+// TEMPORARY INVESTIGATION HOOK - not for release. Exposes the transmit state
+// machine so tests/peer/usb_ncm_soak can tell a wedged NCM transmitter apart
+// from a host that simply stopped draining the IN endpoint. Revert before
+// committing.
+volatile uint32_t espusb_ncm_dbg_tx_in_progress = 0; // set by espUsbDeviceNetTxFrame()
+char espusb_ncm_dbg_tx_task[16] = "?";
+uint32_t espusb_ncm_dbg_overlaps = 0;   // usbd task ran netd_xfer_cb() during a foreign-task xmit
+uint32_t espusb_ncm_dbg_xfer_cbs = 0;
+uint32_t espusb_ncm_dbg_free_list_drops = 0;
+uint32_t espusb_ncm_dbg_ready_list_drops = 0;
+uint32_t espusb_ncm_dbg_no_free_ntb = 0;
+
+void espusb_ncm_dbg_state(uint32_t *v) {
+  v[0] = (uint32_t) (uintptr_t) ncm_interface.xmit_free_ntb[0];
+  v[1] = (uint32_t) (uintptr_t) ncm_interface.xmit_ready_ntb[0];
+  v[2] = (uint32_t) (uintptr_t) ncm_interface.xmit_tinyusb_ntb;
+  v[3] = (uint32_t) (uintptr_t) ncm_interface.xmit_glue_ntb;
+  v[4] = ncm_interface.xmit_glue_ntb_datagram_ndx;
+  v[5] = ncm_interface.itf_data_alt;
+  v[6] = usbd_edpt_busy(ncm_interface.rhport, ncm_interface.ep_in) ? 1 : 0;
+  v[7] = espusb_ncm_dbg_free_list_drops;
+  v[8] = espusb_ncm_dbg_ready_list_drops;
+  v[9] = espusb_ncm_dbg_no_free_ntb;
+  v[10] = ncm_interface.ep_in;
+  v[11] = ncm_interface.ep_size;
+  v[12] = espusb_ncm_dbg_overlaps;
+  v[13] = espusb_ncm_dbg_xfer_cbs;
+}
+
+const char *espusb_ncm_dbg_tx_task_name(void) {
+  return espusb_ncm_dbg_tx_task;
+}
 
 #endif // ( CFG_TUD_ENABLED && CFG_TUD_NCM )
