@@ -207,6 +207,14 @@ void loop()
       attached = usb.networkAttachNetif(netConfig, deviceAddress);
       Serial.printf("NETWORK_ATTACH ok=%u\n", attached ? 1 : 0);
     }
+    else if (command == 'p')
+    {
+      // Unconditional, unlike the auto-report above, which only fires when the
+      // address changes: a test that runs after another has already attached
+      // needs to be able to ask.
+      Serial.printf("NETWORK_IP ip=%s\n",
+                    usb.networkLocalIP(deviceAddress).toString().c_str());
+    }
     else if (command == 'd')
     {
       reportStats("NETWORK_STATS");

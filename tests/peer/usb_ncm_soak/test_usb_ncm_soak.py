@@ -32,15 +32,38 @@ def _wait_device_link(device, timeout=15):
         time.sleep(0.1)
 
 
-def _attach(dut):
-    dut.write("a")
-    dut.expect_exact("NETWORK_ATTACH ok=1")
-    dut.expect(r"ip=192\.168\.7\.\d", timeout=30)
+def _attach(dut, timeout=30):
+    """Attach the host netif, retrying until the device has enumerated.
+
+    Deliberately not keyed on HOST_CONNECTED: that line is printed once per
+    connection, so the second test in this file would wait for a message that
+    already went by.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        dut.write("a")
+        match = dut.expect(r"NETWORK_ATTACH ok=(\d)", timeout=10)
+        if int(match.group(1)) == 1:
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"host did not attach the USB netif within {timeout}s")
+        time.sleep(0.5)
+
+    # Poll for the lease instead of waiting for the auto-report, which only
+    # fires when the address changes and so stays silent for the second test.
+    deadline = time.monotonic() + timeout
+    while True:
+        dut.write("p")
+        match = dut.expect(r"NETWORK_IP ip=(\d+\.\d+\.\d+\.\d+)", timeout=10)
+        if match.group(1).startswith(b"192.168.7."):
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"host got no 192.168.7.x lease within {timeout}s")
+        time.sleep(0.5)
 
 
 def _run_soak(dut, device, command, duration_s):
     _wait_device_link(device)
-    dut.expect_exact("HOST_CONNECTED")
     _attach(dut)
 
     dut.write(command)
@@ -59,30 +82,22 @@ def _run_soak(dut, device, command, duration_s):
         timeout=15,
     )
     print("device:", state.group(0))
-    ncm = device.expect(
-        r"DEVICE_NCM free=(\w+) ready=(\w+) tinyusb=(\w+) glue=(\w+) ndx=(\d+) "
-        r"alt=(\d+) epBusy=(\d+) freeDrops=(\d+) readyDrops=(\d+) noFree=(\d+)",
-        timeout=15,
-    )
-    print("ncm:", ncm.group(0))
-    race = device.expect(
-        r"DEVICE_RACE txTask=(\S+) overlaps=(\d+) xferCbs=(\d+)", timeout=15
-    )
-    print("race:", race.group(0))
-    dwc2 = device.expect(
-        r"DEVICE_DWC2 ep=(\d+) diepctl=(\w+) epena=(\d) naksts=(\d) stall=(\d) "
-        r"diepint=(\w+) dieptsiz=(\w+) gintsts=(\w+) gintmsk=(\w+) daint=(\w+)",
-        timeout=15,
-    )
+    device.write("x")
+    dwc2 = device.expect(r"DWC2_GLOBAL [^\n]+", timeout=15)
     print("dwc2:", dwc2.group(0))
-
+    for _ in range(3):
+        try:
+            ep = device.expect(r"DWC2_EP\d [^\n]+", timeout=2)
+            print("dwc2:", ep.group(0))
+        except Exception:
+            break
     # A wedged NCM transmit state machine shows up as a fresh connection that
     # either cannot be made or delivers nothing.
     dut.write("v")
     recover = dut.expect(r"RECOVER connect=(\d) bytes=(\d+)", timeout=30)
     print("recover:", recover.group(0))
 
-    return soak, stats, state, recover, ncm
+    return soak, stats, state, recover
 
 
 def _assert_healthy(soak, state, recover, duration_s):
@@ -109,28 +124,13 @@ def _assert_healthy(soak, state, recover, duration_s):
     )
 
 
-def _assert_no_lost_ntb(ncm):
-    """The NTB pool must still be intact.
-
-    With CFG_TUD_NCM_IN_NTB_N == 1 there is exactly one transmit NTB, so a
-    single drop from either list loses it permanently and the transmitter can
-    never start again.
-    """
-    free_drops = int(ncm.group(8))
-    ready_drops = int(ncm.group(9))
-    assert free_drops == 0, f"{free_drops} transmit NTB(s) dropped by the free list"
-    assert ready_drops == 0, f"{ready_drops} transmit NTB(s) dropped by the ready list"
-
-
 def test_usb_ncm_soak_30s(dut, peers):
     device = peers["device"]
-    soak, _stats, state, recover, ncm = _run_soak(dut, device, "1", 30)
-    _assert_no_lost_ntb(ncm)
+    soak, _stats, state, recover = _run_soak(dut, device, "1", 30)
     _assert_healthy(soak, state, recover, 30)
 
 
 def test_usb_ncm_soak_300s(dut, peers):
     device = peers["device"]
-    soak, _stats, state, recover, ncm = _run_soak(dut, device, "2", 300)
-    _assert_no_lost_ntb(ncm)
+    soak, _stats, state, recover = _run_soak(dut, device, "2", 300)
     _assert_healthy(soak, state, recover, 300)

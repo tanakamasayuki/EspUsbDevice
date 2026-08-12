@@ -36,8 +36,8 @@
 
 #define CFG_TUSB_MEM_SECTION
 #define CFG_TUD_ENDPOINT0_SIZE 64
-#define CFG_TUD_DWC2_DMA_ENABLE 0
-#define CFG_TUD_DWC2_SLAVE_ENABLE 1
+#define CFG_TUD_DWC2_DMA_ENABLE 1
+#define CFG_TUD_DWC2_SLAVE_ENABLE 0
 
 // Compile one instance of every device class supported by the v2 function
 // model. Whether an instance appears in a device is decided by its descriptor
@@ -58,6 +58,15 @@
 #define CFG_TUD_MIDI_TX_BUFSIZE 512
 #define CFG_TUD_VENDOR_RX_BUFSIZE 512
 #define CFG_TUD_VENDOR_TX_BUFSIZE 512
+
+// TinyUSB defaults both NCM NTB pools to 1, which leaves the transmitter with a
+// single buffer: it can only ever have one NTB in flight, so every frame waits
+// for the previous transfer to complete. Upstream measures up to 50% more
+// throughput at 2 and no "request blocked" at 3 (see class/net/ncm.h). Three
+// 3200-byte transmit NTBs cost ~9.6 KB of USB-capable RAM, which is worth it on
+// the S3/P4 parts this library targets.
+#define CFG_TUD_NCM_IN_NTB_N 3
+#define CFG_TUD_NCM_OUT_NTB_N 2
 
 // These are compile-time capacities, not a fixed Audio Card topology.
 // Descriptor validation will reject formats that exceed the selected bus and
