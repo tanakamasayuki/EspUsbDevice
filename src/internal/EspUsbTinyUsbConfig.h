@@ -52,13 +52,27 @@
 // pads every endpoint buffer to a whole cache line, so no DMA buffer shares a
 // line with anything else. S2/S3 have no such cache and need none of it.
 //
-// Both modes are compiled in rather than one being selected here, because
-// dma_device_enabled() picks between them at run time from the controller's own
-// GHWCFG2.arch. A core without internal DMA - which no ESP32 target is known to
-// be, but which cannot be verified for S2 without the hardware - then falls back
-// to slave mode instead of being left with no transfer path at all.
-#define CFG_TUD_DWC2_DMA_ENABLE 1
+// The two modes are mutually exclusive by construction, not merely by
+// preference: tusb_option.h derives CFG_TUD_EDPT_DEDICATED_HWFIFO from
+// CFG_TUD_DWC2_SLAVE_ENABLE, and that flag decides whether the shared
+// tu_edpt_stream layer (CDC, MIDI, Vendor) hands the driver a real buffer or a
+// tu_fifo. Leaving slave mode on while the controller actually runs DMA makes
+// those classes call usbd_edpt_xfer_fifo(), whose xfer->buffer is NULL, so the
+// endpoint DMAs from address 0 and the host receives garbage. Enable exactly
+// one.
+//
+// S2 keeps slave mode: whether its controller reports internal DMA cannot be
+// checked without the hardware, and because the choice is compile-time there is
+// no run-time fallback if it does not - the device would simply have no
+// transfer path. S3 and P4 are both measured. The cost is that S2 keeps the
+// stall, which needs an S2 board to fix responsibly.
+#if defined(CONFIG_IDF_TARGET_ESP32S2)
+#define CFG_TUD_DWC2_DMA_ENABLE 0
 #define CFG_TUD_DWC2_SLAVE_ENABLE 1
+#else
+#define CFG_TUD_DWC2_DMA_ENABLE 1
+#define CFG_TUD_DWC2_SLAVE_ENABLE 0
+#endif
 
 // Compile one instance of every device class supported by the v2 function
 // model. Whether an instance appears in a device is decided by its descriptor
