@@ -15,10 +15,21 @@
 
 static_assert(CFG_TUD_ENABLED == 1, "device stack must be enabled");
 static_assert(CFG_TUH_ENABLED == 0, "host stack must not be compiled");
+// Device DMA still requires an explicit cache-coherency audit, so it is allowed
+// only on the targets that have one. S2/S3 reach internal SRAM without an L1
+// data cache, so DMA needs no maintenance there and is enabled to keep bulk IN
+// off the slave-mode FIFO refill path that permanently stalled CDC-NCM. P4
+// caches internal SRAM via L1 while TinyUSB's cache hooks compile out, so it
+// must stay on slave mode until that is audited on P4 hardware.
+static_assert(CFG_TUD_DWC2_DMA_ENABLE + CFG_TUD_DWC2_SLAVE_ENABLE == 1,
+              "exactly one DWC2 transfer mode must be selected");
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
 static_assert(CFG_TUD_DWC2_DMA_ENABLE == 0,
-              "device DMA requires an explicit cache-coherency audit");
-static_assert(CFG_TUD_DWC2_SLAVE_ENABLE == 1,
-              "device transfers currently use CPU-driven DWC2 FIFO access");
+              "P4 device DMA requires an explicit cache-coherency audit");
+#else
+static_assert(CFG_TUD_DWC2_DMA_ENABLE == 1,
+              "S2/S3 have no L1 data cache over internal SRAM, so DMA is safe");
+#endif
 static_assert(CFG_TUD_CDC == 1 && CFG_TUD_MSC == 1 && CFG_TUD_HID == 1,
               "non-Audio classes must be library-owned");
 static_assert(CFG_TUD_MIDI == 1 && CFG_TUD_VENDOR == 1 && CFG_TUD_NCM == 1,

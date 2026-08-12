@@ -36,8 +36,29 @@
 
 #define CFG_TUSB_MEM_SECTION
 #define CFG_TUD_ENDPOINT0_SIZE 64
+// DWC2 transfer mode. Slave mode has the CPU push every packet into the
+// controller's TxFIFO, refilling it from the FIFO-empty interrupt that
+// handle_epin_slave() disarms as soon as the last byte is written. A sustained
+// bulk IN stream can end up with the endpoint enabled, packets still
+// outstanding, an empty FIFO and that interrupt already cleared - a transfer
+// nothing can feed again, which killed CDC-NCM device-to-host traffic within
+// seconds. DMA mode does not use that path.
+//
+// It is enabled only where it is coherent without cache maintenance. S2/S3
+// reach internal SRAM without an L1 data cache. P4 does not
+// (SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE), and TinyUSB's ESP32 cache hooks in
+// dwc2_esp32.h compile out unless soc_caps.h reaches that header - it does not,
+// which is why enabling DMA there does not trip the header's own
+// CFG_TUD_MEM_DCACHE_LINE_SIZE #error. P4 would therefore run DMA with no cache
+// maintenance at all, so it stays on slave mode until that is audited and the
+// NCM soak has been run on P4 hardware.
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#define CFG_TUD_DWC2_DMA_ENABLE 0
+#define CFG_TUD_DWC2_SLAVE_ENABLE 1
+#else
 #define CFG_TUD_DWC2_DMA_ENABLE 1
 #define CFG_TUD_DWC2_SLAVE_ENABLE 0
+#endif
 
 // Compile one instance of every device class supported by the v2 function
 // model. Whether an instance appears in a device is decided by its descriptor
