@@ -2097,6 +2097,11 @@ bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, con
 //      runs — the caller's buffer (a stack buffer, or an lwIP pbuf freed the
 //      moment we return / time out) must NOT be handed to tud_network_xmit, and
 //  (3) wait (bounded) for handleXmit to signal completion.
+// TEMPORARY INVESTIGATION HOOK - see src/class/net/ncm_device.c. Revert before
+// committing.
+extern "C" volatile uint32_t espusb_ncm_dbg_tx_in_progress;
+extern "C" char espusb_ncm_dbg_tx_task[16];
+
 static SemaphoreHandle_t g_netTxMutex = nullptr;
 static SemaphoreHandle_t g_netTxDone = nullptr;
 static uint8_t g_netTxBuf[1600];
@@ -2121,6 +2126,14 @@ static bool espUsbDeviceNetTxFrame(const uint8_t *data, uint16_t len)
   }
   xSemaphoreTake(g_netTxMutex, portMAX_DELAY);
   bool ok = false;
+  // TEMPORARY INVESTIGATION HOOK - not for release. Marks the window in which
+  // this (non-usbd) task is inside TinyUSB, so netd_xfer_cb() on the usbd task
+  // can count how often the two actually overlap. Revert before committing.
+  espusb_ncm_dbg_tx_in_progress++;
+  {
+    const char *name = pcTaskGetName(nullptr);
+    strncpy(espusb_ncm_dbg_tx_task, name ? name : "?", sizeof(espusb_ncm_dbg_tx_task) - 1);
+  }
   // Wait (bounded) for a free transmit slot. can_xmit stays false while a prior
   // (possibly timed-out) xmit is still pending, so g_netTxBuf is not overwritten
   // until that xmit's handleXmit has copied it out — no corruption, no UAF.
@@ -2136,6 +2149,7 @@ static bool espUsbDeviceNetTxFrame(const uint8_t *data, uint16_t len)
     // handleXmit() (usbd task) copies g_netTxBuf out, then signals g_netTxDone.
     ok = (xSemaphoreTake(g_netTxDone, pdMS_TO_TICKS(100)) == pdTRUE);
   }
+  espusb_ncm_dbg_tx_in_progress--; // TEMPORARY INVESTIGATION HOOK
   xSemaphoreGive(g_netTxMutex);
   return ok;
 }
