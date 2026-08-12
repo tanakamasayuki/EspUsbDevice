@@ -421,6 +421,12 @@ public:
   EspUsbDevice();
   ~EspUsbDevice();
 
+  // Owns a heap allocation, and registers itself with global callback targets, so
+  // a copy was never meaningful; saying so here turns it into a build error rather
+  // than a double free.
+  EspUsbDevice(const EspUsbDevice &) = delete;
+  EspUsbDevice &operator=(const EspUsbDevice &) = delete;
+
   bool begin();
   bool begin(const EspUsbDeviceConfig &config);
   void end();
@@ -473,9 +479,9 @@ private:
   // Sized for the largest descriptor the library can emit: a 16-cable MIDI
   // function is 572 bytes on its own (34 head + 30 * 16 jacks + 29 * 2
   // endpoints), plus the 9-byte configuration header and room for one more
-  // small function alongside it. Three buffers of this size are held per
-  // device, so it is not free - anything larger returns a clean build failure
-  // from configurationDescriptorForSpeed() rather than overrunning.
+  // small function alongside it. Anything larger returns a clean build failure
+  // from configurationDescriptorForSpeed() rather than overrunning. Three
+  // buffers of this size are held per device, on the heap - see the members.
   static constexpr size_t MAX_CONFIG_DESCRIPTOR = 704;
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
   static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
@@ -483,6 +489,9 @@ private:
   static constexpr size_t MS_OS_20_DESCRIPTOR_SIZE = 178;
 
   bool buildDescriptors();
+  // Allocates the three configuration descriptor buffers on first use. False (and
+  // ESP_ERR_NO_MEM) when the allocation fails, which leaves them null.
+  bool allocateDescriptorBuffers();
   void buildWebUsbDescriptors();
   bool validateControllerEndpoints(const uint8_t *descriptor,
                                    uint16_t length);
@@ -507,9 +516,15 @@ private:
   bool tinyusbStarted_ = false;
   esp_err_t lastError_ = ESP_OK;
   uint8_t deviceDescriptor_[18] = {};
-  uint8_t configDescriptor_[MAX_CONFIG_DESCRIPTOR] = {};
-  uint8_t configDescriptorHighSpeed_[MAX_CONFIG_DESCRIPTOR] = {};
-  uint8_t otherSpeedDescriptor_[MAX_CONFIG_DESCRIPTOR] = {};
+  // One allocation split three ways, made on the first buildDescriptors() and
+  // released by the destructor. These are by far the largest members, and keeping
+  // them out of the object matters because sketches and tests do put an
+  // EspUsbDevice on the stack - several at once, in the case of
+  // tests/unit/descriptor - where 2 KB of buffers per instance overflows the
+  // Arduino loop task.
+  uint8_t *configDescriptor_ = nullptr;
+  uint8_t *configDescriptorHighSpeed_ = nullptr;
+  uint8_t *otherSpeedDescriptor_ = nullptr;
   uint8_t deviceQualifierDescriptor_[10] = {};
   uint8_t bosDescriptor_[MAX_BOS_DESCRIPTOR] = {};
   uint8_t microsoftOs20Descriptor_[MS_OS_20_DESCRIPTOR_SIZE] = {};

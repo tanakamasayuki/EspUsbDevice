@@ -660,6 +660,30 @@ EspUsbDevice::EspUsbDevice()
 EspUsbDevice::~EspUsbDevice()
 {
   end();
+  // configDescriptor_ is the base of the single allocation the three buffers are
+  // carved out of.
+  free(configDescriptor_);
+  configDescriptor_ = nullptr;
+  configDescriptorHighSpeed_ = nullptr;
+  otherSpeedDescriptor_ = nullptr;
+}
+
+bool EspUsbDevice::allocateDescriptorBuffers()
+{
+  if (configDescriptor_)
+  {
+    return true;
+  }
+  uint8_t *storage = static_cast<uint8_t *>(calloc(3, MAX_CONFIG_DESCRIPTOR));
+  if (!storage)
+  {
+    setLastError(ESP_ERR_NO_MEM);
+    return false;
+  }
+  configDescriptor_ = storage;
+  configDescriptorHighSpeed_ = storage + MAX_CONFIG_DESCRIPTOR;
+  otherSpeedDescriptor_ = storage + 2 * MAX_CONFIG_DESCRIPTOR;
+  return true;
 }
 
 bool EspUsbDevice::begin()
@@ -1136,6 +1160,10 @@ void EspUsbDevice::handleBusDetached()
 
 bool EspUsbDevice::buildDescriptors()
 {
+  if (!allocateDescriptorBuffers())
+  {
+    return false;
+  }
   vendorInterfaceNumber_ = 0xff;
   const bool composite = compositeHid();
   uint8_t interfaceCount = composite ? 1 : 0;
@@ -1173,7 +1201,7 @@ bool EspUsbDevice::buildDescriptors()
   deviceDescriptor_[16] = config_.serialNumber ? 3 : 0;
   deviceDescriptor_[17] = 1;
 
-  memset(configDescriptor_, 0, sizeof(configDescriptor_));
+  memset(configDescriptor_, 0, MAX_CONFIG_DESCRIPTOR);
   memset(hidReportDescriptor_, 0, sizeof(hidReportDescriptor_));
   hidReportDescriptorLength_ = 0;
   configDescriptor_[0] = 9;
