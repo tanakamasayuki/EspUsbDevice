@@ -4,6 +4,25 @@
 このライブラリを使う sketch では Arduino-ESP32 標準の `USB.begin()`、
 `USBHIDKeyboard`、`USBHIDMouse` は使いません。
 
+## Info（診断・切り分け用）
+
+機能のデモではなく、**動かないときに原因を切り分けるための**スケッチです。
+新しいボードや新しい構成では、まずここから始めてください。手順の全体像は
+[docs/usb-device-guide.ja.md](../docs/usb-device-guide.ja.md) にまとめています。
+
+- [Info/EspUsbDeviceBringUpCheck](Info/EspUsbDeviceBringUpCheck/README.ja.md):
+  **最初に動かす。** `begin()` の成否、Host が列挙するか、ネゴシエートされた速度、
+  Host → Device 方向の疎通を順に確認します。列挙されない場合のチェックリスト付きです。
+  HID keyboard として列挙しますがキーは送らないので、PC に挿したままで安全です。
+- [Info/EspUsbDeviceDescriptorDump](Info/EspUsbDeviceDescriptorDump/README.ja.md):
+  **次に動かす。** 登録したクラスからライブラリが組み立てた descriptor を全部表示し、
+  endpoint 予算を controller の上限と比較します。Host に接続しなくても確認できるので、
+  複合デバイスが収まるかを事前に判定できます。
+- [Info/EspUsbDeviceConsole](Info/EspUsbDeviceConsole/README.ja.md):
+  **詰めるとき。** Serial monitor から手打ちで HID report や vendor 転送を送り、
+  Host から降りてくる要求（output report、protocol 切り替え、control request）を
+  すべて表示します。ビルドし直さずに 1 転送ずつ試せます。
+
 ## ESP32-P4 Device port
 
 - [P4HighSpeedDevice](P4HighSpeedDevice/README.ja.md): rhport 1と、external UTMI

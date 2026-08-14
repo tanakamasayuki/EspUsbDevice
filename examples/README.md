@@ -4,6 +4,28 @@ Arduino sketches that show the basic `EspUsbDevice` usage. Sketches using this
 library should not call Arduino-ESP32's `USB.begin()`, `USBHIDKeyboard`, or
 `USBHIDMouse`.
 
+## Info (Diagnostics)
+
+Not feature demos - these are the sketches for **finding out why something does
+not work**. On a new board or a new configuration, start here. The full
+procedure is in [docs/usb-device-guide.md](../docs/usb-device-guide.md).
+
+- [Info/EspUsbDeviceBringUpCheck](Info/EspUsbDeviceBringUpCheck/README.md):
+  **Run this first.** Whether `begin()` succeeded, whether the host enumerates,
+  the negotiated speed, and whether host -> device traffic arrives - in that
+  order, with a checklist for when nothing enumerates. It enumerates as a HID
+  keyboard but never sends a key, so it is safe to leave plugged into a PC.
+- [Info/EspUsbDeviceDescriptorDump](Info/EspUsbDeviceDescriptorDump/README.md):
+  **Run this next.** Prints every descriptor the library built from the
+  registered classes, and compares the endpoint usage against the controller's
+  limits. No host connection needed, so it answers "will this composite fit?"
+  before you build the sketch that needs it.
+- [Info/EspUsbDeviceConsole](Info/EspUsbDeviceConsole/README.md):
+  **For nailing things down.** Type HID reports and vendor transfers into the
+  serial monitor, and see every request coming down from the host (output
+  reports, protocol switches, control requests). One transfer at a time, with no
+  rebuild.
+
 ## ESP32-P4 Device Ports
 
 - [P4HighSpeedDevice](P4HighSpeedDevice/README.md): rhport 1 and the board
