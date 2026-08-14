@@ -78,9 +78,9 @@ cd tests && uv run --with pyusb python manual/device_inspect/device_inspect.py -
 === EspUsbDevice descriptor dump ===
 BEGIN ok error=ESP_OK
 --- DEVICE descriptor (18 bytes) ---
-  0000  12 01 00 02 ef 02 01 40 3a 30 51 40 00 01 01 02
+  0000  12 01 00 02 00 00 00 40 3a 30 51 40 00 01 01 02
   0010  03 01
-  bcdUSB=0x0200 class=0xef (Miscellaneous) subclass=0x02 protocol=0x01 ep0_mps=64
+  bcdUSB=0x0200 class=0x00 (per-interface) subclass=0x00 protocol=0x00 ep0_mps=64
   idVendor=0x303a idProduct=0x4051 bcdDevice=0x0100 configurations=1
 --- CONFIGURATION descriptor (full-speed) (98 bytes) ---
   ...

@@ -416,6 +416,8 @@ USB ネットワーク（CDC-NCM）:
 
 USB device そのものの基礎、ESP32 固有の制約、動かないときの切り分け手順は
 [docs/usb-device-guide.ja.md](docs/usb-device-guide.ja.md) にまとめています。
+TinyUSB との関係、descriptor のバイト構造、callback context、独自 class の実装は
+[docs/usb-device-advanced.ja.md](docs/usb-device-advanced.ja.md) にまとめています。
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。
 設計背景と `EspUsbHost` 既存テストからの移行メモは [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md)
