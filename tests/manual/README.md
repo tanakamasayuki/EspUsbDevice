@@ -6,6 +6,104 @@ Manual tests are reserved for behavior that cannot be fully controlled by
 pytest, such as host OS enumeration dialogs, visual LED confirmation, external
 USB analyzers, or physical cabling changes.
 
+The whole diagnosis procedure is in
+[docs/usb-device-guide.md](../../docs/usb-device-guide.md). The user-facing tools
+that report from the device's own serial monitor live in
+[`examples/Info/`](../../examples/Info/).
+
+## `device_inspect` (descriptors as the host received them)
+
+Purpose:
+
+- Where `examples/Info/EspUsbDeviceDescriptorDump` shows what the device *meant*
+  to send, this shows **what the host actually received**. The two must match
+  byte for byte.
+- Print DEVICE, CONFIGURATION (every index), DEVICE QUALIFIER, OTHER SPEED
+  CONFIGURATION, BOS, string and HID report descriptors, as hex plus a
+  block-by-block walk.
+- Report the enumerated speed and which kernel driver bound.
+
+Requirements:
+
+- A board flashed with an EspUsbDevice sketch, its device connector plugged into
+  this PC
+- A PC where libusb is usable
+
+Steps:
+
+```
+cd tests
+uv run --with pyusb python manual/device_inspect/device_inspect.py
+uv run --with pyusb python manual/device_inspect/device_inspect.py --pid 0x4051
+```
+
+Without `--pid` it reports every device with VID `0x303a`. `--json` emits a
+machine-readable form, which makes before/after diffs easy:
+
+```
+uv run --with pyusb python manual/device_inspect/device_inspect.py --json > before.json
+# change the descriptors and reflash
+uv run --with pyusb python manual/device_inspect/device_inspect.py --json > after.json
+diff -u before.json after.json
+```
+
+Expected:
+
+- The CONFIGURATION hex matches the device-side `DescriptorDump` output.
+- Device Qualifier and Other Speed Configuration are only answered when running
+  at high speed.
+- BOS is only present for sketches with WebUSB enabled.
+
+Notes:
+
+- Reading a HID report descriptor needs usbhid detached on Linux, and the
+  Windows HID driver does not pass the request at all. When it cannot be read
+  the reason is printed and the dump continues. Use `--no-hid` to skip it.
+- For `Access denied`, apply the same fix as in the `p4_hs_bulk` section below,
+  substituting the VID/PID you are using.
+
+## `enumeration_soak` (does it survive re-enumeration)
+
+Purpose:
+
+- Enumerating once is not the same as staying usable. This repeats
+  re-enumeration and configuration changes, checking the descriptors never drift
+  and the device keeps answering.
+
+Two cycle kinds, exercising different paths:
+
+- `config`: `SET_CONFIGURATION 0` then `1`. The device stays addressed while
+  class endpoints are torn down and rebuilt, firing `onBusDetached()` /
+  `onBusAttached()`. This catches **state a class kept across a deconfigure**.
+- `reset`: a real USB port reset. The device is re-addressed and re-enumerated,
+  so the descriptors are rebuilt and sent again. This catches a **descriptor
+  buffer that is only correct the first time**, or a controller that does not
+  survive a reset.
+
+Steps:
+
+```
+cd tests
+uv run --with pyusb python manual/enumeration_soak/enumeration_soak.py --cycles 50
+uv run --with pyusb python manual/enumeration_soak/enumeration_soak.py --mode reset --cycles 50
+```
+
+`--mode` defaults to `both` (alternating). `--settle-s` (10 s by default) tunes
+how long to wait for the device to come back after a reset.
+
+Expected:
+
+- Every cycle prints `ok`, ending with
+  `PASS <n> cycles, descriptors identical throughout`.
+- The descriptor hex and the link speed never change from the first reading.
+
+Notes:
+
+- A failing cycle prints the reason (descriptor diff, timeout, never came back)
+  and continues; the script exits non-zero at the end.
+- A reset makes the host rebind its driver, so do not run it while the target is
+  mounted as MSC or similar.
+
 ## `p4_hs_bulk` (ESP32-P4 High-Speed Device)
 
 Purpose:

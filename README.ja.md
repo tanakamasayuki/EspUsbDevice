@@ -172,6 +172,15 @@ void loop()
 
 ユーザー向けの基本 sketch は [examples/README.ja.md](examples/README.ja.md) にまとめています。
 
+診断用の sketch は `examples/Info/` にあります。動かないときはここから始めてください。
+使い方と切り分けの手順は [docs/usb-device-guide.ja.md](docs/usb-device-guide.ja.md) にまとめています。
+
+- `Info/EspUsbDeviceBringUpCheck`: 起動、列挙、速度、Host → Device 疎通を順に確認する。**最初に動かす。**
+- `Info/EspUsbDeviceDescriptorDump`: 組み立てられた descriptor 全部と endpoint 予算を表示する（Host 接続不要）。
+- `Info/EspUsbDeviceConsole`: Serial から手打ちで HID report / vendor 転送を送り、Host からの要求を表示する。
+
+機能別:
+
 - `Keyboard`: layout 付き ASCII 文字列と HID usage ID を送信する boot keyboard。
 - `KeyboardNKRO`: 任意数のキーを同時押下できる N-key rollover keyboard。
 - `Mouse`: 移動、wheel、button を送信する boot mouse。
@@ -405,6 +414,8 @@ USB ネットワーク（CDC-NCM）:
   compatible ID と device interface GUID を Windows へ返します。custom vendor code、
   GUID、descriptor 内容の差し替え API は未実装です。
 
+USB device そのものの基礎、ESP32 固有の制約、動かないときの切り分け手順は
+[docs/usb-device-guide.ja.md](docs/usb-device-guide.ja.md) にまとめています。
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。
 設計背景と `EspUsbHost` 既存テストからの移行メモは [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md)

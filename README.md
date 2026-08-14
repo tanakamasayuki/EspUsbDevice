@@ -188,6 +188,16 @@ void loop()
 
 User-facing sketches are documented in [examples/README.md](examples/README.md).
 
+Diagnostic sketches live in `examples/Info/` - start there when something does
+not work. How to use them, and the whole bring-up procedure, is in
+[docs/usb-device-guide.md](docs/usb-device-guide.md).
+
+- `Info/EspUsbDeviceBringUpCheck`: start, enumeration, speed, and host -> device traffic, in that order. **Run this first.**
+- `Info/EspUsbDeviceDescriptorDump`: every descriptor the library built, plus the endpoint budget (no host needed).
+- `Info/EspUsbDeviceConsole`: type HID reports and vendor transfers over serial, and watch every request from the host.
+
+By feature:
+
 - `Keyboard`: boot keyboard that sends layout-aware ASCII strings and HID usage IDs.
 - `KeyboardNKRO`: N-key rollover keyboard that holds any number of keys at once.
 - `Mouse`: boot mouse that sends movement, wheel, and buttons.
@@ -455,6 +465,9 @@ Composite:
   Custom vendor-code, GUID, and descriptor replacement APIs are not implemented
   yet.
 
+USB device fundamentals, the ESP32-specific constraints, and how to diagnose a
+device the host will not accept are covered in
+[docs/usb-device-guide.md](docs/usb-device-guide.md).
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
 Design background and migration notes from existing EspUsbHost tests are in

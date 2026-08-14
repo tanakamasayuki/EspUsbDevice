@@ -5,6 +5,96 @@
 手動テストは、pytest だけでは完全に制御できない挙動に限定します。
 例: ホスト OS の列挙表示、LED の目視確認、外部 USB analyzer、物理的な配線変更。
 
+切り分けの手順全体は [docs/usb-device-guide.ja.md](../../docs/usb-device-guide.ja.md)
+にまとめています。Device 側の Serial monitor から確認する利用者向けツールは
+[`examples/Info/`](../../examples/Info/) にあります。
+
+## `device_inspect`（Host が受け取った descriptor を表示する）
+
+目的:
+
+- `examples/Info/EspUsbDeviceDescriptorDump` が「送ったつもりの内容」なのに対し、
+  **Host が実際に受け取った内容**を表示する。両者は byte 単位で一致するはず。
+- DEVICE、CONFIGURATION（全 index）、DEVICE QUALIFIER、OTHER SPEED CONFIGURATION、
+  BOS、string、HID report descriptor を、hex と block 単位の走査で表示する。
+- どの speed で列挙されたか、どの kernel driver が bind したかを確認する。
+
+必要なもの:
+
+- EspUsbDevice のスケッチを書き込んだボードと、その device connector をこの PC へ接続
+- libusb を利用できる PC
+
+手順:
+
+```
+cd tests
+uv run --with pyusb python manual/device_inspect/device_inspect.py
+uv run --with pyusb python manual/device_inspect/device_inspect.py --pid 0x4051
+```
+
+`--pid` を省略すると VID `0x303a` の全デバイスを表示します。`--json` を付けると
+機械可読な形式になるので、変更前後の差分を取れます。
+
+```
+uv run --with pyusb python manual/device_inspect/device_inspect.py --json > before.json
+# descriptor を変更して書き込み直す
+uv run --with pyusb python manual/device_inspect/device_inspect.py --json > after.json
+diff -u before.json after.json
+```
+
+期待:
+
+- 表示される CONFIGURATION の hex が、Device 側 `DescriptorDump` の出力と一致する。
+- Device Qualifier と Other Speed Configuration は HighSpeed 動作時のみ返る。
+- BOS は WebUSB を有効にしたスケッチでのみ返る。
+
+注意:
+
+- HID report descriptor の取得は Linux では usbhid の detach が必要で、Windows の
+  HID driver は要求自体を通しません。取得できない場合はその理由を表示して続行します。
+  取得を試みない場合は `--no-hid` を付けます。
+- `Access denied` になった場合の対処は下の `p4_hs_bulk` の項と同じです（VID/PID を
+  対象のものへ読み替えてください）。
+
+## `enumeration_soak`（再列挙に耐えるか）
+
+目的:
+
+- 一度列挙できることと、使い続けられることは別なので、再列挙と configuration 切り替えを
+  繰り返しても descriptor が変化しないこと、応答しなくならないことを確認する。
+
+2 種類の cycle があり、通る経路が違います。
+
+- `config`: `SET_CONFIGURATION 0` → `1`。address は保ったまま class endpoint を
+  張り直し、`onBusDetached()` / `onBusAttached()` を発火させる。**deconfigure を
+  跨いで残った class 側の状態**を捕まえます。
+- `reset`: 実際の USB port reset。再アドレス付与と再列挙が起き、descriptor が
+  組み立て直されて再送される。**初回しか正しくない descriptor buffer** や、reset を
+  越えられない controller を捕まえます。
+
+手順:
+
+```
+cd tests
+uv run --with pyusb python manual/enumeration_soak/enumeration_soak.py --cycles 50
+uv run --with pyusb python manual/enumeration_soak/enumeration_soak.py --mode reset --cycles 50
+```
+
+`--mode` の既定は `both`（交互）です。reset 後にデバイスが戻るまでの待ち時間は
+`--settle-s`（既定 10 秒）で調整します。
+
+期待:
+
+- 全 cycle が `ok` で、最後に `PASS <n> cycles, descriptors identical throughout`。
+- descriptor の hex と link speed が初回と変わらない。
+
+注意:
+
+- 失敗した cycle は理由（descriptor の差分、timeout、戻ってこない）を表示して続行し、
+  最後に非 0 で終了します。
+- reset は Host 側の driver を rebind させるので、対象を MSC などで mount した状態では
+  実行しないでください。
+
 ## `p4_hs_bulk`（ESP32-P4 High-Speed Device）
 
 目的:
