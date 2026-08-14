@@ -12,6 +12,11 @@ explanations are not skipped. If you are in a hurry, start at
 [Bring-up procedure](#4-bring-up-procedure) and come back to the first half when
 a term is unfamiliar.
 
+Once it works and you want to know why it behaves that way and where the limits
+are, continue to the [USB Device Development Guide (Advanced)](usb-device-advanced.md).
+It covers the relationship with TinyUSB, descriptors byte by byte, callback
+context, and implementing your own class.
+
 If instead you want to **plug USB devices into** an ESP32 (the ESP32 being the
 host), the counterpart is [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost)
 and its [USB Host development guide](https://github.com/tanakamasayuki/EspUsbHost/blob/main/docs/usb-host-guide.md).
@@ -139,9 +144,12 @@ prints all of it.
 
 Points worth internalising:
 
-- **The class belongs to the interface, not the device.** On a composite device
-  the device descriptor's class is `0xef` (Miscellaneous / IAD), and the real
-  answer is only visible per interface.
+- **The class belongs to the interface, not the device.** This library always
+  sets the device descriptor's class to `0x00` (decided per interface), so
+  **"what this is" is only visible on the interfaces**. The IAD
+  (`bDescriptorType=0x0b`), which groups several interfaces into one function,
+  appears inside the configuration descriptor on configurations that include
+  CDC.
 - **Interface and endpoint numbers are assigned by the library**, in one pass.
   They are not yours to pick; read the actual numbers from DescriptorDump.
 - **The HID report descriptor is a separate thing.** The configuration
@@ -640,6 +648,8 @@ are what show up in the diff.
 | [`EspUsbDeviceConsole`](../examples/Info/EspUsbDeviceConsole/) | **For nailing things down.** Type HID reports and vendor transfers into a serial terminal, and see every request the host makes |
 
 The per-feature examples are listed in [`examples/README.md`](../examples/README.md).
+How the library works internally is covered in the
+[USB Device Development Guide (Advanced)](usb-device-advanced.md).
 
 ### For developers (tests/manual/)
 

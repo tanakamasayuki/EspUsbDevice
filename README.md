@@ -468,6 +468,9 @@ Composite:
 USB device fundamentals, the ESP32-specific constraints, and how to diagnose a
 device the host will not accept are covered in
 [docs/usb-device-guide.md](docs/usb-device-guide.md).
+The relationship with TinyUSB, descriptors byte by byte, callback context, and
+implementing your own class are covered in
+[docs/usb-device-advanced.md](docs/usb-device-advanced.md).
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
 Design background and migration notes from existing EspUsbHost tests are in
