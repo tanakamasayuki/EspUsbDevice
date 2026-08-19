@@ -310,8 +310,8 @@ by the library. The Arduino core's `tinyusb_enable_interface()` and
 - MIDI, MSC, Vendor, and bidirectional HID share one endpoint number between IN
   and OUT.
 - Audio permits descriptor builds together with other functions. Standalone
-  UAC1 streaming is peer-verified; peer verification of Audio composite devices
-  is still to come.
+  UAC1 streaming and the Audio composite device (`peer/composite_hid_audio`,
+  HID+Audio) are both peer-verified.
 - `MAX_CLASSES=4` is an API limit, distinct from the controller's endpoint
   limit. The S3 has at most four non-control IN endpoints, so some class
   combinations hit the ceiling below four classes.
