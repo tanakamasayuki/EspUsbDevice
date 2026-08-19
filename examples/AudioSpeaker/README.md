@@ -1,5 +1,7 @@
 # AudioSpeaker
 
+> 日本語版: [README.ja.md](README.ja.md)
+
 This example exposes the default UAC1 Playback function and reads
 host-to-device PCM from a bounded FIFO. Pass `EspUsbAudioProtocol::Uac2` as the
 second `EspUsbAudioFunction` constructor argument when UAC2 is required.

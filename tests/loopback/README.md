@@ -1,6 +1,6 @@
 # Loopback Tests
 
-> 日本語: [README.ja.md](README.ja.md)
+> 日本語版: [README.ja.md](README.ja.md)
 
 `tests/loopback` contains one-board ESP32-P4 tests where EspUsbHost and
 EspUsbDevice run on the same chip.

@@ -1,5 +1,7 @@
 # AudioSpeaker
 
+> English: [README.md](README.md)
+
 defaultのUAC1 Playback functionを公開し、Hostから届いたPCMをbounded FIFOから読む例です。
 UAC2が必要な場合は`EspUsbAudioFunction` constructorの第2引数へ
 `EspUsbAudioProtocol::Uac2`を渡します。

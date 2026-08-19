@@ -1,5 +1,7 @@
 # Examples
 
+> English: [README.md](README.md)
+
 `EspUsbDevice` の基本的な使い方を確認するための Arduino sketches です。
 このライブラリを使う sketch では Arduino-ESP32 標準の `USB.begin()`、
 `USBHIDKeyboard`、`USBHIDMouse` は使いません。
@@ -181,6 +183,7 @@ Device descriptor/class requestまでで、end-to-end streamingはEspUsbHostのU
 ## AudioMicrophone
 
 USB Audio source（マイク）device の例です。device から Host へ PCM を送ります。
+詳しくは [AudioMicrophone/README.ja.md](AudioMicrophone/README.ja.md) を参照してください。
 
 - `EspUsbAudioCaptureStream`へmono 48 kHz / 16-bit formatを追加します。
 - `capture.write()`でHostへPCMを送出します（ここでは440 Hzの正弦波を生成）。
@@ -189,6 +192,7 @@ USB Audio source（マイク）device の例です。device から Host へ PCM 
 ## AudioHeadset
 
 USB Audio headset の例です。1台で speaker（Host→device）と microphone（device→Host）を同時に担います。
+詳しくは [AudioHeadset/README.ja.md](AudioHeadset/README.ja.md) を参照してください。
 
 - 1つの`EspUsbAudioFunction`へPlaybackとCapture streamを追加します。
 - loopback headsetとして`playback.read()`したPCMを`capture.write()`へ渡します。
@@ -208,6 +212,7 @@ USB Audio speaker sink と PCMFlowDevice の M5 speaker helper をつなぐ例�
 ## AudioMicrophoneM5
 
 M5 内蔵マイクを使う USB Audio microphone（device → Host）の例です。
+詳しくは [AudioMicrophoneM5/README.ja.md](AudioMicrophoneM5/README.ja.md) を参照してください。
 
 - `M5.Mic`からmono 16 kHz / 16-bit PCMを取り込み、`capture.write()`でHostへ送ります。
 - `M5.Mic.record()`（非同期・ダブルバッファ）を小さいリングで使い、完了済みの最古ブロックを送ります。
@@ -216,6 +221,7 @@ M5 内蔵マイクを使う USB Audio microphone（device → Host）の例で�
 ## AudioHeadsetM5
 
 M5 ハードウェアで headset を実現する例です。M5 スピーカー再生（Host → device）と M5 マイク取り込み（device → Host）。
+詳しくは [AudioHeadsetM5/README.ja.md](AudioHeadsetM5/README.ja.md) を参照してください。
 
 - 受信 PCM を PCMFlowDevice の `M5SpeakerBufferedPlayer` で `M5.Speaker` へ再生し、`M5.Mic` の取り込みを Host へ返します。48 kHz / 16-bit（speaker=stereo、microphone=mono、USB は両方向で同一レート共有）。
 - **既知の制約:** M5 のスピーカーとマイクの同時使用（全二重）は安定して動作しません。M5Unified は両方を1つの I2S ポートで TX 専用/RX 専用に install し、`begin()` のたびに相手を uninstall するため、再生＋録音の同時利用は glitch します（CoreS3 でも確認。スピーカーを別 I2S ポートへ移しても改善せず）。本 example はベストエフォートのデモです。安定動作が必要なら単方向の `AudioSpeakerM5`（再生）/ `AudioMicrophoneM5`（録音）を、両方向のデモは非M5の `AudioHeadset`（USB のみ）を使ってください。

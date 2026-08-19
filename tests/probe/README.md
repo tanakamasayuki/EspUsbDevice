@@ -1,6 +1,6 @@
 # Probe Tests
 
-> 日本語: [README.ja.md](README.ja.md)
+> 日本語版: [README.ja.md](README.ja.md)
 
 `tests/probe` is for ESP32-P4 USB bring-up and port/speed identification.
 Probe sketches are not stable regression tests; they document observed hardware,

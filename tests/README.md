@@ -1,6 +1,6 @@
 # Tests
 
-> 日本語: [README.ja.md](README.ja.md)
+> 日本語版: [README.ja.md](README.ja.md)
 
 This directory contains the EspUsbDevice test specifications and automated
 pytest-embedded tests.

@@ -361,7 +361,7 @@ STATE mounted=1 speed=full leds=0x00 hid_protocol=report vendor_mounted=0
 - **endpoint予算**（[3.3](#33-endpoint予算)）— DescriptorDumpで先に確認する
 - **クラス数4個まで**（[3.4](#34-その他のライブラリ側の上限)）
 
-複合HIDはインターフェースが増えるのではなく、1つのHIDインターフェース上でレポートIDが増えます。[`CompositeDevice`](../examples/CompositeDevice/)、[`CompositeHidCdcMsc`](../examples/CompositeHidCdcMsc/)、[`KeyboardMouse`](../examples/KeyboardMouse/) が参考になります。
+複合HIDはインターフェースが増えるのではなく、1つのHIDインターフェース上でレポートIDが増えます。[`CompositeHidCdcMsc`](../examples/CompositeHidCdcMsc/)、[`KeyboardMouse`](../examples/KeyboardMouse/) が参考になります。
 
 ホストOSによっては、複合デバイスのインターフェースの並び順やIADの有無で挙動が変わります。組み替えたら、対象にするOSで必ず再確認してください。
 

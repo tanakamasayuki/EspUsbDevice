@@ -1,5 +1,7 @@
 # Release Checklist
 
+> 日本語版: [RELEASE_CHECKLIST.ja.md](RELEASE_CHECKLIST.ja.md)
+
 Use this checklist before releasing `EspUsbDevice`. GitHub Actions and the
 `tools/` bump scripts are shared across projects and should not be edited as part
 of a normal release.

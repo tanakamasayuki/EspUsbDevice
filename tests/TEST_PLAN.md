@@ -1,6 +1,6 @@
 # Test Plan
 
-> 日本語: [TEST_PLAN.ja.md](TEST_PLAN.ja.md)
+> 日本語版: [TEST_PLAN.ja.md](TEST_PLAN.ja.md)
 
 ## Policy
 
@@ -101,6 +101,9 @@ acceptable when the behavior is a documented USB, Arduino-ESP32, or TinyUSB
 runtime constraint.
 
 ### Tests Possible Without More Device Classes
+
+Host-side APIs that can be verified with only the current keyboard / mouse /
+composite implementations.
 
 | Host feature | Device stimulus | Expected |
 |--------------|-----------------|----------|
@@ -296,24 +299,22 @@ rather than paper over it.
 
 #### Structural constraints (test-design premises)
 
-A composite registers each function with the library-owned descriptor builder
-and runtime. Two constraints follow:
+The composite descriptor, interface numbers, and endpoint numbers are all owned
+by the library. The Arduino core's `tinyusb_enable_interface()` and
+`tinyusb_get_free_*` are not used.
 
-1. **Audio is a normal composite function.** Audio + HID, CDC, and Vendor
-   descriptor builds are pinned by `composite_constraints`. A concrete
-   combination can still exceed configuration-descriptor capacity or the
-   target's endpoint budget.
-2. **Endpoint numbering originally split across three schemes** that did not know
-   about each other — the prime suspect for composite breakage. This has since
-   been fixed for HID (see below).
-
-   | Class | Interfaces | EP numbering | EP numbers used |
-   |-------|-----------|--------------|-----------------|
-   | HID (merged, 1) | 1 | library counter (from 1) | EP1 duplex (after fix) |
-   | CDC | 2 | hardcoded | EP3(OUT), EP4(IN), EP5(notif) |
-   | MIDI | 2 | core `tinyusb_get_free_*` | dynamic IN+OUT |
-   | MSC | 1 | core `tinyusb_get_free_duplex` | dynamic duplex ×1 |
-   | Vendor | 1 | core `tinyusb_get_free_duplex` | dynamic duplex ×1 |
+- Merged HID collapses into one interface / one duplex endpoint, multiplexed by
+  report ID.
+- CDC/NCM use one endpoint number for the notification endpoint and one for the
+  data duplex pair.
+- MIDI, MSC, Vendor, and bidirectional HID share one endpoint number between IN
+  and OUT.
+- Audio permits descriptor builds together with other functions. Standalone
+  UAC1 streaming is peer-verified; peer verification of Audio composite devices
+  is still to come.
+- `MAX_CLASSES=4` is an API limit, distinct from the controller's endpoint
+  limit. The S3 has at most four non-control IN endpoints, so some class
+  combinations hit the ceiling below four classes.
 
 #### Target matrix
 
@@ -330,7 +331,7 @@ pairs does too).
 | 3 | HID + MSC | ✅ hardware OK (`composite_hid_msc` 3/3) | MSC and HID each use one duplex number, `dup=0 claimok=1` |
 | 2,4-10 | other non-Audio pairs | ○ (subsumed by the maximal config) | one library-owned allocator, consistent numbering; covered by the triple below |
 | 11 | Audio + another function | ✅ S3 UAC1 HID+Audio | `composite_hid_audio` verifies `dup=0`, all claims, keyboard input, and PCM playback; HID/CDC/Vendor descriptor builds pass in `unit/composite_constraints` |
-| — | HID + bulk Vendor | ✅ hardware OK (`composite_hid_vendor` 3/3) | fixed the descriptor duplication (HID blob no longer includes Vendor). `docs/DESIGN_NOTES.ja.md` |
+| — | HID + bulk Vendor | ✅ hardware OK (`composite_hid_vendor` 3/3) | fixed the descriptor duplication (HID blob no longer includes Vendor). `docs/DESIGN_NOTES.ja.md`, section 「複合時の HID + bulk Vendor 二重記述」 |
 
 **S3 endpoint budget:** `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`. The IN
 count includes EP0, leaving four non-control IN endpoints. IN consumption:
@@ -346,9 +347,11 @@ Maximal-configuration tests (stand in for all pairs; all pass on hardware):
 - `peer/composite_cdc_msc_vendor`: non-HID triple (CDC+MSC+Vendor). Covers Vendor
   (no HID blob, so it avoids the bulk-Vendor duplication issue). Vendor RX is
   driven by the `onRx` callback and the test asserts `onrx>=1` (regression guard
-  for the `tud_vendor_rx_cb` signature fix; `docs/DESIGN_NOTES.ja.md`).
+  for the `tud_vendor_rx_cb` signature fix; `docs/DESIGN_NOTES.ja.md`, section
+  「複合時の vendor RX callback が発火しない」).
 - HID+CDC+MSC+Vendor and HID+CDC+MSC+MIDI exceed the S3 IN endpoint budget and
-  cannot enumerate (`docs/DESIGN_NOTES.ja.md`). This is endpoint-shape
+  cannot enumerate (`docs/DESIGN_NOTES.ja.md`, section
+  「複合時の endpoint 予算の上限」). This is endpoint-shape
   dependent, not a class-count rule; over-budget configurations need the P4.
 
 HID + HID (keyboard + mouse, vendor, etc.) collapses into a single HID interface
@@ -357,10 +360,10 @@ repeated here.
 
 #### Layer split (important constraint)
 
-The merged descriptor and EP numbering for CDC/MIDI/MSC/Vendor are only finalized
-when the core runs `tinyusb_init()`, not under `startTinyUsb=false`. So byte-level
-unit checks are limited to the HID-merged part; the rest is verified by
-enumerating on real hardware.
+The merged descriptor and EP numbering are complete even under
+`startTinyUsb=false`, so byte-level unit checks are possible. The hardware peer
+stage additionally verifies the controller limits, each class driver's claim,
+and every data plane.
 
 - **unit (S3 standalone, no host)**
   - `composite_constraints`: Audio + HID/CDC/Vendor descriptor builds succeed
@@ -369,21 +372,31 @@ enumerating on real hardware.
 - **peer (two S3 boards; host=EspUsbHost / device=EspUsbDevice)** ← primary
   - Each `peer/composite_<a>_<b>/`, judged in two stages:
     1. **Enumerates + no duplicate EP:** host dumps the config descriptor and
-       asserts no duplicate endpoint address and sequential interface numbers.
+       asserts that no endpoint address is duplicated (`NO_DUP_EP 1`) and that
+       interface numbers run sequentially from 0..N.
     2. **Both classes function:** one minimal round-trip per class (HID→report,
-       CDC→bidirectional, MSC→capacity, MIDI→packet, Vendor→bulk echo).
+       CDC→bidirectional, MSC→capacity, MIDI→packet, Vendor→bulk echo), composed
+       from the existing peer sketches as building blocks.
   - Device `.ino` prints the shared `DEVICE_BEGIN ok|ng <errname>` line.
 - **loopback (one P4 board):** regress only the pairs that passed on peer; EP
   collisions are speed-independent, so peer is usually sufficient.
 
+#### Shared utilities (build once, reuse for every pair)
+
+- Host side: a check function that dumps the config descriptor and prints
+  `NO_DUP_EP 1/0`.
+- Device side: the shared `DEVICE_BEGIN ok|ng <errname>` output.
+- Python side: a fixture that asserts enumeration plus no duplicate endpoints.
+
 #### Execution order (staged)
 
 1. `unit/composite_constraints` (pins Audio composite builds / MAX_CLASSES; host-free).
-2. `peer/composite_hid_cdc` (establishes the template and shared utilities).
-3. `peer/composite_hid_msc` / `hid_vendor` (breakage suspects). Enumeration or EP
-   collisions get recorded in `docs/DESIGN_NOTES.ja.md`.
-4. Remaining CDC / allocator combinations, then the maximal triples.
-5. Reflect results here and in `docs/DEVELOPMENT_PLAN.ja.md`.
+2. `peer/composite_hid_cdc` (#1; establishes the template and shared utilities
+   with a combination expected to work).
+3. `peer/composite_hid_msc` / `hid_midi` / `hid_vendor` (#2-4).
+4. Remaining CDC / allocator combinations (#5-10) in turn.
+5. Reflect results here and in `docs/DEVELOPMENT_PLAN.ja.md` (composite
+   feasibility and constraints).
 
 ## Initial Migration Order
 

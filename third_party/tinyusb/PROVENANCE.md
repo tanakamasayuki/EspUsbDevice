@@ -65,9 +65,10 @@ upstream files are not patched. `src/tusb_config.h` and
 
 - Review the pin whenever the supported Arduino-ESP32 baseline changes. Prefer
   the TinyUSB commit recorded by that core's S2, S3, and P4 tool packages.
-- Also review it before each major/minor EspUsbDevice release and at least once
-  per quarter when neither the core nor the library release cadence triggers a
-  review. A review does not require an update.
+- Also review it before each major/minor EspUsbDevice release. When neither the
+  core nor the library release cadence triggers a review, check upstream
+  releases, bug fixes, and security advisories at least once per quarter. A
+  review does not require an update.
 - Update between those reviews only for a relevant upstream bug, security fix,
   required USB feature, or target support. Record any deliberate divergence
   from the core-bundled commit in `UPSTREAM.json` `selection_reason`.

@@ -1,5 +1,7 @@
 # EspUsbDevice
 
+> English: [README.md](README.md)
+
 EspUsbDevice は、新しい ESP32 Arduino USB Device ライブラリです。
 
 Arduino-ESP32 標準の `USB`、`USBHIDKeyboard`、`USBHIDMouse` API との互換は

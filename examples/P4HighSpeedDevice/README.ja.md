@@ -1,5 +1,7 @@
 # ESP32-P4 High-Speed Device
 
+> English: [README.md](README.md)
+
 HID keyboardをESP32-P4のHighSpeed Device controllerで動かします。
 
 - Device controller: `EspUsbController::HighSpeed`

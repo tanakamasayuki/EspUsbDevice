@@ -1,6 +1,6 @@
 # Peer Tests
 
-> 日本語: [README.ja.md](README.ja.md)
+> 日本語版: [README.ja.md](README.ja.md)
 
 `tests/peer` contains two-board automated tests.
 
@@ -67,8 +67,9 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
   the enumerated descriptor detail (separate control/data interfaces, active
   alt, three endpoints with correct directions), the transport-layer frame
   counters (a transfer moves frames in both directions with zero TX failures,
-  and the DHCP lease is a real client address), and the device-side view (the
-  device's own web server reports it served the host's request).
+  and the DHCP lease is a real client address, not the gateway's .1), and the
+  device-side view (the device's own web server reports it served the host's
+  request).
 - `usb_audio_speaker`: USB Audio speaker sink (host -> device). Host -> Device
   speaker PCM reception passes on the two-board S3 setup (UAC1 / full speed).
   Logical-channel mute/volume capability, SET/GET, range, and Device event

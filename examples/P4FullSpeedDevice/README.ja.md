@@ -1,5 +1,7 @@
 # ESP32-P4 Full-Speed Device
 
+> English: [README.md](README.md)
+
 HID keyboardをESP32-P4のinternal FullSpeed Device controllerで動かします。
 
 - Device controller: `EspUsbController::FullSpeed`

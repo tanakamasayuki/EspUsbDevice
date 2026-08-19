@@ -1,5 +1,7 @@
 # Examples
 
+> 日本語版: [README.ja.md](README.ja.md)
+
 Arduino sketches that show the basic `EspUsbDevice` usage. Sketches using this
 library should not call Arduino-ESP32's `USB.begin()`, `USBHIDKeyboard`, or
 `USBHIDMouse`.
@@ -201,6 +203,7 @@ validated; end-to-end streaming waits for EspUsbHost UAC2 support.
 ## AudioMicrophone
 
 USB Audio source (microphone) device example: the device sends PCM to the host.
+See [AudioMicrophone/README.md](AudioMicrophone/README.md) for details.
 
 - Add a mono 48 kHz / 16-bit format to `EspUsbAudioCaptureStream`.
 - Push PCM toward the host with `capture.write()`; this example generates a
@@ -211,6 +214,7 @@ USB Audio source (microphone) device example: the device sends PCM to the host.
 
 USB Audio headset example: one device that is both a speaker (host -> device)
 and a microphone (device -> host) at the same time.
+See [AudioHeadset/README.md](AudioHeadset/README.md) for details.
 
 - Add Playback and Capture streams to one `EspUsbAudioFunction`.
 - Echo PCM from `playback.read()` to `capture.write()`.
@@ -232,6 +236,7 @@ See [AudioSpeakerM5/README.md](AudioSpeakerM5/README.md) for details.
 ## AudioMicrophoneM5
 
 USB Audio microphone backed by the M5 built-in microphone (device -> host).
+See [AudioMicrophoneM5/README.md](AudioMicrophoneM5/README.md) for details.
 
 - Captures mono 16 kHz / 16-bit PCM from `M5.Mic` and streams it with
   `capture.write()`; the PC sees a recording device.
@@ -243,6 +248,7 @@ USB Audio microphone backed by the M5 built-in microphone (device -> host).
 
 USB Audio headset backed by M5 hardware: M5 speaker playback (host -> device)
 and M5 microphone capture (device -> host).
+See [AudioHeadsetM5/README.md](AudioHeadsetM5/README.md) for details.
 
 - Plays received PCM on `M5.Speaker` via PCMFlowDevice's `M5SpeakerBufferedPlayer`
   and streams `M5.Mic` capture back to the host, at 48 kHz / 16-bit (stereo
