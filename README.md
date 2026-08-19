@@ -7,7 +7,8 @@ EspUsbDevice is a new ESP32 Arduino USB Device library.
 The goal is not compatibility with Arduino-ESP32's `USB`, `USBHIDKeyboard`, or
 `USBHIDMouse` APIs. The goal is a better, small, explicit USB device library
 where port, speed, descriptors, endpoint packet sizes, and raw class reports are
-controlled by the sketch.
+controlled by the sketch. Coming from those APIs? The
+[migration guide](docs/migrating-from-arduino-esp32-usb.md) maps each one.
 
 The first implementation targets `EspUsbHost` peer and loopback tests because
 those tests give concrete hardware coverage and expose the low-level behavior
@@ -28,6 +29,22 @@ across core versions are published under [`docs/`](docs/) as
 `COMPATIBILITY.WORKTREE.md`.
 The automatic matrix observes releases from 3.3.0 onward, but results below
 3.3.9 are informational and do not indicate official support.
+
+## Supported chips and classes
+
+| Chip | Max speed | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Vendor / WebUSB](examples/USBVendor/) | [NCM network](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) |
+|------|-----------|-----|------------|-----|------|-------|-----------------|-------------|------|
+| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ○ |
+
+✅ = verified by the automated hardware tests (two-board peer rig for the S3,
+loopback/manual rigs for the P4; see [tests/TEST_PLAN.md](tests/TEST_PLAN.md)).
+○ = supported and build-verified on every release per core version
+(the `COMPATIBILITY` files above); hardware verification is pending for these
+cells. Up to four classes combine into one composite device within the
+controller's endpoint budget - see the
+[guide, section 3.3](docs/usb-device-guide.md#33-the-endpoint-budget).
 
 ## Library-owned TinyUSB stack
 
@@ -473,6 +490,10 @@ device the host will not accept are covered in
 The relationship with TinyUSB, descriptors byte by byte, callback context, and
 implementing your own class are covered in
 [docs/usb-device-advanced.md](docs/usb-device-advanced.md).
+Symptom-first fixes are collected in
+[docs/troubleshooting.md](docs/troubleshooting.md).
+Porting a sketch from the core's USB API is covered in
+[docs/migrating-from-arduino-esp32-usb.md](docs/migrating-from-arduino-esp32-usb.md).
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
 Design background and migration notes from existing EspUsbHost tests are in

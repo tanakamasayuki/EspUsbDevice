@@ -612,6 +612,9 @@ drivers assume - are what show up in the diff.
 
 ## 6. Troubleshooting
 
+The expanded, symptom-first version of this table - including build, host-OS,
+and per-class issues - lives in [troubleshooting.md](troubleshooting.md).
+
 | Symptom | Likely cause | Check / fix |
 |---------|--------------|-------------|
 | `begin()` fails with `ESP_ERR_INVALID_SIZE` | Endpoint budget exceeded, or descriptor too large | Read the budget in DescriptorDump. Drop a class. On P4, use HS ([3.3](#33-the-endpoint-budget)) |
