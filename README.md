@@ -1,5 +1,7 @@
 # EspUsbDevice
 
+> 日本語版: [README.ja.md](README.ja.md)
+
 EspUsbDevice is a new ESP32 Arduino USB Device library.
 
 The goal is not compatibility with Arduino-ESP32's `USB`, `USBHIDKeyboard`, or
@@ -375,7 +377,7 @@ setting, so the Clock Source has one rate to report.
 The new Audio source was independently designed from USB Audio specifications
 and TinyUSB's public driver API. The old Espressif USBAudioCard-derived source
 was deleted rather than carried forward. See
-[Audio source provenance](docs/V2_AUDIO_PROVENANCE.ja.md).
+[Audio source provenance](docs/V2_AUDIO_PROVENANCE.ja.md) (Japanese).
 
 ## CCID (Smart Card Reader) APIs
 
@@ -474,7 +476,7 @@ implementing your own class are covered in
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
 Design background and migration notes from existing EspUsbHost tests are in
-[docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md).
+[docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md) (Japanese).
 Current development policy and remaining work are in
-[docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md).
+[docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md) (Japanese).
 See [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) before cutting a release.

@@ -493,7 +493,6 @@ Once a single function works, combine them. Only two constraints matter here:
 - **At most four classes** ([3.4](#34-other-library-side-limits))
 
 Composite HID does not add interfaces; it adds report IDs on one HID interface.
-[`CompositeDevice`](../examples/CompositeDevice/),
 [`CompositeHidCdcMsc`](../examples/CompositeHidCdcMsc/) and
 [`KeyboardMouse`](../examples/KeyboardMouse/) are the references.
 
@@ -564,8 +563,8 @@ shows which driver bound.
 ### 5.2 Windows
 
 - **Device Manager** - "Unknown USB Device (Device Descriptor Request Failed)"
-  means it failed at the descriptor stage; a Code 10 / Code 43 warning means
-  driver binding failed.
+  means it failed at the descriptor stage; a Code 10 / Code 43 warning (the
+  "!" badge on the device) means driver binding failed.
 - **[USB Device Tree Viewer](https://www.uwe-sieber.de/usbtreeview_e.html)** -
   the most useful tool on Windows. It shows both the raw descriptor bytes and
   the error Windows produced.
@@ -605,9 +604,9 @@ lsusb -v -d 303a:4051                         > mine.txt
 diff -u known-good.txt mine.txt
 ```
 
-Interface ordering, presence of an IAD, `bInterfaceProtocol`, endpoint intervals
-- the fields that are technically optional but that real host drivers assume -
-are what show up in the diff.
+Interface ordering, presence of an IAD, `bInterfaceProtocol`, endpoint
+intervals - the fields that are technically optional but that real host
+drivers assume - are what show up in the diff.
 
 ---
 

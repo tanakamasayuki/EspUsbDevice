@@ -1,5 +1,7 @@
 # AudioSpeakerM5
 
+> 日本語版: [README.ja.md](README.ja.md)
+
 This example connects the default UAC1 `EspUsbAudioPlaybackStream` to
 PCMFlowDevice's `M5SpeakerBufferedPlayer`.
 

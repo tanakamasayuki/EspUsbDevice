@@ -138,8 +138,9 @@ descriptors**. No hardware and no host are needed, which is how
 `tests/unit/descriptor` and `tests/unit/composite_constraints` verify
 descriptors. It is equally useful for automated tests of your own configuration.
 
-Teardown runs in reverse: delete the task, `tusb_deinit()`, `usb_del_phy()`.
-After `end()` the same object can `begin()` again.
+Teardown, via `stopTinyUsbRuntime()`, runs in reverse: delete the task,
+`tusb_deinit()`, `usb_del_phy()`. After `end()` the same object can `begin()`
+again.
 
 ---
 
@@ -549,8 +550,9 @@ hard-coded endpoint addresses.
 
 ### 5.2 The controller limits in practice
 
-`validateControllerEndpoints()` **walks the assembled descriptor** rather than
-trusting each class's declaration, so nothing slips past.
+`validateControllerEndpoints()` **walks the assembled descriptor** and counts
+the endpoints actually emitted rather than trusting each class's declaration,
+so nothing slips past.
 
 | Controller | Endpoint number | Non-control IN | Non-control OUT |
 |---|---|---|---|

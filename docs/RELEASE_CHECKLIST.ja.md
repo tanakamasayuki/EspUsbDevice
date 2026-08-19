@@ -1,5 +1,7 @@
 # リリースチェックリスト
 
+> English: [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
+
 `EspUsbDevice` のリリース前に確認する項目です。GitHub Actions と `tools/` の bump script は
 全プロジェクト共通の運用に従い、このリポジトリ固有の手順では編集しません。
 

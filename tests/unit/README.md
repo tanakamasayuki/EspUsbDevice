@@ -1,6 +1,6 @@
 # Unit Tests
 
-> 日本語: [README.ja.md](README.ja.md)
+> 日本語版: [README.ja.md](README.ja.md)
 
 Unit tests cover host-independent logic:
 
@@ -49,9 +49,10 @@ temporarily unbuildable during the v2 rewrite.
 
 Host-compiles the library-owned TinyUSB configuration for the S2, S3, and P4
 target macros. It verifies that all device classes are enabled without Arduino
-Core Kconfig, S2/S3 compile for full-speed capacity, and P4 compiles for
-full/high-speed capacity. The controller/root-hub port and actual bus speed are
-left to runtime initialization.
+Core Kconfig, S2/S3 compile for full-speed capacity, P4 compiles for
+full/high-speed capacity, and the Audio compile-time limits hold. The
+controller/root-hub port and actual bus speed are left to runtime
+initialization.
 
 ## `tinyusb_vendor`
 
