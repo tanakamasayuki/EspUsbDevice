@@ -268,8 +268,8 @@ Arduino Coreの`tinyusb_enable_interface()`や`tinyusb_get_free_*`は使わな�
 - HID複合は1 interface / 1 duplex endpointへreport IDで統合する。
 - CDC/NCMはnotification用1番号とdata duplex用1番号を使う。
 - MIDI/MSC/Vendorと双方向HIDはIN/OUTで同じendpoint番号を共有する。
-- Audioは他functionとのdescriptor buildを許可する。UAC1単体の実streamingはPeer検証済み。
-  Audio複合deviceのPeer検証は今後追加する。
+- Audioは他functionとのdescriptor buildを許可する。UAC1単体の実streamingも
+  Audio複合device（`peer/composite_hid_audio`、HID+Audio）もPeer検証済み。
 - `MAX_CLASSES=4`はAPI上限であり、controllerのendpoint上限とは別。S3は非control
   IN endpoint 4本までなので、classの組み合わせによっては4class未満でも上限に達する。
 
