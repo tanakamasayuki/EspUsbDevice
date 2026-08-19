@@ -7,7 +7,8 @@ EspUsbDevice は、新しい ESP32 Arduino USB Device ライブラリです。
 Arduino-ESP32 標準の `USB`、`USBHIDKeyboard`、`USBHIDMouse` API との互換は
 目標にしません。port、speed、descriptor、endpoint packet size、raw class
 report をスケッチから明示的に制御できる、よりよい小さな USB Device ライブラリを
-目指します。
+目指します。標準 API から乗り換える場合は
+[移行ガイド](docs/migrating-from-arduino-esp32-usb.ja.md) が対応表になっています。
 
 最初の実装対象は `EspUsbHost` の peer / loopback テストです。これは実ハードウェアで
 具体的に検証でき、ライブラリが制御すべき低レベル挙動を明確にできるためです。
@@ -25,6 +26,21 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 [`docs/`](docs/)に`COMPATIBILITY.<version>.md`として公開し、現在のworktreeを
 実行したdraftは固定名`COMPATIBILITY.WORKTREE.md`を使用します。
 自動matrixは3.3.0以降を観測しますが、3.3.9未満の結果は参考情報であり、公式対応を意味しません。
+
+## 対応チップとクラス
+
+| チップ | 最大速度 | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Vendor / WebUSB](examples/USBVendor/) | [NCMネットワーク](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) |
+|--------|----------|-----|------------|-----|------|-------|-----------------|--------------|------|
+| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ○ |
+
+✅ = 自動実機テストで検証済み（S3は2台peer構成、P4はloopback/手動構成。
+[tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)参照）。
+○ = 対応済みで、リリースごとにCore version別のbuild検証を実施
+（上記`COMPATIBILITY`ファイル）。これらのセルの実機検証は今後の課題です。
+最大4クラスをcontrollerのendpoint予算内で1つの複合デバイスに組み合わせられます
+（[ガイド3.3](docs/usb-device-guide.ja.md#33-endpoint予算)参照）。
 
 ## ライブラリ所有のTinyUSB stack
 
@@ -420,6 +436,10 @@ USB device そのものの基礎、ESP32 固有の制約、動かないときの
 [docs/usb-device-guide.ja.md](docs/usb-device-guide.ja.md) にまとめています。
 TinyUSB との関係、descriptor のバイト構造、callback context、独自 class の実装は
 [docs/usb-device-advanced.ja.md](docs/usb-device-advanced.ja.md) にまとめています。
+症状から引ける対処集は [docs/troubleshooting.ja.md](docs/troubleshooting.ja.md) に、
+Core 標準 USB API からの移行手順は
+[docs/migrating-from-arduino-esp32-usb.ja.md](docs/migrating-from-arduino-esp32-usb.ja.md)
+にまとめています。
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。
 設計背景と `EspUsbHost` 既存テストからの移行メモは [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md)

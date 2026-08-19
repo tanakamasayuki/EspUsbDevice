@@ -458,6 +458,9 @@ diff -u known-good.txt mine.txt
 
 ## 6. トラブルシューティング
 
+この表の拡張版（ビルド・ホストOS・クラス別の問題を含む、症状から引ける対処集）は
+[troubleshooting.ja.md](troubleshooting.ja.md) にあります。
+
 | 症状 | ありがちな原因 | 確認・対処 |
 |------|--------------|-----------|
 | `begin()` が `ESP_ERR_INVALID_SIZE` で失敗 | endpoint予算超過、ディスクリプタが大きすぎる | DescriptorDumpの budget を見る。クラスを減らす。P4ならHSへ（[3.3](#33-endpoint予算)） |
