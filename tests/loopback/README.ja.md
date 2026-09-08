@@ -32,6 +32,15 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   Host 側 `onKeyboard()` に届くことを確認する。
 - `usb_serial`: P4 1台上で CDC ACM serial を起動し、Device -> Host、Host -> Device、
   line coding callback を確認する。
+- `usb_serial_multi`: P4 1台上で CDC ACM を 3 ポート持つ device を high-speed controller
+  側で起動する。descriptor unit test は「バイト列が妥当か」までしか見ないが、3 ポートは
+  非 control IN endpoint を 6 本使い、IN 1 本ごとに専用 TxFIFO を controller の 1024 word
+  から切り出す必要がある。この割り当てが成功するかは SET_CONFIGURATION 時に dcd_dwc2 が
+  決めるので、実際に列挙させないと分からない。Host 側で interface 6 / endpoint 9
+  （interrupt IN 3 + bulk 6）・アドレス重複なし・`class=ef` を確認し、port 0 の双方向通信と、
+  port 1 / 2 へ書いたバイトが port 0 の経路に出てこないことを確認する。Host が 1 デバイス
+  につき CDC 機能を 1 つしか bind しないため、port 1 / 2 を host 側から駆動する検証は
+  EspUsbHost の複数 CDC 対応待ち。
 - `usb_midi`: P4 1台上で USB MIDI を起動し、channel voice message と短い SysEx の
   Host -> Device packet 分割を確認する。
 - `usb_msc`: P4 1台上で USB Mass Storage を起動し、単一 LUN RAM disk の capacity /

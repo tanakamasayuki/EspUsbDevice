@@ -254,6 +254,54 @@ HID 無し / HID+CDC / HID+MSC / HID+CDC+MSC は Vendor を含まないので `h
   数える。超える構成はP4を使うか、将来controller capabilityをdescriptor validatorへ渡して
   `begin()`時に明示的に拒否する。
 
+### CDC ACM の複数ポート（S3 / P4 実機確認・2026-09）
+
+`EspUsbDeviceCdcSerial` を複数登録できるようにした。実装上の判断は 3 点。
+
+**1. `CFG_TUD_CDC` は「その SoC が列挙できる最大数」に決め打ちする。**
+TinyUSB のインスタンス数はコンパイル時に固定で、`_cdcd_itf[]` と `_cdcd_epbuf[]` は
+使わなくても常に確保される。一方で実際に載せられる本数は上の endpoint 予算で決まり、
+1 ポート＝非 control IN 2 本。よって S2/S3 は 2、P4（HS）は 3 が物理上限で、それを超える
+インスタンスをコンパイルしても列挙できないポートのために RAM を払うだけになる。実測コストは
+S3 で +1416 byte、P4 で +4600 byte（P4 は HS の bulk endpoint buffer が 512 byte）。
+`#ifndef` にしてあるのでビルド前に上書きは可能。
+
+**2. インスタンス番号は descriptor 順から与える。** TinyUSB は SET_CONFIGURATION 時に
+interface を claim した順でクラスインスタンスを割り当てる。したがって `tud_cdc_n_*()` に
+渡すべき番号は「configuration descriptor の中で何番目の CDC 機能か」であり、登録順でも
+オブジェクトのアドレス順でもない。`buildDescriptors()` が descriptor を書き出す前に
+`assignFunctionIds()` で配り、`g_cdcSerials[]` はその番号で引くだけの配列にした
+（コールバックの `itf` がそのまま添字になる）。
+
+**3. ポートには名前が要る。** 2 つの ACM 機能は descriptor 上まったく同じ形なので、
+名前が無いとホスト側で区別する手段がない。`TUD_CDC_DESCRIPTOR` は string index を control
+interface の `iInterface` にしか入れず、IAD の `iFunction` は 0 固定なので、マクロ展開後に
+byte 7 を書き換えている。Windows は子デバイス名に `iFunction` を使うため、ここを埋めないと
+デバイスマネージャに同名の COM ポートが 2 つ並ぶ。
+
+実機確認は `tests/peer/usb_serial_multi`（S3 2 台）。interface 4 本 / endpoint 6 本が重複なく
+claim され、host→port0 が port 1 の受信数を増やさず、device が port 1 へ書いたバイトが port 0 の
+経路に出てこないことまで確認した。なお `EspUsbHost` は 1 デバイスにつき CDC 機能を 1 つしか
+bind しない（data interface 判定に「まだ取っていないこと」が入るので必ず最初の機能になる）。
+2 つ目のポートを host 側から操作するには EspUsbHost 側の対応が要る。
+
+### IAD がある構成の device class（2026-09）
+
+コンフィグレーションディスクリプタに IAD（型 0x0b）が 1 つでもあれば、device descriptor の
+`bDeviceClass/SubClass/Protocol` に `0xEF/0x02/0x01` を立てるようにした。IAD ECN の要求どおりで、
+それまでこのライブラリは 0x00 のままだった（`docs/usb-device-advanced.ja.md` にも「ドライバの
+バインドがおかしいときに疑う価値がある」と書いてあった）。
+
+効くのは主に Windows で、この宣言があると usbccgp.sys が親としてロードされ、IAD の区切りごとに
+子デバイスが作られて機能ごとにドライバがバインドされる。CDC を 2 つ持つデバイスが COM ポートを
+2 つ見せるにはこれが要る。判定は「クラスの申告」ではなく**組み上げた descriptor の走査**で行う。
+endpoint 上限の検証と同じ方針で、IAD を出すのは CDC / NCM / Audio と、将来 IAD を使うクラスの
+どれであっても自動的に拾える。
+
+副作用として、既に IAD を出していたデバイス（CDC・NCM・Audio を含むもの）は device descriptor が
+変わる。ホストがその VID/PID でドライバのバインドをキャッシュしていると古い結果が残ることがあり、
+開発中は PID を変えるのが簡単な回避策になる。
+
 ### 複合時の vendor RX callback が発火しない（原因確定・修正済・実機確認・2026-07）
 
 `composite_cdc_msc_vendor`（CDC+MSC+bulk Vendor）で bulk echo が通らなかった件。host/device 両側に診断を

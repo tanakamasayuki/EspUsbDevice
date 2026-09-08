@@ -162,6 +162,19 @@ lsusb -v -d 303a:      # descriptors as the host parsed them
 - A vendor interface is only usable once WinUSB binds: set
   `config.webusbEnabled = true` so the MS OS 2.0 descriptor is served, or
   bind manually with Zadig.
+- **A multi-function device shows only one function, or one COM port instead of
+  two.** Windows binds per function only when usbccgp.sys loads as the parent,
+  which needs `bDeviceClass/SubClass/Protocol = 0xEF/0x02/0x01`. The library
+  sets that automatically whenever the configuration contains an Interface
+  Association Descriptor, so if you see the single-function symptom the usual
+  cause is a cached binding from an earlier firmware with the same VID/PID -
+  clear it, or change the PID while developing.
+- **Two identical COM ports with no way to tell them apart.** Windows names a
+  composite child device from the association's `iFunction` string. Give each
+  function a name: `EspUsbDeviceCdcSerial(device, "Console")`.
+- **COM port numbers move when the board is plugged into a different port.**
+  Windows keys them on VID/PID/serial. Set `config.serialNumber` to something
+  unique per board.
 
 ### macOS
 

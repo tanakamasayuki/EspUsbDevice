@@ -151,6 +151,16 @@ See [Serial/README.md](Serial/README.md) for details.
 - Receive host line coding and DTR / RTS state through callbacks.
 - Keep USB CDC separate from the logging Serial monitor.
 
+## SerialMulti
+
+USB CDC device with two serial ports.
+See [SerialMulti/README.md](SerialMulti/README.md) for details.
+
+- Register two `EspUsbDeviceCdcSerial` functions to present two ports to the host.
+- Name each port so the host can tell them apart.
+- Buffers, line coding and DTR state are per port.
+- How many fit is decided by IN endpoints (2 on S2/S3, 3 on the P4 HS controller).
+
 ## MIDI
 
 USB MIDI device example.

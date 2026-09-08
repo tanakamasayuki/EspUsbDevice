@@ -73,6 +73,7 @@ tests/
 | System control HID | planned | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
+| CDC ACM, several ports | ✅ `cdc_multi` (S3: two-port descriptor, endpoint addresses, IAD-derived device class, ceiling rejections), ✅ `p4_controller_endpoints` (P4: HID+Vendor+CDC x2, CDC x3, fourth port rejected, third rejected on FS) | ✅ `usb_serial_multi` (two real S3 boards: 4 interfaces / 6 endpoints / claims, `class=ef`, host to and from port 0, port separation) | ✅ `usb_serial_multi` (one P4, device=HS with 3 ports: 6 interfaces / 9 endpoints / `class=ef`, host to and from port 0, ports 1-2 separated) | | ✅ `examples/SerialMulti` |
 | USB MIDI | ✅ `midi_descriptor` (descriptor bytes for every symmetric and asymmetric cable-count pair) | ✅ `usb_midi` (MIDI-only device also enumerates as supported), ✅ `usb_midi_cables` (asymmetric 4-in / 5-out: Host-decoded counts and directions, interleave, SysEx) | ✅ `usb_midi`, ✅ `usb_midi_cables` (4 cables symmetric) | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
@@ -172,6 +173,20 @@ pre-release validation of unreleased Host-side fixes.
 `loopback/usb_serial` verifies the same behavior on one P4. CDC endpoint MPS is
 notification 8 bytes and bulk data 64 bytes so the FS Host path can allocate the
 endpoints.
+
+`peer/usb_serial_multi` exercises a device with two CDC ACM functions on two
+real S3 boards. It checks (1) that all four interfaces and six endpoints are
+claimed with no duplicate address, (2) that the IAD-derived device class
+`0xef/0x02/0x01` reaches the host, (3) that host-to-device traffic lands on port
+0 only, with port 1's receive count still zero, and (4) that bytes the device
+writes to port 1 never surface on port 0's stream while port 0 keeps working -
+that is, that the two pipes are genuinely separate.
+
+Host-side `EspUsbHost` binds only one CDC function per device (its data-interface
+match requires that no data interface has been taken yet, so it is always the
+first one). `EspUsbHostCdcSerial` here is therefore fixed to port 0, which is
+what makes check (4) meaningful. Driving the second CDC function from the host
+needs work on the `EspUsbHost` side and is out of scope.
 
 `peer/usb_midi` is the first USB MIDI test for `EspUsbDeviceMidi`. It verifies
 Device -> Host and Host -> Device channel voice messages, plus short Host ->
@@ -312,9 +327,9 @@ by the library. The Arduino core's `tinyusb_enable_interface()` and
 - Audio permits descriptor builds together with other functions. Standalone
   UAC1 streaming and the Audio composite device (`peer/composite_hid_audio`,
   HID+Audio) are both peer-verified.
-- `MAX_CLASSES=4` is an API limit, distinct from the controller's endpoint
-  limit. The S3 has at most four non-control IN endpoints, so some class
-  combinations hit the ceiling below four classes.
+- `MAX_CLASSES=6` is an API limit, distinct from the controller's endpoint
+  limit. The S3 has at most four non-control IN endpoints, so some combinations
+  hit the ceiling with as few as two classes (two CDC ports, for one).
 
 #### Target matrix
 
@@ -367,7 +382,7 @@ and every data plane.
 
 - **unit (S3 standalone, no host)**
   - `composite_constraints`: Audio + HID/CDC/Vendor descriptor builds succeed
-    under `startTinyUsb=false`; registering a fifth class still fails at
+    under `startTinyUsb=false`; registering a seventh class still fails at
     `MAX_CLASSES`.
 - **peer (two S3 boards; host=EspUsbHost / device=EspUsbDevice)** ← primary
   - Each `peer/composite_<a>_<b>/`, judged in two stages:

@@ -156,6 +156,17 @@ lsusb -v -d 303a:      # ホストが解釈したディスクリプタ
 - vendorインターフェースはWinUSBがバインドして初めて開けます。
   `config.webusbEnabled = true`でMS OS 2.0 descriptorを返すか、Zadigで手動
   バインドします。
+- **複数機能のデバイスなのに1機能しか出ない、COMポートが2つのはずが1つしか出ない。**
+  Windowsが機能ごとにドライバをバインドするのは、親としてusbccgp.sysがロードされた
+  ときだけで、その条件が `bDeviceClass/SubClass/Protocol = 0xEF/0x02/0x01` です。
+  コンフィグレーションにIADが含まれていればライブラリが自動で立てるので、この症状が
+  出るときは同じVID/PIDの古いファームウェアのバインドがキャッシュに残っているのが
+  典型です。削除するか、開発中はPIDを変えてください。
+- **同名のCOMポートが2つ並んで区別できない。** Windowsは子デバイス名にIADの
+  `iFunction` 文字列を使います。機能ごとに名前を付けてください:
+  `EspUsbDeviceCdcSerial(device, "Console")`。
+- **挿すUSBポートを変えるとCOMポート番号が変わる。** WindowsはVID/PID/シリアルの組で
+  番号を覚えます。`config.serialNumber` をボードごとに固有の値で設定してください。
 
 ### macOS
 

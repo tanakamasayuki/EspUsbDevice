@@ -65,6 +65,7 @@ tests/
 | system control HID | 予定 | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
+| CDC ACM 複数ポート | ✅ `cdc_multi`（S3: 2 ポートの descriptor / endpoint アドレス / IAD 由来の device class / 上限拒否）、✅ `p4_controller_endpoints`（P4: HID+Vendor+CDC×2、CDC×3、4 本目の拒否、FS の 3 本目拒否） | ✅ `usb_serial_multi`（S3 実機 2 台: interface 4 / endpoint 6 / claim、`class=ef`、host↔port0、ポート分離） | ✅ `usb_serial_multi`（P4 1 台・device=HS 3 ポート: interface 6 / endpoint 9 / `class=ef`、host↔port0、port1/2 の分離） | | ✅ `examples/SerialMulti` |
 | USB MIDI | ✅ `midi_descriptor`（対称・非対称すべての cable 数の組み合わせの descriptor byte） | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認）、✅ `usb_midi_cables`（非対称 4-in / 5-out: Host 側 cable 数と方向 / interleave / SysEx） | ✅ `usb_midi`、✅ `usb_midi_cables`（対称 4 cable） | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
@@ -153,6 +154,19 @@ line coding callback を検証します。default profile は released Host を�
 
 `loopback/usb_serial` は同じ観点を P4 1台構成で確認します。CDC endpoint MPS は
 FS Host で確保できるよう notification 8 bytes、bulk data 64 bytes とします。
+
+`peer/usb_serial_multi` は CDC ACM を 2 つ持つ device を S3 実機 2 台で検証します。
+確認するのは (1) interface 4 本・endpoint 6 本が重複なく claim されること、(2) device
+descriptor が IAD 由来の `0xef/0x02/0x01` を宣言してホストに届くこと、(3) host→device が
+port 0 にだけ届き port 1 の受信数が 0 のままであること、(4) device が port 1 へ書いた
+バイトが port 0 の経路に現れず、その後 port 0 の送信は通ること——つまり 2 本の経路が
+実際に分離していることです。
+
+Host 側の `EspUsbHost` は 1 デバイスにつき CDC 機能を 1 つしか bind しません（data
+interface の判定に「まだ data interface を取っていないこと」が入っているため、必ず最初の
+機能になります）。したがってこのテストの `EspUsbHostCdcSerial` は port 0 に固定で、
+それが (4) の分離検証を成立させています。2 つ目の CDC 機能を host 側から操作する検証は
+`EspUsbHost` 側の対応が要るため、対象外です。
 
 `peer/usb_midi` は `EspUsbDeviceMidi` の最初の USB MIDI テストです。Device -> Host /
 Host -> Device の channel voice message と、Host -> Device の短い SysEx packet 分割を
@@ -270,8 +284,9 @@ Arduino Coreの`tinyusb_enable_interface()`や`tinyusb_get_free_*`は使わな�
 - MIDI/MSC/Vendorと双方向HIDはIN/OUTで同じendpoint番号を共有する。
 - Audioは他functionとのdescriptor buildを許可する。UAC1単体の実streamingも
   Audio複合device（`peer/composite_hid_audio`、HID+Audio）もPeer検証済み。
-- `MAX_CLASSES=4`はAPI上限であり、controllerのendpoint上限とは別。S3は非control
-  IN endpoint 4本までなので、classの組み合わせによっては4class未満でも上限に達する。
+- `MAX_CLASSES=6`はAPI上限であり、controllerのendpoint上限とは別。S3は非control
+  IN endpoint 4本までなので、classの組み合わせによっては2classでも上限に達する
+  （CDC 2ポートがその例）。
 
 #### 対象マトリクス（Audioを含むfunctionの組み合わせ）
 
@@ -314,7 +329,7 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 
 - **unit（S3 単体・host 不要）**
   - `unit/composite_constraints`: `startTinyUsb=false`でAudio + HID/CDC/Vendorの
-    descriptor build成功と、5個目のclass登録が`MAX_CLASSES`で拒否されることを確認。
+    descriptor build成功と、7個目のclass登録が`MAX_CLASSES`で拒否されることを確認。
 - **peer（S3 2 台・host=EspUsbHost / device=EspUsbDevice）** ← 本命
   - 各ペア `peer/composite_<a>_<b>/` を作成。2 段階で判定:
     1. **列挙成功 + EP 重複なし**: host 側で config descriptor をダンプし、全 endpoint

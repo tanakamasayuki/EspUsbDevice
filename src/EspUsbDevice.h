@@ -455,6 +455,10 @@ public:
   uint16_t hidInterfacesLength() const;
   uint8_t hidInterfaceCount() const;
   const uint16_t *stringDescriptor(uint8_t index, uint16_t langid);
+  // Number of EspUsbDeviceCdcSerial functions this build can drive. A compile-
+  // time property of the SoC's endpoint budget, not of the device: registering
+  // more than this makes begin() fail.
+  static uint8_t maxCdcPorts();
   const uint8_t *hidReportDescriptor(uint8_t instance);
   void handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length);
   void handleHidSetProtocol(uint8_t instance, uint8_t protocol);
@@ -475,7 +479,14 @@ private:
   friend class EspUsbAudioFunction;
   friend class EspUsbDeviceNet;
   friend class EspUsbDeviceCcid;
-  static constexpr size_t MAX_CLASSES = 4;
+  // Raised from 4 when CDC became multi-instance: the P4 HS controller's 7
+  // non-control IN endpoints admit HID + MSC + Vendor + CDC x2, which is five
+  // functions. Each slot is one pointer, so the ceiling costs nothing to carry;
+  // the endpoint budget is what actually decides whether a device is buildable.
+  static constexpr size_t MAX_CLASSES = 6;
+  // String descriptor indices 1-3 are manufacturer / product / serial and 4 is
+  // the CDC-NCM MAC address. Per-function names start after those.
+  static constexpr uint8_t FIRST_FUNCTION_STRING_INDEX = 5;
   // Sized for the largest descriptor the library can emit: a 16-cable MIDI
   // function is 572 bytes on its own (34 head + 30 * 16 jacks + 29 * 2
   // endpoints), plus the 9-byte configuration header and room for one more
@@ -510,6 +521,10 @@ private:
 
   EspUsbDeviceConfig config_;
   EspUsbDeviceClass *classes_[MAX_CLASSES] = {};
+  // Function name per class slot, published at string index
+  // FIRST_FUNCTION_STRING_INDEX + slot. Filled by buildDescriptors() from
+  // EspUsbDeviceClass::functionName(); null slots have no string.
+  const char *functionStrings_[MAX_CLASSES] = {};
   size_t classCount_ = 0;
   bool running_ = false;
   bool ready_ = false;
@@ -564,6 +579,25 @@ public:
   }
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
+  // Name to publish for this function, or null for none. A composite device
+  // that repeats one class needs it: without a string the host has nothing to
+  // tell two identical functions apart. Returned pointer must outlive begin().
+  virtual const char *functionName() const { return nullptr; }
+  // Called by buildDescriptors() before asking for the descriptor, so a class
+  // can emit and address itself correctly.
+  //
+  // instance is this function's index among functions of the same class, in
+  // descriptor order. TinyUSB numbers its class instances by interface claim
+  // order, which follows descriptor order, so this is exactly the index the
+  // tud_<class>_n() API expects.
+  //
+  // stringIndex is the string descriptor index reserved for functionName(), or
+  // 0 when the class did not ask for a name.
+  virtual void assignFunctionIds(uint8_t instance, uint8_t stringIndex)
+  {
+    (void)instance;
+    (void)stringIndex;
+  }
   virtual uint8_t hidReportId() const { return 0; }
   virtual const uint8_t *hidReportDescriptor() const { return nullptr; }
   virtual uint16_t hidReportDescriptorLength() const { return 0; }
@@ -599,7 +633,11 @@ public:
   using LineStateCallback = std::function<void(const EspUsbDeviceCdcLineState &)>;
   using RxCallback = std::function<void(size_t)>;
 
-  explicit EspUsbDeviceCdcSerial(EspUsbDevice &device);
+  // name is published as the function's iFunction / iInterface string. Give
+  // every port of a multi-port device a distinct one: it is what lets a host
+  // (and its user) tell the ports apart, since the ports are otherwise
+  // identical ACM functions. Optional for a single-port device.
+  explicit EspUsbDeviceCdcSerial(EspUsbDevice &device, const char *name = nullptr);
   ~EspUsbDeviceCdcSerial() override;
 
   bool begin() override;
@@ -610,6 +648,16 @@ public:
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 2; }
   uint8_t endpointCount() const override { return 2; }
+  const char *functionName() const override { return name_; }
+  void assignFunctionIds(uint8_t instance, uint8_t stringIndex) override;
+
+  // Port index among the CDC functions of this device, in the order they appear
+  // in the configuration descriptor. Also the TinyUSB CDC instance this object
+  // drives. Valid after begin().
+  uint8_t port() const { return instance_; }
+  // Alternative to the constructor argument. Only read while the descriptor is
+  // built, so it must be set before EspUsbDevice::begin().
+  void setName(const char *name) { name_ = name; }
 
   int available();
   int read();
@@ -631,6 +679,15 @@ public:
 private:
   friend class EspUsbDevice;
 
+  // Whether instance_ addresses a CDC instance this build actually compiled.
+  // Checked before every tud_cdc_n_*() call, so a device that registered more
+  // ports than the build can hold degrades to a silent port rather than
+  // corrupting another one's state.
+  bool instanceValid() const;
+
+  const char *name_ = nullptr;
+  uint8_t instance_ = 0;
+  uint8_t stringIndex_ = 0;
   EspUsbDeviceCdcLineCoding lineCoding_;
   EspUsbDeviceCdcLineState lineState_;
   LineCodingCallback lineCodingCallback_;

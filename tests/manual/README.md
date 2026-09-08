@@ -62,6 +62,49 @@ Notes:
 - For `Access denied`, apply the same fix as in the `p4_hs_bulk` section below,
   substituting the VID/PID you are using.
 
+## `cdc_multi_ports` (every CDC port, one at a time)
+
+Purpose:
+
+- Confirm that **every** port of a multi-port CDC device actually carries data
+  both ways, and that the ports are independent of each other.
+- The peer and loopback rigs can only drive port 0, because EspUsbHost binds one
+  CDC function per device. A PC binds a driver per function, so it is the only
+  host here that can reach the rest.
+- Also confirms the port names (the IAD's `iFunction` / the control interface's
+  `iInterface`) reached the host. Without them two ACM functions are
+  indistinguishable.
+
+You need:
+
+- A board running [`examples/SerialMulti/`](../../examples/SerialMulti/) with its
+  device connector plugged into this PC. That sketch echoes each line back
+  prefixed with the port's own name, so the reply itself says which port
+  received it.
+- A PC with pyserial available.
+
+Steps:
+
+```
+cd tests
+uv run --with pyserial python manual/cdc_multi_ports/cdc_multi_ports.py
+uv run --with pyserial python manual/cdc_multi_ports/cdc_multi_ports.py --expect 3
+uv run --with pyserial python manual/cdc_multi_ports/cdc_multi_ports.py --pid 0x4018 --serial espusb-dualserial-0001
+```
+
+Expected:
+
+- As many ports as the SoC allows (2 on S2/S3, 3 on the ESP32-P4).
+- Each port's `name=` reads `Console` / `Data Link` / `Telemetry`. `(unnamed)`
+  means the iInterface string did not reach the host.
+- Each probe comes back prefixed with that port's name, and no two ports return
+  the same reply (which would mean two nodes pointing at one function).
+- The last line is `OK`.
+
+The same script works on Windows, where the interface is read from the `MI_xx`
+field of the hardware id. In Device Manager, check that each COM port is listed
+under its `iFunction` name.
+
 ## `enumeration_soak` (does it survive re-enumeration)
 
 Purpose:

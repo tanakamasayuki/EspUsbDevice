@@ -30,8 +30,16 @@ static_assert(CFG_TUD_DWC2_DMA_ENABLE + CFG_TUD_DWC2_SLAVE_ENABLE == 1,
               "DWC2 transfer modes are mutually exclusive");
 static_assert(CFG_TUD_DWC2_DMA_ENABLE == 1,
               "device DMA avoids the slave-mode FIFO refill stall");
-static_assert(CFG_TUD_CDC == 1 && CFG_TUD_MSC == 1 && CFG_TUD_HID == 1,
+static_assert(CFG_TUD_MSC == 1 && CFG_TUD_HID == 1,
               "non-Audio classes must be library-owned");
+// CDC is the one multi-instance class: its count is the number of serial ports
+// the SoC's non-control IN endpoints could ever describe (2 IN per ACM
+// function), so that no port is compiled that could not be enumerated.
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+static_assert(CFG_TUD_CDC == 3, "P4 HS controller admits 3 CDC ports");
+#else
+static_assert(CFG_TUD_CDC == 2, "S2/S3 admit 2 CDC ports");
+#endif
 static_assert(CFG_TUD_MIDI == 1 && CFG_TUD_VENDOR == 1 && CFG_TUD_NCM == 1,
               "non-Audio classes must be library-owned");
 static_assert(CFG_TUD_AUDIO == 1, "Audio capacity must be compiled");
