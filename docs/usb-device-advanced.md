@@ -327,9 +327,9 @@ decides**.
 | 0 | 1 | bLength | 18, fixed |
 | 1 | 1 | bDescriptorType | 0x01 |
 | 2 | 2 | bcdUSB | Library (0x0201 with WebUSB, otherwise 0x0200) |
-| 4 | 1 | bDeviceClass | **Always 0x00** (decided per interface) |
-| 5 | 1 | bDeviceSubClass | Always 0x00 |
-| 6 | 1 | bDeviceProtocol | Always 0x00 |
+| 4 | 1 | bDeviceClass | 0xef when an IAD is present, otherwise 0x00 |
+| 5 | 1 | bDeviceSubClass | 0x02 when an IAD is present, otherwise 0x00 |
+| 6 | 1 | bDeviceProtocol | 0x01 when an IAD is present, otherwise 0x00 |
 | 7 | 1 | bMaxPacketSize0 | 64 (`CFG_TUD_ENDPOINT0_SIZE`) |
 | 8 | 2 | idVendor | **`config.vid`** |
 | 10 | 2 | idProduct | **`config.pid`** |
@@ -345,14 +345,23 @@ never asks for it. The library returns 0x0201. (The WebUSB specification itself
 asks for 0x0210, but hosts gate BOS retrieval on "2.01 or newer", so they do come
 asking.)
 
-**bDeviceClass stays 0x00 even on composite devices.** "What this is" lives
-entirely on the interfaces, and grouping several interfaces into one function is
-the job of the IAD (type 0x0b) inside the configuration descriptor. CDC emits an
-IAD as part of `TUD_CDC_DESCRIPTOR`, so configurations containing CDC do have
-one. The specification's convention is that a device using IADs also declares
-0xef/0x02/0x01 at device level; this library does not. When host driver binding
-misbehaves, that is worth suspecting - it is a textbook case for the diff
-technique in [introduction 5.5](usb-device-guide.md#55-compare-against-something-that-works).
+**bDeviceClass follows whether an IAD was emitted.** "What this is" mostly lives
+on the interfaces, and grouping several interfaces into one function is the job
+of the IAD (type 0x0b) inside the configuration descriptor. CDC, NCM and Audio
+emit one as part of their own descriptor, so any device containing them has one.
+
+A device that uses IADs is required by the IAD ECN to also declare
+**0xef / 0x02 / 0x01** (Miscellaneous / Common Class / Interface Association) at
+device level. `buildDescriptors()` scans the configuration descriptor it just
+assembled and sets those three bytes if it finds any association. **This is what
+matters on Windows:** it makes usbccgp.sys load as the parent, create a child
+device per association, and bind a driver per function. Without it, a device
+with two CDC functions can have a single driver claim all four interfaces and
+surface one port instead of two - if it works at all.
+
+Configurations that emit no IAD (HID, MSC, MIDI, bulk Vendor) keep 0x00, because
+there the class lives entirely in the interface descriptors and the device level
+has nothing to add.
 
 ### 3.2 Configuration descriptor (9 bytes + what follows)
 
@@ -447,6 +456,43 @@ Generated only when `config.webusbEnabled = true`.
 **The MS OS 2.0 descriptor is what lets Windows open the vendor interface.**
 Without it a `0xff` interface sits there with no driver. APIs to replace the
 vendor code, GUID or contents are not implemented.
+
+### 3.8 Presenting a multi-function device to Windows
+
+Linux and macOS bind drivers per function straight from the IADs in the
+configuration descriptor. **Windows also reads the device descriptor**, in this
+order:
+
+1. `bDeviceClass` of **0xef / 0x02 / 0x01** makes **usbccgp.sys** (the USB
+   Generic Parent Driver) load as the parent
+2. usbccgp creates a child device (PDO) per IAD-delimited function
+3. Each child binds the driver for its own class. For CDC ACM that is
+   **usbser.sys**, one COM port per function
+
+The library does step 1 automatically whenever it emits an IAD
+([3.1](#31-device-descriptor-18-bytes)), so a device with two CDC functions
+shows up as two COM ports.
+
+The rest is design-side work:
+
+| Do this | Why |
+|---|---|
+| **Name every port** (`EspUsbDeviceCdcSerial(device, "Console")`) | Windows uses the IAD's `iFunction` as the child device name. Without it you get identically named ports and no way to tell which is which |
+| **Set `config.serialNumber`, unique per board** | Windows remembers COM port numbers per VID/PID/serial. With no serial, the number is reassigned whenever the device moves to a different USB port, and two identical boards collide |
+| **Change the PID whenever the descriptor changes (during development)** | Windows caches driver binding per VID/PID. Keeping the same pair across a descriptor change leaves the stale binding in place, which typically looks like "only one port appears". `pnputil /enum-devices /connected` plus Device Manager's "Show hidden devices" is how you clear it |
+
+**No INF file is needed.** Windows 10 and newer bind usbser.sys to CDC ACM
+(class 0x02 / subclass 0x02) automatically. Windows 7 needed a `.inf`; treat
+that as out of scope.
+
+**Alongside a bulk Vendor interface**, that one interface is a separate story:
+attaching WinUSB to it needs the MS OS 2.0 descriptor, which is emitted when
+`config.webusbEnabled = true` ([3.7](#37-bos-and-microsoft-os-20)). It works
+independently of the CDC ports.
+
+The quickest check is `tests/manual/device_inspect/device_inspect.py`: it prints
+the descriptors a host actually received, so `bDeviceClass=0xef`, the number of
+IADs and the `iFunction` strings are all visible at once.
 
 ---
 
@@ -583,6 +629,48 @@ Ways out, in order:
 2. **Merge into a composite HID.** Keyboard + mouse + gamepad cost one IN
    endpoint total
 3. **Use the ESP32-P4 HS controller.** Seven IN endpoints
+
+### 5.3.1 Several CDC ports
+
+`EspUsbDeviceCdcSerial` is the one class you can register more than once. The
+host sees several serial ports, each with its own buffers, line coding and DTR
+state.
+
+```cpp
+EspUsbDevice device;
+EspUsbDeviceCdcSerial Console(device, "Console");
+EspUsbDeviceCdcSerial DataLink(device, "Data Link");
+```
+
+**How many fit is decided by IN endpoints, not by a class count.** Each port
+costs 2 IN:
+
+| controller | CDC alone | Alongside HID + Vendor |
+|---|---|---|
+| ESP32-S2 / S3 | 2 ports (4 IN, the whole budget) | **1 port** (HID 1 + Vendor 1 + CDC 2 = 4) |
+| ESP32-P4 rhport 0 (FS) | 2 ports | 1 port |
+| ESP32-P4 rhport 1 (HS) | 3 ports (6 IN) | **2 ports** (1 + 1 + 4 = 6) |
+
+`CFG_TUD_CDC` is fixed per target to exactly that ceiling (2 on S2/S3, 3 on P4):
+compiling a port that could never be enumerated buys nothing. Registering more
+than fits makes `begin()` fail with `ESP_ERR_INVALID_SIZE`, before the PHY is
+started, so the host sees nothing.
+
+The instance array is always allocated, so a sketch using a single port still
+pays for the capacity (measured: +1416 bytes on S3, +4600 bytes on P4, where the
+HS bulk endpoint buffers are 512 bytes). Define `CFG_TUD_CDC` before the library
+is built to override it.
+
+**The port index is descriptor order.** What `port()` returns is also the
+TinyUSB instance the object drives. Changing registration order changes both the
+port numbers and the endpoint addresses, which matters if a host-side script
+hardcodes them.
+
+**Always name the ports.** Two ACM functions are byte-for-byte the same shape,
+so without names a host has no way to tell them apart. The constructor's second
+argument fills in both the IAD's `iFunction` and the control interface's
+`iInterface` (and, per [3.1](#31-device-descriptor-18-bytes), a configuration
+with associations declares 0xef/0x02/0x01 automatically).
 
 ### 5.4 Buffer sizes
 
@@ -808,7 +896,7 @@ drops the frame and lets TCP retransmit
 
 Every class in the library derives from `EspUsbDeviceClass`. The constructor
 calls `device.addClass(this)`, so **constructing the object registers it** (up to
-four).
+six).
 
 What to implement:
 
@@ -821,6 +909,7 @@ What to implement:
 | `afterDeviceStarted()` | Work that needs the stack running |
 | `configurationDescriptorForSpeed(dst, capacity, …, highSpeed)` | When content varies by speed. The default calls `configurationDescriptor()` with MPS 64 or 512 |
 | `hidReportDescriptor()` / `hidReportDescriptorLength()` / `hidReportId()` / `hidInEndpointSize()` | For HID classes |
+| `functionName()` / `assignFunctionIds(instance, stringIndex)` | For a class that can appear more than once: the name to publish, and the instance index and string index the builder assigns in descriptor order |
 | `onBusAttached()` / `onBusDetached()` | Drop state the host no longer knows ([7.3](#73-bus-reset-suspend-deconfiguration)) |
 
 **`configurationDescriptor()` must use the numbers it was given.** Picking your

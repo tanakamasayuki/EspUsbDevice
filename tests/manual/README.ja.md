@@ -56,6 +56,47 @@ diff -u before.json after.json
 - `Access denied` になった場合の対処は下の `p4_hs_bulk` の項と同じです（VID/PID を
   対象のものへ読み替えてください）。
 
+## `cdc_multi_ports`（CDC 複数ポートを1本ずつ確認する）
+
+目的:
+
+- 複数 CDC ポートを持つ device の**全ポート**について、実際にデータが往復すること、
+  そしてポート同士が独立していることを確認する。
+- peer / loopback リグでは port 0 しか駆動できない（EspUsbHost が 1 デバイスにつき
+  CDC 機能を 1 つしか bind しないため）。PC は機能ごとにドライバをバインドするので、
+  残りのポートを確認できるのは PC ホストだけ。
+- あわせて、ポート名（IAD の `iFunction` / control interface の `iInterface`）がホスト側に
+  届いていることも確認する。名前が無いと 2 つの ACM 機能は区別できない。
+
+必要なもの:
+
+- [`examples/SerialMulti/`](../../examples/SerialMulti/) を書き込んだボードと、その
+  device connector をこの PC へ接続（このスケッチはポート名を前置してエコーを返すので、
+  どのポートが受けたかが返信そのものから分かる）
+- pyserial を利用できる PC
+
+手順:
+
+```
+cd tests
+uv run --with pyserial python manual/cdc_multi_ports/cdc_multi_ports.py
+uv run --with pyserial python manual/cdc_multi_ports/cdc_multi_ports.py --expect 3
+uv run --with pyserial python manual/cdc_multi_ports/cdc_multi_ports.py --pid 0x4018 --serial espusb-dualserial-0001
+```
+
+期待する結果:
+
+- ポート数が SoC の上限どおり（S2/S3 は 2、ESP32-P4 は 3）。
+- 各ポートの `name=` が `Console` / `Data Link` / `Telemetry` と表示される
+  （`(unnamed)` なら iInterface が届いていない）。
+- 各ポートへ送った probe の返信が、そのポート名を前置して返る。返信がポート間で
+  重複しない（重複したら 2 つのノードが同じ機能を指している）。
+- 最終行が `OK`。
+
+Windows で確認する場合も同じスクリプトが動きます（COM ポート番号は `hwid` の `MI_xx`
+から interface を読んで並べます）。デバイスマネージャ側では、各 COM ポートが
+`iFunction` の名前で並ぶことを確認してください。
+
 ## `enumeration_soak`（再列挙に耐えるか）
 
 目的:

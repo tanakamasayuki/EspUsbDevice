@@ -278,6 +278,11 @@ CDC ACM:
 - `EspUsbDeviceCdcSerial` は USB serial の read / write callback と helper を提供します。
 - `available()`、`read()`、`write()`、`print()` 系の Arduino らしい使い方と、
   raw callback の両方を扱えます。
+- **複数登録できます。** ポートごとに名前を付けて `EspUsbDeviceCdcSerial(device, "Console")`
+  のように登録すると、ホストにシリアルポートが複数見えます。何本載るかは IN endpoint で
+  決まり（1 ポートにつき 2 本）、S2/S3 は 2 ポート、ESP32-P4 の high-speed controller は
+  3 ポート、HID や Vendor と併用するとその分減ります。上限は
+  `EspUsbDevice::maxCdcPorts()` で確認できます。
 
 USB MIDI:
 

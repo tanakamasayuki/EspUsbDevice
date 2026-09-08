@@ -69,7 +69,9 @@ static void testAudioAddedLast()
   checkAudioComposite("hid_plus_audio", device, audio);
 }
 
-// The 5th class must be refused by addClass() (MAX_CLASSES == 4).
+// The 7th class must be refused by addClass() (MAX_CLASSES == 6). This limit
+// is about registration only - whether the resulting device is buildable is
+// decided separately by the controller's endpoint budget.
 static void testMaxClasses()
 {
   EspUsbDevice device;
@@ -77,10 +79,12 @@ static void testMaxClasses()
   EspUsbDeviceHidMouse c2(device);
   EspUsbDeviceCdcSerial c3(device);
   EspUsbDeviceMidi c4(device);
-  check(device.lastError() == ESP_OK, "four_classes_ok");
+  EspUsbDeviceVendor c5(device);
+  EspUsbDeviceMsc c6(device);
+  check(device.lastError() == ESP_OK, "six_classes_ok");
 
-  EspUsbDeviceVendor c5(device); // base ctor calls addClass(this); must fail.
-  check(device.lastError() == ESP_FAIL, "fifth_class_rejected");
+  EspUsbDeviceCdcSerial c7(device); // base ctor calls addClass(this); must fail.
+  check(device.lastError() == ESP_FAIL, "seventh_class_rejected");
 }
 
 static void testS3EndpointLimit()

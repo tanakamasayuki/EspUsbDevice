@@ -55,6 +55,7 @@
 | `USBVendor` | vendor-specific interface、bulk IN/OUT、control request | 中 |
 | `CustomHID` | sketch-defined HID descriptor | 中 |
 | `Serial` | CDC ACM serial | 高 |
+| `SerialMulti` | CDC ACM を 2 ポート。名前付き function と endpoint 予算 | 中 |
 | `MIDI` | USB MIDI basic send/receive | 中 |
 | `MIDIController` | ADC/button to MIDI | 中 |
 | `MIDIInterface` | UART MIDI <-> USB MIDI bridge | 中 |

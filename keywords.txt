@@ -96,6 +96,9 @@ flush	KEYWORD2
 connected	KEYWORD2
 mounted	KEYWORD2
 lineCoding	KEYWORD2
+port	KEYWORD2
+setName	KEYWORD2
+maxCdcPorts	KEYWORD2
 lineState	KEYWORD2
 onLineCoding	KEYWORD2
 onLineState	KEYWORD2

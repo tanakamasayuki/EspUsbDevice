@@ -72,7 +72,22 @@
 // Compile one instance of every device class supported by the v2 function
 // model. Whether an instance appears in a device is decided by its descriptor
 // graph, not by Arduino-ESP32 Kconfig.
-#define CFG_TUD_CDC 1
+// CDC is the one class the v2 function model can instantiate more than once,
+// so its count is a capacity rather than a flag. What bounds it is the
+// controller's non-control IN endpoint budget, not RAM: every ACM function
+// costs two IN endpoints (notification + data), and validateControllerEndpoints()
+// enforces the per-controller ceiling at begin(). S2/S3 have 4 non-control IN
+// endpoints, so two ports is the hardware maximum; the P4 HS controller has 7,
+// so three. Sizing the compile-time array to exactly that maximum keeps the
+// static cost at what the SoC could actually enumerate - a port that could
+// never be described is not worth its buffers.
+#ifndef CFG_TUD_CDC
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#define CFG_TUD_CDC 3
+#else
+#define CFG_TUD_CDC 2
+#endif
+#endif
 #define CFG_TUD_MSC 1
 #define CFG_TUD_HID 1
 #define CFG_TUD_MIDI 1

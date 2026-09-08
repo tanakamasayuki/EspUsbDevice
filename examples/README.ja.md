@@ -135,6 +135,16 @@ USB CDC ACM serial device の例です。
 - Host からの line coding と DTR / RTS 状態を callback で受け取ります。
 - USB CDC とログ用 Serial monitor を分けて扱います。
 
+## SerialMulti
+
+シリアルポートを2つ持つ USB CDC device の例です。
+詳しくは [SerialMulti/README.ja.md](SerialMulti/README.ja.md) を参照してください。
+
+- `EspUsbDeviceCdcSerial` を2つ登録し、ホストにポートを2つ見せます。
+- ポートごとに名前を付け、Host 側で区別できるようにします。
+- バッファ・line coding・DTR 状態はポートごとに独立です。
+- 何本載るかは IN endpoint で決まります（S2/S3 は2本、P4 HS は3本）。
+
 ## MIDI
 
 USB MIDI device の例です。

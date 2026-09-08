@@ -236,9 +236,9 @@ espUsbDeviceRegisterAppDrivers(drivers, count);  // drivers はスタック稼�
 | 0 | 1 | bLength | 18 固定 |
 | 1 | 1 | bDescriptorType | 0x01 |
 | 2 | 2 | bcdUSB | ライブラリ（WebUSB有効時は0x0201、通常0x0200） |
-| 4 | 1 | bDeviceClass | **常に0x00**（インターフェース側で決まる） |
-| 5 | 1 | bDeviceSubClass | 常に0x00 |
-| 6 | 1 | bDeviceProtocol | 常に0x00 |
+| 4 | 1 | bDeviceClass | IADがあれば0xef、なければ0x00 |
+| 5 | 1 | bDeviceSubClass | IADがあれば0x02、なければ0x00 |
+| 6 | 1 | bDeviceProtocol | IADがあれば0x01、なければ0x00 |
 | 7 | 1 | bMaxPacketSize0 | 64（`CFG_TUD_ENDPOINT0_SIZE`） |
 | 8 | 2 | idVendor | **`config.vid`** |
 | 10 | 2 | idProduct | **`config.pid`** |
@@ -250,7 +250,11 @@ espUsbDeviceRegisterAppDrivers(drivers, count);  // drivers はスタック稼�
 
 **`bcdUSB` が上がるのはWebUSB有効時だけです。** BOSディスクリプタを持つと宣言するにはUSB 2.01以上が必要で、ここを変えずにBOSだけ足してもホストは取りに来ません。このライブラリが返すのは 0x0201 です（WebUSB仕様自体は 0x0210 を求めていますが、ホストはBOS取得の可否を「2.01以上か」で判断するため、実際には取りに来ます）。
 
-**bDeviceClass は複合デバイスでも 0x00 のままです。** 「何であるか」は完全にインターフェース側にあり、複数機能のまとめ方はコンフィグレーションディスクリプタ内のIAD（型 0x0b）が担います。CDCは `TUD_CDC_DESCRIPTOR` の一部としてIADを出すので、CDCを含む複合デバイスにはIADが入ります。IADを使うデバイスはデバイスレベルでも 0xef/0x02/0x01 を宣言するのが規格上の作法ですが、このライブラリはそうしていません。ホスト側のドライバのバインドがおかしいときは、ここを疑う価値があります（[入門編5.5](usb-device-guide.ja.md#55-うまくいっている機器と比べる)の差分取りが効く典型例です）。
+**bDeviceClass は「IADを出したかどうか」で決まります。** 「何であるか」は基本的にインターフェース側にあり、複数機能のまとめ方はコンフィグレーションディスクリプタ内のIAD（型 0x0b）が担います。CDC・NCM・Audioは自分のディスクリプタの一部としてIADを出すので、それらを含むデバイスにはIADが入ります。
+
+IADを使うデバイスは、デバイスレベルでも **0xef / 0x02 / 0x01**（Miscellaneous / Common Class / Interface Association）を宣言することがIAD ECNで求められています。`buildDescriptors()` は組み上げたコンフィグレーションディスクリプタを走査し、IADが1つでもあればこの3バイトを立てます。**これはWindowsで効きます。** usbccgp.sys が親としてロードされ、IADの区切りごとに子デバイスが作られて、機能ごとにドライバがバインドされるからです。宣言が無いと、たとえばCDCを2つ持つデバイスで1つのドライバが4インターフェース全体を掴み、ポートが1つしか（それも壊れた形でしか）出てこないことがあります。
+
+IADを出さない構成（HID、MSC、MIDI、bulk Vendor）は 0x00 のままです。この場合はクラスがインターフェースディスクリプタだけで完結しているので、デバイスレベルで言うことがありません。
 
 ### 3.2 コンフィグレーションディスクリプタ（9バイト＋後続）
 
@@ -331,6 +335,30 @@ DescriptorDumpがレポートディスクリプタの長さをここから読ん
 | MS OS 2.0 | 178バイト | 実際に割り当てたvendorインターフェースに対する WinUSB compatible ID と device interface GUID |
 
 **Windowsでvendorインターフェースを開けるようにするのがMS OS 2.0の役割**です。これがないと、`0xff` のインターフェースはドライバなしのまま残ります。vendor code、GUID、内容を差し替えるAPIは未実装です。
+
+### 3.8 複数機能デバイスをWindowsにどう見せるか
+
+Linux と macOS は、コンフィグレーションディスクリプタのIADを見て機能ごとにドライバをバインドします。**Windows は device descriptor も見ます。** 順番はこうです。
+
+1. `bDeviceClass` が **0xef / 0x02 / 0x01** なら、まず **usbccgp.sys**（USB Generic Parent Driver）が親としてロードされる
+2. usbccgp が IAD の区切りごとに子デバイス（PDO）を作る
+3. 子デバイスごとに、その機能のクラスに応じたドライバがバインドされる。CDC ACM なら **usbser.sys** で、1機能につき1つのCOMポートになる
+
+このライブラリはIADを出したときに 1. を自動でやります（[3.1](#31-デバイスディスクリプタ18バイト)）。CDCを2つ持つデバイスなら、Windows側にCOMポートが2つ出ます。
+
+残りは設計側でやることです。
+
+| やること | 理由 |
+|---|---|
+| **ポートごとに名前を付ける**（`EspUsbDeviceCdcSerial(device, "Console")`） | Windows はIADの `iFunction` を子デバイス名に使います。無いと同名のポートが並び、どちらがどちらか分かりません |
+| **`config.serialNumber` を設定する。ボードごとに固有の値で** | Windows は VID/PID/シリアルの組でCOMポート番号を記憶します。シリアルが無いと、挿すUSBポートを変えるたびに番号が振り直され、同じ機種を2台挿すと衝突します |
+| **descriptorを変えたら PID も変える（開発中）** | Windows は VID/PID 単位でドライバのバインド結果をキャッシュします。descriptor構成を変えたのに同じ VID/PID のままだと、古いバインドが残って「1ポートしか出ない」といった症状になります。`pnputil /enum-devices /connected` と デバイスマネージャの「非表示のデバイスの表示」で古い項目を消せます |
+
+**INFファイルは要りません。** Windows 10 以降は CDC ACM（class 0x02 / subclass 0x02）に usbser.sys を自動でバインドします。Windows 7 では `.inf` が必要でしたが、対象外と考えて構いません。
+
+**bulk Vendor と併用する場合**は、そのインターフェース側だけ別の話になります。WinUSB を当てるには MS OS 2.0 descriptor が必要で、これは `config.webusbEnabled = true` のときに出ます（[3.7](#37-bosとmicrosoft-os-20)）。CDC側のCOMポートとは独立に効きます。
+
+確認は `tests/manual/device_inspect/device_inspect.py` が早いです。ホストが実際に受け取ったdescriptorを表示するので、`bDeviceClass=0xef` とIADの本数・`iFunction` 文字列をその場で見られます。
 
 ---
 
@@ -440,6 +468,32 @@ DWC2では、**IN endpointごとに専用のTxFIFOが必要**です。OUTは共�
 1. **クラスを減らす。** CDCは通知用INを1本使うので、単にバイト列を流したいだけならVendor（IN 1本）の方が安い
 2. **複合HIDにまとめる。** キーボード＋マウス＋ゲームパッドはIN 1本で済む
 3. **ESP32-P4のHSコントローラを使う。** IN 7本まで増える
+
+### 5.3.1 CDCを複数並べる
+
+`EspUsbDeviceCdcSerial` は複数登録できる唯一のクラスです。ホストからはシリアルポートが複数見え、それぞれが独立したバッファ・line coding・DTR状態を持ちます。
+
+```cpp
+EspUsbDevice device;
+EspUsbDeviceCdcSerial Console(device, "Console");
+EspUsbDeviceCdcSerial DataLink(device, "Data Link");
+```
+
+**何本入るかは、クラス数ではなくIN endpointで決まります。** 1ポートにつきIN 2本なので、
+
+| controller | CDC単独の上限 | HID＋Vendorと併用したときの上限 |
+|---|---|---|
+| ESP32-S2 / S3 | 2ポート（IN 4本＝使い切り） | **1ポート**（HID 1 + Vendor 1 + CDC 2 = 4） |
+| ESP32-P4 rhport 0（FS） | 2ポート | 1ポート |
+| ESP32-P4 rhport 1（HS） | 3ポート（IN 6本） | **2ポート**（1 + 1 + 4 = 6） |
+
+`CFG_TUD_CDC` はこの上限に合わせてターゲットごとに決め打ちしてあります（S2/S3は2、P4は3）。列挙できないポートをコンパイルしても意味がないからです。上限を超えて登録した場合は `begin()` が `ESP_ERR_INVALID_SIZE` で落ちます——PHYを起動する前なので、ホスト側には何も起きません。
+
+インスタンス配列は常に確保されるので、CDCを1本しか使わないスケッチにも静的コストがかかります（実測: S3 で +1416 byte、P4 で +4600 byte。P4はHSのbulk endpoint bufferが512 byteのため大きくなります）。減らしたい場合は、ライブラリをビルドする前に `CFG_TUD_CDC` を定義すれば上書きできます。
+
+**ポート番号はディスクリプタ上の並び順です。** `port()` が返す値は、そのオブジェクトが駆動するTinyUSBのインスタンス番号でもあります。登録順を変えるとポート番号もエンドポイントアドレスも変わるので、ホスト側スクリプトが直書きしているなら注意してください。
+
+**名前は必ず付けてください。** 2つのACM機能は descriptor 上まったく同じ形なので、名前が無いとホスト側でどちらがどちらか区別できません。コンストラクタの第2引数はIADの `iFunction` とcontrolインターフェースの `iInterface` の両方に入ります（[3.1](#31-デバイスディスクリプタ18バイト)のとおり、複数機能があるとデバイスは自動的に 0xef/0x02/0x01 を宣言します）。
 
 ### 5.4 バッファのサイズ
 
@@ -616,7 +670,7 @@ Networkの送信側も同じ思想で、キューが埋まればフレームを�
 
 ### 9.1 EspUsbDeviceClass を継承する
 
-ライブラリのクラスはすべて `EspUsbDeviceClass` の派生です。コンストラクタが `device.addClass(this)` を呼ぶので、**オブジェクトを作るだけで登録されます**（4個まで）。
+ライブラリのクラスはすべて `EspUsbDeviceClass` の派生です。コンストラクタが `device.addClass(this)` を呼ぶので、**オブジェクトを作るだけで登録されます**（6個まで）。
 
 実装すべきものは次のとおりです。
 
@@ -629,6 +683,7 @@ Networkの送信側も同じ思想で、キューが埋まればフレームを�
 | `afterDeviceStarted()` | スタック起動後の処理 |
 | `configurationDescriptorForSpeed(dst, capacity, ..., highSpeed)` | 速度で内容が変わる場合。既定はMPSを64/512で切り替えて `configurationDescriptor()` を呼ぶ |
 | `hidReportDescriptor()` / `hidReportDescriptorLength()` / `hidReportId()` / `hidInEndpointSize()` | HIDの場合 |
+| `functionName()` / `assignFunctionIds(instance, stringIndex)` | 複数登録できるクラス用。公開する名前と、ビルダーがディスクリプタ順に割り当てるインスタンス番号・string index |
 | `onBusAttached()` / `onBusDetached()` | ホスト側の認識が無効になったときに状態を捨てる（[7.3](#73-バスリセットサスペンドデコンフィグレーション)） |
 
 **`configurationDescriptor()` は渡された番号をそのまま使うこと**が重要です。自分で番号を決めると採番が壊れ、`validateControllerEndpoints()` の検査もすり抜けます。

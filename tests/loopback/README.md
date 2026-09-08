@@ -35,6 +35,16 @@ port/speed behavior can be verified before broader class coverage is added.
   arrive as the same ASCII through Host `onKeyboard()`.
 - `usb_serial`: starts CDC ACM serial on one P4 and verifies Device -> Host,
   Host -> Device, and line coding callbacks.
+- `usb_serial_multi`: starts a three-port CDC ACM device on one P4's high-speed
+  controller. The descriptor unit tests stop at "the bytes are well formed", but
+  three ports means six non-control IN endpoints, and every IN endpoint needs its
+  own TxFIFO carved out of the controller's 1024-word data FIFO - an allocation
+  dcd_dwc2 only performs at SET_CONFIGURATION, so it has to be enumerated to be
+  believed. Checks 6 interfaces / 9 endpoints (3 interrupt IN + 6 bulk) with no
+  duplicate address and `class=ef` on the host side, traffic both ways on port 0,
+  and that bytes written to ports 1 and 2 never surface on port 0's stream.
+  Driving ports 1 and 2 from the host waits on EspUsbHost binding more than one
+  CDC function per device.
 - `usb_midi`: starts USB MIDI on one P4 and verifies channel voice messages and
   short Host -> Device SysEx packet splitting.
 - `usb_msc`: starts USB Mass Storage on one P4 and verifies single-LUN RAM disk
