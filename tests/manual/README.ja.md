@@ -62,9 +62,9 @@ diff -u before.json after.json
 
 - 複数 CDC ポートを持つ device の**全ポート**について、実際にデータが往復すること、
   そしてポート同士が独立していることを確認する。
-- 2 ポートまでは `peer/usb_serial_multi` が per-port で検証している。P4 の 3 ポート構成は
-  loopback 側の `ESP_USB_HOST_MAX_SERIAL_PORTS` 設定が保留中なので、いま 3 ポートすべてを
-  叩けるのは PC ホストだけ。
+- 自動テストでは `peer/usb_serial_multi`（S3・2 ポート）と `loopback/usb_serial_multi`
+  （P4・3 ポート）が per-port で検証している。この手動テストが押さえるのは、PC の OS が
+  実際にポートごとのシリアルノードを作り、そこに名前が届いているかどうか。
 - あわせて、ポート名（IAD の `iFunction` / control interface の `iInterface`）がホスト側に
   届いていることも確認する。名前が無いと 2 つの ACM 機能は区別できない。
 
