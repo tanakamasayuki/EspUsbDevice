@@ -38,9 +38,10 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   から切り出す必要がある。この割り当てが成功するかは SET_CONFIGURATION 時に dcd_dwc2 が
   決めるので、実際に列挙させないと分からない。Host 側で interface 6 / endpoint 9
   （interrupt IN 3 + bulk 6）・アドレス重複なし・`class=ef` を確認し、port 0 の双方向通信と、
-  port 1 / 2 へ書いたバイトが port 0 の経路に出てこないことを確認する。Host が 1 デバイス
-  につき CDC 機能を 1 つしか bind しないため、port 1 / 2 を host 側から駆動する検証は
-  EspUsbHost の複数 CDC 対応待ち。
+  port 1 / 2 へ書いたバイトが port 0 の経路に出てこないことを確認する。port 1 / 2 を host 側から駆動する検証は
+  `ESP_USB_HOST_MAX_SERIAL_PORTS` を 3 にする必要があり、その設定方法の仕様が固まるまで保留
+  （EspUsbHost 側の複数ポート bind 自体は対応済みで、2 ポートの `peer/usb_serial_multi` は
+  per-port で検証済み）。
 - `usb_midi`: P4 1台上で USB MIDI を起動し、channel voice message と短い SysEx の
   Host -> Device packet 分割を確認する。
 - `usb_msc`: P4 1台上で USB Mass Storage を起動し、単一 LUN RAM disk の capacity /
