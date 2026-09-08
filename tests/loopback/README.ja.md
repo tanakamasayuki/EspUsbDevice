@@ -42,8 +42,7 @@ descriptor ログで P4 の port / speed 挙動を確認します。
   双方向通信・分離・per-port line coding まで確認する。host 側で 3 ポートが収まるのは、
   1 ポートが 3 チャネルではなく 2 チャネル（bulk IN + OUT）で済むからで、CDC control
   interface を claim せず class request を EP0 で送るようになったことによる——EP0 1 本 +
-  3 ポート × 2 = 7/8 チャネル。EspUsbHost の per-port bind が要るので
-  `--profile=p4_loopback_local` で実行する。
+  3 ポート × 2 = 7/8 チャネル。EspUsbHost 2.8.0 の per-port bind を使う。
 - `usb_midi`: P4 1台上で USB MIDI を起動し、channel voice message と短い SysEx の
   Host -> Device packet 分割を確認する。
 - `usb_msc`: P4 1台上で USB Mass Storage を起動し、単一 LUN RAM disk の capacity /

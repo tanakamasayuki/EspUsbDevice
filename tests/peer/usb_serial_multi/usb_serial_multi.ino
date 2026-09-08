@@ -12,17 +12,6 @@
 // device gives; naming the port is what makes the two ACM functions - identical
 // in every respect but their interface numbers - individually addressable.
 
-// EspUsbHost gained per-port CDC binding after 2.7.9; ESP_USB_HOST_MAX_SERIAL_PORTS
-// is the macro that arrived with it. Guarding on it keeps this sketch building
-// against the released library, where the multi-port cases then fail rather than
-// break the build for every other peer test. Run them with
-// --profile=s3_peer_local until that support is released.
-#ifdef ESP_USB_HOST_MAX_SERIAL_PORTS
-#define PEER_HOST_HAS_MULTIPORT 1
-#else
-#define PEER_HOST_HAS_MULTIPORT 0
-#endif
-
 EspUsbHost usb;
 EspUsbHostCdcSerial Port0Serial(usb);
 EspUsbHostCdcSerial Port1Serial(usb);
@@ -104,7 +93,6 @@ static void reportDeviceClass()
 // two of something.
 static void reportPorts()
 {
-#if PEER_HOST_HAS_MULTIPORT
   Serial.printf("HOST_PORTS count=%u\n",
                 usb.serialPortCount(deviceAddress));
   for (uint8_t port = 0; port < 2; port++)
@@ -123,10 +111,6 @@ static void reportPorts()
                   info.outEndpointAddress,
                   info.ready ? 1 : 0);
   }
-#else
-  Serial.println("HOST_PORTS count=1");
-  Serial.println("HOST_PORT 0 unsupported");
-#endif
 }
 
 static void drain(EspUsbHostCdcSerial &port, const char *label)
@@ -177,13 +161,10 @@ void setup()
 
   // Bound before any device exists: the port index is a property of the
   // descriptor layout this test expects, not of the device that turns up.
-#if PEER_HOST_HAS_MULTIPORT
   Port0Serial.setPort(0);
   Port1Serial.setPort(1);
-#endif
   Port0Serial.begin(115200);
   Port1Serial.begin(115200);
-  Serial.printf("HOST_MULTIPORT %u\n", PEER_HOST_HAS_MULTIPORT);
 
   if (!usb.begin())
   {
@@ -222,8 +203,7 @@ void loop()
     {
       // Line coding is a control request on that port's own control interface,
       // so this is the control path being per-port, not just the data path.
-      Serial.printf("SERIAL_BAUD1 %u\n",
-                    PEER_HOST_HAS_MULTIPORT && Port1Serial.setBaudRate(57600) ? 1 : 0);
+      Serial.printf("SERIAL_BAUD1 %u\n", Port1Serial.setBaudRate(57600) ? 1 : 0);
     }
     else if (command == 'q')
     {

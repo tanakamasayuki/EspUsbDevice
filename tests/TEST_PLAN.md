@@ -73,7 +73,7 @@ tests/
 | System control HID | planned | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| CDC ACM, several ports | ✅ `cdc_multi` (S3: two-port descriptor, endpoint addresses, IAD-derived device class, ceiling rejections), ✅ `p4_controller_endpoints` (P4: HID+Vendor+CDC x2, CDC x3, fourth port rejected, third rejected on FS) | ✅ `usb_serial_multi` (two real S3 boards: 4 interfaces / 6 endpoints / claims, `class=ef`, port-to-interface/endpoint mapping, **traffic both ways on port 0 and on port 1**, separation, per-port line coding; needs `--profile=s3_peer_local`) | ✅ `usb_serial_multi` (one P4, device=HS with 3 ports: 6 interfaces / 9 endpoints / `class=ef`, port-to-interface/endpoint mapping, **traffic both ways on all three ports**, separation, per-port line coding; needs `--profile=p4_loopback_local`) | | ✅ `examples/SerialMulti` |
+| CDC ACM, several ports | ✅ `cdc_multi` (S3: two-port descriptor, endpoint addresses, IAD-derived device class, ceiling rejections), ✅ `p4_controller_endpoints` (P4: HID+Vendor+CDC x2, CDC x3, fourth port rejected, third rejected on FS) | ✅ `usb_serial_multi` (two real S3 boards: 4 interfaces / 6 endpoints / claims, `class=ef`, port-to-interface/endpoint mapping, **traffic both ways on port 0 and on port 1**, separation, per-port line coding) | ✅ `usb_serial_multi` (one P4, device=HS with 3 ports: 6 interfaces / 9 endpoints / `class=ef`, port-to-interface/endpoint mapping, **traffic both ways on all three ports**, separation, per-port line coding) | | ✅ `examples/SerialMulti` |
 | USB MIDI | ✅ `midi_descriptor` (descriptor bytes for every symmetric and asymmetric cable-count pair) | ✅ `usb_midi` (MIDI-only device also enumerates as supported), ✅ `usb_midi_cables` (asymmetric 4-in / 5-out: Host-decoded counts and directions, interleave, SysEx) | ✅ `usb_midi`, ✅ `usb_midi_cables` (4 cables symmetric) | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
@@ -190,10 +190,7 @@ and checks **both ports individually**:
    SET_LINE_CODING is a control request on that port's own control interface, so
    this is the control path being per-port, not just the data path
 
-Per-port binding is newer than `EspUsbHost` 2.7.9. The sketch guards on
-`ESP_USB_HOST_MAX_SERIAL_PORTS` so it still builds against the released library,
-but **run the per-port cases with `--profile=s3_peer_local` until that support
-ships**.
+Per-port binding requires `EspUsbHost` 2.8.0.
 
 `peer/usb_midi` is the first USB MIDI test for `EspUsbDeviceMidi`. It verifies
 Device -> Host and Host -> Device channel voice messages, plus short Host ->

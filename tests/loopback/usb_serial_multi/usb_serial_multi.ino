@@ -25,17 +25,6 @@
 // interface - its class requests go over EP0 - so no channel is spent on a
 // notification endpoint nothing transfers on.
 
-// EspUsbHost gained per-port CDC binding after 2.7.9;
-// ESP_USB_HOST_MAX_SERIAL_PORTS is the macro that arrived with it. Guarding on
-// it keeps this sketch building against the released library, where the
-// per-port checks then fail rather than break the build for every other
-// loopback test. Run with --profile=p4_loopback_local until it is released.
-#ifdef ESP_USB_HOST_MAX_SERIAL_PORTS
-#define LOOPBACK_HOST_HAS_MULTIPORT 1
-#else
-#define LOOPBACK_HOST_HAS_MULTIPORT 0
-#endif
-
 EspUsbDevice device;
 EspUsbDeviceCdcSerial Port0(device, "Console");
 EspUsbDeviceCdcSerial Port1(device, "Data Link");
@@ -178,7 +167,6 @@ static bool reportEnumeration()
 // port 0, rather than both merely having three of something.
 static bool reportPorts()
 {
-#if LOOPBACK_HOST_HAS_MULTIPORT
   const uint8_t count = usb.serialPortCount(deviceAddress);
   Serial.printf("HOST_PORTS count=%u\n", count);
   bool ok = count == PORT_COUNT;
@@ -201,10 +189,6 @@ static bool reportPorts()
     ok = ok && info.ready;
   }
   return ok;
-#else
-  Serial.println("HOST_PORTS count=1");
-  return false;
-#endif
 }
 
 void setup()
@@ -225,16 +209,11 @@ void setup()
                           deviceConnected = true;
                         });
 
-#if LOOPBACK_HOST_HAS_MULTIPORT
   // Bound before any device exists: the port index is a property of the
   // descriptor layout this test expects, not of the device that turns up.
   for (uint8_t port = 0; port < PORT_COUNT; port++)
   {
     hostPorts[port]->setPort(port);
-  }
-#endif
-  for (uint8_t port = 0; port < PORT_COUNT; port++)
-  {
     hostPorts[port]->begin(115200);
   }
 
@@ -326,7 +305,6 @@ void setup()
   Serial.printf("PENDING host=%d device=%d\n", hostPending, devicePending);
   ok = (hostPending == 0 && devicePending == 0) && ok;
 
-#if LOOPBACK_HOST_HAS_MULTIPORT
   // SET_LINE_CODING is a control request carrying one port's own control
   // interface in wIndex, so this is the control path being per-port rather than
   // only the data path. The host never claimed those interfaces; the request
@@ -341,7 +319,6 @@ void setup()
         Port1.lineCoding().baud == 115200 &&
         Port2.lineCoding().baud == 57600) &&
        ok;
-#endif
 
   Serial.println(ok ? "TEST_END ok" : "TEST_END fail");
   Serial.println(ok ? "OK" : "NG");
