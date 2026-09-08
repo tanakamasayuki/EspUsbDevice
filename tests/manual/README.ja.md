@@ -62,9 +62,9 @@ diff -u before.json after.json
 
 - 複数 CDC ポートを持つ device の**全ポート**について、実際にデータが往復すること、
   そしてポート同士が独立していることを確認する。
-- peer / loopback リグでは port 0 しか駆動できない（EspUsbHost が 1 デバイスにつき
-  CDC 機能を 1 つしか bind しないため）。PC は機能ごとにドライバをバインドするので、
-  残りのポートを確認できるのは PC ホストだけ。
+- 2 ポートまでは `peer/usb_serial_multi` が per-port で検証している。P4 の 3 ポート構成は
+  loopback 側の `ESP_USB_HOST_MAX_SERIAL_PORTS` 設定が保留中なので、いま 3 ポートすべてを
+  叩けるのは PC ホストだけ。
 - あわせて、ポート名（IAD の `iFunction` / control interface の `iInterface`）がホスト側に
   届いていることも確認する。名前が無いと 2 つの ACM 機能は区別できない。
 

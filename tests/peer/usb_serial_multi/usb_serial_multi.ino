@@ -3,18 +3,29 @@
 // Host side for the two-port CDC test.
 //
 // Checks the parts of a multi-port device that only a real host can see: that
-// the device declares itself an IAD composite, that both ACM functions appear
-// as their own association with their own name, and that the two data pipes
-// are genuinely separate.
+// the device declares itself an IAD composite, that both ACM functions come up
+// as their own port with their own endpoints, that each port carries data in
+// both directions, and that the two pipes stay separate.
 //
-// EspUsbHost binds one CDC function per device - the first one, since its
-// data-interface match requires no data interface to have been taken yet - so
-// CdcSerial here is port 0. That is what makes the separation check meaningful:
-// bytes the device writes to port 1 must not appear on this stream.
+// One EspUsbHostCdcSerial is bound per port. Leaving the port unset would make
+// an object follow the device's first ready port, which is what a single-port
+// device gives; naming the port is what makes the two ACM functions - identical
+// in every respect but their interface numbers - individually addressable.
 
+// EspUsbHost gained per-port CDC binding after 2.7.9; ESP_USB_HOST_MAX_SERIAL_PORTS
+// is the macro that arrived with it. Guarding on it keeps this sketch building
+// against the released library, where the multi-port cases then fail rather than
+// break the build for every other peer test. Run them with
+// --profile=s3_peer_local until that support is released.
+#ifdef ESP_USB_HOST_MAX_SERIAL_PORTS
+#define PEER_HOST_HAS_MULTIPORT 1
+#else
+#define PEER_HOST_HAS_MULTIPORT 0
+#endif
 
 EspUsbHost usb;
-EspUsbHostCdcSerial CdcSerial(usb);
+EspUsbHostCdcSerial Port0Serial(usb);
+EspUsbHostCdcSerial Port1Serial(usb);
 
 // The S3 presents its built-in USB-Serial/JTAG (pid=0x1001) while booting,
 // before EspUsbDevice takes over the OTG port. Latch only our own pid.
@@ -87,6 +98,52 @@ static void reportDeviceClass()
                 deviceClass, deviceSubClass, deviceProtocol);
 }
 
+// The mapping from a host-side port index onto the interfaces and endpoints the
+// device actually published. This is what says the host and the device agree on
+// which function is port 0 and which is port 1, rather than both merely having
+// two of something.
+static void reportPorts()
+{
+#if PEER_HOST_HAS_MULTIPORT
+  Serial.printf("HOST_PORTS count=%u\n",
+                usb.serialPortCount(deviceAddress));
+  for (uint8_t port = 0; port < 2; port++)
+  {
+    EspUsbHostSerialPortInfo info;
+    if (!usb.getSerialPortInfo(info, deviceAddress, port))
+    {
+      Serial.printf("HOST_PORT %u missing\n", port);
+      continue;
+    }
+    Serial.printf("HOST_PORT %u ctrl=%u data=%u in=%02x out=%02x ready=%u\n",
+                  port,
+                  info.controlInterfaceNumber,
+                  info.dataInterfaceNumber,
+                  info.inEndpointAddress,
+                  info.outEndpointAddress,
+                  info.ready ? 1 : 0);
+  }
+#else
+  Serial.println("HOST_PORTS count=1");
+  Serial.println("HOST_PORT 0 unsupported");
+#endif
+}
+
+static void drain(EspUsbHostCdcSerial &port, const char *label)
+{
+  if (port.available() <= 0)
+  {
+    return;
+  }
+  Serial.print(label);
+  Serial.print(' ');
+  while (port.available() > 0)
+  {
+    Serial.write(port.read());
+  }
+  Serial.println();
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -103,17 +160,30 @@ void setup()
                           deviceClass = device.deviceClass;
                           deviceSubClass = device.deviceSubClass;
                           deviceProtocol = device.deviceProtocol;
-                          CdcSerial.setAddress(device.address);
-                          while (CdcSerial.available() > 0)
+                          Port0Serial.setAddress(device.address);
+                          Port1Serial.setAddress(device.address);
+                          while (Port0Serial.available() > 0)
                           {
-                            CdcSerial.read();
+                            Port0Serial.read();
+                          }
+                          while (Port1Serial.available() > 0)
+                          {
+                            Port1Serial.read();
                           }
                           Serial.printf("HOST_CONNECTED vid=%04x pid=%04x ifcount=%u\n",
                                         device.vid, device.pid,
                                         device.configurationInterfaceCount);
                         });
 
-  CdcSerial.begin(115200);
+  // Bound before any device exists: the port index is a property of the
+  // descriptor layout this test expects, not of the device that turns up.
+#if PEER_HOST_HAS_MULTIPORT
+  Port0Serial.setPort(0);
+  Port1Serial.setPort(1);
+#endif
+  Port0Serial.begin(115200);
+  Port1Serial.begin(115200);
+  Serial.printf("HOST_MULTIPORT %u\n", PEER_HOST_HAS_MULTIPORT);
 
   if (!usb.begin())
   {
@@ -134,27 +204,37 @@ void loop()
     {
       reportDeviceClass();
     }
+    else if (command == 'p')
+    {
+      reportPorts();
+    }
     else if (command == 'h')
     {
-      Serial.printf("SERIAL_TX %u\n",
-                    CdcSerial.write(reinterpret_cast<const uint8_t *>("host to port zero"), 17) == 17 ? 1 : 0);
+      Serial.printf("SERIAL_TX0 %u\n",
+                    Port0Serial.write(reinterpret_cast<const uint8_t *>("host to port zero"), 17) == 17 ? 1 : 0);
+    }
+    else if (command == 'H')
+    {
+      Serial.printf("SERIAL_TX1 %u\n",
+                    Port1Serial.write(reinterpret_cast<const uint8_t *>("host to port one"), 16) == 16 ? 1 : 0);
+    }
+    else if (command == 'b')
+    {
+      // Line coding is a control request on that port's own control interface,
+      // so this is the control path being per-port, not just the data path.
+      Serial.printf("SERIAL_BAUD1 %u\n",
+                    PEER_HOST_HAS_MULTIPORT && Port1Serial.setBaudRate(57600) ? 1 : 0);
     }
     else if (command == 'q')
     {
-      // Nothing should be waiting. Printed as a count so the test can assert
-      // silence rather than wait for a timeout.
-      Serial.printf("SERIAL_PENDING %d\n", CdcSerial.available());
+      // Printed as counts so the test can assert silence rather than wait for a
+      // timeout.
+      Serial.printf("SERIAL_PENDING p0=%d p1=%d\n",
+                    Port0Serial.available(), Port1Serial.available());
     }
   }
 
-  if (CdcSerial.available() > 0)
-  {
-    Serial.print("SERIAL_RX ");
-    while (CdcSerial.available() > 0)
-    {
-      Serial.write(CdcSerial.read());
-    }
-    Serial.println();
-  }
+  drain(Port0Serial, "SERIAL_RX0");
+  drain(Port1Serial, "SERIAL_RX1");
   delay(1);
 }

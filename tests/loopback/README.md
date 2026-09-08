@@ -43,8 +43,10 @@ port/speed behavior can be verified before broader class coverage is added.
   believed. Checks 6 interfaces / 9 endpoints (3 interrupt IN + 6 bulk) with no
   duplicate address and `class=ef` on the host side, traffic both ways on port 0,
   and that bytes written to ports 1 and 2 never surface on port 0's stream.
-  Driving ports 1 and 2 from the host waits on EspUsbHost binding more than one
-  CDC function per device.
+  Driving ports 1 and 2 from the host needs
+  `ESP_USB_HOST_MAX_SERIAL_PORTS` raised to 3, and is on hold until how that is
+  configured settles. Per-port binding itself is supported - the two-port
+  `peer/usb_serial_multi` verifies each port individually.
 - `usb_midi`: starts USB MIDI on one P4 and verifies channel voice messages and
   short Host -> Device SysEx packet splitting.
 - `usb_msc`: starts USB Mass Storage on one P4 and verifies single-LUN RAM disk

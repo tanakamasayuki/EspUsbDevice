@@ -68,9 +68,10 @@ Purpose:
 
 - Confirm that **every** port of a multi-port CDC device actually carries data
   both ways, and that the ports are independent of each other.
-- The peer and loopback rigs can only drive port 0, because EspUsbHost binds one
-  CDC function per device. A PC binds a driver per function, so it is the only
-  host here that can reach the rest.
+- Up to two ports are covered per-port by `peer/usb_serial_multi`. The P4's
+  three-port configuration is on hold pending how `ESP_USB_HOST_MAX_SERIAL_PORTS`
+  is configured on the loopback rig, so a PC is currently the only host here that
+  can reach all three.
 - Also confirms the port names (the IAD's `iFunction` / the control interface's
   `iInterface`) reached the host. Without them two ACM functions are
   indistinguishable.
