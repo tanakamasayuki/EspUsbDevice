@@ -65,7 +65,7 @@ tests/
 | system control HID | 予定 | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
 | gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
 | CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| CDC ACM 複数ポート | ✅ `cdc_multi`（S3: 2 ポートの descriptor / endpoint アドレス / IAD 由来の device class / 上限拒否）、✅ `p4_controller_endpoints`（P4: HID+Vendor+CDC×2、CDC×3、4 本目の拒否、FS の 3 本目拒否） | ✅ `usb_serial_multi`（S3 実機 2 台: interface 4 / endpoint 6 / claim、`class=ef`、port↔interface/endpoint 対応、**port 0 と port 1 それぞれの双方向通信**、分離、per-port line coding。要 `--profile=s3_peer_local`） | ✅ `usb_serial_multi`（P4 1 台・device=HS 3 ポート: interface 6 / endpoint 9 / `class=ef`、port↔interface/endpoint 対応、**3 ポートすべての双方向通信**、分離、per-port line coding。要 `--profile=p4_loopback_local`） | | ✅ `examples/SerialMulti` |
+| CDC ACM 複数ポート | ✅ `cdc_multi`（S3: 2 ポートの descriptor / endpoint アドレス / IAD 由来の device class / 上限拒否）、✅ `p4_controller_endpoints`（P4: HID+Vendor+CDC×2、CDC×3、4 本目の拒否、FS の 3 本目拒否） | ✅ `usb_serial_multi`（S3 実機 2 台: interface 4 / endpoint 6 / claim、`class=ef`、port↔interface/endpoint 対応、**port 0 と port 1 それぞれの双方向通信**、分離、per-port line coding） | ✅ `usb_serial_multi`（P4 1 台・device=HS 3 ポート: interface 6 / endpoint 9 / `class=ef`、port↔interface/endpoint 対応、**3 ポートすべての双方向通信**、分離、per-port line coding） | | ✅ `examples/SerialMulti` |
 | USB MIDI | ✅ `midi_descriptor`（対称・非対称すべての cable 数の組み合わせの descriptor byte） | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認）、✅ `usb_midi_cables`（非対称 4-in / 5-out: Host 側 cable 数と方向 / interleave / SysEx） | ✅ `usb_midi`、✅ `usb_midi_cables`（対称 4 cable） | | |
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
@@ -170,9 +170,7 @@ Host 側は `EspUsbHostCdcSerial` をポートごとに 1 つずつ bind し（`
    SET_LINE_CODING はその port 自身の control interface に対する control request なので、
    データ経路だけでなく制御経路も per-port であることの確認
 
-複数ポートの bind は `EspUsbHost` 2.7.9 より後の機能です。sketch は
-`ESP_USB_HOST_MAX_SERIAL_PORTS` の有無でガードしてあるのでリリース版でもビルドは通りますが、
-**per-port のケースはリリースされるまで `--profile=s3_peer_local` で実行**してください。
+複数ポートの bind は `EspUsbHost` 2.8.0 の機能です。
 
 `peer/usb_midi` は `EspUsbDeviceMidi` の最初の USB MIDI テストです。Device -> Host /
 Host -> Device の channel voice message と、Host -> Device の短い SysEx packet 分割を

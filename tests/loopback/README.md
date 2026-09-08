@@ -48,8 +48,7 @@ port/speed behavior can be verified before broader class coverage is added.
   ports fit the host controller only because a port costs two channels rather
   than three - the host no longer claims the CDC control interface and sends its
   class requests over EP0, so EP0 plus 3 x (bulk IN + OUT) is 7 of 8 channels.
-  Needs EspUsbHost's per-port binding, so run with
-  `--profile=p4_loopback_local`.
+  Uses EspUsbHost 2.8.0's per-port binding.
 - `usb_midi`: starts USB MIDI on one P4 and verifies channel voice messages and
   short Host -> Device SysEx packet splitting.
 - `usb_msc`: starts USB Mass Storage on one P4 and verifies single-LUN RAM disk
