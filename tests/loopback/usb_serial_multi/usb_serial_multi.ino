@@ -2,14 +2,15 @@
 #include "EspUsbHost.h"
 #include <string.h>
 
-// Three CDC ACM ports on one ESP32-P4, brought up against a real host.
+// Three CDC ACM ports on one ESP32-P4, driven individually.
 //
 // The point of running this on hardware is that the descriptor unit tests stop
 // at "the bytes are well formed". Three ports means six non-control IN
-// endpoints on the high-speed controller, and every IN endpoint needs its own
-// TxFIFO carved out of the controller's 1024-word data FIFO. Whether that
-// allocation actually succeeds is decided by dcd_dwc2 at SET_CONFIGURATION,
-// long after any descriptor check - so it has to be enumerated to be believed.
+// endpoints on the device's high-speed controller, and every IN endpoint needs
+// its own TxFIFO carved out of the controller's 1024-word data FIFO. Whether
+// that allocation actually succeeds is decided by dcd_dwc2 at
+// SET_CONFIGURATION, long after any descriptor check - so it has to be
+// enumerated to be believed.
 //
 // Device sits on the high-speed controller because that is where the endpoint
 // budget for a third port comes from; the host takes the other controller,
@@ -17,6 +18,23 @@
 // budget follows the controller, not the negotiated speed, so this exercises
 // the six-IN-endpoint allocation. A three-port device on an actual high-speed
 // link (512-byte bulk packets) needs a PC host - see tests/manual.
+//
+// On the host side three ports fit the full-speed controller's eight channels
+// exactly: EP0 takes one and each port takes two (bulk IN + bulk OUT), which is
+// seven. That is only true because the host does not claim the CDC control
+// interface - its class requests go over EP0 - so no channel is spent on a
+// notification endpoint nothing transfers on.
+
+// EspUsbHost gained per-port CDC binding after 2.7.9;
+// ESP_USB_HOST_MAX_SERIAL_PORTS is the macro that arrived with it. Guarding on
+// it keeps this sketch building against the released library, where the
+// per-port checks then fail rather than break the build for every other
+// loopback test. Run with --profile=p4_loopback_local until it is released.
+#ifdef ESP_USB_HOST_MAX_SERIAL_PORTS
+#define LOOPBACK_HOST_HAS_MULTIPORT 1
+#else
+#define LOOPBACK_HOST_HAS_MULTIPORT 0
+#endif
 
 EspUsbDevice device;
 EspUsbDeviceCdcSerial Port0(device, "Console");
@@ -24,7 +42,13 @@ EspUsbDeviceCdcSerial Port1(device, "Data Link");
 EspUsbDeviceCdcSerial Port2(device, "Telemetry");
 
 EspUsbHost usb;
-EspUsbHostCdcSerial HostSerial(usb);
+EspUsbHostCdcSerial HostPort0(usb);
+EspUsbHostCdcSerial HostPort1(usb);
+EspUsbHostCdcSerial HostPort2(usb);
+
+static EspUsbDeviceCdcSerial *const devicePorts[] = {&Port0, &Port1, &Port2};
+static EspUsbHostCdcSerial *const hostPorts[] = {&HostPort0, &HostPort1, &HostPort2};
+static const uint8_t PORT_COUNT = 3;
 
 static volatile bool deviceConnected = false;
 static uint8_t deviceAddress = 0;
@@ -42,50 +66,49 @@ static bool waitFor(volatile bool &flag, uint32_t timeoutMs)
   return flag;
 }
 
-static bool waitHostRx(const char *expected, uint32_t timeoutMs = 3000)
+static bool waitHostRx(uint8_t port, const char *expected, uint32_t timeoutMs = 3000)
 {
   char buffer[64] = {};
   size_t length = 0;
   const uint32_t start = millis();
   while (millis() - start < timeoutMs)
   {
-    while (HostSerial.available() > 0 && length + 1 < sizeof(buffer))
+    while (hostPorts[port]->available() > 0 && length + 1 < sizeof(buffer))
     {
-      buffer[length++] = static_cast<char>(HostSerial.read());
+      buffer[length++] = static_cast<char>(hostPorts[port]->read());
       buffer[length] = '\0';
     }
     if (strcmp(buffer, expected) == 0)
     {
-      Serial.printf("SERIAL_RX %s\n", buffer);
+      Serial.printf("SERIAL_RX%u %s\n", port, buffer);
       return true;
     }
     delay(10);
   }
-  Serial.printf("SERIAL_RX_TIMEOUT got=%s\n", buffer);
+  Serial.printf("SERIAL_RX%u_TIMEOUT got=%s\n", port, buffer);
   return false;
 }
 
-static bool waitPortRx(EspUsbDeviceCdcSerial &port, const char *label,
-                       const char *expected, uint32_t timeoutMs = 3000)
+static bool waitDeviceRx(uint8_t port, const char *expected, uint32_t timeoutMs = 3000)
 {
   char buffer[64] = {};
   size_t length = 0;
   const uint32_t start = millis();
   while (millis() - start < timeoutMs)
   {
-    while (port.available() > 0 && length + 1 < sizeof(buffer))
+    while (devicePorts[port]->available() > 0 && length + 1 < sizeof(buffer))
     {
-      buffer[length++] = static_cast<char>(port.read());
+      buffer[length++] = static_cast<char>(devicePorts[port]->read());
       buffer[length] = '\0';
     }
     if (strcmp(buffer, expected) == 0)
     {
-      Serial.printf("%s %s\n", label, buffer);
+      Serial.printf("DEVICE_RX%u %s\n", port, buffer);
       return true;
     }
     delay(10);
   }
-  Serial.printf("%s_TIMEOUT got=%s\n", label, buffer);
+  Serial.printf("DEVICE_RX%u_TIMEOUT got=%s\n", port, buffer);
   return false;
 }
 
@@ -150,6 +173,40 @@ static bool reportEnumeration()
          deviceProtocol == 0x01;
 }
 
+// The mapping from a host-side port index onto the interfaces and endpoints the
+// device published. This is what says the two sides agree on which function is
+// port 0, rather than both merely having three of something.
+static bool reportPorts()
+{
+#if LOOPBACK_HOST_HAS_MULTIPORT
+  const uint8_t count = usb.serialPortCount(deviceAddress);
+  Serial.printf("HOST_PORTS count=%u\n", count);
+  bool ok = count == PORT_COUNT;
+  for (uint8_t port = 0; port < PORT_COUNT; port++)
+  {
+    EspUsbHostSerialPortInfo info;
+    if (!usb.getSerialPortInfo(info, deviceAddress, port))
+    {
+      Serial.printf("HOST_PORT %u missing\n", port);
+      ok = false;
+      continue;
+    }
+    Serial.printf("HOST_PORT %u ctrl=%u data=%u in=%02x out=%02x ready=%u\n",
+                  port,
+                  info.controlInterfaceNumber,
+                  info.dataInterfaceNumber,
+                  info.inEndpointAddress,
+                  info.outEndpointAddress,
+                  info.ready ? 1 : 0);
+    ok = ok && info.ready;
+  }
+  return ok;
+#else
+  Serial.println("HOST_PORTS count=1");
+  return false;
+#endif
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -168,7 +225,18 @@ void setup()
                           deviceConnected = true;
                         });
 
-  HostSerial.begin(115200);
+#if LOOPBACK_HOST_HAS_MULTIPORT
+  // Bound before any device exists: the port index is a property of the
+  // descriptor layout this test expects, not of the device that turns up.
+  for (uint8_t port = 0; port < PORT_COUNT; port++)
+  {
+    hostPorts[port]->setPort(port);
+  }
+#endif
+  for (uint8_t port = 0; port < PORT_COUNT; port++)
+  {
+    hostPorts[port]->begin(115200);
+  }
 
   EspUsbHostConfig hostConfig;
   hostConfig.port = ESP_USB_HOST_PORT_FULL_SPEED;
@@ -220,45 +288,60 @@ void setup()
                 Port0.port(), Port1.port(), Port2.port());
 
   bool ok = reportEnumeration();
+  ok = reportPorts() && ok;
 
-  // The host claims the first CDC function, so this is port 0. Both directions
-  // on it prove the three-port device is a working device and not merely a
-  // well-formed descriptor: the endpoints were opened and the FIFOs allocated.
-  const uint8_t devicePayload[] = "port zero to host";
-  Serial.printf("DEVICE_TX0 %u\n",
-                Port0.write(devicePayload, sizeof(devicePayload) - 1) ==
-                        sizeof(devicePayload) - 1
-                    ? 1
-                    : 0);
-  ok = waitHostRx("port zero to host") && ok;
+  // Every port, both directions, one at a time. A port that were silently
+  // aliased onto another's endpoints would surface here as a timeout or as the
+  // wrong port answering.
+  for (uint8_t port = 0; port < PORT_COUNT; port++)
+  {
+    char payload[32];
+    const int deviceLength = snprintf(payload, sizeof(payload), "port %u to host", port);
+    Serial.printf("DEVICE_TX%u %u\n", port,
+                  devicePorts[port]->write(reinterpret_cast<const uint8_t *>(payload),
+                                           deviceLength) == static_cast<size_t>(deviceLength)
+                      ? 1
+                      : 0);
+    ok = waitHostRx(port, payload) && ok;
 
-  const uint8_t hostPayload[] = "host to port zero\n";
-  Serial.printf("SERIAL_TX %u\n",
-                HostSerial.write(hostPayload, sizeof(hostPayload) - 1) ==
-                        sizeof(hostPayload) - 1
-                    ? 1
-                    : 0);
-  ok = waitPortRx(Port0, "DEVICE_RX0", "host to port zero\n") && ok;
+    const int hostLength = snprintf(payload, sizeof(payload), "host to port %u\n", port);
+    Serial.printf("SERIAL_TX%u %u\n", port,
+                  hostPorts[port]->write(reinterpret_cast<const uint8_t *>(payload),
+                                         hostLength) == static_cast<size_t>(hostLength)
+                      ? 1
+                      : 0);
+    ok = waitDeviceRx(port, payload) && ok;
+  }
 
-  // Ports 1 and 2 accept writes - their endpoints are open and their FIFOs are
-  // their own - and none of it reaches port 0's stream. Driving them from this
-  // side needs a host that binds more than one CDC function per device; until
-  // then this is the separation half of the check.
-  Serial.printf("DEVICE_TX1 %u\n",
-                Port1.write(reinterpret_cast<const uint8_t *>("port one\n"), 9) == 9 ? 1 : 0);
-  Serial.printf("DEVICE_TX2 %u\n",
-                Port2.write(reinterpret_cast<const uint8_t *>("port two\n"), 9) == 9 ? 1 : 0);
-  delay(500);
-  const int leaked = HostSerial.available();
-  Serial.printf("SERIAL_PENDING %d\n", leaked);
-  ok = (leaked == 0) && ok;
+  // Every exchange above was matched exactly, so anything left anywhere is
+  // traffic that reached a port it was not addressed to.
+  delay(300);
+  int hostPending = 0;
+  int devicePending = 0;
+  for (uint8_t port = 0; port < PORT_COUNT; port++)
+  {
+    hostPending += hostPorts[port]->available();
+    devicePending += devicePorts[port]->available();
+  }
+  Serial.printf("PENDING host=%d device=%d\n", hostPending, devicePending);
+  ok = (hostPending == 0 && devicePending == 0) && ok;
 
-  Serial.printf("DEVICE_TX0 %u\n",
-                Port0.write(devicePayload, sizeof(devicePayload) - 1) ==
-                        sizeof(devicePayload) - 1
-                    ? 1
-                    : 0);
-  ok = waitHostRx("port zero to host") && ok;
+#if LOOPBACK_HOST_HAS_MULTIPORT
+  // SET_LINE_CODING is a control request carrying one port's own control
+  // interface in wIndex, so this is the control path being per-port rather than
+  // only the data path. The host never claimed those interfaces; the request
+  // goes over EP0.
+  Serial.printf("SERIAL_BAUD2 %u\n", HostPort2.setBaudRate(57600) ? 1 : 0);
+  delay(200);
+  Serial.printf("DEVICE_LINE_CODING p0=%lu p1=%lu p2=%lu\n",
+                static_cast<unsigned long>(Port0.lineCoding().baud),
+                static_cast<unsigned long>(Port1.lineCoding().baud),
+                static_cast<unsigned long>(Port2.lineCoding().baud));
+  ok = (Port0.lineCoding().baud == 115200 &&
+        Port1.lineCoding().baud == 115200 &&
+        Port2.lineCoding().baud == 57600) &&
+       ok;
+#endif
 
   Serial.println(ok ? "TEST_END ok" : "TEST_END fail");
   Serial.println(ok ? "OK" : "NG");
