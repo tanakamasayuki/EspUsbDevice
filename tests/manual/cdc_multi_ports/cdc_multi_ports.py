@@ -82,6 +82,18 @@ def interface_number(info) -> int:
 
 def probe(device: str, text: str, timeout: float) -> str:
     """Send one line and return what came back, or "" on timeout."""
+    # Keep the baud at 115200. These are the board's own USB CDC ports, where a
+    # 1200 bps open is Arduino's reset convention - probing at that rate answers
+    # with a freshly booted sketch rather than the running one. The board's
+    # *console* port is worse and catches people the other way round: on this
+    # rig it enumerates as /dev/ttyACM* like a native CDC port but is a CH343
+    # bridge (1a86:55d3) whose DTR/RTS reach EN, so opening it at any baud
+    # resets the board.
+    #
+    # General form, and the reason both are written down: never verify that a
+    # device has gone quiet by opening a port belonging to it. Observe from
+    # somewhere else, and prove the observation works by resetting the target on
+    # purpose and seeing it.
     with serial.Serial(device, 115200, timeout=timeout) as port:
         # Opening asserts DTR, which the sketch reports; give the device a
         # moment before writing so the first bytes are not sent into a port the

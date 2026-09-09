@@ -37,4 +37,17 @@ def test_example_compile(example_dir, profile):
         stderr=subprocess.STDOUT,
         check=False,
     )
+    # A negative return code is a signal, not a compiler verdict: something
+    # outside this run killed arduino-cli. That has happened here - a
+    # neighbouring project on the same machine ran `pkill -x arduino-cli` and
+    # took two of these with it, each reporting -15 with no diagnostic in the
+    # captured output. Say so, because the alternative is spending time looking
+    # for a compile error in a sketch that compiles.
+    if result.returncode < 0:
+        raise AssertionError(
+            f"arduino-cli was killed by signal {-result.returncode} while compiling "
+            f"{example_dir.name} for {profile}; this is not a compile failure. "
+            "Something outside this test terminated it - re-run before "
+            f"investigating.\ncaptured output:\n{result.stdout}"
+        )
     assert result.returncode == 0, result.stdout

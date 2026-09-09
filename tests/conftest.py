@@ -45,14 +45,28 @@ _KNOWN_SERIAL_FINDINGS = (
         max_count=1,
         reason="GET_MAX_LUN fallback for single-LUN MSC",
     ),
+    # Scoped to any peer test rather than one, because it is a property of the
+    # window and not of a test: the Host board is already a USB host while the
+    # peer board is being re-flashed, so it enqueues against a device that is
+    # going away. It appears roughly once per full peer run and lands on a
+    # different test every time - observed on hid_gamepad, custom_hid,
+    # hid_keyboard, hid_system_control, hid_vendor, composite_hid_cdc and
+    # usb_msc. Naming one test made every other sighting look like a new
+    # problem, which twice led to a full run being read as an improvement.
+    #
+    # This entry is also the check for the eventual fix. Gating the Host
+    # sketches' usb.begin() on the plugin's START command should close the
+    # window at the source; when that lands, delete this entry and a run that
+    # stays clean is the evidence. See the dut-lifecycle work.
     _KnownSerialFinding(
-        nodeid_pattern="*peer/hid_gamepad/test_hid_gamepad.py::test_hid_gamepad_axes",
+        nodeid_pattern="*peer/*",
         log_name="dut.log",
         line_pattern=re.compile(
             r"USB HOST: Enqueue URB error: ESP_ERR_INVALID_STATE$"
         ),
         max_count=1,
-        reason="transient disconnect while peer firmware is replaced",
+        reason="Host is already a USB host while the peer is being re-flashed; "
+        "moves between tests, remove this entry once START gating lands",
     ),
 )
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
