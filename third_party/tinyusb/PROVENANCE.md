@@ -96,7 +96,7 @@ upstream files are not patched. `src/tusb_config.h` and
 
    ```sh
    cd tests
-   uv run --env-file .env pytest examples_compile/ --clean -vv
+   python3 tools/build_check.py esp32s3
    ```
 
 6. Run `python3 tools/verify_tinyusb_vendor.py` again. It must pass

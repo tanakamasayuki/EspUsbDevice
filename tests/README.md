@@ -23,7 +23,6 @@ explicitly for those tests.
 ## Layout
 
 - `unit/`: host-independent descriptor, report helper, and FAT RAM disk tests.
-- `examples_compile/`: build-only smoke tests for examples sketches.
 - `peer/`: two-board tests using EspUsbHost as host and EspUsbDevice as device.
 - `loopback/`: one-board ESP32-P4 tests running EspUsbHost and EspUsbDevice together.
 - `manual/`: tests that require physical devices or visual confirmation.
@@ -36,7 +35,6 @@ From this directory:
 uv run --env-file .env pytest
 uv run --env-file .env pytest peer/
 uv run --env-file .env pytest --run-mode=build
-uv run --env-file .env pytest examples_compile/
 ```
 
 Regular peer and loopback tests use the released EspUsbHost version. Local
@@ -79,7 +77,7 @@ one of them was environmental.
   project's esptool under the same device lock - a portalocker file lock in the
   plugin's lock directory, keyed by the resolved port path.
 - **A compile killed by a neighbour reports `returncode=-15` with no compiler
-  diagnostic.** A real failure always names a file and a line. `examples_compile`
+  diagnostic.** A real failure always names a file and a line. `tools/build_check.py`
   detects this and says "killed by signal, re-run before investigating".
 - **Build-only load cannot turn a pass into a fail, but it can turn a timing
   expect into a false failure.** Hold heavy builds while someone else is
@@ -87,8 +85,9 @@ one of them was environmental.
 - **Do not read "the run moved past test X" as "X passed".** pytest continues to
   the next parameter after a failure. Read the result, not the position.
 
-`pytest --clean` with no arguments collects examples_compile, loopback, peer,
-then unit, so a full run stays off the boards for its first half hour or so.
+`pytest --clean` with no arguments collects loopback, peer, then unit. Building
+the examples is not part of that run - `tools/build_check.py` and the CI Build
+Check workflow cover it.
 
 After each test, the host `dut.log` and peer `peer-*.log` files are audited
 automatically. Suspicious ESP-IDF errors, `ESP_ERR_*` values, panics, asserts,

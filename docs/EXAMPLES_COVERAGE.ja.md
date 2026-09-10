@@ -183,7 +183,7 @@ examples は手動で compile smoke を実行できます。
 
 ```sh
 cd tests
-uv run --env-file .env pytest examples_compile/ -vv
+python3 tools/build_check.py esp32s3
 ```
 
 現在のリリース範囲では 17 examples を compile smoke の対象にします。

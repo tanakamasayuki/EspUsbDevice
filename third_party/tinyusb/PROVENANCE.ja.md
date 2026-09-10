@@ -89,7 +89,7 @@ patchを加えていません。`src/tusb_config.h`と
 
    ```sh
    cd tests
-   uv run --env-file .env pytest examples_compile/ --clean -vv
+   python3 tools/build_check.py esp32s3
    ```
 
 6. `python3 tools/verify_tinyusb_vendor.py`を再実行する。実機testへ進む前に

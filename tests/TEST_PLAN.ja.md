@@ -40,7 +40,6 @@ Host 側の未リリース修正をこのリポジトリでリリース前検証
 ```text
 tests/
   unit/       自動 - descriptor builder と report helper。
-  examples_compile/ 自動 - examples sketch の build-only smoke。
   peer/       自動 - EspUsbHost host + EspUsbDevice device の2台構成。
   loopback/   自動 - ESP32-P4 1台で host / device role を同時実行。
   manual/     手動 - 物理デバイスまたは人の判断が必要。
@@ -72,7 +71,6 @@ tests/
 | USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`、UAC2 `usb_audio_uac2` | 未実装 | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | |
 | Core依存境界 | ✅ `dependency_boundary` | | | |
-| examples compile | ✅ `examples_compile` 宣言済みS2/S3/P4全profile | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
 
@@ -267,9 +265,16 @@ PC mount / file copy / OS eject は別途 manual または peer テストで確�
 `examples/MSCSdCard` は build を通すことを最低条件とし、Host OS mount / file write /
 eject は `tests/manual` の手順で確認します。
 
-`examples_compile` は `examples/*/*.ino` を列挙し、各 sketch を `arduino-cli compile
---profile esp32s3` で build-only 確認します。examples はユーザー向け API の入口なので、
-peer / loopback の実機テストとは別に、全 example が常にコンパイルできることを合格条件にします。
+example の build-only 確認は `tools/build_check.py` が担当します。`examples/**/sketch.yaml`
+を列挙し、要求されたプロファイルを宣言している example を `arduino-cli compile` します。
+examples はユーザー向け API の入口なので、peer / loopback の実機テストとは別に、全 example が
+常にコンパイルできることを合格条件にします。
+
+これは pytest から出してあります。ボードもシリアルポートも fixture も要らない層であり、
+pytest に置くとフル実行の先頭で 15 分ほど、待っているはずの実機に触れずに費やすためです。
+CI の Build Check ワークフローがプロファイルごとに並列ジョブとして走らせ、同じスクリプトを
+手元でも直接叩けます。**リリース前は Build Check が緑であることを確認してください**——
+ローカルのフル実行は example をビルドしません。
 
 ### 複合デバイス（composite）テスト
 

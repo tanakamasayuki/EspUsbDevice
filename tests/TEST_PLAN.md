@@ -48,7 +48,6 @@ for example
 ```text
 tests/
   unit/       Automated - descriptor builders and report helpers.
-  examples_compile/ Automated - build-only smoke tests for examples sketches.
   peer/       Automated - two boards: EspUsbHost host + EspUsbDevice device.
   loopback/   Automated - one ESP32-P4 running host and device roles.
   manual/     Manual - physical devices or human inspection required.
@@ -80,7 +79,6 @@ tests/
 | USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`, UAC2 `usb_audio_uac2` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
 | Core dependency boundary | ✅ `dependency_boundary` | | | | |
-| examples compile | ✅ `examples_compile` all declared S2/S3/P4 profiles | | | | |
 
 ## Detailed EspUsbHost Behavior Tests
 
@@ -303,9 +301,17 @@ SPIFFS / LittleFS exposure is not part of the standard test scope.
 `examples/MSCSdCard` must compile at minimum; host OS mount / file write / eject
 is covered by the `tests/manual` procedure.
 
-`examples_compile` enumerates `examples/*/*.ino` and builds each sketch with
-`arduino-cli compile --profile esp32s3`. Examples are the user-facing API entry
-points, so they must compile independently of peer / loopback hardware tests.
+Build-only checking of the examples is `tools/build_check.py`'s job. It
+enumerates `examples/**/sketch.yaml` and compiles every example that declares the
+requested profile. Examples are the user-facing API entry points, so they must
+compile independently of peer / loopback hardware tests.
+
+It lives outside pytest. The layer needs no board, no serial port and no fixture,
+and keeping it in pytest meant a full run spent about fifteen minutes at the
+front not touching the hardware it was queued for. The CI Build Check workflow
+runs it as one parallel job per profile, and the same script runs locally.
+**Before releasing, confirm Build Check is green** - a local full run builds no
+examples at all.
 
 ### Composite Device Tests
 
