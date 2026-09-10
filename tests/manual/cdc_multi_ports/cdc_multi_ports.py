@@ -84,16 +84,21 @@ def probe(device: str, text: str, timeout: float) -> str:
     """Send one line and return what came back, or "" on timeout."""
     # Keep the baud at 115200. These are the board's own USB CDC ports, where a
     # 1200 bps open is Arduino's reset convention - probing at that rate answers
-    # with a freshly booted sketch rather than the running one. The board's
-    # *console* port is worse and catches people the other way round: on this
-    # rig it enumerates as /dev/ttyACM* like a native CDC port but is a CH343
-    # bridge (1a86:55d3) whose DTR/RTS reach EN, so opening it at any baud
-    # resets the board.
+    # with a freshly booted sketch rather than the running one.
     #
-    # General form, and the reason both are written down: never verify that a
-    # device has gone quiet by opening a port belonging to it. Observe from
-    # somewhere else, and prove the observation works by resetting the target on
-    # purpose and seeing it.
+    # The console port is a separate question and the answer is board-specific.
+    # On this rig opening it does NOT reset the board: the auto-reset circuit
+    # reacts to the DTR/RTS sequence, not to a plain open asserting both at once.
+    # Measured, because the chip alone does not tell you - 18 tests in one module
+    # each open and close the console and no boot banner appears in any of their
+    # logs. On boards wired differently a plain open really is a reset, which a
+    # neighbouring project measured on theirs.
+    #
+    # General form, and the reason both are written down: do not verify that a
+    # device has gone quiet by opening a port belonging to it. Even where the
+    # open does not reset, the connection can change what the sketch does.
+    # Observe from somewhere else, and prove the observation works by resetting
+    # the target on purpose and seeing it.
     with serial.Serial(device, 115200, timeout=timeout) as port:
         # Opening asserts DTR, which the sketch reports; give the device a
         # moment before writing so the first bytes are not sent into a port the

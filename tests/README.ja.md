@@ -15,7 +15,7 @@ ESP32-P4 の loopback は、Arduino-ESP32 標準 Device 実装が HS 固定で F
 - Arduino CLI
 - 対象ボード用の ESP32 board package
 - `peer/` 用の ESP32-S3 ボード
-- `loopback/` と `probe/` 用の ESP32-P4 ボード
+- `loopback/` 用の ESP32-P4 ボード
 
 ## 構成
 
@@ -23,7 +23,6 @@ ESP32-P4 の loopback は、Arduino-ESP32 標準 Device 実装が HS 固定で F
 - `examples_compile/`: examples sketch の build-only smoke テスト。
 - `peer/`: EspUsbHost を host、EspUsbDevice を device とする2台構成テスト。
 - `loopback/`: ESP32-P4 1台で EspUsbHost と EspUsbDevice を同時に動かすテスト。
-- `probe/`: P4 の port / speed 切り分け用スケッチ。
 - `manual/`: 物理デバイスまたは目視確認が必要なテスト。
 
 ## 実行

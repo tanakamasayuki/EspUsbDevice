@@ -51,7 +51,6 @@ tests/
   examples_compile/ Automated - build-only smoke tests for examples sketches.
   peer/       Automated - two boards: EspUsbHost host + EspUsbDevice device.
   loopback/   Automated - one ESP32-P4 running host and device roles.
-  probe/      Bring-up - port/speed/PHY identification and OS enumeration.
   manual/     Manual - physical devices or human inspection required.
 ```
 
@@ -424,8 +423,6 @@ and every data plane.
 3. ✅ `peer/hid_keyboard`
 4. ✅ `peer/hid_mouse`
 5. ✅ `peer/hid_keyboard_mouse`
-6. `probe/p4_device_fs_probe`
-7. `probe/p4_device_hs_probe`
 8. ✅ `loopback/hid_keyboard`
 9. ✅ `loopback/hid_mouse`
 10. ✅ `loopback/hid_keyboard_mouse`
@@ -476,5 +473,7 @@ and every data plane.
 - Device sketches must not call Arduino-ESP32 `USB.begin()`.
 - P4 tests must print selected port, requested speed, TinyUSB rhport, connected
   speed when available, VID/PID, interface count, and endpoint MPS.
-- Unsupported P4 port/speed combinations must be explicit `xfail` or documented
-  probe results, not silent skips.
+- Unsupported P4 port/speed combinations must be an explicit `xfail` or a
+  documented result, not a silent skip. The P4 port/speed/PHY bring-up itself is
+  finished; what it found is in `docs/DESIGN_NOTES.ja.md` under the P4 USB
+  port/PHY heading.

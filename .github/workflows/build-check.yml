@@ -1,0 +1,68 @@
+name: Build Check
+
+# Compiles every example for each profile it declares. This is the build layer of
+# the test plan: no device, no serial port, no judgement about behaviour, only
+# "does it still build". It used to run inside pytest as tests/examples_compile,
+# where it cost a quarter of an hour at the front of every full run and competed
+# for a machine that other projects share. The profiles are independent, so as CI
+# jobs they run at the same time instead of one after another.
+#
+# Examples that do not declare a given profile are skipped for that job, and
+# reported as skipped rather than as failures.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "examples/**"
+      - "tools/build_check.py"
+      - ".github/workflows/build-check.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "examples/**"
+      - "tools/build_check.py"
+      - ".github/workflows/build-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      # A build matrix is a coverage report: one red cell must not cancel the
+      # others, or a single failure hides the state of every other target.
+      fail-fast: false
+      matrix:
+        # esp32s3 is the primary target, esp32p4 the high-speed OTG target, and
+        # esp32s2 the RAM-constrained one that catches allocation regressions the
+        # other two have room to absorb.
+        profile: [esp32s3, esp32p4, esp32s2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh -s -- -b "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache the Arduino platform
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          # Keyed on the sketch.yaml files because they pin the platform and
+          # library versions: a job that is not bumping either should not
+          # download a toolchain again.
+          key: arduino-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('examples/**/sketch.yaml') }}
+          restore-keys: |
+            arduino-${{ runner.os }}-${{ matrix.profile }}-
+
+      - name: Build examples
+        run: python3 tools/build_check.py ${{ matrix.profile }}
