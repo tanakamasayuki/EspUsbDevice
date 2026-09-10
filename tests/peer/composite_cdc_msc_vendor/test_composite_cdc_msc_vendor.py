@@ -1,4 +1,10 @@
-def test_composite_cdc_msc_vendor_enumerates(dut, peers):
+def test_composite_cdc_msc_vendor(dut, peers):
+    """CDC + MSC + bulk Vendor in one device, each function exercised in turn.
+
+    One test rather than four. Only the first of the four waited for
+    enumeration; the rest wrote to the host straight away, which works while
+    they follow it and races the enumeration when one is run on its own.
+    """
     device = peers["device"]
 
     device.write("b")
@@ -13,10 +19,7 @@ def test_composite_cdc_msc_vendor_enumerates(dut, peers):
     dut.write("e")
     dut.expect(r"HOST_ENUM pid=4023 ifcount=\d+ eps=\d+ dup=0 cdc=[1-9]\d* msc=[1-9]\d* vendor=[1-9]\d* claimok=1")
 
-
-def test_composite_cdc_msc_vendor_serial_works(dut, peers):
-    device = peers["device"]
-
+    # CDC, both directions.
     device.write("d")
     device.expect_exact("DEVICE_TX 1")
     dut.expect_exact("SERIAL_RX device to host")
@@ -25,21 +28,16 @@ def test_composite_cdc_msc_vendor_serial_works(dut, peers):
     dut.expect_exact("SERIAL_TX 1")
     device.expect_exact("DEVICE_RX host to serial")
 
-
-def test_composite_cdc_msc_vendor_msc_works(dut, peers):
+    # MSC.
     dut.write("m")
     dut.expect_exact("MSC_CAPACITY ok=1 blocks=16 block_size=512")
 
-
-def test_composite_cdc_msc_vendor_vendor_works(dut, peers):
-    # Bulk Vendor round-trip in the composite, driven entirely by the onRx
-    # callback (no polling on the device). This is the regression guard for the
-    # tud_vendor_rx_cb signature/linkage fix: before the fix the library defined
-    # a 1-arg tud_vendor_rx_cb that got a C++-mangled symbol and never overrode
+    # Bulk Vendor round-trip, driven entirely by the onRx callback (no polling
+    # on the device). This is the regression guard for the tud_vendor_rx_cb
+    # signature/linkage fix: before the fix the library defined a 1-arg
+    # tud_vendor_rx_cb that got a C++-mangled symbol and never overrode
     # TinyUSB's weak default, so onRx never fired. See src/EspUsbDevice.cpp and
     # docs/DESIGN_NOTES.ja.md "複合時の vendor RX callback".
-    device = peers["device"]
-
     dut.write("v")
     dut.expect_exact("VENDOR_ECHO ok=1 data=echo:ping")
 

@@ -18,7 +18,7 @@ explicitly for those tests.
 - Arduino CLI
 - ESP32 board packages for the target boards
 - ESP32-S3 boards for `peer/`
-- ESP32-P4 board for `loopback/` and `probe/`
+- ESP32-P4 board for `loopback/`
 
 ## Layout
 
@@ -26,7 +26,6 @@ explicitly for those tests.
 - `examples_compile/`: build-only smoke tests for examples sketches.
 - `peer/`: two-board tests using EspUsbHost as host and EspUsbDevice as device.
 - `loopback/`: one-board ESP32-P4 tests running EspUsbHost and EspUsbDevice together.
-- `probe/`: bring-up sketches for P4 port and speed investigation.
 - `manual/`: tests that require physical devices or visual confirmation.
 
 ## Run Mode

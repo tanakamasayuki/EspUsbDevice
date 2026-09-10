@@ -43,37 +43,36 @@ tests/
   examples_compile/ 自動 - examples sketch の build-only smoke。
   peer/       自動 - EspUsbHost host + EspUsbDevice device の2台構成。
   loopback/   自動 - ESP32-P4 1台で host / device role を同時実行。
-  probe/      初期切り分け - port / speed / PHY / OS認識の確認。
   manual/     手動 - 物理デバイスまたは人の判断が必要。
 ```
 
 ## カバレッジ計画
 
-| 機能 | unit | peer | loopback | probe | manual |
-|------|------|------|----------|-------|--------|
-| device descriptor config | ✅ `descriptor` | | | 予定 | |
-| runtime lifecycle | ✅ `descriptor`（100回begin/end + 途中失敗からの復帰） | | | | |
-| FS/HS endpoint MPS | ✅ `descriptor` | 予定 | 予定 | 予定 | |
-| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` 通常/逆port | | |
-| HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard`（callback + `ledState()`、callback 未設定時も追従） | ✅ `hid_keyboard` 通常/逆port | | 任意 |
-| HID keyboard NKRO | ✅ `nkro_report`（struct の bitmap/modifier/境界） | ✅ `hid_keyboard_nkro`（8キー chord のキーコード一致、JIS 高 usage、状態全体を1レポート、`heldState()`、`enableNkro()` 未実行時の失敗） | 未実装 | | ✅ `examples/KeyboardNKRO` |
-| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | build済み `hid_mouse` | | |
-| keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | build済み `hid_keyboard_mouse` | | |
-| custom HID report descriptor | 予定 | ✅ `custom_hid` | ✅ `custom_hid` | | |
-| HID vendor IN/OUT/Feature | 予定 | ✅ `hid_vendor` | ✅ `hid_vendor` | | |
-| consumer control HID | 予定 | ✅ `hid_consumer_control` | ✅ `hid_consumer_control` | | |
-| system control HID | 予定 | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
-| gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
-| CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| CDC ACM 複数ポート | ✅ `cdc_multi`（S3: 2 ポートの descriptor / endpoint アドレス / IAD 由来の device class / 上限拒否）、✅ `p4_controller_endpoints`（P4: HID+Vendor+CDC×2、CDC×3、4 本目の拒否、FS の 3 本目拒否） | ✅ `usb_serial_multi`（S3 実機 2 台: interface 4 / endpoint 6 / claim、`class=ef`、port↔interface/endpoint 対応、**port 0 と port 1 それぞれの双方向通信**、分離、per-port line coding） | ✅ `usb_serial_multi`（P4 1 台・device=HS 3 ポート: interface 6 / endpoint 9 / `class=ef`、port↔interface/endpoint 対応、**3 ポートすべての双方向通信**、分離、per-port line coding） | | ✅ `examples/SerialMulti` |
-| USB MIDI | ✅ `midi_descriptor`（対称・非対称すべての cable 数の組み合わせの descriptor byte） | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認）、✅ `usb_midi_cables`（非対称 4-in / 5-out: Host 側 cable 数と方向 / interleave / SysEx） | ✅ `usb_midi`、✅ `usb_midi_cables`（対称 4 cable） | | |
-| USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
-| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| CCID スマートカードリーダー | ✅ `ccid_descriptor`（interface / class descriptor の byte 列） | ✅ `usb_ccid` class descriptor、ICC 3 状態、ATR、APDU / escape / parameters / abort、挿抜通知 | 未実装 | | ✅ `examples/SmartCardReader` |
-| USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`、UAC2 `usb_audio_uac2` | 未実装 | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
-| composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | | |
-| Core依存境界 | ✅ `dependency_boundary` | | | | |
-| examples compile | ✅ `examples_compile` 宣言済みS2/S3/P4全profile | | | | |
+| 機能 | unit | peer | loopback | manual |
+|------|------|------|----------|--------|
+| device descriptor config | ✅ `descriptor` | | | |
+| runtime lifecycle | ✅ `descriptor`（100回begin/end + 途中失敗からの復帰） | | | |
+| FS/HS endpoint MPS | ✅ `descriptor` | 予定 | 予定 | |
+| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` 通常/逆port | |
+| HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard`（callback + `ledState()`、callback 未設定時も追従） | ✅ `hid_keyboard` 通常/逆port | 任意 |
+| HID keyboard NKRO | ✅ `nkro_report`（struct の bitmap/modifier/境界） | ✅ `hid_keyboard_nkro`（8キー chord のキーコード一致、JIS 高 usage、状態全体を1レポート、`heldState()`、`enableNkro()` 未実行時の失敗） | 未実装 | ✅ `examples/KeyboardNKRO` |
+| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | build済み `hid_mouse` | |
+| keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | build済み `hid_keyboard_mouse` | |
+| custom HID report descriptor | 予定 | ✅ `custom_hid` | ✅ `custom_hid` | |
+| HID vendor IN/OUT/Feature | 予定 | ✅ `hid_vendor` | ✅ `hid_vendor` | |
+| consumer control HID | 予定 | ✅ `hid_consumer_control` | ✅ `hid_consumer_control` | |
+| system control HID | 予定 | ✅ `hid_system_control` | ✅ `hid_system_control` | |
+| gamepad HID | 予定 | ✅ `hid_gamepad` | ✅ `hid_gamepad` | |
+| CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | |
+| CDC ACM 複数ポート | ✅ `cdc_multi`（S3: 2 ポートの descriptor / endpoint アドレス / IAD 由来の device class / 上限拒否）、✅ `p4_controller_endpoints`（P4: HID+Vendor+CDC×2、CDC×3、4 本目の拒否、FS の 3 本目拒否） | ✅ `usb_serial_multi`（S3 実機 2 台: interface 4 / endpoint 6 / claim、`class=ef`、port↔interface/endpoint 対応、**port 0 と port 1 それぞれの双方向通信**、分離、per-port line coding） | ✅ `usb_serial_multi`（P4 1 台・device=HS 3 ポート: interface 6 / endpoint 9 / `class=ef`、port↔interface/endpoint 対応、**3 ポートすべての双方向通信**、分離、per-port line coding） | ✅ `examples/SerialMulti` |
+| USB MIDI | ✅ `midi_descriptor`（対称・非対称すべての cable 数の組み合わせの descriptor byte） | ✅ `usb_midi`（MIDI 単機能で supported 列挙も確認）、✅ `usb_midi_cables`（非対称 4-in / 5-out: Host 側 cable 数と方向 / interleave / SysEx） | ✅ `usb_midi`、✅ `usb_midi_cables`（対称 4 cable） | |
+| USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | |
+| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `examples/USBVendor` |
+| CCID スマートカードリーダー | ✅ `ccid_descriptor`（interface / class descriptor の byte 列） | ✅ `usb_ccid` class descriptor、ICC 3 状態、ATR、APDU / escape / parameters / abort、挿抜通知 | 未実装 | ✅ `examples/SmartCardReader` |
+| USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`、UAC2 `usb_audio_uac2` | 未実装 | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
+| composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | |
+| Core依存境界 | ✅ `dependency_boundary` | | | |
+| examples compile | ✅ `examples_compile` 宣言済みS2/S3/P4全profile | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
 
@@ -365,8 +364,6 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 3. ✅ `peer/hid_keyboard`
 4. ✅ `peer/hid_mouse`
 5. ✅ `peer/hid_keyboard_mouse`
-6. `probe/p4_device_fs_probe`
-7. `probe/p4_device_hs_probe`
 8. ✅ `loopback/hid_keyboard`
 9. ✅ `loopback/hid_mouse`
 10. ✅ `loopback/hid_keyboard_mouse`
@@ -416,5 +413,6 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 - device sketch は Arduino-ESP32 標準の `USB.begin()` を呼ばない。
 - P4 テストは selected port、requested speed、TinyUSB rhport、取得できる場合は
   connected speed、VID/PID、interface count、endpoint MPS を出力する。
-- 未対応の P4 port / speed 組み合わせは、無言 skip ではなく `xfail` または probe
-  結果として明示する。
+- 未対応の P4 port / speed 組み合わせは、無言 skip ではなく `xfail` または文書化した
+  結果として明示する。P4 の port / speed / PHY の切り分け自体は完了しており、
+  結果は `docs/DESIGN_NOTES.ja.md`「P4 USB ポート/PHY の実測整理」にある。
