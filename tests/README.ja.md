@@ -19,7 +19,11 @@ ESP32-P4 の loopback は、Arduino-ESP32 標準 Device 実装が HS 固定で F
 
 ## 構成
 
-- `unit/`: ホスト不要の descriptor / report helper / FAT RAM disk テスト。
+- `unit/`: ボードを一切使わない。純粋な Python か、`src/` から出荷される C++ を
+  抽出してシステムの g++ でコンパイルするかのどちらか。5 秒ほどで終わり、CI が
+  push ごとに `.env` なしで回している（`.github/workflows/unit-tests.yml`）。
+- `single/`: デバイス側ボード 1 枚のみ、USB ホスト役は使わない。実機にスケッチを
+  書き込んで本物の API を呼び、`OK` / `NG` を出力する。`.env` が必要。
 - `peer/`: EspUsbHost を host、EspUsbDevice を device とする2台構成テスト。
 - `loopback/`: ESP32-P4 1台で EspUsbHost と EspUsbDevice を同時に動かすテスト。
 - `manual/`: 物理デバイスまたは目視確認が必要なテスト。
@@ -139,7 +143,7 @@ def test_composite_hid_cdc(dut, peers):
 - **「実行が次のテストへ進んだ」を「そのテストが通った」と読まないでください。** pytest は
   失敗しても次のパラメータへ進みます。位置ではなく結果を見ること。
 
-`pytest --clean` を引数なしで実行したときの収集順は loopback → peer → unit です。
+`pytest --clean` を引数なしで実行したときの収集順は loopback → peer → single → unit です。
 example のビルドはこの実行に含まれません——`tools/build_check.py` と CI の Build Check
 ワークフローが担当します。
 

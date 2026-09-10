@@ -39,7 +39,8 @@ Host 側の未リリース修正をこのリポジトリでリリース前検証
 
 ```text
 tests/
-  unit/       自動 - descriptor builder と report helper。
+  unit/       自動 - ボード不要。CI が push ごとに実行する。
+  single/     自動 - デバイス側ボード 1 枚、USB ホスト役は使わない。
   peer/       自動 - EspUsbHost host + EspUsbDevice device の2台構成。
   loopback/   自動 - ESP32-P4 1台で host / device role を同時実行。
   manual/     手動 - 物理デバイスまたは人の判断が必要。
@@ -71,6 +72,7 @@ tests/
 | USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`、UAC2 `usb_audio_uac2` | 未実装 | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | |
 | Core依存境界 | ✅ `dependency_boundary` | | | |
+| serial log 許可リストの整合性 | ✅ `known_findings` | | | |
 
 ## EspUsbHost 詳細挙動テスト計画
 
@@ -254,7 +256,7 @@ eject / stop 後に ESP32 側で 8.3 filename の file を scan / read できる
 firmware update や Wi-Fi 転送は、まず「Host が書いた file を eject 後に Device 側が
 byte 列として取り出せる」ことを合格条件にします。
 
-`unit/fat_ramdisk` は、Host mount 前に FAT12 image の基本構造、root entry、cluster chain、
+`single/fat_ramdisk` は、Host mount 前に FAT12 image の基本構造、root entry、cluster chain、
 `exists()` / `fileSize()` / `readFile()`、MSC attach と eject callback を検証します。
 PC mount / file copy / OS eject は別途 manual または peer テストで確認します。
 
@@ -308,7 +310,7 @@ Arduino Coreの`tinyusb_enable_interface()`や`tinyusb_get_free_*`は使わな�
 | 1 | HID + CDC | ✅ 実機 OK（`composite_hid_cdc` 4/4） | ライブラリ所有allocator、address重複なし |
 | 3 | HID + MSC | ✅ 実機 OK（`composite_hid_msc` 3/3） | MSC/HIDともduplex 1番号、`dup=0 claimok=1` |
 | 2,4-10 | 上記以外の非 Audio ペア | ○（最大構成で包含） | 単一のライブラリ所有allocatorで一貫採番。下記tripleがカバー |
-| 11 | Audio + 他function | ✅ S3 UAC1 HID+Audio | `composite_hid_audio`で`dup=0`、全claim、keyboard入力、PCM playbackを確認。HID/CDC/Vendorとのdescriptor buildは`unit/composite_constraints`でPASS |
+| 11 | Audio + 他function | ✅ S3 UAC1 HID+Audio | `composite_hid_audio`で`dup=0`、全claim、keyboard入力、PCM playbackを確認。HID/CDC/Vendorとのdescriptor buildは`single/composite_constraints`でPASS |
 | — | HID + bulk Vendor | ✅ 実機 OK（`composite_hid_vendor` 3/3） | descriptor 二重記述を修正（HID blob に Vendor を含めない）。`docs/DESIGN_NOTES.ja.md`「複合時の HID + bulk Vendor 二重記述」 |
 
 **S3 の endpoint 予算**: `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`。IN数はEP0を
@@ -336,7 +338,7 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 実機Peerではcontroller上限、class driverのclaim、各data planeを追加確認する。
 
 - **unit（S3 単体・host 不要）**
-  - `unit/composite_constraints`: `startTinyUsb=false`でAudio + HID/CDC/Vendorの
+  - `single/composite_constraints`: `startTinyUsb=false`でAudio + HID/CDC/Vendorの
     descriptor build成功と、7個目のclass登録が`MAX_CLASSES`で拒否されることを確認。
 - **peer（S3 2 台・host=EspUsbHost / device=EspUsbDevice）** ← 本命
   - 各ペア `peer/composite_<a>_<b>/` を作成。2 段階で判定:
@@ -356,7 +358,7 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 
 #### 実行順（段階的）
 
-1. `unit/composite_constraints`（Audio複合build / MAX_CLASSESを回帰固定。host不要）。
+1. `single/composite_constraints`（Audio複合build / MAX_CLASSESを回帰固定。host不要）。
 2. `peer/composite_hid_cdc`（#1、動く見込みの複合で雛形と共通 util を確立）。
 3. `peer/composite_hid_msc` / `hid_midi` / `hid_vendor`（#2-4）。
 4. 残り CDC 系 / アロケータ系（#5-10）を順次。
@@ -364,8 +366,8 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 
 ## 初期移行順
 
-1. `unit/compile_smoke`
-2. `unit/descriptor`
+1. `single/compile_smoke`
+2. `single/descriptor`
 3. ✅ `peer/hid_keyboard`
 4. ✅ `peer/hid_mouse`
 5. ✅ `peer/hid_keyboard_mouse`
@@ -397,7 +399,7 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
 34a. ✅ `peer/usb_audio_uac2`（UAC2 end-to-end: device側control状態、Clock Sourceへのrate request、双方向、feedback）
-35. ✅ `unit/composite_constraints`（Audio複合build / MAX_CLASSES）
+35. ✅ `single/composite_constraints`（Audio複合build / MAX_CLASSES）
 36. ✅ `peer/composite_hid_cdc`（複合の雛形 + 共通 util、4/4）
 37. ✅ `peer/composite_hid_msc`（HID 採番衝突の発見 → 修正 → 3/3。`docs/DESIGN_NOTES.ja.md`）
 38. ✅ `peer/composite_hid_cdc_msc`（HID+CDC+MSC、収まる最大構成）
@@ -413,8 +415,15 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 ## 合格条件
 
 - descriptor テストはログ確認ではなく byte 列を assert する。
-- `unit/compile_smoke` は build-only で Arduino CLI、sketch.yaml、ESP32 board package、ライブラリ解決を確認する。
+- `single/compile_smoke` は build-only で Arduino CLI、sketch.yaml、ESP32 board package、
+  ライブラリ解決を確認し、通常実行では実機上で全公開クラスがリンク・構築できることも確認する。
+- `unit/` はボード不要を維持する。CI で回せる唯一の層なので、実機が要るテストは
+  見た目が unit 的でも `single/` に置く。
 - peer テストは serial command で device board の挙動を制御する。
+- `tests/conftest.py` の `_KnownSerialFinding` は、各エントリが実在するテストに
+  1 件以上一致し、固有のエントリが一般のエントリより前にあること。`unit/known_findings`
+  が両方を検査する。ノード ID で引いているため、テストのリネームやマージで黙って
+  外れ、許可していた行が「未知の異常」として再出現する。
 - `peer/` の 1 モジュールは pytest テスト 1 個とし、ケースはリストから順に呼ぶ
   名前付き関数にする。順序が必要なモジュールは理由を docstring に書く。それ以外
   はケースのリストを逆順にしても通ること。

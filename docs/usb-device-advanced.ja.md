@@ -98,7 +98,7 @@ TinyUSBの規約として、device APIは `tud_task()` と同じコンテキス�
 
 つまり、**構成が不正なら電気的に何も起きません**。ホスト側から見ると「挿しても無反応」で、原因はボード内にあります。入門編のBringUpCheckが `BEGIN` の成否を先に表示するのはこのためです。
 
-`config.startTinyUsb = false` にすると、**3以降を行わずディスクリプタだけを組み立てます**。ハードウェアもホストも要らないので、`tests/unit/descriptor` や `tests/unit/composite_constraints` はこれでディスクリプタを検証しています。自分の構成を自動テストしたいときにも使えます。
+`config.startTinyUsb = false` にすると、**3以降を行わずディスクリプタだけを組み立てます**。ハードウェアもホストも要らないので、`tests/single/descriptor` や `tests/single/composite_constraints` はこれでディスクリプタを検証しています。自分の構成を自動テストしたいときにも使えます。
 
 停止は `stopTinyUsbRuntime()` で、タスク削除 → `tusb_deinit()` → `usb_del_phy()` の逆順です。`end()` の後、同じオブジェクトで `begin()` を再開できます。
 
@@ -709,7 +709,7 @@ CCIDが実例です。手順は次のようになります。
 
 ### 9.4 実装の順序
 
-1. **`config.startTinyUsb = false` でディスクリプタだけ作る。** ハードウェア不要。`tests/unit/descriptor` と同じやり方で、バイト列が意図どおりか先に固める
+1. **`config.startTinyUsb = false` でディスクリプタだけ作る。** ハードウェア不要。`tests/single/descriptor` と同じやり方で、バイト列が意図どおりか先に固める
 2. **DescriptorDumpに載せて、endpoint予算を確認する**
 3. **実機で列挙させ、`device_inspect` でホスト側と突き合わせる**
 4. **データ経路を1方向ずつ確認する**（まずデバイス→ホスト、次にホスト→デバイス）

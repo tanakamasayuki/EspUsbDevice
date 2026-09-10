@@ -142,9 +142,9 @@ uv run --env-file .env pytest --clean
 
 検証済みの主な範囲:
 
-- `unit/compile_smoke`
-- `unit/descriptor`
-- `unit/fat_ramdisk`
+- `single/compile_smoke`
+- `single/descriptor`
+- `single/fat_ramdisk`
 - `peer/hid_keyboard`
 - `peer/hid_keyboard_layout`
 - `peer/hid_mouse`

@@ -47,7 +47,8 @@ for example
 
 ```text
 tests/
-  unit/       Automated - descriptor builders and report helpers.
+  unit/       Automated - no board. Runs in CI on every push.
+  single/     Automated - one device board, no USB host board.
   peer/       Automated - two boards: EspUsbHost host + EspUsbDevice device.
   loopback/   Automated - one ESP32-P4 running host and device roles.
   manual/     Manual - physical devices or human inspection required.
@@ -79,6 +80,7 @@ tests/
 | USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`, UAC2 `usb_audio_uac2` | not implemented | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | |
 | Core dependency boundary | ✅ `dependency_boundary` | | | |
+| Serial-log allowlist integrity | ✅ `known_findings` | | | |
 
 ## Detailed EspUsbHost Behavior Tests
 
@@ -289,7 +291,7 @@ stop. Firmware update and Wi-Fi forwarding start from the simpler requirement
 that a file written by the host can be extracted as bytes by the device after
 host ownership ends.
 
-`unit/fat_ramdisk` verifies the FAT12 image structure, root entries, cluster
+`single/fat_ramdisk` verifies the FAT12 image structure, root entries, cluster
 chains, `exists()` / `fileSize()` / `readFile()`, MSC attach, and eject callback
 before host-mount testing. PC mount / file copy / OS eject should be covered by
 manual or peer tests separately.
@@ -354,7 +356,7 @@ pairs does too).
 | 1 | HID + CDC | ✅ hardware OK (`composite_hid_cdc` 4/4) | library allocator, no duplicate address |
 | 3 | HID + MSC | ✅ hardware OK (`composite_hid_msc` 3/3) | MSC and HID each use one duplex number, `dup=0 claimok=1` |
 | 2,4-10 | other non-Audio pairs | ○ (subsumed by the maximal config) | one library-owned allocator, consistent numbering; covered by the triple below |
-| 11 | Audio + another function | ✅ S3 UAC1 HID+Audio | `composite_hid_audio` verifies `dup=0`, all claims, keyboard input, and PCM playback; HID/CDC/Vendor descriptor builds pass in `unit/composite_constraints` |
+| 11 | Audio + another function | ✅ S3 UAC1 HID+Audio | `composite_hid_audio` verifies `dup=0`, all claims, keyboard input, and PCM playback; HID/CDC/Vendor descriptor builds pass in `single/composite_constraints` |
 | — | HID + bulk Vendor | ✅ hardware OK (`composite_hid_vendor` 3/3) | fixed the descriptor duplication (HID blob no longer includes Vendor). `docs/DESIGN_NOTES.ja.md`, section 「複合時の HID + bulk Vendor 二重記述」 |
 
 **S3 endpoint budget:** `CFG_TUD_NUM_EPS=6` / `CFG_TUD_NUM_IN_EPS=5`. The IN
@@ -414,7 +416,7 @@ and every data plane.
 
 #### Execution order (staged)
 
-1. `unit/composite_constraints` (pins Audio composite builds / MAX_CLASSES; host-free).
+1. `single/composite_constraints` (pins Audio composite builds / MAX_CLASSES; host-free).
 2. `peer/composite_hid_cdc` (#1; establishes the template and shared utilities
    with a combination expected to work).
 3. `peer/composite_hid_msc` / `hid_midi` / `hid_vendor` (#2-4).
@@ -424,8 +426,8 @@ and every data plane.
 
 ## Initial Migration Order
 
-1. `unit/compile_smoke`
-2. `unit/descriptor`
+1. `single/compile_smoke`
+2. `single/descriptor`
 3. ✅ `peer/hid_keyboard`
 4. ✅ `peer/hid_mouse`
 5. ✅ `peer/hid_keyboard_mouse`
@@ -457,7 +459,7 @@ and every data plane.
 33. ✅ `peer/usb_audio_microphone`
 34. ✅ `peer/usb_audio_headset`
 34a. ✅ `peer/usb_audio_uac2` (UAC2 end to end: device control state, Clock Source rate, both directions, feedback)
-35. ✅ `unit/composite_constraints` (Audio composite builds / MAX_CLASSES)
+35. ✅ `single/composite_constraints` (Audio composite builds / MAX_CLASSES)
 36. ✅ `peer/composite_hid_cdc` (composite template + shared util, 4/4)
 37. ✅ `peer/composite_hid_msc` (found → fixed the HID numbering collision → 3/3; `docs/DESIGN_NOTES.ja.md`)
 38. ✅ `peer/composite_hid_cdc_msc` (HID+CDC+MSC, the maximal config that fits)
@@ -473,9 +475,16 @@ and every data plane.
 ## Acceptance Rules
 
 - Descriptor tests must assert bytes, not only log them.
-- `unit/compile_smoke` must verify Arduino CLI, sketch.yaml, ESP32 board package,
-  and library resolution in build-only mode.
+- `single/compile_smoke` must verify Arduino CLI, sketch.yaml, ESP32 board
+  package, and library resolution in build-only mode, and on a normal run must
+  also link and construct every public class on the chip.
+- `unit/` must stay board-free. It is the only layer CI can run, so a test that
+  needs hardware belongs in `single/` however unit-like it looks.
 - Peer tests must use serial commands to drive the device board.
+- Every `_KnownSerialFinding` entry in `tests/conftest.py` must match at least one
+  real test, and specific entries must precede general ones. `unit/known_findings`
+  asserts both: the rules are keyed on node ids, so a rename or a merge detaches
+  them silently and the line they allowed reappears as an unexpected finding.
 - Each `peer/` module is one pytest test whose cases are named functions driven
   from a list. A module that needs its cases in a particular order must say why
   in its docstring; every other module must pass with the list reversed.

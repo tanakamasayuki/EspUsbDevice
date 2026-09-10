@@ -135,7 +135,7 @@ the board. That is why BringUpCheck reports `BEGIN` before anything else.
 
 Setting `config.startTinyUsb = false` **stops after step 2 and only builds the
 descriptors**. No hardware and no host are needed, which is how
-`tests/unit/descriptor` and `tests/unit/composite_constraints` verify
+`tests/single/descriptor` and `tests/single/composite_constraints` verify
 descriptors. It is equally useful for automated tests of your own configuration.
 
 Teardown, via `stopTinyUsbRuntime()`, runs in reverse: delete the task,
@@ -945,7 +945,7 @@ indirection links your driver into sketches that never use the class.
 ### 9.4 Implementation order
 
 1. **Build descriptors only, with `config.startTinyUsb = false`.** No hardware
-   needed. Settle the byte layout first, the way `tests/unit/descriptor` does
+   needed. Settle the byte layout first, the way `tests/single/descriptor` does
 2. **Put it in DescriptorDump and check the endpoint budget**
 3. **Enumerate on real hardware and cross-check with `device_inspect`**
 4. **Verify one data direction at a time** (device→host first, then host→device)
