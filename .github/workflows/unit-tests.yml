@@ -1,0 +1,67 @@
+name: Unit Tests
+
+# The layer that needs no board. Every module under tests/unit/ is either plain
+# Python or the shipped C++ extracted from src/ and compiled with the system
+# g++, so the whole layer runs in about five seconds and can run on every push
+# rather than waiting for someone to remember it.
+#
+# It also enforces what `unit/` means. Before this workflow existed, seven
+# modules that upload a sketch to a board had accumulated here, and nothing
+# noticed: running `pytest unit/` without the port variables failed them with
+# `Failed uploading: no upload port provided`, which reads like a broken
+# environment rather than a misplaced test. Those moved to tests/single/. If a
+# board-dependent test lands here again, this job fails - which is the point.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "tests/unit/**"
+      - "tests/conftest.py"
+      - "tests/pyproject.toml"
+      - "tests/uv.lock"
+      - ".github/workflows/unit-tests.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/unit/**"
+      - "tests/conftest.py"
+      - "tests/pyproject.toml"
+      - "tests/uv.lock"
+      - ".github/workflows/unit-tests.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: unit-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: tests/uv.lock
+
+      - name: Cache the pinned TinyUSB archive
+        uses: actions/cache@v4
+        with:
+          # tinyusb_vendor compares the vendored copy under src/ against the
+          # upstream tarball named in UPSTREAM.json, downloading it on a miss.
+          # That is this job's only network dependency; keyed on the pinned
+          # commit, so it is fetched once per pin rather than once per run.
+          path: third_party/tinyusb/.upstream-cache
+          key: tinyusb-upstream-${{ hashFiles('third_party/tinyusb/UPSTREAM.json') }}
+
+      - name: Run unit tests
+        working-directory: tests
+        # No --env-file here, deliberately: these tests open no serial port and
+        # need no board, so the port variables a hardware run reads are unset.
+        run: uv run pytest unit/ -v

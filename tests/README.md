@@ -22,7 +22,11 @@ explicitly for those tests.
 
 ## Layout
 
-- `unit/`: host-independent descriptor, report helper, and FAT RAM disk tests.
+- `unit/`: no board at all. Plain Python, or the shipped C++ extracted from
+  `src/` and compiled with the system g++. About five seconds, and CI runs it on
+  every push without `.env` (`.github/workflows/unit-tests.yml`).
+- `single/`: one device board, no USB host board. Uploads a sketch that calls
+  the real API on the real chip and prints `OK` / `NG`. Needs `.env`.
 - `peer/`: two-board tests using EspUsbHost as host and EspUsbDevice as device.
 - `loopback/`: one-board ESP32-P4 tests running EspUsbHost and EspUsbDevice together.
 - `manual/`: tests that require physical devices or visual confirmation.
@@ -35,6 +39,9 @@ From this directory:
 uv run --env-file .env pytest
 uv run --env-file .env pytest peer/
 uv run --env-file .env pytest --run-mode=build
+
+# The unit layer needs no board and no ports, so it needs no .env.
+uv run pytest unit/
 ```
 
 Regular peer and loopback tests use the released EspUsbHost version. Local
@@ -152,7 +159,7 @@ one of them was environmental.
 - **Do not read "the run moved past test X" as "X passed".** pytest continues to
   the next parameter after a failure. Read the result, not the position.
 
-`pytest --clean` with no arguments collects loopback, peer, then unit. Building
+`pytest --clean` with no arguments collects loopback, peer, single, then unit. Building
 the examples is not part of that run - `tools/build_check.py` and the CI Build
 Check workflow cover it.
 

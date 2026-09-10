@@ -156,6 +156,12 @@ void loop()
     else if (command == 'v')
     {
       const bool opened = deviceAddress && usb.vendorOpen(deviceAddress);
+      // lastErrorName() is sticky by design: EspUsbHost only overwrites
+      // lastError_ on failure, and mscUnmount() even restores the previous
+      // value across a successful flush. It is an errno-style contract - read
+      // it only after a call that reported failure - so reading it after a
+      // success prints an unrelated older error and makes the serial log audit
+      // flag an ESP_ERR_* line for an operation that worked.
       Serial.printf("VENDOR_OPEN ok=%u err=%s\n", opened ? 1 : 0,
                     opened ? "none" : usb.lastErrorName());
       const uint8_t payload[] = "ping";

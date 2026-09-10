@@ -2,29 +2,16 @@
 
 > 日本語版: [README.ja.md](README.ja.md)
 
-Unit tests cover host-independent logic:
+No board, no serial port, no Arduino CLI. Every module here either is plain
+Python or extracts the shipped C++ from `src/` and compiles it with the system
+g++, so the whole layer runs on a developer machine in about five seconds. That
+is why CI runs it on every push, without `tests/.env` - see
+`.github/workflows/unit-tests.yml`.
 
-- Device descriptor bytes.
-- Configuration descriptor layout.
-- FS/HS endpoint MPS selection.
-- HID report descriptor bytes.
-- HID keyboard/mouse report builders.
-- MSC FAT RAM disk helper boot sector, FAT, root directory, and file-read
-  helpers.
-
-## `compile_smoke`
-
-This is the first environment check. In `--run-mode=build`, it verifies Arduino
-CLI, sketch.yaml, the ESP32 board package, library resolution, and minimal
-public header compilation. It does not validate the USB device stack at runtime.
-
-## `descriptor`
-
-This verifies USB device, configuration, and HID report descriptor bytes. The
-initial spec fixes HID keyboard and HID mouse interrupt endpoint MPS to 8 bytes
-for both FS and HS. Keyboard + mouse composite uses one HID interface with
-report IDs and 16-byte endpoint MPS so the report-ID-prefixed keyboard report
-fits in one interrupt packet.
+Tests that call the real library API on a real chip live in `../single/`
+instead. They look like unit tests and several of them start TinyUSB only to
+leave it stopped, but they need a board, so keeping them here made `unit/`
+un-runnable in CI and hid that fact behind an upload error.
 
 ## `ccid_descriptor`
 
@@ -56,9 +43,11 @@ initialization.
 
 ## `tinyusb_vendor`
 
-Checks that the TinyUSB pin metadata, headers, and selected device sources in the Arduino build
-tree remain byte-identical to the pinned archive, and that no unintended `.c`
-file has entered the build.
+Checks that the TinyUSB pin metadata, headers, and selected device sources
+vendored under `src/` remain byte-identical to the upstream commit named in
+`third_party/tinyusb/UPSTREAM.json`, and that no unintended `.c` file has
+entered the build. It fetches that upstream tarball on a cache miss, which is
+the only thing in this layer that touches the network.
 
 ## `audio_model`
 
@@ -67,21 +56,6 @@ implementation. It covers mono/stereo, 16/24/32-bit samples, subslots, FS/HS
 frame rates, clock tolerance, isochronous packet and software-buffer limits,
 the entity graph, UAC2 descriptors, Clock/Feature control state, and CUR/RANGE
 wire formats.
-
-## `audio_v2_descriptor`
-
-Builds the new public `EspUsbAudioFunction` API on S3 hardware and checks the
-speaker, microphone, and duplex configuration descriptors, FS/HS packet sizes,
-polling of mute, volume, and stream-state events, and the stream-stats reset
-lifecycle. UAC1 24-bit and 32-bit formats also verify subslot/bit fields, packet
-sizes, and transfer accounting. It leaves the USB runtime stopped, so this
-specifically tests public API, device-descriptor, and control state integration.
-
-## `p4_controller_endpoints`
-
-Runs on P4 without starting TinyUSB and verifies controller-specific descriptor
-limits: a five-IN-endpoint composite is rejected for the FS controller but
-accepted for HS and for P4's HS-default `Auto` selection.
 
 ## `keymap`
 
@@ -110,14 +84,28 @@ boot-protocol fold-down, the "no `enableNkro()` -> fail" rule, and the bytes tha
 actually reach a host belong to `EspUsbDeviceHidKeyboard`, which cannot be
 host-compiled; `tests/peer/hid_keyboard_nkro` covers those on hardware.
 
-## `fat_ramdisk`
+## `midi_descriptor`
 
-This verifies host-independent `EspUsbDeviceMscFatRamDisk` logic:
+Host g++ test for the multi-cable USB MIDI configuration descriptor. The builder
+no longer uses TinyUSB's single-cable `TUD_MIDI_DESCRIPTOR()` template - it emits
+the head, the per-cable jack descriptors, and the endpoint blocks itself - and
+that assembly fails silently: a host that reads a wrong `wTotalLength` or a
+duplicated jack ID still enumerates and just shows the wrong number of ports, so
+a round trip on real hardware passes while the descriptor is wrong. The builder
+is extracted from `src/EspUsbDevice.cpp` at test time and compiled against the
+real TinyUSB macros and enums, so the assertions run against the shipped code.
 
-- FAT12 boot sector fields.
-- Volume label, FAT type, and boot signature.
-- 8.3 filename normalization.
-- Root directory entries.
-- FAT12 cluster chains.
-- `exists()`, `fileSize()`, and `readFile()`.
-- `EspUsbDeviceMsc` attach, read/write callbacks, and eject callback.
+## `dependency_boundary`
+
+Greps the shipped sources for the Arduino-ESP32 USB core headers and symbols the
+library must not depend on. It is a boundary this project decided once and would
+otherwise re-cross by accident, since including `USB.h` compiles perfectly well
+and only shows up as a conflict at runtime.
+
+## `known_findings`
+
+Checks the serial-log allowlist in `tests/conftest.py` against the tests that
+actually exist. Its rules are keyed on pytest node ids with nothing connecting
+them to the tests they name, so a rename or a merge detaches a rule silently -
+the test still passes, and the expected line it covered comes back as an
+unexpected finding. That happened when `peer/` went from 110 tests to 29.

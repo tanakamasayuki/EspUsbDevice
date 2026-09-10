@@ -2,27 +2,14 @@
 
 > English: [README.md](README.md)
 
-unit テストでは、ホストに依存しないロジックを検証します。
+ボードもシリアルも Arduino CLI も使いません。ここのモジュールはすべて、純粋な Python か、
+`src/` から出荷される C++ を抽出してシステムの g++ でコンパイルするかのどちらかです。
+層全体で開発マシン上 5 秒ほどで終わるので、CI が push ごとに `tests/.env` なしで
+回しています。`.github/workflows/unit-tests.yml` を見てください。
 
-- device descriptor の byte 列。
-- configuration descriptor layout。
-- FS / HS endpoint MPS 選択。
-- HID report descriptor の byte 列。
-- HID keyboard / mouse report builder。
-- MSC FAT RAM disk helper の boot sector、FAT、root directory、file read helper。
-
-## `compile_smoke`
-
-最初の環境確認用テストです。`--run-mode=build` で Arduino CLI、sketch.yaml、
-ESP32 board package、ライブラリ解決、公開ヘッダの最小コンパイルを確認します。
-USB device stack の実行確認ではありません。
-
-## `descriptor`
-
-USB device / configuration / HID report descriptor の byte 列を検証します。
-初期仕様として、HID keyboard と HID mouse の interrupt endpoint MPS は FS / HS とも
-8 bytes に固定します。keyboard + mouse composite は単一 HID interface + report ID 構成で、
-report ID 付き keyboard report に合わせて endpoint MPS を 16 bytes にします。
+実機上で本物の API を呼ぶテストは `../single/` にあります。見た目は unit テストで、
+TinyUSB を起動しないものもありますが、ボードが必要です。ここに置いていたために
+`unit/` が CI で回せず、その事実がアップロードエラーの裏に隠れていました。
 
 ## `ccid_descriptor`
 
@@ -49,8 +36,10 @@ compileされること、Audioのcompile-time上限を確認します。controll
 
 ## `tinyusb_vendor`
 
-TinyUSB pin metadata、Arduino build対象のheader、選択したdevice sourceが固定commitと
-byte-identicalであること、および意図しない`.c`がbuild対象へ増えていないことを確認します。
+`src/` に取り込んだ TinyUSB の pin metadata、header、選択した device source が、
+`third_party/tinyusb/UPSTREAM.json` が指す upstream commit と byte-identical であること、
+および意図しない `.c` が build 対象へ増えていないことを確認します。キャッシュが無ければ
+upstream の tarball を取得します。この層でネットワークに触るのはここだけです。
 
 ## `audio_model`
 
@@ -58,19 +47,6 @@ byte-identicalであること、および意図しない`.c`がbuild対象へ増
 mono/stereo、16/24/32 bit、subslot、FS/HS frame rate、clock tolerance、
 isochronous packet上限、software buffer上限、entity graph、UAC2 descriptor、
 Clock/Feature control stateとCUR/RANGE wire formatを確認します。
-
-## `audio_v2_descriptor`
-
-新公開APIの`EspUsbAudioFunction`をS3実機上で構築し、speaker、microphone、duplexの
-configuration descriptor、FS/HS packet size、mute / volume / stream state eventの
-polling、stream statsのreset lifecycleを確認します。UAC1の24/32bit formatについても
-subslot/bit field、packet size、transfer accountingを検証します。USB runtimeは開始しない
-ため、純粋な公開API・device descriptor・control state統合テストです。
-
-## `p4_controller_endpoints`
-
-TinyUSBを開始せずP4上でcontroller別descriptor上限を検証します。IN endpointを5本使う
-CompositeはFS controllerで拒否し、HSとP4でHSを選ぶ`Auto`では受理することを確認します。
 
 ## `keymap`
 
@@ -97,14 +73,25 @@ boot protocol への畳み込み、`enableNkro()` 未実行時の失敗、実際
 host コンパイルできない `EspUsbDeviceHidKeyboard` 側の挙動なので、実機の
 `tests/peer/hid_keyboard_nkro` でカバーします。
 
-## `fat_ramdisk`
+## `midi_descriptor`
 
-`EspUsbDeviceMscFatRamDisk` の host 非依存ロジックを検証します。
+複数 cable の USB MIDI configuration descriptor をホスト g++ で検証します。builder は
+TinyUSB の 1 cable 用テンプレート `TUD_MIDI_DESCRIPTOR()` を使わず、head と cable ごとの
+jack descriptor と endpoint ブロックを自前で組み立てています。この組み立ては黙って壊れます。
+`wTotalLength` が違っても jack ID が重複しても、ホストは列挙してポート数が違って見えるだけなので、
+実機の往復テストは descriptor が壊れたまま通ります。builder はテスト時に
+`src/EspUsbDevice.cpp` から抽出し、本物の TinyUSB マクロと enum と一緒にコンパイルするので、
+検証対象は出荷されるコードそのものです。
 
-- FAT12 boot sector の基本 field。
-- volume label、FAT type、boot signature。
-- 8.3 filename の正規化。
-- root directory entry。
-- FAT12 cluster chain。
-- `exists()`、`fileSize()`、`readFile()`。
-- `EspUsbDeviceMsc` への attach、read/write callback、eject callback。
+## `dependency_boundary`
+
+依存してはいけない Arduino-ESP32 の USB core ヘッダとシンボルが出荷ソースに現れていないかを
+検査します。一度決めた境界で、放っておくと事故で越えます。`USB.h` を include しても
+コンパイルは通ってしまい、実行時の衝突としてしか現れないからです。
+
+## `known_findings`
+
+`tests/conftest.py` の serial log 許可リストが、実在するテストに一致しているかを検査します。
+ルールは pytest の node id で引いているだけで、名指ししたテストとの結び付きが何もないため、
+リネームやマージで黙って外れます。テストは通ったままで、許可していたはずの行が
+「未知の異常」として再出現します。`peer/` を 110 テストから 29 に統合したときに実際に起きました。
