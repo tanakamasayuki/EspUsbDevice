@@ -480,6 +480,18 @@ and every data plane.
   also link and construct every public class on the chip.
 - `unit/` must stay board-free. It is the only layer CI can run, so a test that
   needs hardware belongs in `single/` however unit-like it looks.
+- Files under `manual/` must not be named `test_*.py`. Everything there needs
+  hardware that is not permanently attached, or a person, so it must never be
+  reachable by collection - not from a plain `pytest`, and not from
+  `pytest manual/`.
+
+  This is enforced by the naming alone. There is deliberately no `testpaths`
+  entry and no marker doing it a second time: that would state the same rule
+  twice, and it would turn a misnamed file from something that shows up in the
+  run into something silently skipped. A test that runs when it should not is
+  visible in the count; a test that never runs is not. The same asymmetry is why
+  a new layer under `tests/` joins the default run automatically rather than
+  waiting to be declared.
 - Peer tests must use serial commands to drive the device board.
 - Every `_KnownSerialFinding` entry in `tests/conftest.py` must match at least one
   real test, and specific entries must precede general ones. `unit/known_findings`

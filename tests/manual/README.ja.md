@@ -5,6 +5,15 @@
 手動テストは、pytest だけでは完全に制御できない挙動に限定します。
 例: ホスト OS の列挙表示、LED の目視確認、外部 USB analyzer、物理的な配線変更。
 
+**このディレクトリのファイルを `test_*.py` という名前にしてはいけません。** pytest が
+収集の判断に使うのがこの接頭辞で、ここにあるものはすべて、常時つながっているとは限らない
+実機か、見ている人間を必要とします。その名前を付けると、引数なしの `pytest` でも
+`pytest manual/` でも拾われ、ライブラリとは無関係な理由で失敗するか止まります。
+担保しているのは命名だけで、marker も `testpaths` も意図的に使っていません。理由は
+[../TEST_PLAN.ja.md](../TEST_PLAN.ja.md) にあります。
+
+実行はスクリプトを名指しで行い、収集経由では行いません。
+
 切り分けの手順全体は [docs/usb-device-guide.ja.md](../../docs/usb-device-guide.ja.md)
 にまとめています。Device 側の Serial monitor から確認する利用者向けツールは
 [`examples/Info/`](../../examples/Info/) にあります。

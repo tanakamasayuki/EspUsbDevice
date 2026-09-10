@@ -6,6 +6,16 @@ Manual tests are reserved for behavior that cannot be fully controlled by
 pytest, such as host OS enumeration dialogs, visual LED confirmation, external
 USB analyzers, or physical cabling changes.
 
+**Do not name a file in this directory `test_*.py`.** That prefix is what pytest
+collects on, and everything here needs either hardware that is not permanently
+attached or a person watching. A file named that way would be picked up by a
+plain `pytest` run, and by `pytest manual/`, and would fail or hang for reasons
+that have nothing to do with the library. The naming is the whole mechanism -
+there is no marker and no `testpaths` entry backing it up, deliberately; see
+[../TEST_PLAN.md](../TEST_PLAN.md).
+
+Run these by naming the script, never through collection.
+
 The whole diagnosis procedure is in
 [docs/usb-device-guide.md](../../docs/usb-device-guide.md). The user-facing tools
 that report from the device's own serial monitor live in
