@@ -46,17 +46,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install arduino-cli
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh -s -- -b "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
 
-      - name: Cache the Arduino platform
+      - name: Cache the Arduino platform and tools
         uses: actions/cache@v4
         with:
           path: |
             ~/.arduino15
-            ~/Arduino/libraries
+            ~/.cache/arduino
           # Keyed on the sketch.yaml files because they pin the platform and
           # library versions: a job that is not bumping either should not
           # download a toolchain again.
@@ -64,5 +62,13 @@ jobs:
           restore-keys: |
             arduino-${{ runner.os }}-${{ matrix.profile }}-
 
-      - name: Build examples
+      - name: Update the Arduino library index
+        # sketch.yaml pins library versions, which arduino-cli resolves against
+        # the library index. A cache restored through restore-keys can hold an
+        # index from before a pinned version was published, which surfaces as
+        # "Library 'EspUsbHost' not found" and then a missing header. Refreshing
+        # after the restore keeps this independent of cache state.
+        run: arduino-cli lib update-index
+
+      - name: Build examples (${{ matrix.profile }})
         run: python3 tools/build_check.py ${{ matrix.profile }}
