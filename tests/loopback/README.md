@@ -8,6 +8,28 @@ EspUsbDevice run on the same chip.
 The first target is HID keyboard loopback with descriptor logging so P4
 port/speed behavior can be verified before broader class coverage is added.
 
+## Why these wait for a banner when `peer/` asks
+
+Every test here opens by waiting for `HOST_DEVICE`, the line the sketch prints
+once when its own host half enumerates its own device half. `tests/peer` moved
+away from exactly that shape: a line printed once at enumeration is only visible
+to whichever test reads it first, so the peer modules now ask (`?` ->
+`DEVICE_READY <0|1>`) instead of awaiting an announcement.
+
+That change is not needed here, and the reason is structural rather than a
+judgement call. Each module in this directory is a single test with its own
+sketch and its own upload, so the test that reads the banner is always the first
+thing to run after the board comes up. There is no second test to be starved of
+it, and no order for it to depend on.
+
+What did bite once was timing rather than order: the sketch printed its port
+report at boot, and in a full run that output could scroll past before pytest
+attached to the serial port, which failed inside the suite and passed when run
+alone. The fix was to move the report after enumeration so it is emitted with
+`HOST_DEVICE` rather than ahead of it. If a module here ever grows a second
+test, or starts reporting something before enumeration again, convert it to the
+`peer/` shape rather than re-tuning the timing.
+
 ## Tests
 
 - `hid_keyboard`: starts `EspUsbHost` and `EspUsbDeviceHidKeyboard` on one P4,
