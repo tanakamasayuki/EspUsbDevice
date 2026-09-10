@@ -39,10 +39,20 @@ cd tests
 uv run --env-file .env pytest --clean
 ```
 
+Building the examples is the CI Build Check workflow's job, not pytest's.
+**Before releasing, confirm Build Check is green for the commit being released.**
+A local full test does not build any example, so skipping this ships a broken one.
+To check by hand, the same entry point runs locally:
+
+```sh
+python3 tools/build_check.py esp32s3
+python3 tools/build_check.py esp32s2
+python3 tools/build_check.py esp32p4
+```
+
 Optional focused checks:
 
 ```sh
-uv run --env-file .env pytest examples_compile/ --clean -vv
 uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean -vv
 uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean -vv
 ```

@@ -36,7 +36,8 @@ Device 側に回避を入れるのは、USB 仕様、Arduino-ESP32、TinyUSB run
 主なテスト構成:
 
 - `unit/`: descriptor builder、report helper、FAT RAM disk など、Host 不要のテスト。
-- `examples_compile/`: examples sketch の build-only smoke。
+- example の build-only smoke は pytest ではなく `tools/build_check.py` と CI の
+  Build Check ワークフローが担当します。
 - `peer/`: ESP32-S3 2台構成。Host 側は `EspUsbHost`、Device 側は `EspUsbDevice`。
 - `loopback/`: ESP32-P4 1台構成。Host role と Device role を同時に動かす。
 - `manual/`: Host OS、browser、SD card、PC mount など、自動化しにくい確認。
@@ -144,7 +145,6 @@ uv run --env-file .env pytest --clean
 - `unit/compile_smoke`
 - `unit/descriptor`
 - `unit/fat_ramdisk`
-- `examples_compile`
 - `peer/hid_keyboard`
 - `peer/hid_keyboard_layout`
 - `peer/hid_mouse`

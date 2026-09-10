@@ -30,10 +30,20 @@ cd tests
 uv run --env-file .env pytest --clean
 ```
 
+example のビルドは pytest ではなく CI の Build Check ワークフローが担当します。
+**リリース前に、対象コミットで Build Check が緑になっていることを確認してください。**
+ローカルの全テストは example をビルドしないので、ここを飛ばすと壊れた example が
+そのまま出ます。手元で確かめたいときは同じ入口を直接叩けます。
+
+```sh
+python3 tools/build_check.py esp32s3
+python3 tools/build_check.py esp32s2
+python3 tools/build_check.py esp32p4
+```
+
 必要に応じて個別に確認します。
 
 ```sh
-uv run --env-file .env pytest examples_compile/ --clean -vv
 uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean -vv
 uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean -vv
 ```

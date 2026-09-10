@@ -20,7 +20,6 @@ ESP32-P4 の loopback は、Arduino-ESP32 標準 Device 実装が HS 固定で F
 ## 構成
 
 - `unit/`: ホスト不要の descriptor / report helper / FAT RAM disk テスト。
-- `examples_compile/`: examples sketch の build-only smoke テスト。
 - `peer/`: EspUsbHost を host、EspUsbDevice を device とする2台構成テスト。
 - `loopback/`: ESP32-P4 1台で EspUsbHost と EspUsbDevice を同時に動かすテスト。
 - `manual/`: 物理デバイスまたは目視確認が必要なテスト。
@@ -33,7 +32,6 @@ ESP32-P4 の loopback は、Arduino-ESP32 標準 Device 実装が HS 固定で F
 uv run --env-file .env pytest
 uv run --env-file .env pytest peer/
 uv run --env-file .env pytest --run-mode=build
-uv run --env-file .env pytest examples_compile/
 ```
 
 通常の peer / loopback はリリース版 `EspUsbHost` を使います。local profile は
@@ -74,15 +72,16 @@ uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
   （plugin の lock ディレクトリにある portalocker のファイルロック。キーは解決後のポートパス）
   に参加させることです。
 - **隣のプロジェクトに kill された compile は `returncode=-15` かつコンパイラの診断が出ません。**
-  本物の失敗は必ずファイル名と行番号を出します。`examples_compile` はこれを判別して
+  本物の失敗は必ずファイル名と行番号を出します。`tools/build_check.py` はこれを判別して
   「signal で殺された、再実行してから調べろ」と明示します。
 - **ビルドだけの負荷は pass を fail に変えませんが、タイミングの expect は狂わせます。**
   誰かがタイミングを計測している間は重いビルドを止め、そのことを伝えてください。
 - **「実行が次のテストへ進んだ」を「そのテストが通った」と読まないでください。** pytest は
   失敗しても次のパラメータへ進みます。位置ではなく結果を見ること。
 
-`pytest --clean` を引数なしで実行したときの収集順は examples_compile → loopback → peer → unit
-なので、最初の 30 分ほどはボードに触りません。
+`pytest --clean` を引数なしで実行したときの収集順は loopback → peer → unit です。
+example のビルドはこの実行に含まれません——`tools/build_check.py` と CI の Build Check
+ワークフローが担当します。
 
 各テスト終了時に、Host 側の `dut.log` と peer 側の `peer-*.log` が自動的に監査されます。
 ESP-IDF のエラーログ、`ESP_ERR_*`、panic、assert、watchdog などの疑わしい行は、テストを
