@@ -112,11 +112,30 @@ void setup()
   }
 }
 
+// Block until the peer has been enumerated, so every command below answers about
+// a device that is actually attached, whatever order the tests run in.
+//
+// deviceAddress is latched in onDeviceConnected, which fires after the host has
+// claimed the interfaces - the right side of the event for anything that reads
+// the device's interfaces or endpoints. Waiting here rather than announcing once
+// at boot is what lets a test run in any position: a boot announcement is only
+// visible to whichever test happens to be first.
+static bool waitForDevice(uint32_t timeoutMs = 5000)
+{
+  const uint32_t startedAt = millis();
+  while (deviceAddress == 0 && millis() - startedAt < timeoutMs)
+  {
+    delay(10);
+  }
+  return deviceAddress != 0;
+}
+
 void loop()
 {
   if (Serial.available() > 0)
   {
     char command = Serial.read();
+    waitForDevice();
     if (command == 'e')
     {
       reportEnumeration();
@@ -137,12 +156,14 @@ void loop()
     else if (command == 'v')
     {
       const bool opened = deviceAddress && usb.vendorOpen(deviceAddress);
-      Serial.printf("VENDOR_OPEN ok=%u err=%s\n", opened ? 1 : 0, usb.lastErrorName());
+      Serial.printf("VENDOR_OPEN ok=%u err=%s\n", opened ? 1 : 0,
+                    opened ? "none" : usb.lastErrorName());
       const uint8_t payload[] = "ping";
       const bool wrote = opened && usb.vendorWrite(payload, sizeof(payload) - 1, deviceAddress);
       // Diagnostic: separate write success from read result to localize the
       // failure (host write vs device receipt vs host read).
-      Serial.printf("VENDOR_WRITE ok=%u err=%s\n", wrote ? 1 : 0, usb.lastErrorName());
+      Serial.printf("VENDOR_WRITE ok=%u err=%s\n", wrote ? 1 : 0,
+                    wrote ? "none" : usb.lastErrorName());
       uint8_t buffer[64] = {};
       size_t length = 0;
       const uint32_t started = millis();

@@ -8,6 +8,13 @@ declares, the RDR_to_PC answers it builds for each PC_to_RDR message, the ATR it
 returns on activation, the APDU exchanges, PC_to_RDR_Escape, and the interrupt
 endpoint's slot change notifications. EspUsbHost 2.7.1's ccid* API is the
 instrument.
+
+One test rather than five. Only the first waited for enumeration, and it did so
+by reading ``HOST_CONNECTED``, printed once at connect; the other four opened the
+interface through ``_open()`` and would have raced the enumeration on their own.
+Both sketches answer rather than announce now - see
+``tests/peer/composite_hid_cdc`` for the full note - and ``_open()`` puts the
+card where each case needs it, so the order is not load-bearing.
 """
 
 import time
@@ -43,7 +50,7 @@ def _expect_events(dut, pattern, retries=15, timeout=2):
 def _open(dut, device, *, card: bool):
     """Bring both sides to a known state: interface open, card in or out."""
     device.write("?")
-    device.expect_exact("DEVICE_READY")
+    device.expect_exact("DEVICE_READY 1")
     device.write("i" if card else "r")
     device.expect(r"DEVICE_CARD inserted=\d present=" + ("1" if card else "0"))
 
@@ -51,7 +58,7 @@ def _open(dut, device, *, card: bool):
     dut.expect_exact("CCID_OPEN 1")
 
 
-def test_usb_ccid_enumeration(dut, peers):
+def _enumeration(dut, device):
     """The reader's descriptors are what a CCID host expects to find.
 
     Interface class 0x0b with bulk IN / bulk OUT / interrupt IN, and a CCID class
@@ -59,12 +66,8 @@ def test_usb_ccid_enumeration(dut, peers):
     exchange level is the load-bearing one - it is what tells a host it may send
     whole APDUs instead of TPDUs.
     """
-    device = peers["device"]
-
-    dut.expect_exact("HOST_CONNECTED")
-    device.write("?")
-    device.expect_exact("DEVICE_READY")
-
+    # No _open() here: the host waits for enumeration inside every command, and
+    # the descriptors are the same whatever the slot holds.
     dut.write("i")
     dut.expect_exact("INTERFACE number=0 class=0x0b subclass=0x00 protocol=0x00 endpoints=3")
     dut.expect_exact("ENDPOINT iface=0 ep=0x01 attrs=0x02 mps=64 interval=0")
@@ -83,13 +86,12 @@ def test_usb_ccid_enumeration(dut, peers):
     )
 
 
-def test_usb_ccid_slot_status_follows_the_card(dut, peers):
+def _slot_status_follows_the_card(dut, device):
     """GetSlotStatus reports what the sketch put in the slot.
 
     Absent, then present but not activated, then active after IccPowerOn: the
     three ICC states a reader can report, driven from the device side.
     """
-    device = peers["device"]
     _open(dut, device, card=False)
 
     dut.write("s")
@@ -121,7 +123,7 @@ def test_usb_ccid_slot_status_follows_the_card(dut, peers):
     dut.expect_exact("CCID_STATUS ok=1 icc=inactive present=1 active=0 command=0 error=0x00")
 
 
-def test_usb_ccid_apdu_exchange(dut, peers):
+def _apdu_exchange(dut, device):
     """XfrBlock carries whole APDUs to the sketch and its answer back.
 
     Three cases: the PC/SC Get UID pseudo APDU, an echo instruction that proves
@@ -129,7 +131,6 @@ def test_usb_ccid_apdu_exchange(dut, peers):
     implement - which must come back as a successful exchange carrying the card's
     own 6D00, not as a failed CCID command.
     """
-    device = peers["device"]
     _open(dut, device, card=True)
 
     dut.write("p")
@@ -163,14 +164,13 @@ def test_usb_ccid_apdu_exchange(dut, peers):
     device.expect(r"DEVICE_STATUS mounted=1 present=1 powered=1 commands=\d+ apdus=\d+ last=0x65")
 
 
-def test_usb_ccid_escape_and_parameters(dut, peers):
+def _escape_and_parameters(dut, device):
     """The messages either side of the APDU path: Escape and GetParameters.
 
     Escape is the vendor-specific channel, answered by the sketch's onEscape();
     GetParameters is answered by the class itself and must come back as
     RDR_to_PC_Parameters for T=1.
     """
-    device = peers["device"]
     _open(dut, device, card=True)
 
     dut.write("c")
@@ -191,7 +191,7 @@ def test_usb_ccid_escape_and_parameters(dut, peers):
     device.expect(r"DEVICE_POWER on=\d+ off=\d+ escape=[1-9]\d*")
 
 
-def test_usb_ccid_slot_change_notifications(dut, peers):
+def _slot_change_notifications(dut, device):
     """Taking the card out and putting it back reaches the host as events.
 
     RDR_to_PC_NotifySlotChange on the interrupt endpoint is the only part of the
@@ -206,7 +206,6 @@ def test_usb_ccid_slot_change_notifications(dut, peers):
     belief depends on what earlier tests left behind, the card is toggled twice:
     that yields at least one insertion and one removal event either way.
     """
-    device = peers["device"]
     _open(dut, device, card=True)
     # _open() moved the card too; let its notification land before counting.
     time.sleep(0.3)
@@ -229,3 +228,23 @@ def test_usb_ccid_slot_change_notifications(dut, peers):
     # card ended up back in the slot.
     dut.write("s")
     dut.expect_exact("CCID_STATUS ok=1 icc=inactive present=1 active=0 command=0 error=0x00")
+
+
+def test_usb_ccid(dut, peers):
+    device = peers["device"]
+
+    # The precondition, asked rather than awaited: the device answers only once
+    # the host has configured it. Each case then calls _open() for the slot state
+    # it needs.
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+
+    checks = (
+        _enumeration,
+        _slot_status_follows_the_card,
+        _apdu_exchange,
+        _escape_and_parameters,
+        _slot_change_notifications,
+    )
+    for check in checks:
+        check(dut, device)

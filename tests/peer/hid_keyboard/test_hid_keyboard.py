@@ -3,12 +3,28 @@
 One test rather than four. The four it replaced shared a single enumeration
 wait: only the first waited for DEVICE_BEGIN / HOST_CONNECTED / HID_DESC, and
 the rest wrote to the host immediately, which works while they run after it and
-races the enumeration when any of them is run on its own.
+races the enumeration when any of them is run on its own. Those three lines are
+printed once at boot, so even the first one only worked by being first.
+
+Both sketches answer rather than announce now. The device types every printable
+byte it receives, so its commands are control bytes: 0x04 asks whether the host
+has configured it. The host answers '?' with the peer's address and 'D' with the
+report descriptor summary it fetched at enumeration.
 
 The cases are named functions driven from a list, so a failure names the
 function it happened in. Each one establishes what it needs and leaves the LED
 state cleared, so the list order is not load-bearing.
 """
+
+
+def _report_descriptor(dut, device):
+    """The host fetched a report descriptor for the keyboard interface.
+
+    Everything below decodes through it, and _set_protocol addresses the
+    interface number it carries, so it is worth stating on its own.
+    """
+    dut.write("D")
+    dut.expect_exact("HID_DESC iface=0")
 
 
 def _typing(dut, device):
@@ -85,9 +101,10 @@ def _set_protocol(dut, device):
 def test_hid_keyboard(dut, peers):
     device = peers["device"]
 
-    device.expect_exact("DEVICE_BEGIN 1")
-    dut.expect_exact("HOST_CONNECTED")
-    dut.expect_exact("HID_DESC iface=0")
+    device.write("\x04")
+    device.expect_exact("DEVICE_READY 1")
+    dut.write("?")
+    dut.expect(r"HOST_READY 1 address=[1-9]\d*")
 
-    for check in (_typing, _led_callback, _led_state_getter, _set_protocol):
+    for check in (_report_descriptor, _typing, _led_callback, _led_state_getter, _set_protocol):
         check(dut, device)

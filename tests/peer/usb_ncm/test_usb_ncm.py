@@ -13,6 +13,12 @@ Here the angle is finer / different:
                            is a real client address (not the gateway .1)
   - device_observes_request  device-side view: the device's own web server
                              actually served the host's request
+
+One test rather than three: the first read ``HOST_CONNECTED``, printed once at
+connect, and the other two depended on the netif state it left behind. Both
+sketches answer rather than announce now - see ``tests/peer/composite_hid_cdc``
+for the full note - and ``_ensure_attached()`` re-establishes the link at the top
+of each case, so the order is not load-bearing.
 """
 
 import re
@@ -67,7 +73,7 @@ def _wait_device_link(device, timeout=15):
     while True:
         device.write("?")
         m = device.expect(
-            r"DEVICE_READY ip=192\.168\.7\.1 link=(\d)",
+            r"DEVICE_NET ip=192\.168\.7\.1 link=(\d)",
             timeout=min(2, max(0.1, deadline - time.monotonic())),
         )
         if int(m.group(1)) == 1:
@@ -116,7 +122,7 @@ def _ensure_attached(dut, device):
     up yet. Returns a fresh stats snapshot to use as a baseline.
     """
     device.write("?")
-    device.expect_exact("DEVICE_READY ip=192.168.7.1")
+    device.expect_exact("DEVICE_NET ip=192.168.7.1")
 
     stats = _read_stats(dut)
     if stats["netif"] == 0:
@@ -127,13 +133,9 @@ def _ensure_attached(dut, device):
     return stats
 
 
-def test_usb_ncm_enumeration_endpoints(dut, peers):
+def _enumeration_endpoints(dut, device):
     """Finer than the protocol-only enumeration check: the host must have parsed
     a structurally valid CDC-NCM function."""
-    device = peers["device"]
-    _wait_device_link(device)
-
-    dut.expect_exact("HOST_CONNECTED")
     dut.write("i")
     m = dut.expect(ENUM_RE, timeout=10)
     ctrl = int(m.group(1))
@@ -157,10 +159,9 @@ def test_usb_ncm_enumeration_endpoints(dut, peers):
     assert not (ep_out & 0x80), hex(ep_out)
 
 
-def test_usb_ncm_frame_stats(dut, peers):
+def _frame_stats(dut, device):
     """Transport-layer perspective: link/netif up, the lease is a real client
     address, and a transfer moves frames in BOTH directions with no TX fails."""
-    device = peers["device"]
     before = _ensure_attached(dut, device)
 
     assert before["ready"] == 1, before
@@ -181,11 +182,10 @@ def test_usb_ncm_frame_stats(dut, peers):
     assert after["link"] == 1 and after["netif"] == 1, after
 
 
-def test_usb_ncm_device_observes_request(dut, peers):
+def _device_observes_request(dut, device):
     """Device-side perspective (only possible from this repo's peer): after the
     host fetches the page, the DEVICE's own web server must report that it served
     the request, closing the loop from the device end."""
-    device = peers["device"]
     _ensure_attached(dut, device)
 
     device.write("s")
@@ -205,3 +205,18 @@ def test_usb_ncm_device_observes_request(dut, peers):
     assert served_after > served_before, (served_before, served_after)
     # And its link/lwIP netif were up while doing so.
     assert link == 1 and net == 1, m1.group(0)
+
+
+def test_usb_ncm(dut, peers):
+    device = peers["device"]
+
+    # The precondition, asked rather than awaited. The peer is uploaded and
+    # started after the host, so its serial console can be ready slightly before
+    # USB enumeration reaches the configured state; _wait_device_link polls
+    # through that transition rather than racing it.
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+    _wait_device_link(device)
+
+    for check in (_enumeration_endpoints, _frame_stats, _device_observes_request):
+        check(dut, device)

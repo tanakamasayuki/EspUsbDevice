@@ -14,6 +14,24 @@ EspUsbHostCdcSerial CdcSerial(usb);
 // our own pid so the test never races the boot window.
 static const uint16_t DEVICE_PID = 0x4020;
 static uint8_t deviceAddress = 0;
+
+// Block until our device has enumerated and its interfaces are claimed, so every
+// command below answers about a device that is actually there.
+//
+// deviceAddress is latched in onDeviceConnected, which fires after the host has
+// claimed the interfaces - the right side of the event for anything that reads
+// getInterfaces() or getEndpoints(). Waiting here rather than announcing once at
+// boot is what lets a test run in any position: an announcement is only visible
+// to whichever test happens to be first.
+static bool waitForDevice(uint32_t timeoutMs = 5000)
+{
+  const uint32_t started = millis();
+  while (deviceAddress == 0 && millis() - started < timeoutMs)
+  {
+    delay(10);
+  }
+  return deviceAddress != 0;
+}
 static uint16_t devicePid = 0;
 
 static void reportEnumeration()
@@ -114,6 +132,7 @@ void loop()
   if (Serial.available() > 0)
   {
     char command = Serial.read();
+    waitForDevice();
     if (command == 'e')
     {
       reportEnumeration();

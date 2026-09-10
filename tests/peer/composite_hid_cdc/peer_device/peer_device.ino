@@ -11,6 +11,26 @@ EspUsbDeviceCdcSerial UsbSerial(device);
 static bool beginOk = false;
 static const char *beginError = "ESP_OK";
 
+// Block until the host has configured us, so every command below answers from a
+// usable device whatever order the tests run in.
+//
+// device.ready() is tud_mounted(): the host completed SET_CONFIGURATION. That is
+// the event the tests actually depend on, and it is deliberately answered on
+// demand rather than announced once at boot - a test that does not run first
+// never sees an announcement, which is what made most of this suite fail when
+// its modules were run in reverse. tests/peer/usb_msc has had this shape all
+// along and is the only peer module that survived that check.
+static bool waitForHost(uint32_t timeoutMs = 5000)
+{
+  const uint32_t started = millis();
+  while (!device.ready() && millis() - started < timeoutMs)
+  {
+    device.task();
+    delay(10);
+  }
+  return device.ready();
+}
+
 static bool tapKeyWithRetry(char c)
 {
   const uint32_t start = millis();
@@ -50,9 +70,10 @@ void loop()
   if (Serial.available() > 0)
   {
     char command = Serial.read();
+    const bool hostReady = waitForHost();
     if (command == '?')
     {
-      Serial.println("DEVICE_READY");
+      Serial.printf("DEVICE_READY %u\n", hostReady ? 1 : 0);
     }
     else if (command == 'b')
     {

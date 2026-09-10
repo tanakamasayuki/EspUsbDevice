@@ -55,30 +55,30 @@ tests/
 
 ## Coverage Plan
 
-| Feature | Unit | Peer | Loopback | Probe | Manual |
-|---------|------|------|----------|-------|--------|
-| Device descriptor config | ✅ `descriptor` | | | planned | |
-| Runtime lifecycle | ✅ `descriptor` (100 begin/end + partial failure recovery) | | | | |
-| FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | planned | |
-| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal/reverse ports | | |
-| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` (callback + `ledState()`, tracked with no callback installed) | ✅ `hid_keyboard` normal/reverse ports | | optional |
-| HID keyboard NKRO | ✅ `nkro_report` (struct bitmap/modifier/boundaries) | ✅ `hid_keyboard_nkro` (exact 8-key chord, JIS high usages, whole state in one report, `heldState()`, refusal without `enableNkro()`) | pending | | ✅ `examples/KeyboardNKRO` |
-| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | | |
-| Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | | |
-| Custom HID report descriptor | planned | ✅ `custom_hid` | ✅ `custom_hid` | | |
-| HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | ✅ `hid_vendor` | | |
-| Consumer control HID | planned | ✅ `hid_consumer_control` | ✅ `hid_consumer_control` | | |
-| System control HID | planned | ✅ `hid_system_control` | ✅ `hid_system_control` | | |
-| Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | | |
-| CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | | |
-| CDC ACM, several ports | ✅ `cdc_multi` (S3: two-port descriptor, endpoint addresses, IAD-derived device class, ceiling rejections), ✅ `p4_controller_endpoints` (P4: HID+Vendor+CDC x2, CDC x3, fourth port rejected, third rejected on FS) | ✅ `usb_serial_multi` (two real S3 boards: 4 interfaces / 6 endpoints / claims, `class=ef`, port-to-interface/endpoint mapping, **traffic both ways on port 0 and on port 1**, separation, per-port line coding) | ✅ `usb_serial_multi` (one P4, device=HS with 3 ports: 6 interfaces / 9 endpoints / `class=ef`, port-to-interface/endpoint mapping, **traffic both ways on all three ports**, separation, per-port line coding) | | ✅ `examples/SerialMulti` |
-| USB MIDI | ✅ `midi_descriptor` (descriptor bytes for every symmetric and asymmetric cable-count pair) | ✅ `usb_midi` (MIDI-only device also enumerates as supported), ✅ `usb_midi_cables` (asymmetric 4-in / 5-out: Host-decoded counts and directions, interleave, SysEx) | ✅ `usb_midi`, ✅ `usb_midi_cables` (4 cables symmetric) | | |
-| USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | | |
-| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | | ✅ `examples/USBVendor` |
-| CCID smart card reader | ✅ `ccid_descriptor` (interface / class descriptor bytes) | ✅ `usb_ccid` class descriptor, ICC states, ATR, APDU / escape / parameters / abort, slot change notifications | not implemented | | ✅ `examples/SmartCardReader` |
-| USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`, UAC2 `usb_audio_uac2` | not implemented | | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
-| Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | | |
-| Core dependency boundary | ✅ `dependency_boundary` | | | | |
+| Feature | Unit | Peer | Loopback | Manual |
+|---------|------|------|----------|--------|
+| Device descriptor config | ✅ `descriptor` | | | |
+| Runtime lifecycle | ✅ `descriptor` (100 begin/end + partial failure recovery) | | | |
+| FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | |
+| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal/reverse ports | |
+| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` (callback + `ledState()`, tracked with no callback installed) | ✅ `hid_keyboard` normal/reverse ports | optional |
+| HID keyboard NKRO | ✅ `nkro_report` (struct bitmap/modifier/boundaries) | ✅ `hid_keyboard_nkro` (exact 8-key chord, JIS high usages, whole state in one report, `heldState()`, refusal without `enableNkro()`) | pending | ✅ `examples/KeyboardNKRO` |
+| HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | |
+| Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | |
+| Custom HID report descriptor | planned | ✅ `custom_hid` | ✅ `custom_hid` | |
+| HID vendor IN/OUT/Feature | planned | ✅ `hid_vendor` | ✅ `hid_vendor` | |
+| Consumer control HID | planned | ✅ `hid_consumer_control` | ✅ `hid_consumer_control` | |
+| System control HID | planned | ✅ `hid_system_control` | ✅ `hid_system_control` | |
+| Gamepad HID | planned | ✅ `hid_gamepad` | ✅ `hid_gamepad` | |
+| CDC ACM | | ✅ `usb_serial` | ✅ `usb_serial` | |
+| CDC ACM, several ports | ✅ `cdc_multi` (S3: two-port descriptor, endpoint addresses, IAD-derived device class, ceiling rejections), ✅ `p4_controller_endpoints` (P4: HID+Vendor+CDC x2, CDC x3, fourth port rejected, third rejected on FS) | ✅ `usb_serial_multi` (two real S3 boards: 4 interfaces / 6 endpoints / claims, `class=ef`, port-to-interface/endpoint mapping, **traffic both ways on port 0 and on port 1**, separation, per-port line coding) | ✅ `usb_serial_multi` (one P4, device=HS with 3 ports: 6 interfaces / 9 endpoints / `class=ef`, port-to-interface/endpoint mapping, **traffic both ways on all three ports**, separation, per-port line coding) | ✅ `examples/SerialMulti` |
+| USB MIDI | ✅ `midi_descriptor` (descriptor bytes for every symmetric and asymmetric cable-count pair) | ✅ `usb_midi` (MIDI-only device also enumerates as supported), ✅ `usb_midi_cables` (asymmetric 4-in / 5-out: Host-decoded counts and directions, interleave, SysEx) | ✅ `usb_midi`, ✅ `usb_midi_cables` (4 cables symmetric) | |
+| USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | |
+| USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL, opened pipes and packet sizes, full-packet + ZLP receive, queued burst receive | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `examples/USBVendor` |
+| CCID smart card reader | ✅ `ccid_descriptor` (interface / class descriptor bytes) | ✅ `usb_ccid` class descriptor, ICC states, ATR, APDU / escape / parameters / abort, slot change notifications | not implemented | ✅ `examples/SmartCardReader` |
+| USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`, UAC2 `usb_audio_uac2` | not implemented | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
+| Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | |
+| Core dependency boundary | ✅ `dependency_boundary` | | | |
 
 ## Detailed EspUsbHost Behavior Tests
 
@@ -476,6 +476,14 @@ and every data plane.
 - `unit/compile_smoke` must verify Arduino CLI, sketch.yaml, ESP32 board package,
   and library resolution in build-only mode.
 - Peer tests must use serial commands to drive the device board.
+- Each `peer/` module is one pytest test whose cases are named functions driven
+  from a list. A module that needs its cases in a particular order must say why
+  in its docstring; every other module must pass with the list reversed.
+- Peer sketches answer questions rather than announcing state at boot. The device
+  answers `?` with `DEVICE_READY <0|1>` after waiting on `device.ready()`; the
+  host waits on its latched device address, and answers `?` with `HOST_READY` when
+  nothing else it prints reports the connection. Anything learned once at
+  enumeration must also be replayable on demand.
 - Device sketches must not call Arduino-ESP32 `USB.begin()`.
 - P4 tests must print selected port, requested speed, TinyUSB rhport, connected
   speed when available, VID/PID, interface count, and endpoint MPS.

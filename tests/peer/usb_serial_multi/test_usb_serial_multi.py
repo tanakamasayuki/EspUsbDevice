@@ -92,11 +92,12 @@ def _line_coding_is_per_port(dut, device):
 def test_usb_serial_multi(dut, peers):
     device = peers["device"]
 
-    dut.expect_exact("HOST_CONNECTED vid=303a pid=4015")
     device.write("b")
     device.expect_exact("DEVICE_BEGIN ok ESP_OK")
+    # The precondition, asked rather than awaited: begun=1 is this sketch's own
+    # setup having run, the leading flag is the host having configured it.
     device.write("?")
-    device.expect_exact("DEVICE_READY")
+    device.expect_exact("DEVICE_READY 1 begun=1")
 
     checks = (
         _device_reports_two_ports,

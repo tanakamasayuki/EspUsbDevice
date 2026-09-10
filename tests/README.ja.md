@@ -52,6 +52,66 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
 ```
 
+## peer テストの形
+
+`peer/` 配下のモジュールはそれぞれ pytest のテスト 1 個です。中のケースはただの
+名前付き関数で、リストから順に呼び出します。
+
+```python
+def _enumeration(dut, device): ...
+def _keyboard(dut, device): ...
+
+
+def test_composite_hid_cdc(dut, peers):
+    device = peers["device"]
+
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+
+    for check in (_enumeration, _keyboard):
+        check(dut, device)
+```
+
+理由は 2 つです。失敗したとき行番号ではなく関数名で場所が分かること。そして
+1 モジュール 1 テストなら、特定の順序でしか通らないテストが存在し得ないこと。
+
+### 待つのではなく訊く
+
+両側のスケッチは、起動時に一度告知するのではなく、訊かれたら答えます。
+
+- デバイス側は `?` に `DEVICE_READY <0|1>` で答えます。答える前に `waitForHost()`
+  で `device.ready()`（`tud_mounted()`、ホストが SET_CONFIGURATION を完了した
+  状態）を待ちます。モジュール固有の状態は `DEVICE_NET` / `DEVICE_CABLES` /
+  `DEVICE_NKRO` のように別行にし、`DEVICE_READY` 行には足しません。
+- ホスト側も同様に `waitForDevice()` で `onDeviceConnected` がラッチしたアドレス
+  を待ちます。コールバック出力を流すだけで接続を報告するコマンドを持たない
+  スケッチには `?` → `HOST_READY <0|1> vid=.... pid=....` を追加しました。
+- 列挙時に一度だけ得られる情報は、表示するだけでなく保持して訊き直せるように
+  しました。`D` は HID レポートディスクリプタの要約、`S` はオーディオストリーム
+  一覧を再送します。
+
+これで実行位置が無関係になります。起動時に一度出る行は最初のテストにしか見えま
+せんが、質問はいつでもできて、訊くこと自体がバナー待ちと同じ検証になります。
+
+`peer/usb_msc` は最初からこの形で、他が起動バナーを読んでいた頃に逆順実行を唯一
+通過したモジュールです。
+
+### 意図的に順序があるモジュール
+
+4 つのモジュールは意図してケース順を固定しており、docstring にその理由を書いて
+います。
+
+- `usb_serial` — 最後の line coding 手順が「部分的な SET_LINE_CODING が他の
+  フィールドを保つ」ことを見るので、前の手順が前提。
+- `usb_serial_multi` — ポート分離の確認が、前の 2 ケースが作ったカウンタを読む。
+- `usb_midi_cables` — 最初と最後のケースが、間の全送信を挟む before/after の対。
+- `usb_vendor` — 最初のケースがデバイス側 RX 数の厳密値を見るので、カウンタが
+  セッション開始時のままである必要がある。
+
+それ以外はケースのリストを逆順にしても通るはずです。確認方法はタプルを
+`reversed(...)` で包んでそのモジュールを再実行するだけ。pytest 1 回・書き込み
+1 回で済むので、ケースを書き換えたモジュールには回しておく価値があります。
+
 ## 治具を共有するときの注意
 
 治具は他のプロジェクトや他の Claude セッションと共有しています。実機を使う前に相手へ

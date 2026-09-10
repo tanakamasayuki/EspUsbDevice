@@ -7,15 +7,21 @@ The three tests below the first one were added once the host side moved to
 EspUsbHost 2.7.0: they need APIs introduced in 2.5.3 (opened-pipe reporting,
 auto ZLP, and the asynchronous bulk-OUT queue) that the previously pinned 2.5.2
 did not have, so this device behaviour had no automated coverage.
+
+One test rather than four. The first read ``HOST_CONNECTED``, printed once at
+connect, and the other three opened the pipe without waiting for enumeration.
+Both sketches answer rather than announce now; see
+``tests/peer/composite_hid_cdc`` for the full note.
+
+The cases are named functions driven from a list, and here the list IS ordered:
+``_enumeration_and_transfer`` asserts an exact device RX count (rx=4), which only
+holds while the counters are still the ones this session started with. The two
+burst cases reset them. So this module is not a candidate for a reversed run -
+the ordering is the subject of the first case, not an accident of how it was
+written.
 """
 
-def test_usb_vendor_enumeration_and_transfer(dut, peers):
-    device = peers["device"]
-
-    dut.expect_exact("HOST_CONNECTED")
-    device.write("?")
-    device.expect_exact("DEVICE_READY")
-
+def _enumeration_and_transfer(dut, device):
     dut.write("i")
     dut.expect_exact("INTERFACE number=0 class=0xff subclass=0x00 protocol=0x00 endpoints=2")
     dut.expect_exact("ENDPOINT iface=0 ep=0x01 attrs=0x02 mps=64 interval=0")
@@ -68,7 +74,7 @@ def _restore_device_echo(device):
     device.expect_exact("DEVICE_ECHO 1")
 
 
-def test_usb_vendor_opened_pipes(dut, peers):
+def _opened_pipes(dut, device):
     """The pipes vendorOpen() actually opened must match what the device declared.
 
     The enumeration test above reads the descriptor; this reads the driver's view
@@ -77,10 +83,6 @@ def test_usb_vendor_opened_pipes(dut, peers):
     usable, not merely well-formed - a device that declares 64 but opens as
     something else would pass the descriptor check alone.
     """
-    device = peers["device"]
-    device.write("?")
-    device.expect_exact("DEVICE_READY")
-
     dut.write("o")
     dut.expect_exact("VENDOR_OPEN 1")
 
@@ -89,7 +91,7 @@ def test_usb_vendor_opened_pipes(dut, peers):
     dut.expect_exact("VENDOR_PIPES in=0x81 out=0x01 in_mps=64 out_mps=64")
 
 
-def test_usb_vendor_full_packet_write_with_zlp(dut, peers):
+def _full_packet_write_with_zlp(dut, device):
     """A transfer that is exactly one full packet must arrive complete.
 
     A bulk OUT whose length is a non-zero multiple of wMaxPacketSize does not
@@ -98,9 +100,6 @@ def test_usb_vendor_full_packet_write_with_zlp(dut, peers):
     boundary the P4 manual test covers for device-to-host: all 64 bytes must reach
     the sketch, and the endpoint must stay usable afterwards.
     """
-    device = peers["device"]
-    device.write("?")
-    device.expect_exact("DEVICE_READY")
     dut.write("o")
     dut.expect_exact("VENDOR_OPEN 1")
 
@@ -130,7 +129,7 @@ def test_usb_vendor_full_packet_write_with_zlp(dut, peers):
     dut.expect_exact("VENDOR_DATA seen=1 data=echo:ping")
 
 
-def test_usb_vendor_queued_writes(dut, peers):
+def _queued_writes(dut, device):
     """Back-to-back queued transfers must all reach the device.
 
     `vendorWriteQueueBegin()` / `vendorWriteAcquire()` / `vendorWriteSubmit()`
@@ -138,9 +137,6 @@ def test_usb_vendor_queued_writes(dut, peers):
     pattern that stresses the device's OUT FIFO and `onRx()` handling hardest. With
     the synchronous API available at 2.5.2 the host could not produce it.
     """
-    device = peers["device"]
-    device.write("?")
-    device.expect_exact("DEVICE_READY")
     dut.write("o")
     dut.expect_exact("VENDOR_OPEN 1")
 
@@ -163,3 +159,19 @@ def test_usb_vendor_queued_writes(dut, peers):
         assert received == 256, m.group(0)
     finally:
         _restore_device_echo(device)
+
+
+def test_usb_vendor(dut, peers):
+    device = peers["device"]
+
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+
+    checks = (
+        _enumeration_and_transfer,
+        _opened_pipes,
+        _full_packet_write_with_zlp,
+        _queued_writes,
+    )
+    for check in checks:
+        check(dut, device)
