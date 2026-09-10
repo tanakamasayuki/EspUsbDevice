@@ -46,9 +46,11 @@ def test_composite_hid_cdc_msc(dut, peers):
     # begin() status over UART first, independent of USB enumeration.
     device.write("b")
     device.expect_exact("DEVICE_BEGIN ok ESP_OK")
+    # The precondition, asked rather than awaited. The device answers only once
+    # the host has configured it, so this both waits and asserts; the pid is
+    # checked by _enumeration below, from the host's side.
     device.write("?")
-    device.expect_exact("DEVICE_READY")
-    dut.expect_exact("HOST_CONNECTED vid=303a pid=4022")
+    device.expect_exact("DEVICE_READY 1")
 
     for check in (_enumeration, _hid, _cdc, _msc):
         check(dut, device)

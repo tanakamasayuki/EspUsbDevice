@@ -1,16 +1,26 @@
+"""USB Audio source (microphone): the device streams PCM to the host.
+
+The preconditions are asked rather than awaited. ``MIC_DEVICE_READY`` is printed
+once by the device's setup(), so a test that did not run first would never see
+it; the device now answers '?' with a ready flag, and the host answers 'S' with
+the stream report its connect callback announces.
+
+The cases are named functions driven from a list. ``_streaming`` resets the
+counter it then reads, so the order is not load-bearing.
+"""
+
 import time
 
 
-def test_usb_audio_microphone(dut, peers):
-    """USB Audio source (microphone): the device streams PCM to the host. Start
-    the input stream and confirm device -> host PCM arrives and is non-silent."""
-    device = peers["device"]
+def _input_stream_present(dut, device):
+    """One IN (microphone) stream, read from the descriptors."""
+    dut.write("S")
+    dut.expect("AUDIO_STREAM .* dir=IN ")
 
-    device.expect_exact("MIC_DEVICE_READY 1")
 
-    # Wait for a stable, audio-input-ready device (the 'i' command polls up to
-    # 15 s, tolerating startup re-enumeration), so this passes regardless of
-    # boot timing / run order.
+def _streaming(dut, device):
+    # The 'i' command polls for up to 15 s, tolerating the re-enumeration the
+    # device can do at startup, so this does not depend on boot timing.
     dut.write("i")
     dut.expect("HOST_AUDIO addr=[1-9][0-9]* ready=1", timeout=20)
 
@@ -31,3 +41,13 @@ def test_usb_audio_microphone(dut, peers):
     # And the device confirms it actually pushed samples out.
     device.write("?")
     device.expect("MIC_ALIVE tx=[1-9][0-9]*")
+
+
+def test_usb_audio_microphone(dut, peers):
+    device = peers["device"]
+
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+
+    for check in (_input_stream_present, _streaming):
+        check(dut, device)

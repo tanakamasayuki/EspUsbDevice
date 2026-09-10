@@ -48,6 +48,13 @@ Not covered here, and why:
   composite peer sketch of its own.
 * **Two MIDI Streaming interfaces**, the case the claim gate was tightened for.
   `EspUsbDeviceMidi` allows one instance per device, so this peer cannot produce it.
+
+One test rather than ten, and here the merge does more than remove a boot-banner
+dependency: this module is a sequence. ``_cable_count_before_any_traffic`` is only
+that test if nothing has sent MIDI yet, and ``_cable_count_unchanged_after_traffic``
+is only that test if everything in between has run. As ten separate tests that
+held by luck of collection order; as one ordered list it is stated. So this module
+is deliberately not a candidate for a reversed run.
 """
 
 IN_CABLES = 4
@@ -64,7 +71,7 @@ def _port_info(dut):
     return m
 
 
-def test_usb_midi_cable_count_before_any_traffic(dut, peers):
+def _cable_count_before_any_traffic(dut, device):
     """The host must report 4 cables device-to-host and 5 host-to-device, from the
     descriptors alone.
 
@@ -73,12 +80,11 @@ def test_usb_midi_cable_count_before_any_traffic(dut, peers):
     any MIDI message is exchanged, because a count that only becomes right after
     traffic arrives is exactly what EspMidi cannot use.
     """
-    device = peers["device"]
-
-    dut.expect_exact("HOST_CONNECTED vid=303a pid=4017")
-    device.write("?")
+    # The device's own view of what it published, which is what the host below
+    # has to agree with.
     # 34 head + 30 per two-way cable + 15 per one-way cable + 17 + 18 endpoints.
-    device.expect_exact(f"DEVICE_READY in={IN_CABLES} out={OUT_CABLES} bytes=204")
+    device.write("?")
+    device.expect_exact(f"DEVICE_CABLES in={IN_CABLES} out={OUT_CABLES} bytes=204")
 
     m = _port_info(dut)
     assert int(m.group(1)) == 1, m.group(0)
@@ -94,10 +100,8 @@ def test_usb_midi_cable_count_before_any_traffic(dut, peers):
     assert int(m.group(4)) == 1, m.group(0)
 
 
-def test_usb_midi_all_cables_device_to_host(dut, peers):
+def _all_cables_device_to_host(dut, device):
     """Every cable this device sends on."""
-    device = peers["device"]
-
     device.write("A")
     for cable in range(IN_CABLES):
         device.expect_exact(f"DEVICE_TX_CABLE {cable} 1")
@@ -106,9 +110,7 @@ def test_usb_midi_all_cables_device_to_host(dut, peers):
         )
 
 
-def test_usb_midi_all_cables_host_to_device(dut, peers):
-    device = peers["device"]
-
+def _all_cables_host_to_device(dut, device):
     dut.write("A")
     for cable in range(OUT_CABLES):
         dut.expect_exact(f"MIDI_TX_CABLE {cable} 1")
@@ -117,15 +119,13 @@ def test_usb_midi_all_cables_host_to_device(dut, peers):
         )
 
 
-def test_usb_midi_interleaved_cables_device_to_host(dut, peers):
+def _interleaved_cables_device_to_host(dut, device):
     """Four packets on four cables, written back to back so they share a transfer.
 
     The note numbers stay sequential while the cables do not, so a cable applied
     once per transfer rather than once per packet pairs them up wrongly instead of
     just losing a message.
     """
-    device = peers["device"]
-
     device.write("I")
     device.expect_exact("DEVICE_TX_INTERLEAVE 1")
     for index, cable in enumerate(INTERLEAVED_CABLES):
@@ -134,11 +134,9 @@ def test_usb_midi_interleaved_cables_device_to_host(dut, peers):
         )
 
 
-def test_usb_midi_interleaved_cables_host_to_device(dut, peers):
+def _interleaved_cables_host_to_device(dut, device):
     """The same, in the direction where the four packets really are one transfer:
     the host writes them with a single midiSend()."""
-    device = peers["device"]
-
     dut.write("I")
     dut.expect_exact("MIDI_TX_INTERLEAVE 1")
     for index, cable in enumerate(INTERLEAVED_CABLES):
@@ -147,52 +145,44 @@ def test_usb_midi_interleaved_cables_host_to_device(dut, peers):
         )
 
 
-def test_usb_midi_sysex_on_non_zero_cable_device_to_host(dut, peers):
+def _sysex_on_non_zero_cable_device_to_host(dut, device):
     """A SysEx message split across packets keeps its cable on every packet.
 
     Each packet repeats the cable number, so reassembly is where one can be lost -
     and a message that starts on cable 3 and ends on cable 0 is not a message.
     """
-    device = peers["device"]
-
     device.write("S")
     device.expect_exact("DEVICE_TX_SYSEX 1")
     dut.expect_exact("MIDI_RX cable=3 cin=04 status=f0 data1=125 data2=1")
     dut.expect_exact("MIDI_RX cable=3 cin=06 status=02 data1=247 data2=0")
 
 
-def test_usb_midi_sysex_on_non_zero_cable_host_to_device(dut, peers):
-    device = peers["device"]
-
+def _sysex_on_non_zero_cable_host_to_device(dut, device):
     dut.write("S")
     dut.expect_exact("MIDI_TX_SYSEX 1")
     device.expect_exact("DEVICE_RX cable=3 cin=04 status=f0 data1=125 data2=1")
     device.expect_exact("DEVICE_RX cable=3 cin=06 status=02 data1=247 data2=0")
 
 
-def test_usb_midi_unknown_cable_is_refused(dut, peers):
+def _unknown_cable_is_refused(dut, device):
     """Cable 5 is past this device's cables in both directions, so sending on it must
     fail rather than land on another port."""
-    device = peers["device"]
-
     device.write("x")
     device.expect_exact("DEVICE_TX_UNKNOWN_CABLE 0")
 
 
-def test_usb_midi_receive_only_cable_is_refused_for_sending(dut, peers):
+def _receive_only_cable_is_refused_for_sending(dut, device):
     """Cable 4 exists for receiving but not for sending, and must be refused anyway.
 
     The range a sender is bounded by is inCableCount(), not outCableCount() - the
     Host has no port to deliver this to. Only an asymmetric device can show the
     difference; on a symmetric one both bounds are the same number.
     """
-    device = peers["device"]
-
     device.write("X")
     device.expect_exact("DEVICE_TX_RECEIVE_ONLY_CABLE 0")
 
 
-def test_usb_midi_cable_count_unchanged_after_traffic(dut, peers):
+def _cable_count_unchanged_after_traffic(dut, device):
     """The count must be the same as before any traffic.
 
     Traffic has now been seen on every cable in both directions. If the count were
@@ -204,3 +194,29 @@ def test_usb_midi_cable_count_unchanged_after_traffic(dut, peers):
     assert int(m.group(1)) == 1, m.group(0)
     assert int(m.group(2)) == IN_CABLES, m.group(0)
     assert int(m.group(3)) == OUT_CABLES, m.group(0)
+
+
+def test_usb_midi_cables(dut, peers):
+    device = peers["device"]
+
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+    dut.write("?")
+    dut.expect_exact("HOST_READY 1 vid=303a pid=4017")
+
+    # Ordered on purpose: the first and last cases are a before/after pair around
+    # everything between them.
+    checks = (
+        _cable_count_before_any_traffic,
+        _all_cables_device_to_host,
+        _all_cables_host_to_device,
+        _interleaved_cables_device_to_host,
+        _interleaved_cables_host_to_device,
+        _sysex_on_non_zero_cable_device_to_host,
+        _sysex_on_non_zero_cable_host_to_device,
+        _unknown_cable_is_refused,
+        _receive_only_cable_is_refused_for_sending,
+        _cable_count_unchanged_after_traffic,
+    )
+    for check in checks:
+        check(dut, device)

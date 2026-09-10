@@ -3,9 +3,15 @@ import time
 
 
 # The reported symptom is that device->host traffic stops permanently after a
-# while of continuous streaming and only a restart recovers it. These tests run
-# the stream for 30s and 300s and assert the link both keeps moving data and is
+# while of continuous streaming and only a restart recovers it. This runs the
+# stream for 30s and then 300s and asserts the link both keeps moving data and is
 # still usable afterwards.
+#
+# One test rather than two, in the shape the rest of tests/peer uses: the two
+# durations are named functions driven from a list, so a failure names which soak
+# stopped. The short one first, because a link that cannot survive 30s has
+# nothing to learn from another five minutes of it - and _run_soak re-establishes
+# the link either way, so neither depends on the other.
 
 _SOAK_RE = (
     r"SOAK connect=1 bytes=(\d+) ms=(\d+) kbps=(\d+) maxIdleMs=(\d+) "
@@ -22,7 +28,7 @@ def _wait_device_link(device, timeout=15):
     while True:
         device.write("?")
         match = device.expect(
-            r"DEVICE_READY ip=192\.168\.7\.1 link=(\d)",
+            r"DEVICE_NET ip=192\.168\.7\.1 link=(\d)",
             timeout=min(2, max(0.1, deadline - time.monotonic())),
         )
         if int(match.group(1)) == 1:
@@ -124,13 +130,24 @@ def _assert_healthy(soak, state, recover, duration_s):
     )
 
 
-def test_usb_ncm_soak_30s(dut, peers):
-    device = peers["device"]
+def _soak_30s(dut, device):
     soak, _stats, state, recover = _run_soak(dut, device, "1", 30)
     _assert_healthy(soak, state, recover, 30)
 
 
-def test_usb_ncm_soak_300s(dut, peers):
-    device = peers["device"]
+def _soak_300s(dut, device):
     soak, _stats, state, recover = _run_soak(dut, device, "2", 300)
     _assert_healthy(soak, state, recover, 300)
+
+
+def test_usb_ncm_soak(dut, peers):
+    device = peers["device"]
+
+    # The precondition, asked rather than awaited: the device answers only once
+    # the host has configured it. _run_soak then waits for the network link on
+    # top of that, which is a later state than enumeration.
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+
+    for check in (_soak_30s, _soak_300s):
+        check(dut, device)

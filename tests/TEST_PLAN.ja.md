@@ -415,6 +415,14 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 - descriptor テストはログ確認ではなく byte 列を assert する。
 - `unit/compile_smoke` は build-only で Arduino CLI、sketch.yaml、ESP32 board package、ライブラリ解決を確認する。
 - peer テストは serial command で device board の挙動を制御する。
+- `peer/` の 1 モジュールは pytest テスト 1 個とし、ケースはリストから順に呼ぶ
+  名前付き関数にする。順序が必要なモジュールは理由を docstring に書く。それ以外
+  はケースのリストを逆順にしても通ること。
+- peer のスケッチは起動時に状態を告知するのではなく、訊かれたら答える。デバイス
+  側は `device.ready()` を待ってから `?` に `DEVICE_READY <0|1>` を返す。ホスト側
+  はラッチしたアドレスを待ち、接続を報告するコマンドが他にない場合は `?` に
+  `HOST_READY` を返す。列挙時に一度だけ得られる情報も、要求で再送できるように
+  する。
 - device sketch は Arduino-ESP32 標準の `USB.begin()` を呼ばない。
 - P4 テストは selected port、requested speed、TinyUSB rhport、取得できる場合は
   connected speed、VID/PID、interface count、endpoint MPS を出力する。

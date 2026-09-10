@@ -60,6 +60,28 @@ static void reportEnumeration()
       audioCount, claimOk);
 }
 
+static void reportAudioStreams(uint8_t address)
+{
+  EspUsbHostAudioStreamInfo streams[ESP_USB_HOST_MAX_AUDIO_STREAMS];
+  const size_t count = usb.getAudioStreams(address, streams,
+                                           ESP_USB_HOST_MAX_AUDIO_STREAMS);
+  Serial.printf("AUDIO_STREAMS count=%u\n", static_cast<unsigned>(count));
+  for (size_t i = 0; i < count; ++i)
+  {
+    Serial.printf(
+        "AUDIO_STREAM iface=%u alt=%u ep=0x%02x dir=%s channels=%u bytes=%u bits=%u rate=%lu maxPacket=%u\n",
+        streams[i].interfaceNumber,
+        streams[i].alternate,
+        streams[i].endpointAddress,
+        streams[i].input ? "IN" : "OUT",
+        streams[i].channels,
+        streams[i].bytesPerSample,
+        streams[i].bitsPerSample,
+        static_cast<unsigned long>(streams[i].sampleRate),
+        streams[i].maxPacketSize);
+  }
+}
+
 static void fillOutputSamples()
 {
   static int16_t value = 0;
@@ -88,26 +110,7 @@ void setup()
                               device.vid, device.pid,
                               device.configurationInterfaceCount);
 
-                          EspUsbHostAudioStreamInfo streams
-                              [ESP_USB_HOST_MAX_AUDIO_STREAMS];
-                          const size_t count = usb.getAudioStreams(
-                              device.address, streams,
-                              ESP_USB_HOST_MAX_AUDIO_STREAMS);
-                          for (size_t i = 0; i < count; ++i)
-                          {
-                            Serial.printf(
-                                "AUDIO_STREAM iface=%u alt=%u ep=0x%02x dir=%s channels=%u bytes=%u bits=%u rate=%lu maxPacket=%u\n",
-                                streams[i].interfaceNumber,
-                                streams[i].alternate,
-                                streams[i].endpointAddress,
-                                streams[i].input ? "IN" : "OUT",
-                                streams[i].channels,
-                                streams[i].bytesPerSample,
-                                streams[i].bitsPerSample,
-                                static_cast<unsigned long>(
-                                    streams[i].sampleRate),
-                                streams[i].maxPacketSize);
-                          } });
+                          reportAudioStreams(device.address); });
 
   usb.onKeyboard([](const EspUsbHostKeyboardEvent &event)
                  {
@@ -123,14 +126,37 @@ void setup()
   }
 }
 
+// Block until the peer has been enumerated, so every command below answers about
+// a device that is actually attached, whatever order the tests run in.
+//
+// deviceAddress is latched in onDeviceConnected, which fires after the host has
+// claimed the interfaces - the right side of the event for anything that reads
+// the device's interfaces or endpoints. Waiting here rather than announcing once
+// at boot is what lets a test run in any position: a boot announcement is only
+// visible to whichever test happens to be first.
+static bool waitForDevice(uint32_t timeoutMs = 5000)
+{
+  const uint32_t startedAt = millis();
+  while (deviceAddress == 0 && millis() - startedAt < timeoutMs)
+  {
+    delay(10);
+  }
+  return deviceAddress != 0;
+}
+
 void loop()
 {
   if (Serial.available() > 0)
   {
     const char command = static_cast<char>(Serial.read());
+    waitForDevice();
     if (command == 'e')
     {
       reportEnumeration();
+    }
+    else if (command == 'S')
+    {
+      reportAudioStreams(deviceAddress);
     }
     else if (command == 'i')
     {

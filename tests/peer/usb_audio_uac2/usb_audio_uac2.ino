@@ -89,11 +89,30 @@ static void printAudioStreams()
   Serial.printf("AUDIO_STREAM_COUNT %u\n", static_cast<unsigned>(streamCount));
 }
 
+// Block until the peer has been enumerated, so every command below answers about
+// a device that is actually attached, whatever order the tests run in.
+//
+// audioAddress is latched in onDeviceConnected, which fires after the host has
+// claimed the interfaces - the right side of the event for anything that reads
+// the device's interfaces or endpoints. Waiting here rather than announcing once
+// at boot is what lets a test run in any position: a boot announcement is only
+// visible to whichever test happens to be first.
+static bool waitForDevice(uint32_t timeoutMs = 5000)
+{
+  const uint32_t startedAt = millis();
+  while (audioAddress == 0 && millis() - startedAt < timeoutMs)
+  {
+    delay(10);
+  }
+  return audioAddress != 0;
+}
+
 void loop()
 {
   if (Serial.available() > 0)
   {
     const char command = static_cast<char>(Serial.read());
+    waitForDevice();
     if (command == 'i')
     {
       // The device can re-enumerate a few times at startup, and its UAC2 rates

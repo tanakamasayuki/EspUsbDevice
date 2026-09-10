@@ -54,6 +54,73 @@ uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
 ```
 
+## The shape of a peer test
+
+Every module under `peer/` is one pytest test. The cases inside it are ordinary
+named functions, driven from a list:
+
+```python
+def _enumeration(dut, device): ...
+def _keyboard(dut, device): ...
+
+
+def test_composite_hid_cdc(dut, peers):
+    device = peers["device"]
+
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+
+    for check in (_enumeration, _keyboard):
+        check(dut, device)
+```
+
+Two reasons. A failure names the function it happened in, not just a line
+number; and a module that is one test cannot have tests that only pass in a
+particular order.
+
+### Ask, do not await
+
+Both sketches answer questions instead of announcing facts at boot.
+
+- The device answers `?` with `DEVICE_READY <0|1>`, and blocks first: its command
+  handler calls `waitForHost()`, which spins on `device.ready()` - `tud_mounted()`,
+  the host having completed SET_CONFIGURATION. Module-specific state follows on
+  its own line (`DEVICE_NET`, `DEVICE_CABLES`, `DEVICE_NKRO`, ...), never appended
+  to the `DEVICE_READY` line.
+- The host blocks the same way, in `waitForDevice()`, on the address its
+  `onDeviceConnected` latched. Where nothing else it prints reports the
+  connection - the sketches that only forward callback output - it also answers
+  `?` with `HOST_READY <0|1> vid=.... pid=....`.
+- Anything the host learns once, at enumeration, is kept as well as printed, and
+  can be asked for again: `D` replays a HID report descriptor summary, `S`
+  replays the audio stream report.
+
+This is what makes position irrelevant. A line printed once at boot is only
+visible to whichever test reads it first; a question can be asked at any point,
+and asking it asserts the same thing waiting for the banner did.
+
+`peer/usb_msc` has had this shape from the start and was the only peer module
+that survived being run in reverse while the rest were still reading banners.
+
+### Modules that are deliberately ordered
+
+Four modules keep an ordered case list on purpose, and say so in their
+docstring:
+
+- `usb_serial` - the last line-coding step asserts that a partial SET_LINE_CODING
+  left the earlier fields alone, which is only a claim after the earlier steps.
+- `usb_serial_multi` - the separation check reads counters the two per-port
+  exchanges produce.
+- `usb_midi_cables` - the first and last cases are a before/after pair around
+  every message the module sends.
+- `usb_vendor` - the first case asserts an exact device RX count, which only
+  holds while the counters are the ones the session started with.
+
+Everything else should pass with its case list reversed: wrap the tuple in
+`reversed(...)` and re-run that module. It is one pytest invocation and one
+upload, so the check costs a minute rather than a flash cycle per case, and it is
+worth running on any module whose cases have just been rewritten.
+
 ## Sharing the rig
 
 The boards are shared with other projects and other Claude sessions. Tell them

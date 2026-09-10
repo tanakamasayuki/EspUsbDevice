@@ -19,6 +19,13 @@ held at once, i.e. the count):
                      0xE0-0xE7 in event.modifiers instead.
   - nkro_disabled    the state overload refuses when enableNkro() was not called,
                      instead of silently dropping the seventh key onwards
+
+One test rather than four: the first of the four read `HOST_CONNECTED`, a banner
+the host prints once at connect, and the rest inherited the enumeration it had
+waited for. Both sketches answer rather than announce now - see
+tests/peer/composite_hid_cdc for the full note. The cases are named functions
+driven from a list; each opens with a host-side reset that flushes stale key
+events, so the order is not load-bearing.
 """
 
 import re
@@ -54,22 +61,17 @@ def _collect_presses(dut, count, timeout=10):
     return seen
 
 
-def _ready(device):
-    device.write("?")
-    device.expect(r"DEVICE_READY nkro=1")
-
-
-def test_hid_keyboard_nkro_exact_chord(dut, peers):
-    """Finer than a count check: every one of the eight held keys must arrive at
-    the host with its exact keycode."""
-    device = peers["device"]
-    _ready(device)
-    dut.expect_exact("HOST_CONNECTED")
-
-    # Reset acts as a sync barrier: it flushes stale PRESS/RELEASE lines so the
-    # PRESS events collected below belong to this chord.
+def _reset(dut):
+    """Sync barrier: clears the host's counters and flushes stale PRESS/RELEASE
+    lines, so what a case collects afterwards belongs to that case."""
     dut.write("r")
     dut.expect_exact("RESET")
+
+
+def _exact_chord(dut, device):
+    """Finer than a count check: every one of the eight held keys must arrive at
+    the host with its exact keycode."""
+    _reset(dut)
 
     device.write("c")
     device.expect(r"SENT_CHORD n=8 protocol=report")
@@ -84,15 +86,11 @@ def test_hid_keyboard_nkro_exact_chord(dut, peers):
     assert int(m.group(1)) >= len(CHORD_C), _text(m.group(0))
 
 
-def test_hid_keyboard_nkro_high_usage_keys(dut, peers):
+def _high_usage_keys(dut, device):
     """Different angle: International / LANG (JIS) keys live at high usages
     (0x87-0x91), only reachable because the NKRO bitmap spans 0x00-0xDF. Each
     high keycode must arrive; a truncated bitmap would drop them silently."""
-    device = peers["device"]
-    _ready(device)
-
-    dut.write("r")
-    dut.expect_exact("RESET")
+    _reset(dut)
 
     device.write("j")
     device.expect(re.compile(r"SENT_CHORD_JIS n=\d+"))
@@ -107,7 +105,7 @@ def test_hid_keyboard_nkro_high_usage_keys(dut, peers):
     assert int(m.group(1)) >= len(CHORD_J), _text(m.group(0))
 
 
-def test_hid_keyboard_nkro_state_report(dut, peers):
+def _state_report(dut, device):
     """The whole held-key state in a single report.
 
     The incremental path spaces its presses out (see sendChord() in peer_device)
@@ -117,11 +115,7 @@ def test_hid_keyboard_nkro_state_report(dut, peers):
     byte - in event.modifiers. heldState() is checked on the device side in the
     same breath, including that releaseAll() clears the modifier too.
     """
-    device = peers["device"]
-    _ready(device)
-
-    dut.write("r")
-    dut.expect_exact("RESET")
+    _reset(dut)
 
     device.write("s")
     # held=10 covers the bitmap usages, mod=1 the Left Shift routed out of it.
@@ -148,16 +142,35 @@ def test_hid_keyboard_nkro_state_report(dut, peers):
     assert int(m.group(1)) >= len(CHORD_STATE), _text(m.group(0))
 
 
-def test_hid_keyboard_nkro_state_report_requires_enable_nkro(dut, peers):
+def _state_report_requires_enable_nkro(dut, device):
     """Without enableNkro() the state overload must fail, not half-work.
 
     Folding an 11-key state down to six here would make the seventh key onwards
     vanish for good, and a sketch that forgot enableNkro() would never find out.
     (Boot protocol is the opposite case - the host chose it, so the state is
-    folded down rather than refused.)
+    folded down rather than refused.) The spare keyboard object this uses is not
+    attached to a running device, so it leaves the one under test alone.
     """
-    device = peers["device"]
-    _ready(device)
-
     device.write("x")
     device.expect_exact("NKRO_DISABLED_SEND ok=0 nkro=0")
+
+
+def test_hid_keyboard_nkro(dut, peers):
+    device = peers["device"]
+
+    device.write("?")
+    device.expect_exact("DEVICE_READY 1")
+    device.expect_exact("DEVICE_NKRO nkro=1")
+    # The host end: it decoded the report descriptor as a bitmap report, which is
+    # the premise of every case below.
+    dut.write("i")
+    dut.expect_exact("NKRO bitmap=1")
+
+    checks = (
+        _exact_chord,
+        _high_usage_keys,
+        _state_report,
+        _state_report_requires_enable_nkro,
+    )
+    for check in checks:
+        check(dut, device)

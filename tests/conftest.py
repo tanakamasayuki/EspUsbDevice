@@ -30,6 +30,9 @@ class _KnownSerialFinding:
     reason: str
 
 
+# These are keyed on pytest node ids, so renaming or merging a test silently
+# detaches its entry: the test still passes and the line it allowed comes back
+# as an unexpected finding. Grep this tuple when you rename a test.
 _KNOWN_SERIAL_FINDINGS = (
     _KnownSerialFinding(
         nodeid_pattern="*loopback/usb_msc/test_loopback_usb_msc.py::test_loopback_usb_msc",
@@ -39,7 +42,7 @@ _KNOWN_SERIAL_FINDINGS = (
         reason="GET_MAX_LUN fallback for single-LUN MSC",
     ),
     _KnownSerialFinding(
-        nodeid_pattern="*peer/usb_msc/test_usb_msc.py::test_usb_msc_block_device_info",
+        nodeid_pattern="*peer/usb_msc/test_usb_msc.py::test_usb_msc",
         log_name="dut.log",
         line_pattern=re.compile(r"USBH: Dev \d+ EP 0 STALL$"),
         max_count=1,

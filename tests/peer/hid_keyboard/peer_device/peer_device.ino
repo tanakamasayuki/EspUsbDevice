@@ -7,6 +7,7 @@
 //   0x02 -> drop the onOutputReport() callback (simulates an integration layer
 //           that owns the single slot, or a sketch that never installed one)
 //   0x03 -> reinstall the callback, so suites stay order-independent
+//   0x04 -> report whether the host has configured us (DEVICE_READY)
 
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
@@ -69,11 +70,32 @@ void setup()
   Serial.printf("DEVICE_BEGIN %u\n", device.begin(config) ? 1 : 0);
 }
 
+// Block until the host has configured us, so a keystroke is only ever sent to a
+// host that can receive it, whatever order the tests run in. device.ready() is
+// tud_mounted(): the host completed SET_CONFIGURATION. See
+// tests/peer/composite_hid_cdc for why this replaced the boot announcement.
+static bool waitForHost(uint32_t timeoutMs = 5000)
+{
+  const uint32_t startedAt = millis();
+  while (!device.ready() && millis() - startedAt < timeoutMs)
+  {
+    device.task();
+    delay(10);
+  }
+  return device.ready();
+}
+
 void loop()
 {
   while (Serial.available() > 0)
   {
     char c = static_cast<char>(Serial.read());
+    const bool hostReady = waitForHost();
+    if (c == '\x04')
+    {
+      Serial.printf("DEVICE_READY %u\n", hostReady ? 1 : 0);
+      continue;
+    }
     if (c == '\x01')
     {
       printLedState();

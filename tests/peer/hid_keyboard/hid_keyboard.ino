@@ -6,6 +6,8 @@ static char textBuffer[32] = {};
 static size_t textLength = 0;
 static uint8_t keyboardAddress = 0;
 static uint8_t keyboardInterface = 0;
+static char hidDescriptorLine[128] = "HID_DESC none";
+static volatile bool hidDescriptorSeen = false;
 
 static void printBytes(const uint8_t *data, size_t length, size_t maxLength)
 {
@@ -45,12 +47,18 @@ void setup()
 
   usb.onHIDReportDescriptor([](const EspUsbHostHIDReportDescriptor &descriptor)
                             {
-                              Serial.printf("HID_DESC iface=%u reported=%u len=%u first=%02x last=%02x\n",
-                                            descriptor.interfaceNumber,
-                                            descriptor.reportedLength,
-                                            descriptor.length,
-                                            descriptor.length > 0 ? descriptor.data[0] : 0,
-                                            descriptor.length > 0 ? descriptor.data[descriptor.length - 1] : 0);
+                              // Kept as well as printed: the descriptor is
+                              // fetched once, at enumeration, and a test that
+                              // runs later has to be able to ask for it.
+                              snprintf(hidDescriptorLine, sizeof(hidDescriptorLine),
+                                       "HID_DESC iface=%u reported=%u len=%u first=%02x last=%02x",
+                                       descriptor.interfaceNumber,
+                                       descriptor.reportedLength,
+                                       descriptor.length,
+                                       descriptor.length > 0 ? descriptor.data[0] : 0,
+                                       descriptor.length > 0 ? descriptor.data[descriptor.length - 1] : 0);
+                              hidDescriptorSeen = true;
+                              Serial.println(hidDescriptorLine);
                               keyboardInterface = descriptor.interfaceNumber;
                             });
 
@@ -71,12 +79,41 @@ void setup()
   }
 }
 
+// Block until the peer has been enumerated, so every command below acts on a
+// device that is actually attached. keyboardAddress is latched in
+// onDeviceConnected, after the host has claimed the interfaces.
+static bool waitForDevice(uint32_t timeoutMs = 5000)
+{
+  const uint32_t startedAt = millis();
+  while (keyboardAddress == 0 && millis() - startedAt < timeoutMs)
+  {
+    delay(10);
+  }
+  return keyboardAddress != 0;
+}
+
 void loop()
 {
   if (Serial.available() > 0)
   {
     char command = Serial.read();
-    if (command == 'n')
+    const bool attached = waitForDevice();
+    if (command == '?')
+    {
+      Serial.printf("HOST_READY %u address=%u\n", attached ? 1 : 0, keyboardAddress);
+    }
+    else if (command == 'D')
+    {
+      // The report descriptor is fetched after the connect event, so a latched
+      // address does not yet mean this line has been filled in.
+      const uint32_t startedAt = millis();
+      while (!hidDescriptorSeen && millis() - startedAt < 3000)
+      {
+        delay(10);
+      }
+      Serial.println(hidDescriptorLine);
+    }
+    else if (command == 'n')
     {
       Serial.printf("LED_TX %u\n", usb.setKeyboardLeds(true, false, false) ? 1 : 0);
     }

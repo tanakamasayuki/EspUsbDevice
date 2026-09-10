@@ -7,6 +7,39 @@ static bool audioReported = false;
 static volatile uint8_t audioAddress = 0;
 static int16_t outputSamples[480];
 
+// The stream report is a function rather than only a connect-time announcement,
+// so a test can ask for it. It also latches the audio address for any device
+// that has streams at all, even if audioOutputReady() is momentarily false at
+// connect time, so the command tests do not depend on that timing.
+static void reportAudioStreams(uint8_t address)
+{
+  EspUsbHostAudioStreamInfo audioStreams[ESP_USB_HOST_MAX_AUDIO_STREAMS];
+  const size_t audioStreamCount = usb.getAudioStreams(address, audioStreams, ESP_USB_HOST_MAX_AUDIO_STREAMS);
+  if (audioStreamCount > 0)
+  {
+    audioAddress = address;
+  }
+  Serial.printf("AUDIO_STREAMS count=%u\n", static_cast<unsigned>(audioStreamCount));
+  for (size_t i = 0; i < audioStreamCount; i++)
+  {
+    Serial.printf("AUDIO_STREAM iface=%u alt=%u ep=0x%02x dir=%s channels=%u bytes=%u bits=%u rate=%lu rates=%u first=%lu min=%lu max=%lu maxPacket=%u interval=%u\n",
+                  audioStreams[i].interfaceNumber,
+                  audioStreams[i].alternate,
+                  audioStreams[i].endpointAddress,
+                  audioStreams[i].input ? "IN" : "OUT",
+                  audioStreams[i].channels,
+                  audioStreams[i].bytesPerSample,
+                  audioStreams[i].bitsPerSample,
+                  static_cast<unsigned long>(audioStreams[i].sampleRate),
+                  audioStreams[i].sampleRateCount,
+                  static_cast<unsigned long>(audioStreams[i].sampleRateCount > 0 ? audioStreams[i].sampleRates[0] : 0),
+                  static_cast<unsigned long>(audioStreams[i].sampleRateMin),
+                  static_cast<unsigned long>(audioStreams[i].sampleRateMax),
+                  audioStreams[i].maxPacketSize,
+                  audioStreams[i].interval);
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -24,33 +57,7 @@ void setup()
                             Serial.printf("AUDIO_OUT_READY addr=%u\n", device.address);
                           }
 
-                          EspUsbHostAudioStreamInfo audioStreams[ESP_USB_HOST_MAX_AUDIO_STREAMS];
-                          const size_t audioStreamCount = usb.getAudioStreams(device.address, audioStreams, ESP_USB_HOST_MAX_AUDIO_STREAMS);
-                          // Capture the audio device address for any audio device,
-                          // even if audioOutputReady() is momentarily false at connect
-                          // time, so serial-command tests do not depend on timing.
-                          if (audioStreamCount > 0)
-                          {
-                            audioAddress = device.address;
-                          }
-                          for (size_t i = 0; i < audioStreamCount; i++)
-                          {
-                            Serial.printf("AUDIO_STREAM iface=%u alt=%u ep=0x%02x dir=%s channels=%u bytes=%u bits=%u rate=%lu rates=%u first=%lu min=%lu max=%lu maxPacket=%u interval=%u\n",
-                                          audioStreams[i].interfaceNumber,
-                                          audioStreams[i].alternate,
-                                          audioStreams[i].endpointAddress,
-                                          audioStreams[i].input ? "IN" : "OUT",
-                                          audioStreams[i].channels,
-                                          audioStreams[i].bytesPerSample,
-                                          audioStreams[i].bitsPerSample,
-                                          static_cast<unsigned long>(audioStreams[i].sampleRate),
-                                          audioStreams[i].sampleRateCount,
-                                          static_cast<unsigned long>(audioStreams[i].sampleRateCount > 0 ? audioStreams[i].sampleRates[0] : 0),
-                                          static_cast<unsigned long>(audioStreams[i].sampleRateMin),
-                                          static_cast<unsigned long>(audioStreams[i].sampleRateMax),
-                                          audioStreams[i].maxPacketSize,
-                                          audioStreams[i].interval);
-                          } });
+                          reportAudioStreams(device.address); });
 
   if (!usb.begin())
   {
@@ -68,12 +75,35 @@ static void fillOutputSamples()
   }
 }
 
+// Block until the peer has been enumerated, so every command below answers about
+// a device that is actually attached, whatever order the tests run in.
+//
+// audioAddress is latched in onDeviceConnected, which fires after the host has
+// claimed the interfaces - the right side of the event for anything that reads
+// the device's interfaces or endpoints. Waiting here rather than announcing once
+// at boot is what lets a test run in any position: a boot announcement is only
+// visible to whichever test happens to be first.
+static bool waitForDevice(uint32_t timeoutMs = 5000)
+{
+  const uint32_t startedAt = millis();
+  while (audioAddress == 0 && millis() - startedAt < timeoutMs)
+  {
+    delay(10);
+  }
+  return audioAddress != 0;
+}
+
 void loop()
 {
   if (Serial.available() > 0)
   {
     const char command = static_cast<char>(Serial.read());
-    if (command == 'r')
+    waitForDevice();
+    if (command == 'S')
+    {
+      reportAudioStreams(audioAddress);
+    }
+    else if (command == 'r')
     {
       audioBytes = 0;
       audioReported = false;

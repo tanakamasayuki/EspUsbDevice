@@ -58,9 +58,13 @@ def _line_coding(dut, device):
 def test_usb_serial(dut, peers):
     device = peers["device"]
 
-    dut.expect_exact("HOST_CONNECTED vid=303a pid=4016")
+    # The preconditions, asked rather than awaited. The device answers only once
+    # the host has configured it; the host only once it has enumerated the peer,
+    # and the pid says it is our peer rather than a neighbouring board.
     device.write("?")
-    device.expect_exact("DEVICE_READY")
+    device.expect_exact("DEVICE_READY 1")
+    dut.write("?")
+    dut.expect_exact("HOST_READY 1 vid=303a pid=4016")
 
     for check in (_device_to_host, _host_to_device, _line_coding):
         check(dut, device)

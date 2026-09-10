@@ -18,6 +18,13 @@ Not covered: switching between sample rates. The descriptor builder emits one
 alternate setting per direction and therefore exactly one rate, so the Clock
 Source has nothing to switch between; the ``RANGE`` encoder's multi-subrange path
 is covered on the host side by ``tests/unit/audio_model``.
+
+One test rather than four: the first read ``UAC2_DEVICE_READY`` and the host's
+``AUDIO_OUT_READY`` / ``AUDIO_IN_READY`` lines, all printed once at boot, and the
+other three inherited the enumeration it had waited for. Both sketches answer
+rather than announce now - see ``tests/peer/composite_hid_cdc`` for the full
+note - and ``_sync()`` re-establishes the same state at the top of every case, so
+the order is not load-bearing.
 """
 
 import time
@@ -71,7 +78,7 @@ def _device_state(device):
     return state
 
 
-def test_usb_audio_uac2_enumeration(dut, peers):
+def _enumeration(dut, device):
     """The UAC2 descriptors the device emits are the ones a UAC2 host needs.
 
     Protocol 0x20 on both streaming interfaces, a Clock Source entity behind
@@ -80,11 +87,6 @@ def test_usb_audio_uac2_enumeration(dut, peers):
     two streams - the asynchronous playback interface's explicit feedback IN
     endpoint must not look like a third.
     """
-    device = peers["device"]
-
-    device.expect_exact("UAC2_DEVICE_READY 1 proto=uac2")
-    dut.expect("AUDIO_OUT_READY addr=[1-9][0-9]*", timeout=20)
-    dut.expect("AUDIO_IN_READY addr=[1-9][0-9]*", timeout=20)
     _sync(dut, device)
 
     # Asked for after enumeration, not from the connect callback: under UAC2 the
@@ -121,7 +123,7 @@ def test_usb_audio_uac2_enumeration(dut, peers):
     assert state["range"] == VOLUME_RANGE, state["line"]
 
 
-def test_usb_audio_uac2_control_state_round_trip(dut, peers):
+def _control_state_round_trip(dut, device):
     """What the host writes is what the device applies.
 
     The host repo's copy checks its own read-back, which a device could satisfy by
@@ -129,7 +131,6 @@ def test_usb_audio_uac2_control_state_round_trip(dut, peers):
     events it raised, for the master channel and for logical channel 1 - two
     different entries of the UAC2 Feature Unit's bmaControls array.
     """
-    device = peers["device"]
     _sync(dut, device)
 
     dut.write("w")
@@ -166,7 +167,7 @@ def test_usb_audio_uac2_control_state_round_trip(dut, peers):
     assert state["master_mute"] == "0", state["line"]
 
 
-def test_usb_audio_uac2_clock_source_request(dut, peers):
+def _clock_source_request(dut, device):
     """The sample rate is set on the Clock Source entity, not on the endpoint.
 
     A UAC1 host writes the rate to the streaming endpoint; a UAC2 host writes it
@@ -178,7 +179,6 @@ def test_usb_audio_uac2_clock_source_request(dut, peers):
     assertion is that the request is accepted and the rate still reads back, not
     that it changed (the device only raises SampleRateChanged on a real change).
     """
-    device = peers["device"]
     _sync(dut, device)
 
     dut.write("R")
@@ -188,7 +188,7 @@ def test_usb_audio_uac2_clock_source_request(dut, peers):
     assert state["rate"] == "48000", state["line"]
 
 
-def test_usb_audio_uac2_streaming_both_directions(dut, peers):
+def _streaming_both_directions(dut, device):
     """Both isochronous directions carry PCM over UAC2.
 
     This is the streaming validation that was deferred while EspUsbHost was
@@ -196,7 +196,6 @@ def test_usb_audio_uac2_streaming_both_directions(dut, peers):
     feedback endpoint: the device computes the rate from its own FIFO level, and
     the host must be pacing its OUT packets from what it reports.
     """
-    device = peers["device"]
     _sync(dut, device)
 
     dut.write("a")
@@ -242,3 +241,20 @@ def test_usb_audio_uac2_streaming_both_directions(dut, peers):
     # Values sent before the device's FIFO is primed fall outside the host's
     # +/-12.5% window and are ignored; those are the only rejects expected.
     assert rejects * 10 < updates, f"{rejects} rejected feedback packets out of {updates}"
+
+
+def test_usb_audio_uac2(dut, peers):
+    device = peers["device"]
+
+    # The precondition, asked rather than awaited: the device answers only once
+    # the host has configured it.
+    _probe_device(device, "DEVICE_READY 1")
+
+    checks = (
+        _enumeration,
+        _control_state_round_trip,
+        _clock_source_request,
+        _streaming_both_directions,
+    )
+    for check in checks:
+        check(dut, device)
