@@ -109,6 +109,11 @@ and asking it asserts the same thing waiting for the banner did.
 `peer/usb_msc` has had this shape from the start and was the only peer module
 that survived being run in reverse while the rest were still reading banners.
 
+`loopback/` still waits for a banner, deliberately: each module there is a single
+test with its own upload, so nothing can run ahead of the line it reads. See
+[loopback/README.md](loopback/README.md) for the full reason and for when that
+stops being true.
+
 ### Modules that are deliberately ordered
 
 Four modules keep an ordered case list on purpose, and say so in their
