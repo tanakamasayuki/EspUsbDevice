@@ -366,8 +366,8 @@ keyboard / mouse は `05 xx 09 xx a1 01` でちょうど 6 byte だが、vendor 
 | `tests/single/descriptor` | ESP32-S3 | MS OS 2.0 の flat / subsets、vendor の per-speed MPS、HID vendor の Report Count |
 | `tests/single/p4_hs_packet_sizes` | ESP32-P4 | 511 byte report の descriptor、HS 512 / FS 64、FIFO 容量、observer の着脱 |
 | `tests/loopback/usb_vendor` | ESP32-P4 | host 役が取りに行った MS OS 2.0 が 162 byte、observer が MS OS 2.0 要求と GET_DESCRIPTOR を観測 |
-| `tests/loopback/` 全体 | ESP32-P4 | 既存 16 本の回帰 |
-| `tests/peer/` `tests/single/` | ESP32-S3 ×2 | 36/37。失敗した 1 本（`peer/usb_msc`）は DUT が EspUsbHost 単体で、このライブラリを include していない起動時 OOM |
+| `tests/loopback/` `tests/single/` | ESP32-P4 | 新既定で 24/24 |
+| `tests/peer/` | ESP32-S3 ×2 | 全数。一度 `peer/usb_msc` が起動時 OOM で落ちたが、`--clean` で通る（README にある stale build cache の症状で、DUT 側は EspUsbHost 単体でこのライブラリを include していない） |
 | `tests/manual/p4_hs_stream` | ESP32-P4 + PC | bulk IN の FIFO / 転送長 / waitWritable / host URB depth |
 | `tests/manual/p4_hs_hid_stream` | ESP32-P4 + PC | HID 511 byte の descriptor と 4.03 MB/s |
 | `tests/manual/windows_winusb` | ESP32-P4 + Windows | WinUSB bind と、旧構造での Code 28 対照実験 |
