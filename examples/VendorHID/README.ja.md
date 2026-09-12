@@ -8,6 +8,13 @@ Vendor HID は、専用 driver を用意せずに小さな独自プロトコル�
 したい場合に便利です。この example は report ID `6` の Input / Output / Feature report を
 扱います。
 
+63 byte は既定値であって上限ではありません。上限は `CFG_TUD_HID_EP_BUFSIZE - 1` で、
+ESP32-S2/S3 では 63、**ESP32-P4 では 511** です。P4 の high-speed interrupt endpoint は
+125 us ごとに report 全体を 1 packet で運びます。`EspUsbDeviceHidVendor vendor(device, 511)`
+と書くだけで、report descriptor もそのサイズに追従します。
+[docs/usb-device-advanced.ja.md](../../docs/usb-device-advanced.ja.md#62-最大パケットサイズ)
+を参照してください。
+
 ## ハードウェア
 
 - USB device 対応の ESP32-S3 など Arduino-ESP32 board

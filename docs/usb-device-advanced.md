@@ -451,11 +451,47 @@ Generated only when `config.webusbEnabled = true`.
 | Descriptor | Size | Contents |
 |------------|------|----------|
 | BOS | up to 57 bytes | WebUSB platform capability (landing URL) and Microsoft OS 2.0 platform capability |
-| MS OS 2.0 | 178 bytes | WinUSB compatible ID and device interface GUID for the vendor interface actually allocated |
+| MS OS 2.0 | 162 or 178 bytes | WinUSB compatible ID and device interface GUID for the vendor interface actually allocated |
 
 **The MS OS 2.0 descriptor is what lets Windows open the vendor interface.**
 Without it a `0xff` interface sits there with no driver. APIs to replace the
 vendor code, GUID or contents are not implemented.
+
+**The two sizes are two shapes, and picking the wrong one costs you the
+driver.** A descriptor set may carry the compatible ID directly under its
+header, or wrap it in a configuration subset and a function subset:
+
+```
+Set header (10)                      Set header (10)
+  Compatible ID (20)                   Configuration subset (8)
+  Registry property (132)                Function subset (8, bFirstInterface)
+= 162, "flat"                                Compatible ID (20)
+                                             Registry property (132)
+                                     = 178, "subsets"
+```
+
+The subsets exist to name **one function of a composite device**, and Windows
+resolves them only through **usbccgp.sys** - the parent driver it loads for a
+composite device and nothing else. Put a function subset on a
+single-interface device and the compatible ID has no function to attach to:
+`USB\MS_COMP_WINUSB` never reaches the device node, no driver matches, and
+Device Manager reports `CM_PROB_FAILED_INSTALL` (code 28) **with not a line
+written to `setupapi.dev.log`** - the install never starts, so there is
+nothing to log. The device answers the vendor request correctly the whole
+time, which is what makes this one hard to see from the Linux side, where no
+driver is needed at all.
+
+The layout therefore follows `bNumInterfaces` by default, and
+`config.msOs20Layout` overrides it:
+
+| `msOs20Layout` | Result |
+|----------------|--------|
+| `ESP_USB_DEVICE_MS_OS_20_AUTO` (default) | subsets when the configuration has more than one interface, flat when it has exactly one |
+| `ESP_USB_DEVICE_MS_OS_20_FLAT` | always flat |
+| `ESP_USB_DEVICE_MS_OS_20_SUBSETS` | always subsets |
+
+`EspUsbDevice::microsoftOs20UsesSubsets()` reports what was actually built,
+and `examples/Info/EspUsbDeviceDescriptorDump` prints the bytes.
 
 ### 3.8 Presenting a multi-function device to Windows
 
@@ -536,6 +572,41 @@ needs.
 | MSC SCSI commands | the `tud_msc_*_cb()` family |
 
 In other words: **you never write the EP0 handling, but you own every answer.**
+
+#### Watching the requests the library answers itself
+
+`EspUsbDeviceVendor::onControlRequest()` only ever sees what is left over. The
+library takes the WebUSB and Microsoft OS 2.0 vendor codes, and the whole
+standard descriptor path, before that callback runs - which is exactly the
+traffic you need when a host refuses to bind a driver and you cannot tell
+whether it asked at all.
+
+`EspUsbDevice::onAnyControlRequest()` watches all of it. It is an observer:
+the return value cannot change what the device answers.
+
+```cpp
+device.onAnyControlRequest([](const EspUsbDeviceControlRequestInfo &r) {
+  Serial.printf("%s type=0x%02x req=0x%02x val=0x%04x idx=0x%04x len=%u -> %u%s\n",
+                r.stage == ESP_USB_DEVICE_CONTROL_STAGE_SETUP ? "SETUP" : "ACK",
+                r.bmRequestType, r.bRequest, r.wValue, r.wIndex, r.wLength,
+                r.responseLength, r.handled ? "" : " (unhandled)");
+});
+```
+
+| Field | Meaning |
+|-------|---------|
+| `stage` | `SETUP` for every vendor request, `ACK` for every control transfer that completed |
+| `responseLength` | bytes the library handed to the stack, before it clamps them to `wLength`. Non-zero only for descriptors, the WebUSB URL and the MS OS 2.0 set |
+| `handled` | at `SETUP`, the library recognised the request; at `ACK`, the transfer completed |
+
+Vendor requests are reported at `SETUP` rather than at `ACK` on purpose: a
+request the device **stalls** never reaches a status stage, and "the host asked
+and we said no" is a different diagnosis from "the host never asked". So to
+answer *"is Windows sending the MS OS 2.0 request?"*, look for
+`type=0xC0 req=<bMS_VendorCode> idx=0x0007` in the log.
+
+The callback runs on the usbd task, so keep it to counters or a queue - see
+[1.3](#13-tinyusb-apis-are-called-from-the-usbd-task).
 
 ### 4.3 Three stages, and STALL
 
@@ -683,11 +754,43 @@ allocates that. What matters instead is `CFG_TUD_*_BUFSIZE`
 | CDC dropping input | `CFG_TUD_CDC_RX_BUFSIZE` (512) |
 | MSC is slow | `CFG_TUD_MSC_EP_BUFSIZE` (4096), the SCSI read/write unit |
 | NCM throughput is low | `CFG_TUD_NCM_IN_NTB_N` (3) and `NET_TX_SLOTS` (4) |
-| A HID report does not fit | `CFG_TUD_HID_EP_BUFSIZE` (64) caps the HID endpoint MPS |
+| A HID report does not fit | `CFG_TUD_HID_EP_BUFSIZE` caps the HID endpoint MPS and the report size |
+| `vendor.write()` keeps returning 0 | `CFG_TUD_VENDOR_TX_BUFSIZE` is the whole transmit FIFO |
 
-These live in the vendored config, so **changing the library changes them**.
-Unlike the host side, "it is prebuilt by Arduino" is not the answer here. But
-raising them costs RAM and creates a delta from upstream.
+**These are not fixed by the library.** Every one is behind `#ifndef`, so a
+sketch raises it from its own `build_opt.h` and the flag reaches the library's
+translation units too:
+
+```c
+// build_opt.h, next to the .ino
+-DCFG_TUD_VENDOR_TX_BUFSIZE=16384
+```
+
+That is the thing owning `tusb_config.h` bought
+([2.2](#22-what-owning-tusb_configh-bought)): the core's prebuilt TinyUSB bakes
+these into a shipped `sdkconfig`, where no sketch can reach them.
+
+The defaults already differ per target, because full speed and high speed do
+not have the same problem:
+
+| | ESP32-S2 / S3 | ESP32-P4 |
+|---|---|---|
+| `CFG_TUD_VENDOR_TX_BUFSIZE` | 512 | **8192** |
+| `CFG_TUD_HID_EP_BUFSIZE` | 64 | **512** |
+
+Both P4 values are measured ceilings rather than guesses. The vendor FIFO at
+512 bytes is one high-speed bulk packet, and a sketch streaming 4 MiB out of
+it spins on `write()` returning 0 about 40,000 times; at 8 KiB the same
+transfer runs at 10.59 MB/s against 9.03, and the run-to-run spread collapses
+from ±19% to ±2.5%. 16 and 32 KiB buy nothing. Between them the two P4
+defaults cost **9024 bytes of RAM**, whether or not a sketch uses those
+classes, because TinyUSB defines the buffers statically.
+
+**Nothing `tu_fifo` backs may exceed 32768 bytes**, and the reason is not RAM:
+`tu_edpt_stream_init()` takes the size as `uint16_t` and `tu_fifo` runs its
+indices over `[0, 2*depth)`. 65536 arrives as a depth of 0 - the device
+reports ready and never mounts, with nothing pointing at the flag that caused
+it. The header turns that into a build error instead.
 
 ---
 
@@ -719,8 +822,16 @@ contention.
 | Isochronous | ≤1023 | ≤1024 |
 
 The HS configuration descriptor is built by copying the FS one and **rewriting
-only the bulk endpoints' MPS to 512**. Audio is computed separately from
-direction and rate.
+every bulk endpoint's MPS to 512**, plus the interrupt endpoints of any HID
+function that asked for a larger high-speed packet (`hidHighSpeedEndpointSize()`,
+today only `EspUsbDeviceHidVendor`). Audio is computed separately from direction
+and rate.
+
+Per-function rather than per-descriptor-type, because the two are not the same
+question: a keyboard beside a vendor HID function must keep its 8-byte endpoint
+while the other goes to 512. An interrupt endpoint **reserves** its bandwidth,
+so inflating one that sends 8 bytes takes the reservation from everything else
+on the bus.
 
 The HID MPS depends on the configuration:
 
@@ -728,11 +839,20 @@ The HID MPS depends on the configuration:
 |---------------|------------------|
 | Single HID | 8 |
 | Composite HID | 16 |
-| Composite HID including an NKRO keyboard | Whatever that class asks for (`CFG_TUD_HID_EP_BUFSIZE` = 64 is the ceiling) |
+| Composite HID including an NKRO keyboard | Whatever that class asks for (`CFG_TUD_HID_EP_BUFSIZE` is the ceiling) |
+| `EspUsbDeviceHidVendor` | `reportSize + 1`, capped at 64 in the FS configuration and at `CFG_TUD_HID_EP_BUFSIZE` in the HS one |
 
 An NKRO keyboard's bitmap report would be split across packets otherwise, so it
 requests a larger MPS via `hidInEndpointSize()`. A composite HID's shared
 endpoint takes **the maximum request among the classes it contains**.
+
+**HID is not "the low-bandwidth class" at high speed.** That reputation is a
+full-speed fact: 64 bytes every millisecond is 64 KB/s. A high-speed interrupt
+endpoint carries up to 1024 bytes every 125 us, so a 511-byte report at 8,000
+reports/s is about 4 MB/s - and unlike bulk, that bandwidth is reserved rather
+than whatever is left over. It is also the only class that needs no driver on
+any host OS, which is what makes it worth the endpoint budget when Windows
+driver binding is the problem you are trying to avoid.
 
 ### 6.3 Measured throughput
 
@@ -748,6 +868,14 @@ design, measure again with your own transfer pattern.
 Note also that flushing a transfer of exactly 512 bytes makes TinyUSB send a
 terminating ZLP. The checker counts and skips those legitimate zero-byte packets
 because that is **protocol-correct behaviour** ([7.2](#72-zlp)).
+
+For a one-way stream the number that moves is the transmit FIFO depth, not the
+send loop: on P4 the same 4 MiB transfer runs at 9.03 MB/s with a 512-byte
+`CFG_TUD_VENDOR_TX_BUFSIZE` and 10.59 with 8 KiB, which is why the default is
+8 KiB there ([5.4](#54-buffer-sizes)). A sketch that streams while it also
+produces the data should use `EspUsbDeviceVendor::waitWritable()` rather than
+spinning on `write()` returning 0 - the spin competes with the producer for the
+same CPU.
 
 ---
 
@@ -921,7 +1049,8 @@ CDC, HID, MIDI, MSC, Vendor, NCM and Audio are **already compiled in**
 ([2.2](#22-what-owning-tusb_configh-bought)). So a new capability is usually just
 "a protocol on top of an existing class":
 
-- Custom data with no driver → `EspUsbDeviceHidVendor` (63-byte reports) or
+- Custom data with no driver → `EspUsbDeviceHidVendor` (reports up to
+  `CFG_TUD_HID_EP_BUFSIZE - 1`: 63 on S2/S3, 511 on P4) or
   `EspUsbDeviceHidCustom` (your own report descriptor)
 - A custom protocol that needs bandwidth → `EspUsbDeviceVendor` (bulk IN/OUT plus
   control)

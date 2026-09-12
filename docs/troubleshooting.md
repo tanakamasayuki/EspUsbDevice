@@ -134,6 +134,18 @@ combination is not one the host OS maps to a driver.
    connector is the OTG one, logs and the device role share a plug - use a
    two-connector board or a UART adapter while developing
    ([guide 2.3](usb-device-guide.md#23-connector-layout-while-developing)).
+5. **`undefined reference to EspUsbDeviceVendor::write` and friends, while the
+   headers were found.** If `sketch.yaml` points `libraries: - dir:` at a
+   **symlink**, arduino-cli resolves the include path through it but does not
+   collect the `.cpp` files behind it, so every method is missing at link time.
+   Use the real path, or install through the Library Manager
+   (`- EspUsbDevice (2.2.0)`).
+6. **A flag you set in `build_opt.h` seems to have no effect.** The class
+   buffer sizes are guarded with `#ifndef`, so `-DCFG_TUD_VENDOR_TX_BUFSIZE=8192`
+   does reach the library - but `build_opt.h` must sit next to the `.ino`, and
+   Arduino only re-reads it on a clean build. Rebuild with `--clean` after
+   changing it. Anything above 32768 is now a build error rather than a device
+   that never mounts ([advanced 5.4](usb-device-advanced.md#54-buffer-sizes)).
 
 ## 5. Host-OS specifics
 
@@ -162,6 +174,18 @@ lsusb -v -d 303a:      # descriptors as the host parsed them
 - A vendor interface is only usable once WinUSB binds: set
   `config.webusbEnabled = true` so the MS OS 2.0 descriptor is served, or
   bind manually with Zadig.
+- **Code 28 (`CM_PROB_FAILED_INSTALL`) on a vendor interface, with nothing at
+  all in `setupapi.dev.log`.** The empty log is the tell: the install never
+  started, so the compatible ID never reached the device node. If the device
+  answers the MS OS 2.0 vendor request correctly - check from Linux with
+  `bmRequestType=0xC0, bRequest=<bMS_VendorCode>, wIndex=7`, or watch it from
+  the device with `EspUsbDevice::onAnyControlRequest()` - then the bytes are
+  fine and the *structure* is wrong for this device. A function subset only
+  resolves through usbccgp.sys, which Windows loads for composite devices
+  only, so a single-interface device needs the compatible ID directly under
+  the set header. The library picks by interface count on its own;
+  `config.msOs20Layout` forces it either way
+  ([advanced 3.7](usb-device-advanced.md#37-bos-and-microsoft-os-20)).
 - **A multi-function device shows only one function, or one COM port instead of
   two.** Windows binds per function only when usbccgp.sys loads as the parent,
   which needs `bDeviceClass/SubClass/Protocol = 0xEF/0x02/0x01`. The library

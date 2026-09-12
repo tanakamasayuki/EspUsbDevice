@@ -205,7 +205,7 @@ void loop()
 - `KeyboardMouse`: keyboard + mouse の composite HID。
 - `Gamepad`: axes、hat、button を送信する HID gamepad。
 - `MediaKeys`: volume、再生停止、system control を送信する HID media keys。
-- `VendorHID`: 独自 63 byte report を送受信する vendor-defined HID。
+- `VendorHID`: 独自 report を送受信する vendor-defined HID（1 report 最大 63 byte、ESP32-P4 では 511 byte）。
 - `USBVendor`: bulk IN/OUT と control request を扱う vendor-specific interface。
 - `CustomHID`: sketch 定義の HID report descriptor を使う custom HID。
 - `Serial`: PC / Host とテキストを送受信する CDC ACM serial。

@@ -332,9 +332,32 @@ DescriptorDumpがレポートディスクリプタの長さをここから読ん
 | ディスクリプタ | サイズ | 内容 |
 |---------------|--------|------|
 | BOS | 最大57バイト | WebUSB platform capability（landing URL）と Microsoft OS 2.0 platform capability |
-| MS OS 2.0 | 178バイト | 実際に割り当てたvendorインターフェースに対する WinUSB compatible ID と device interface GUID |
+| MS OS 2.0 | 162バイトまたは178バイト | 実際に割り当てたvendorインターフェースに対する WinUSB compatible ID と device interface GUID |
 
 **Windowsでvendorインターフェースを開けるようにするのがMS OS 2.0の役割**です。これがないと、`0xff` のインターフェースはドライバなしのまま残ります。vendor code、GUID、内容を差し替えるAPIは未実装です。
+
+**2つのサイズは2つの構造であり、選び間違えるとドライバが当たりません。** descriptor setは、compatible IDをset headerの直下に置くことも、configuration subsetとfunction subsetで包むこともできます。
+
+```
+Set header (10)                      Set header (10)
+  Compatible ID (20)                   Configuration subset (8)
+  Registry property (132)                Function subset (8, bFirstInterface)
+= 162、"flat"                                Compatible ID (20)
+                                             Registry property (132)
+                                     = 178、"subsets"
+```
+
+subsetは**composite deviceの「1つのfunction」を指すため**の入れ子で、Windowsがこれを解決するのは **usbccgp.sys** ——composite deviceに対してだけ読み込む親ドライバ——を通したときだけです。単一インターフェースのデバイスにfunction subsetを付けると、compatible IDは結び付く先を持ちません。`USB\MS_COMP_WINUSB` はdevice nodeに届かず、どのドライバも一致せず、デバイスマネージャーは `CM_PROB_FAILED_INSTALL`（コード28）を出します。しかも **`setupapi.dev.log` には1行も書かれません**——インストールが始まらないので、記録すべきものが無いからです。その間デバイスはvendor requestに正しく答え続けているので、ドライバの要らないLinux側からは見えません。
+
+そのため既定では `bNumInterfaces` に従って構造を決め、`config.msOs20Layout` で上書きできます。
+
+| `msOs20Layout` | 結果 |
+|----------------|------|
+| `ESP_USB_DEVICE_MS_OS_20_AUTO`（既定） | インターフェースが2本以上ならsubsets、1本ならflat |
+| `ESP_USB_DEVICE_MS_OS_20_FLAT` | 常にflat |
+| `ESP_USB_DEVICE_MS_OS_20_SUBSETS` | 常にsubsets |
+
+実際にどちらで組まれたかは `EspUsbDevice::microsoftOs20UsesSubsets()` が返し、バイト列は `examples/Info/EspUsbDeviceDescriptorDump` が出力します。
 
 ### 3.8 複数機能デバイスをWindowsにどう見せるか
 
@@ -400,6 +423,31 @@ Host側では「送る側」として読んだ表を、こちらは「受ける�
 | MSC の各SCSIコマンド | `tud_msc_*_cb()` 群 |
 
 つまり、**EP0の処理は書かなくてよいが、答える内容は全部こちらが持っている**という構造です。
+
+#### ライブラリ自身が answer した要求を観測する
+
+`EspUsbDeviceVendor::onControlRequest()` に来るのは「残り」だけです。WebUSBとMicrosoft OS 2.0のvendor code、そして標準descriptorの経路は、このcallbackより先にライブラリが処理します。ホストがドライバを当ててくれないとき、**そもそも要求が来ているのかどうか**を知るために見たいのは、まさにそこです。
+
+`EspUsbDevice::onAnyControlRequest()` はその全部を観測できます。純粋な観測用で、戻り値でデバイスの応答は変わりません。
+
+```cpp
+device.onAnyControlRequest([](const EspUsbDeviceControlRequestInfo &r) {
+  Serial.printf("%s type=0x%02x req=0x%02x val=0x%04x idx=0x%04x len=%u -> %u%s\n",
+                r.stage == ESP_USB_DEVICE_CONTROL_STAGE_SETUP ? "SETUP" : "ACK",
+                r.bmRequestType, r.bRequest, r.wValue, r.wIndex, r.wLength,
+                r.responseLength, r.handled ? "" : " (unhandled)");
+});
+```
+
+| フィールド | 意味 |
+|-----------|------|
+| `stage` | vendor requestは全て `SETUP`、完了した control transfer は全て `ACK` |
+| `responseLength` | ライブラリがスタックへ渡したバイト数（`wLength` で切り詰められる前）。descriptor、WebUSB URL、MS OS 2.0 setのときだけ非ゼロ |
+| `handled` | `SETUP` では「ライブラリが認識した」、`ACK` では「転送が完了した」 |
+
+vendor requestを `ACK` ではなく `SETUP` で報告するのには理由があります。**STALLした要求はstatus stageに到達しない**ためで、「来たが断った」と「そもそも来ていない」は別の診断です。したがって *「WindowsはMS OS 2.0の要求を投げているのか」* は、ログに `type=0xC0 req=<bMS_VendorCode> idx=0x0007` が出るかどうかで決まります。
+
+このcallbackはusbdタスク上で動くので、カウンタかキューに留めてください（[1.3](#13-tinyusb-の-api-は-usbd-タスクから呼ぶ)）。
 
 ### 4.3 3つのステージとSTALL
 
@@ -504,9 +552,28 @@ Host側のFIFO分割に相当する調整はDevice側にはありません（`dc
 | CDCで取りこぼす | `CFG_TUD_CDC_RX_BUFSIZE`（512） |
 | MSCが遅い | `CFG_TUD_MSC_EP_BUFSIZE`（4096）。SCSIの読み書き1回の単位 |
 | NCMのスループットが出ない | `CFG_TUD_NCM_IN_NTB_N`（3）と `NET_TX_SLOTS`（4） |
-| HIDのレポートが大きくて入らない | `CFG_TUD_HID_EP_BUFSIZE`（64）がHID endpoint MPSの上限 |
+| HIDのレポートが大きくて入らない | `CFG_TUD_HID_EP_BUFSIZE` がHID endpoint MPSとレポートサイズの上限 |
+| `vendor.write()` が0を返し続ける | `CFG_TUD_VENDOR_TX_BUFSIZE` が送信FIFOそのもの |
 
-これらは同梱の設定ファイルの値なので、**ライブラリを変更すれば変えられます**。Host側と違って「Arduinoのビルド済みだから無理」ではありません。ただし変えるとRAM消費が増え、上流と差分が出ます。
+**これらはライブラリ固定値ではありません。** すべて `#ifndef` で囲ってあるので、スケッチ側の `build_opt.h` から上げられます。フラグはライブラリ自身の翻訳単位にも届きます。
+
+```c
+// .ino と同じ場所に置く build_opt.h
+-DCFG_TUD_VENDOR_TX_BUFSIZE=16384
+```
+
+これが `tusb_config.h` を自前で持っていることの対価です（[2.2](#22-tusb_configh-を所有した結果)）。coreのビルド済みTinyUSBでは、これらは同梱 `sdkconfig` に焼かれていてスケッチからは届きません。
+
+既定値はターゲットごとに違います。full speedとhigh speedでは問題が同じではないからです。
+
+| | ESP32-S2 / S3 | ESP32-P4 |
+|---|---|---|
+| `CFG_TUD_VENDOR_TX_BUFSIZE` | 512 | **8192** |
+| `CFG_TUD_HID_EP_BUFSIZE` | 64 | **512** |
+
+P4の2つはどちらも実測した飽和点で、勘で決めた値ではありません。vendorの送信FIFOは512バイトだとhigh speed bulk 1パケット分しかなく、4 MiBを流すスケッチは `write()` が0を返すのを約4万回spinします。8 KiBにすると同じ転送が9.03に対して10.59 MB/sで走り、実行ごとのばらつきも±19%から±2.5%へ縮みます。16 KiB以上は何も買いません。この2つの既定値は合わせて **9024バイトのRAM** を消費します。TinyUSBがバッファを静的に確保するので、そのクラスを使わないスケッチでも消費します。
+
+**`tu_fifo` を使うバッファは32768バイトを超えられません。** 理由はRAMではなく、`tu_edpt_stream_init()` がサイズを `uint16_t` で受け取り、`tu_fifo` が読み書きindexを `[0, 2*depth)` で回すためです。65536はdepth 0として届き、デバイスはreadyを報告したまま一度もmountしません。原因のフラグを指すものは何も出ません。ヘッダ側でビルドエラーにしてあります。
 
 ---
 
@@ -533,7 +600,9 @@ Host側のFIFO分割に相当する調整はDevice側にはありません（`dc
 | Interrupt | ≤64 | ≤1024 |
 | Isochronous | ≤1023 | ≤1024 |
 
-このライブラリのHS用コンフィグレーションディスクリプタは、FS版をコピーしてから**bulkエンドポイントのMPSだけを512へ書き換えて**作られます。Audioは方向とレートから別途計算されます。
+このライブラリのHS用コンフィグレーションディスクリプタは、FS版をコピーしてから**すべてのbulkエンドポイントのMPSを512へ書き換え**、さらにhigh speedで大きなパケットを要求したHID function（`hidHighSpeedEndpointSize()`。現状 `EspUsbDeviceHidVendor` だけ）のinterruptエンドポイントを書き換えて作られます。Audioは方向とレートから別途計算されます。
+
+ディスクリプタ種別ではなくfunction単位なのは、両者が同じ問いではないからです。vendor HIDの隣にあるキーボードは8バイトのエンドポイントのままでなければなりません。interruptエンドポイントは帯域を**予約**するので、8バイトしか送らないものを膨らませると、その予約をバス上の他から奪うことになります。
 
 HIDのMPSは構成で変わります。
 
@@ -541,9 +610,12 @@ HIDのMPSは構成で変わります。
 |------|-----------------|
 | 単独HID | 8 |
 | 複合HID | 16 |
-| 複合HIDにNKROキーボードを含む | そのクラスが要求する大きさ（`CFG_TUD_HID_EP_BUFSIZE` = 64 が上限） |
+| 複合HIDにNKROキーボードを含む | そのクラスが要求する大きさ（`CFG_TUD_HID_EP_BUFSIZE` が上限） |
+| `EspUsbDeviceHidVendor` | `reportSize + 1`。FS側は64、HS側は `CFG_TUD_HID_EP_BUFSIZE` で頭打ち |
 
 NKROキーボードはビットマップレポートが1パケットに収まらないと分割されるため、`hidInEndpointSize()` でより大きなMPSを要求します。複合HIDの共有エンドポイントは、**含まれるクラスの要求の最大値**を取ります。
+
+**high speedでは「HIDは帯域が小さいクラス」ではありません。** その理解はfull speed前提の事実で、64バイト×1 msは64 KB/sです。high speedのinterruptエンドポイントは125 usごとに最大1024バイトを運ぶので、511バイトのレポートを8,000回/秒で約4 MB/s——しかもbulkと違い、その帯域は余りではなく予約です。どのホストOSでもドライバが要らない唯一のクラスでもあるので、Windowsのドライバ結合そのものを避けたいときは、エンドポイント予算を割く価値があります。
 
 ### 6.3 実測スループット
 
@@ -554,6 +626,8 @@ NKROキーボードはビットマップレポートが1パケットに収まら
 `p4_hs_bulk` が表示する値は**パケットごとの同期echoを含む健全性確認値であり、最大帯域のベンチマークではありません**。1パケット送って1パケット受けるたびにバスが空くので、実運用のストリーミングより低く出ます。設計の見積りに使うなら、自分の転送パターンで測り直してください。
 
 なお、512バイトちょうどの転送を `flush()` するとTinyUSBは終端のZLPを送ります。チェッカがこの正規の0バイトパケットを数えて読み飛ばしているのは、それが**プロトコル上正しい**からです（[7.2](#72-zlp)）。
+
+片方向のストリームで効くのは送出ループではなく送信FIFOの深さです。P4では同じ4 MiBの転送が `CFG_TUD_VENDOR_TX_BUFSIZE` 512バイトで9.03 MB/s、8 KiBで10.59 MB/sになります。P4の既定が8 KiBなのはそのためです（[5.4](#54-バッファのサイズ)）。データを作りながら流すスケッチは、`write()` が0を返すのをspinするのではなく `EspUsbDeviceVendor::waitWritable()` を使ってください。spinは生産側と同じCPUを取り合います。
 
 ---
 
@@ -692,7 +766,7 @@ Networkの送信側も同じ思想で、キューが埋まればフレームを�
 
 CDC、HID、MIDI、MSC、Vendor、NCM、Audioは**すでにコンパイルされています**（[2.2](#22-tusb_configh-を所有した結果)）。したがって新しい機能は、多くの場合「既存クラスの上にプロトコルを載せる」だけで済みます。
 
-- 独自データをドライバなしで流したい → `EspUsbDeviceHidVendor`（63バイトレポート）または `EspUsbDeviceHidCustom`（自前のレポートディスクリプタ）
+- 独自データをドライバなしで流したい → `EspUsbDeviceHidVendor`（レポートは最大 `CFG_TUD_HID_EP_BUFSIZE - 1`。S2/S3で63、P4で511）または `EspUsbDeviceHidCustom`（自前のレポートディスクリプタ）
 - 帯域が要る独自プロトコル → `EspUsbDeviceVendor`（bulk IN/OUT ＋ control）
 - シリアルに見せる → `EspUsbDeviceCdcSerial`
 
