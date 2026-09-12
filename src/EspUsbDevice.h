@@ -512,6 +512,9 @@ public:
   // more than this makes begin() fail.
   static uint8_t maxCdcPorts();
   const uint8_t *hidReportDescriptor(uint8_t instance);
+  // Length of what hidReportDescriptor(instance) returns. For a composite HID
+  // that is the merged descriptor, which is not any one class's own length.
+  uint16_t hidReportDescriptorLength(uint8_t instance);
 
   using ControlRequestObserver = std::function<void(const EspUsbDeviceControlRequestInfo &)>;
   // Watch control requests, including every one the library answers itself.

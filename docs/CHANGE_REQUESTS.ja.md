@@ -343,18 +343,50 @@ FIFO を出ており、FIFO には sketch が後ろに積んだぶんが残っ�
 
 ---
 
-## 作業中に見つかった別件
+## 作業中に見つかった別件（修正済み）
 
-**複合 HID に `EspUsbDeviceHidVendor` を混ぜると report descriptor が壊れる。**
+依頼書の範囲外だが、複合 HID の経路に 2 件あった。どちらも直した。
+
+### 1. report descriptor の merge が item 境界を無視していた
+
 `EspUsbDevice::buildDescriptors()` の複合 HID merge は、各クラスの report descriptor の
-**先頭 6 byte を prologue と決め打ち**して、その後ろに Report ID item を差し込む。
+**先頭 6 byte を prologue と決め打ち**して、その後ろに Report ID item を差し込んでいた。
 keyboard / mouse は `05 xx 09 xx a1 01` でちょうど 6 byte だが、vendor HID の usage page は
-3 byte item（`06 00 ff`）なので prologue が 7 byte あり、しかも Report ID を自前で持っている。
-結果、6 byte で切った続きに Report ID を挿すと item 境界がずれる。
+3 byte item（`06 00 ff`）なので prologue は 7 byte ある。6 byte で切ると **Collection item の
+途中**で切ることになり、そこから先の item が 1 byte ずつずれる。ホストは `a1 85` を
+「Collection (vendor 定義)」と読み、以降すべて別物になる。デバイスは列挙するので気付かない。
 
-**今回は直していない。** CR の範囲外であり、`EspUsbDeviceHidVendor` は examples / tests とも
-単独でしか使われていないので現に踏まれていない。直すなら merge 側を item 単位で走査する形に
-変える必要があり、複合 HID 全体の回帰確認が要る。別途起票する。
+Collection (Application) item の終わりを**item 単位で走査して**見つけるようにし、そこに
+Report ID を挿す形に直した。自前で Report ID を持つクラス（gamepad / consumer control /
+system control / vendor HID）は、重複させずに置き換える（従来は `85 04 85 04` のように
+同じ item が 2 回出ていた。値が同じなので無害だったが、無駄だった）。
+
+### 2. 複合 HID が interrupt OUT の report を全部捨てていた
+
+TinyUSB の HID driver は report descriptor を解釈しないので、interrupt OUT に届いた report を
+`tud_hid_set_report_cb(instance, 0, ...)` と **report ID 0** で上げてくる
+（`class/hid/hid_device.c`。control SET_REPORT の経路だけは wValue から ID を取り出す）。
+一方、複合 HID の振り分けは report ID で行う。結果、**複合デバイスは interrupt OUT に来た
+report をひとつも受け取れなかった**。単独クラスの device は `instance` で振り分けるので無事。
+
+merged descriptor は report ID を宣言しているので、仕様上ホストは report の先頭バイトに
+ID を置く。そこから読むようにした。先頭バイトがどのクラスの ID でもないときは何もしない
+（ID を宣言していない構成で payload の 1 byte 目を食べないため）。
+
+### 確認の取り方（と、取れなかったこと）
+
+- merge は `tests/single/descriptor` が item 単位で走査して検証する（well-formed、
+  Collection (Application) の数、Report ID の並び、Collection より前に Report ID が無いこと）。
+- 実ホストから見た merged descriptor と両 ID の往復は
+  `tests/loopback/composite_hid_report_ids` が P4 実機で確認する。ホストが取得した
+  descriptor をホスト側で走査し、ID 1 と ID 6 の IN、control 経由の feature (ID 6) と
+  LED (ID 1) を通す。
+- **interrupt OUT の経路だけは、この台のどちらのホストからも駆動できなかった。** usbip は
+  interrupt OUT URB を配送せず（control SET_REPORT は通る。`hidraw` の ioctl で確認）、
+  EspUsbHost には生のエンドポイント書き込み API が無く、`sendHIDVendorOutput()` は複合
+  デバイスには届かない（device 側の `handleHidSetReport` が一度も呼ばれない）。そのため
+  `tests/single/descriptor` から `handleHidSetReport()` を直接呼んで振り分けだけを検証して
+  いる。ホストが ID を前置するかどうかはホストの責任で、device の責任は振り分けである。
 
 ---
 
@@ -366,7 +398,8 @@ keyboard / mouse は `05 xx 09 xx a1 01` でちょうど 6 byte だが、vendor 
 | `tests/single/descriptor` | ESP32-S3 | MS OS 2.0 の flat / subsets、vendor の per-speed MPS、HID vendor の Report Count |
 | `tests/single/p4_hs_packet_sizes` | ESP32-P4 | 511 byte report の descriptor、HS 512 / FS 64、FIFO 容量、observer の着脱 |
 | `tests/loopback/usb_vendor` | ESP32-P4 | host 役が取りに行った MS OS 2.0 が 162 byte、observer が MS OS 2.0 要求と GET_DESCRIPTOR を観測 |
-| `tests/loopback/` `tests/single/` | ESP32-P4 | 新既定で 24/24 |
+| `tests/loopback/composite_hid_report_ids` | ESP32-P4 | 実ホストが取得した merged descriptor と、report ID 1 / 6 の双方向 |
+| `tests/loopback/` `tests/single/` | ESP32-P4 | 新既定で全数 |
 | `tests/peer/` | ESP32-S3 ×2 | 全数。一度 `peer/usb_msc` が起動時 OOM で落ちたが、`--clean` で通る（README にある stale build cache の症状で、DUT 側は EspUsbHost 単体でこのライブラリを include していない） |
 | `tests/manual/p4_hs_stream` | ESP32-P4 + PC | bulk IN の FIFO / 転送長 / waitWritable / host URB depth |
 | `tests/manual/p4_hs_hid_stream` | ESP32-P4 + PC | HID 511 byte の descriptor と 4.03 MB/s |
