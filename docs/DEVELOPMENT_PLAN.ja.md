@@ -124,12 +124,21 @@ flash / SPIFFS / LittleFS の直接 MSC 公開は標準方針にしません。�
 ### USBVendor / WebUSB
 
 `EspUsbDeviceVendor` は HID vendor とは別の、HID ではない vendor-specific interface です。
-bulk IN/OUT、stream-like API、EP0 vendor control request callback、WebUSB landing URL を扱います。
+bulk IN/OUT、stream-like API、EP0 vendor control request callback、WebUSB landing URL、
+送信 FIFO の空き待ち（`writeAvailable()` / `waitWritable()`）を扱います。spin で待つ形も
+残していますが、データを作りながら流す用途では block する待ちを使います。
 
-WebUSB / Microsoft OS 2.0 descriptor はライブラリ側で生成し、割り当て済みの vendor
-interface 番号へ WinUSB compatible ID を関連付けます。custom vendor code、GUID、
-Microsoft OS 2.0 descriptor 内容を差し替える API は未実装です。
-browser / libusb / WinUSB の挙動は Host OS や driver 状態に依存するため、まず `tests/manual` の確認対象にします。
+WebUSB / Microsoft OS 2.0 descriptor はライブラリ側で生成します。**descriptor set の構造は
+device の interface 数で決めます**——1 本なら compatible ID を set header 直下に置き（flat、
+162 byte）、2 本以上なら configuration / function subset で包んで割り当て済みの vendor
+interface 番号へ関連付けます（178 byte）。Windows が function subset を解決するのは
+usbccgp.sys を通したときだけで、それが読み込まれるのは composite device のときだけだからです。
+`config.msOs20Layout` でどちらかに固定もできます。custom vendor code、GUID、feature
+descriptor の中身を差し替える API は未実装です。
+
+browser / libusb / WinUSB の挙動は Host OS や driver 状態に依存するため、`tests/manual` の
+確認対象です。WinUSB の bind は `tests/manual/windows_winusb` が Windows 実機で確認します
+（旧構造を強制した対照実験込み）。
 
 ## 現在の検証範囲
 
@@ -187,9 +196,12 @@ manual 確認に残す範囲:
 4. Audioのdescriptor、control request、FIFO、event、statsのDevice単体検証を維持する。
 5. USB Audio composite deviceはS3 UAC1 HID+Audio Peerまで自動化済み。必要なら
    CDC/Vendorとの組み合わせを追加する。
-6. MSC FAT RAM disk / SD card / USBVendor の manual 確認手順を実機で消化する。
+6. MSC FAT RAM disk / SD card の manual 確認手順を実機で消化する。USBVendor 側は
+   `tests/manual/windows_winusb`（WinUSB bind）と `tests/manual/p4_hs_stream`（HS bulk の
+   帯域と FIFO / 転送長）で消化済み。
 7. WebUSB / libusb / WinUSB の Host 側サンプルを追加するか判断する。
-8. USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API を検討する。
+8. USBVendor の custom vendor code / GUID / Microsoft OS 2.0 の feature descriptor 内容を
+   差し替える API を検討する（構造の選択は `config.msOs20Layout` で実装済み）。
 9. FirmwareMSC は FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example として検討する。
 10. all-in-one composite example は `CompositeHidCdcMsc`（HID+CDC+MSC）を追加済み。4-in-1（+Vendor）は S3 の endpoint 予算超のため P4 対応時に検討する。
 11. CDC-NCM ネットワークデバイス（`EspUsbDeviceNet` + esp_netif/DHCP、`UsbNetwork` example、`tests/manual/usb_ncm`）は実 PC で確認済み。sibling の `EspUsbHost` NCM 実装が出来次第、2 台 peer テストを追加する。

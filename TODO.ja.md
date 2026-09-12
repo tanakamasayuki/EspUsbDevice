@@ -1,12 +1,12 @@
 # TODO
 
-更新日: 2026-08-19（全項目をリポジトリ実態と照合して棚卸し）
+更新日: 2026-09-13（MS OS 2.0 の構造選択が入ったので該当項目を更新）
 
 ## 未完了
 
 - [ ] （任意）P4 2台 HS peer 構成で HS の Audio を自動テスト化する。UAC2 自体は S3 の FS peer で検証済みなので、残るのは HS リンク上の isochronous packet サイズと interval の検証。
 - [ ] （検討）UAC2 で 1 方向あたり複数 sample rate を宣言できるようにする。現状 descriptor builder は 1 stream = 1 format 固定（`UnsupportedFormatCount`）で、Clock Source の `RANGE` は複数 subrange を返せる実装がありながら 1 つしか出せない。実装すれば peer テストで rate 切り替えも検証できる。
-- [ ] USBVendor の custom vendor code / Microsoft OS 2.0 descriptor 差し替え API。現状は固定 178 byte の MS OS 2.0 descriptor のみ。
+- [ ] USBVendor の custom vendor code / GUID / Microsoft OS 2.0 descriptor 内容の差し替え API。構造の選択（`config.msOs20Layout`：interface 1 本なら flat 162 byte、2 本以上なら subsets 178 byte。Windows 実機で対照確認済み）は実装したが、vendor code・GUID・feature descriptor の中身は固定のまま。
 - [ ] WebUSB / libusb / WinUSB のサンプル Host 側コード（WebUSB ページ、libusb スクリプトなど）。手動確認手順自体は `tests/manual/README.ja.md` に整備済み（BOS / landing URL の確認、libusb / WinUSB / WebUSB での interface claim）。
 - [ ] FirmwareMSC。FAT RAM disk 上の `firmware.bin` を安全に扱う helper / example。
 - [ ] CCID の拡張検討: 複数 slot、extended APDU / chaining、`ccidIdentifyCard()` が使う UID 経路のような ATR 以外の識別、PIN pad。いずれも現状は class descriptor で非対応と宣言しているので Host からは要求されない。
