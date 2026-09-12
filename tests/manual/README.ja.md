@@ -219,6 +219,144 @@ sudo udevadm trigger --attr-match=idVendor=303a --attr-match=idProduct=4041
   USB標準の`SET_CONFIGURATION 0 → 1`でclass endpointを再初期化してから比較を始める。
 - HS cable/port/PHYの物理条件を含むため通常のpytestには入れず、release candidateで実行する。
 
+## `p4_hs_stream`（high-speed bulk IN の律速は何か）
+
+目的:
+
+- ESP32-P4 device から この PC への片方向 bulk IN のスループットを測る。パターンを
+  ホスト側で検証するので、速いが取りこぼした run は良く見えない。
+- それを決める 2 つの数——送信 FIFO（`CFG_TUD_VENDOR_TX_BUFSIZE`）と、その FIFO の
+  どれだけを 1 回の転送が運ぶか（`CFG_TUD_VENDOR_TX_EPSIZE`）——を `build_opt.h` から
+  振る。ライブラリの変更は要らない。
+- 同じストリームで spin ループと `EspUsbDeviceVendor::waitWritable()` を比べる。
+
+効くのは 2 つ目で、しかも普通は誰も触らない値です。TinyUSB の vendor class は
+endpoint ごとに 1 転送しか投げず完了 callback で再 arm しますが、その転送長の既定が
+bulk 1 packet です。つまり 512 byte ごとに完了割り込み・event queue・usbd タスクの
+往復が入ります。ESP32-P4 rev 1.3、usbip 経由、1 run 4 MiB、9 回の median:
+
+| FIFO | 転送長 | MB/s | 備考 |
+|-----:|-------:|-----:|------|
+| 512 | 512 | 9.83 | 8.33-10.21。ZLP で終了した host URB が 4〜53 |
+| 8192 | 512 | 10.76 | 10.50-11.06。ZLP 終了なし |
+| 8192 | 2048 | 18.64 | |
+| **4096** | **4096** | **21.12** | ライブラリの ESP32-P4 既定 |
+| 8192 | 8192 | 22.81 | 飽和。16384 は何も買わない |
+| 32768 | 8192 | 23.34 | |
+
+必要なもの:
+
+- high-speed Device コネクタをこの PC に繋いだ ESP32-P4 ボード
+- WSL なら Windows 側の `usbipd`
+- libusb が動く PC
+
+手順:
+
+1. 測りたい条件を sketch と同じ場所の `build_opt.h` に書いて（空ファイルならライブラリの
+   既定）書き込みます。
+   ```
+   cd tests/manual/p4_hs_stream
+   printf -- '-DCFG_TUD_VENDOR_TX_EPSIZE=8192\n' > build_opt.h
+   arduino-cli compile --profile p4_hs_stream --clean
+   arduino-cli upload --profile p4_hs_stream -p <port>
+   ```
+   `--clean` は省略できません。Arduino は `build_opt.h` をクリーンビルドのときしか
+   読み直しません。
+2. WSL では Device コネクタを attach します。**次の書き込みの前に必ず detach**
+   してください。書き込みはチップをリセットし、attach 中のリセットは死んだ vhci
+   エントリを残して、ボードのシリアルポートまで巻き込んで固まらせます。
+   ```
+   usbipd.exe attach --wsl --busid <n>
+   ```
+3. 計測します。
+   ```
+   cd tests
+   uv run --with pyusb python manual/p4_hs_stream/p4_hs_stream.py --runs 9
+   ```
+
+各 run はホスト側のレートと並べてデバイス自身の見え方——`write()` が拒否された回数、
+`waitWritable()` が block した回数、ホストの URB が短く返った回数——を出します。最後の
+ものは見る価値があります。TinyUSB は packet size の倍数の転送のあとに FIFO が空になると
+ZLP を送り、それがホストの実行中 URB を早期終了させます。FIFO 512 byte のとき、遅い run は
+まさにその回数が多い run です。
+
+## `p4_hs_hid_stream`（high-speed が許すパケットサイズでの HID）
+
+目的:
+
+- `EspUsbDeviceHidVendor` を 511 byte report で使ったとき、high-speed の
+  configuration では 512 byte の interrupt endpoint、full-speed 側では USB 2.0 の
+  上限である 64 になることを確認する。
+- HID report descriptor が Report Count 511 を宣言していることを確認する。ホストは
+  読み出しサイズをこの値から決めます。
+- 順序どおり・欠落なしで、どれだけ出るかを測る。
+
+HID はどのホスト OS でも driver が要らない唯一のクラスで、high speed では full speed
+由来の「帯域が小さいクラス」という評判は成立しません。interrupt endpoint は 125 us ごとに
+最大 1024 byte を運び、しかも bulk と違ってその帯域は予約です。実測 4.03 MB/s、
+7,866 report/s、欠落 0。
+
+必要なもの: `p4_hs_stream` と同じ。深さの掃引には `libusb1`。
+
+手順:
+
+1. `p4_hs_hid_stream` profile で書き込み、attach します。
+2. 確認します。
+   ```
+   cd tests
+   uv run --with pyusb python manual/p4_hs_hid_stream/p4_hs_hid_stream.py
+   ```
+
+**ここで出るレートは、ホストが URB を複数 in-flight にしない限りデバイスの値ではなく
+ホストの値です。** usbip 経由で同期読み 1 本ずつだと、デバイスが何をしようと約
+1,100 report/s になります。ホストが 8 本以上投げると、デバイスは約 7,900/s——
+1 microframe に 1 report という天井の 98%——に到達します。
+
+## `windows_winusb`（Windows が .inf なしで WinUSB を bind するか）
+
+目的:
+
+- 素の vendor interface が driver package なしで Windows にインストールされること、
+  すなわち compatible ID に `USB\MS_COMP_WINUSB` が出て、bind される service が
+  WinUSB になることを確認する。
+- 旧 descriptor 構造を強制して、置き換えた側の失敗も再現する。
+
+Microsoft OS 2.0 の function subset を解決するのは usbccgp.sys だけで、Windows が
+それを読み込むのは composite device のときだけです。したがって単一 interface の
+デバイスでは、subset に包まれた compatible ID は結び付く先を持ちません。同じボード、
+レイアウトのフラグ以外は同じファーム、毎回新しい device instance での実測:
+
+| `msOs20Layout` | Status | compatible ID | service |
+|---|---|---|---|
+| AUTO（interface 1 本なので flat） | OK / CM_PROB_NONE | `USB\MS_COMP_WINUSB` あり | WinUSB |
+| SUBSETS（従来の構造） | Error / **CM_PROB_FAILED_INSTALL** | なし | なし |
+
+必要なもの:
+
+- デバイスが Windows 側から見える PC（WSL なら `powershell.exe` が届くこと）。WSL では
+  Device コネクタを WSL に attach していないことが条件です。
+
+手順:
+
+1. **この PC で一度もインストールに失敗していない serial number を選びます。**
+   Windows は device instance を VID / PID / serial で識別し、失敗した driver match は
+   その instance に貼り付いて二度と再評価されません。一度失敗した serial で試すと、
+   いま descriptor が何を言っているかではなくキャッシュされた失敗が返ります。
+   ```
+   cd tests/manual/windows_winusb
+   printf -- '-DWINUSB_TEST_SERIAL=\\"espusb-winusb-3\\"\n' > build_opt.h
+   arduino-cli compile --profile p4_windows_winusb --clean
+   arduino-cli upload --profile p4_windows_winusb -p <port>
+   ```
+2. Device コネクタが Windows 側にあることを確認し（WSL に attach 済みなら
+   `usbipd.exe detach --busid <n>`）、Windows に聞きます。
+   ```
+   cd tests
+   uv run python manual/windows_winusb/windows_winusb.py
+   ```
+3. 対照実験は `-DWINUSB_TEST_LAYOUT=2` と**別の**未使用 serial を足して、
+   `CM_PROB_FAILED_INSTALL` と `USB\MS_COMP_WINUSB` の不在を確認します。
+
 ## `usb_ncm`（USB CDC-NCM ネットワークデバイス）
 
 目的:

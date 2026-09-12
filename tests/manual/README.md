@@ -242,6 +242,150 @@ Notes:
 - Physical HS cable/port/PHY conditions make this a release-candidate manual
   test rather than part of the default pytest suite.
 
+## `p4_hs_stream` (what limits a high-speed bulk IN)
+
+Purpose:
+
+- Measure one-way bulk IN throughput from an ESP32-P4 device to this PC, with
+  the pattern verified so a fast run that lost data cannot look good.
+- Vary the two numbers that decide it - the transmit FIFO
+  (`CFG_TUD_VENDOR_TX_BUFSIZE`) and how much of that FIFO one armed transfer
+  carries (`CFG_TUD_VENDOR_TX_EPSIZE`) - from `build_opt.h`, with no change to
+  the library.
+- Compare the spin loop against `EspUsbDeviceVendor::waitWritable()` on the same
+  stream.
+
+The second knob is the one that matters and the one nobody reaches for.
+TinyUSB's vendor class submits one transfer per endpoint and re-arms it from the
+completion callback, and it sizes that transfer at a single bulk packet by
+default: every 512 bytes then costs a completion interrupt, an event-queue hop
+and a usbd task turn. Measured on ESP32-P4 rev 1.3 over usbip, 4 MiB per run,
+median of 9:
+
+| FIFO | transfer | MB/s | note |
+|-----:|---------:|-----:|------|
+| 512 | 512 | 9.83 | 8.33-10.21, and 4-53 ZLP-terminated host URBs |
+| 8192 | 512 | 10.76 | 10.50-11.06, no ZLP terminations |
+| 8192 | 2048 | 18.64 | |
+| **4096** | **4096** | **21.12** | the library's ESP32-P4 default |
+| 8192 | 8192 | 22.81 | saturated; 16384 buys nothing |
+| 32768 | 8192 | 23.34 | |
+
+Requirements:
+
+- An ESP32-P4 board with its high-speed Device connector cabled to this PC
+- On WSL, `usbipd` on the Windows side
+- A PC with a working libusb backend
+
+Steps:
+
+1. Write the arm you want to measure into `build_opt.h` next to the sketch (an
+   empty file is the library's defaults), then flash:
+   ```
+   cd tests/manual/p4_hs_stream
+   printf -- '-DCFG_TUD_VENDOR_TX_EPSIZE=8192\n' > build_opt.h
+   arduino-cli compile --profile p4_hs_stream --clean
+   arduino-cli upload --profile p4_hs_stream -p <port>
+   ```
+   `--clean` is not optional: Arduino only re-reads `build_opt.h` on a clean
+   build.
+2. On WSL, attach the Device connector. **Detach it again before the next
+   flash** - flashing resets the chip, and a reset under a live attachment
+   leaves a dead vhci entry behind that also wedges the board's serial port:
+   ```
+   usbipd.exe attach --wsl --busid <n>
+   ```
+3. Run the measurement:
+   ```
+   cd tests
+   uv run --with pyusb python manual/p4_hs_stream/p4_hs_stream.py --runs 9
+   ```
+
+Each run prints the host's rate beside the device's own view: how many times
+`write()` was refused, how many times `waitWritable()` blocked, and how many of
+the host's URBs came back short. That last one is worth watching - TinyUSB sends
+a zero-length packet whenever the FIFO runs dry after a transfer that was a
+multiple of the packet size, which ends the host's in-flight URB early, and at a
+512-byte FIFO the slow runs are exactly the runs with many of them.
+
+## `p4_hs_hid_stream` (HID at the packet size high speed allows)
+
+Purpose:
+
+- Confirm that `EspUsbDeviceHidVendor` with a 511-byte report emits a 512-byte
+  interrupt endpoint in the high-speed configuration and the 64 USB 2.0 allows
+  in the full-speed one.
+- Confirm the HID report descriptor declares Report Count 511, which is what a
+  host sizes its reads from.
+- Measure the rate, in order, with no gaps.
+
+HID is the only class that needs no driver on any host OS, and at high speed it
+is not the low-bandwidth class its full-speed reputation suggests: an interrupt
+endpoint carries up to 1024 bytes every 125 us, and unlike bulk that bandwidth
+is reserved. Measured 4.03 MB/s at 7,866 reports/s with no sequence gaps.
+
+Requirements: as `p4_hs_stream`, plus `libusb1` for the depth sweep.
+
+Steps:
+
+1. Flash and attach as above, using the `p4_hs_hid_stream` profile.
+2. Run the check:
+   ```
+   cd tests
+   uv run --with pyusb python manual/p4_hs_hid_stream/p4_hs_hid_stream.py
+   ```
+
+**The rate this reports is the host's, not the device's, unless the host keeps
+several URBs in flight.** One synchronous read at a time over usbip gives about
+1,100 reports/s whatever the device does. The device reaches ~7,900/s - 98% of
+the one-report-per-microframe ceiling - once the host submits 8 or more.
+
+## `windows_winusb` (does Windows bind WinUSB without an .inf)
+
+Purpose:
+
+- Confirm that a bare vendor interface installs on Windows with no driver
+  package: `USB\MS_COMP_WINUSB` in its compatible IDs and WinUSB as the bound
+  service.
+- Confirm the failure it replaces, by forcing the old descriptor shape.
+
+A Microsoft OS 2.0 function subset only resolves through usbccgp.sys, which
+Windows loads for composite devices only, so on a single-interface device the
+subsets leave the compatible ID attached to nothing. Measured on the same board,
+same firmware but for the layout flag, a fresh device instance each time:
+
+| `msOs20Layout` | Status | Compatible IDs | Service |
+|---|---|---|---|
+| AUTO (flat, one interface) | OK / CM_PROB_NONE | `USB\MS_COMP_WINUSB` present | WinUSB |
+| SUBSETS (the old shape) | Error / **CM_PROB_FAILED_INSTALL** | absent | none |
+
+Requirements:
+
+- A Windows PC (or WSL with `powershell.exe` reachable) whose Windows side can
+  see the device. On WSL that means the Device connector must **not** be
+  attached to WSL.
+
+Steps:
+
+1. **Choose a serial number that has never failed to install on this PC.**
+   Windows keys a device instance on VID, PID and serial, and a failed driver
+   match sticks to that instance and is never re-probed, so a serial that once
+   failed reports the cached failure rather than what the descriptors now say:
+   ```
+   cd tests/manual/windows_winusb
+   printf -- '-DWINUSB_TEST_SERIAL=\\"espusb-winusb-3\\"\n' > build_opt.h
+   arduino-cli compile --profile p4_windows_winusb --clean
+   arduino-cli upload --profile p4_windows_winusb -p <port>
+   ```
+2. Make sure the Device connector is on the Windows side (`usbipd.exe detach
+   --busid <n>` if it is attached to WSL), then ask Windows:
+   ```
+   cd tests
+   uv run python manual/windows_winusb/windows_winusb.py
+   ```
+3. For the control, add `-DWINUSB_TEST_LAYOUT=2` and **another** unused serial,
+   and expect `CM_PROB_FAILED_INSTALL` with no `USB\MS_COMP_WINUSB`.
+
 ## `usb_ncm` (USB CDC-NCM network device)
 
 Purpose:

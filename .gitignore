@@ -45,3 +45,6 @@ tests/unit/**/output/
 *.bin
 *.hex
 *.map
+
+# Per-run experiment flags for the manual tests; each arm writes its own.
+tests/manual/**/build_opt.h

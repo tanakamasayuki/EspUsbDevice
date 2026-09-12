@@ -775,15 +775,37 @@ not have the same problem:
 
 | | ESP32-S2 / S3 | ESP32-P4 |
 |---|---|---|
-| `CFG_TUD_VENDOR_TX_BUFSIZE` | 512 | **8192** |
+| `CFG_TUD_VENDOR_TX_BUFSIZE` | 512 | **4096** |
+| `CFG_TUD_VENDOR_TX_EPSIZE` | TinyUSB's (one packet) | **4096** |
 | `CFG_TUD_HID_EP_BUFSIZE` | 64 | **512** |
 
-Both P4 values are measured ceilings rather than guesses. The vendor FIFO at
-512 bytes is one high-speed bulk packet, and a sketch streaming 4 MiB out of
-it spins on `write()` returning 0 about 40,000 times; at 8 KiB the same
-transfer runs at 10.59 MB/s against 9.03, and the run-to-run spread collapses
-from ±19% to ±2.5%. 16 and 32 KiB buy nothing. Between them the two P4
-defaults cost **9024 bytes of RAM**, whether or not a sketch uses those
+**The middle row is the one nobody reaches for, and it is the one that
+matters.** The FIFO is how much a sketch may queue; `CFG_TUD_VENDOR_TX_EPSIZE`
+is how much of that FIFO **one armed transfer carries**, and TinyUSB defaults
+it to a single bulk packet. The vendor class submits one transfer per endpoint
+and re-arms from the completion callback, so at one packet per transfer every
+512 bytes costs a completion interrupt, an event-queue hop and a usbd task turn
+- about 52 us of turnaround against 46 us of wire time. DWC2 sends several
+packets per transfer perfectly happily; only that default stopped it.
+
+Measured on ESP32-P4 rev 1.3 over usbip, 4 MiB per run, median of 9, pattern
+verified on the host:
+
+| FIFO | transfer | MB/s | global RAM |
+|-----:|---------:|-----:|-----------:|
+| 512 | 512 | 9.83 | 74,008 |
+| 8192 | 512 | 10.76 | 81,688 |
+| 8192 | 2048 | 18.64 | 83,224 |
+| **4096** | **4096** | **21.12** | **81,176** |
+| 8192 | 8192 | 22.81 | 89,368 |
+| 8192 | 16384 | 22.78 | 97,560 |
+| 32768 | 8192 | 23.34 | 113,936 |
+
+It saturates around 8192, and 4096/4096 gets 93% of that ceiling while using
+**less** RAM than raising the FIFO alone did. Raising the host's URB depth past
+2 adds nothing, so ~23 MB/s is the device's ceiling on this path rather than
+the host's. Together with `CFG_TUD_HID_EP_BUFSIZE` the P4 defaults cost 7168
+bytes of RAM over a full-speed build, whether or not a sketch uses those
 classes, because TinyUSB defines the buffers statically.
 
 **Nothing `tu_fifo` backs may exceed 32768 bytes**, and the reason is not RAM:
@@ -850,7 +872,10 @@ endpoint takes **the maximum request among the classes it contains**.
 full-speed fact: 64 bytes every millisecond is 64 KB/s. A high-speed interrupt
 endpoint carries up to 1024 bytes every 125 us, so a 511-byte report at 8,000
 reports/s is about 4 MB/s - and unlike bulk, that bandwidth is reserved rather
-than whatever is left over. It is also the only class that needs no driver on
+than whatever is left over. Measured on P4: 4.03 MB/s at 7,866 reports/s with
+no gaps in the sequence, which is 98% of one report per microframe. That rate
+needs the *host* to keep several URBs in flight, though - one synchronous read
+at a time gives about 1,100 reports/s whatever the device does. It is also the only class that needs no driver on
 any host OS, which is what makes it worth the endpoint budget when Windows
 driver binding is the problem you are trying to avoid.
 
@@ -869,13 +894,13 @@ Note also that flushing a transfer of exactly 512 bytes makes TinyUSB send a
 terminating ZLP. The checker counts and skips those legitimate zero-byte packets
 because that is **protocol-correct behaviour** ([7.2](#72-zlp)).
 
-For a one-way stream the number that moves is the transmit FIFO depth, not the
-send loop: on P4 the same 4 MiB transfer runs at 9.03 MB/s with a 512-byte
-`CFG_TUD_VENDOR_TX_BUFSIZE` and 10.59 with 8 KiB, which is why the default is
-8 KiB there ([5.4](#54-buffer-sizes)). A sketch that streams while it also
-produces the data should use `EspUsbDeviceVendor::waitWritable()` rather than
-spinning on `write()` returning 0 - the spin competes with the producer for the
-same CPU.
+For a one-way stream the numbers that move are the transmit FIFO depth and the
+transfer length, not the send loop: on P4 the same 4 MiB transfer runs at 9.83
+MB/s with the FIFO and transfer TinyUSB defaults to, and 21.5 with the 4096/4096
+this library sets there ([5.4](#54-buffer-sizes)). A sketch that streams while
+it also produces the data should use `EspUsbDeviceVendor::waitWritable()` rather
+than spinning on `write()` returning 0: measured at the same 21 MB/s with the
+spin count going from ~25,000 per 4 MiB to zero, one block per transfer.
 
 ---
 
