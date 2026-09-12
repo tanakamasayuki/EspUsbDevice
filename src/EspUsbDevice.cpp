@@ -152,6 +152,38 @@ static uint8_t powerToDescriptor(uint16_t milliamps)
   return static_cast<uint8_t>(units);
 }
 
+// Length of the HID item starting at `item`, or 0 if it is malformed or runs
+// past `available`.
+//
+// A HID report descriptor is a stream of items, not a fixed layout, and the
+// prefix byte says how much data follows: two bits of size, where 3 means four
+// bytes rather than three. 0xFE introduces a long item, which nothing here
+// emits but which must still be stepped over correctly rather than silently
+// mis-parsed.
+static size_t hidItemLength(const uint8_t *item, size_t available)
+{
+  if (!item || available == 0)
+  {
+    return 0;
+  }
+  if (item[0] == 0xfe)
+  {
+    if (available < 3)
+    {
+      return 0;
+    }
+    const size_t length = 3u + item[1];
+    return length <= available ? length : 0;
+  }
+  static constexpr uint8_t DATA_SIZE[4] = {0, 1, 2, 4};
+  const size_t length = 1u + DATA_SIZE[item[0] & 0x03];
+  return length <= available ? length : 0;
+}
+
+// Item prefixes with the size bits masked off.
+static constexpr uint8_t HID_ITEM_COLLECTION = 0xa0;
+static constexpr uint8_t HID_ITEM_REPORT_ID = 0x84;
+
 static uint16_t writeHidConfigurationDescriptor(uint8_t *dst,
                                                 uint8_t interfaceNumber,
                                                 uint8_t endpointNumber,
@@ -1226,10 +1258,49 @@ const uint8_t *EspUsbDevice::hidReportDescriptor(uint8_t instance)
   return classes_[instance]->hidReportDescriptor();
 }
 
+uint16_t EspUsbDevice::hidReportDescriptorLength(uint8_t instance)
+{
+  if (compositeHid())
+  {
+    return instance == 0 ? hidReportDescriptorLength_ : 0;
+  }
+  if (instance >= classCount_ || !classes_[instance] || !classes_[instance]->isHid())
+  {
+    return 0;
+  }
+  return classes_[instance]->hidReportDescriptorLength();
+}
+
 void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
 {
   if (compositeHid())
   {
+    // A report that arrived on the interrupt OUT endpoint has no report ID yet.
+    // TinyUSB's HID driver does not parse report descriptors, so it passes 0
+    // and leaves the payload untouched (hid_device.c); only the control
+    // SET_REPORT path knows the ID, from wValue. A merged descriptor declares
+    // report IDs, so the host prefixes every report with one and the first byte
+    // is it - without this, a composite HID device silently dropped everything
+    // its host sent to the OUT endpoint, while the same device received control
+    // SET_REPORTs fine.
+    //
+    // Only consumed when it actually names one of the merged classes, so a
+    // device whose classes somehow declare no IDs is left alone rather than
+    // having its first payload byte eaten.
+    if (reportId == 0 && length > 0)
+    {
+      for (size_t i = 0; i < classCount_; i++)
+      {
+        if (classes_[i] && classes_[i]->isHid() &&
+            classReportId(static_cast<uint8_t>(i)) == data[0])
+        {
+          reportId = data[0];
+          data++;
+          length--;
+          break;
+        }
+      }
+    }
     for (size_t i = 0; i < classCount_; i++)
     {
       if (!classes_[i] || !classes_[i]->isHid())
@@ -1458,12 +1529,70 @@ bool EspUsbDevice::buildDescriptors()
         setLastError(ESP_FAIL);
         return false;
       }
-      memcpy(&hidReportDescriptor_[hidReportDescriptorLength_], src, 6);
-      hidReportDescriptorLength_ += 6;
-      hidReportDescriptor_[hidReportDescriptorLength_++] = 0x85;
-      hidReportDescriptor_[hidReportDescriptorLength_++] = classReportId(static_cast<uint8_t>(i));
-      memcpy(&hidReportDescriptor_[hidReportDescriptorLength_], src + 6, srcLen - 6);
-      hidReportDescriptorLength_ += srcLen - 6;
+      // Merging means giving each class its own Report ID, which has to go
+      // immediately after that class's Collection (Application) item.
+      //
+      // Finding that point by walking items is not pedantry. The obvious
+      // shortcut - copy six bytes, insert the ID, copy the rest - holds only
+      // for a descriptor that opens with a one-byte Usage Page, a one-byte
+      // Usage and the Collection. EspUsbDeviceHidVendor opens with a
+      // vendor-defined Usage Page, which is a three-byte item, so cutting at
+      // six landed inside the Collection item and the merged descriptor was
+      // nonsense from there on: the host read 0xA1 0x85 as "Collection
+      // (vendor)" and every later item shifted by one.
+      //
+      // A class that already declares a Report ID of its own (gamepad,
+      // consumer control, system control, vendor HID) has it replaced rather
+      // than duplicated, since the composite device is the one deciding IDs.
+      size_t sourceOffset = 0;
+      bool reportIdWritten = false;
+      bool justInsertedId = false;
+      while (sourceOffset < srcLen)
+      {
+        const size_t itemLength = hidItemLength(&src[sourceOffset], srcLen - sourceOffset);
+        if (itemLength == 0)
+        {
+          setLastError(ESP_FAIL);
+          return false;
+        }
+        const uint8_t prefix = src[sourceOffset];
+        if (justInsertedId && (prefix & 0xfc) == HID_ITEM_REPORT_ID)
+        {
+          justInsertedId = false;
+          sourceOffset += itemLength;
+          continue;
+        }
+        justInsertedId = false;
+        if (hidReportDescriptorLength_ + itemLength > MAX_HID_REPORT_DESCRIPTOR)
+        {
+          setLastError(ESP_FAIL);
+          return false;
+        }
+        memcpy(&hidReportDescriptor_[hidReportDescriptorLength_], &src[sourceOffset], itemLength);
+        hidReportDescriptorLength_ = static_cast<uint16_t>(hidReportDescriptorLength_ + itemLength);
+        sourceOffset += itemLength;
+        if (!reportIdWritten && (prefix & 0xfc) == HID_ITEM_COLLECTION)
+        {
+          if (hidReportDescriptorLength_ + 2 > MAX_HID_REPORT_DESCRIPTOR)
+          {
+            setLastError(ESP_FAIL);
+            return false;
+          }
+          hidReportDescriptor_[hidReportDescriptorLength_++] = 0x85;
+          hidReportDescriptor_[hidReportDescriptorLength_++] =
+              classReportId(static_cast<uint8_t>(i));
+          reportIdWritten = true;
+          justInsertedId = true;
+        }
+      }
+      if (!reportIdWritten)
+      {
+        // No Collection to hang a Report ID on, so this class cannot be merged
+        // with another. Failing here beats shipping a descriptor whose reports
+        // are indistinguishable on the wire.
+        setLastError(ESP_FAIL);
+        return false;
+      }
     }
 
     // Single duplex endpoint on EP1 (OUT=0x01 / IN=0x81).

@@ -1,6 +1,20 @@
 #include "EspUsbDevice.h"
 #include <string.h>
 
+struct HidWalk
+{
+  bool wellFormed = false;
+  // Collection (Application) only. A mouse nests a Physical collection inside
+  // its Application one, so counting every Collection item counts functions
+  // wrong.
+  uint8_t collections = 0;
+  uint8_t reportIds[8] = {};
+  uint8_t reportIdCount = 0;
+  // Report IDs seen before any Collection item, which would apply to nothing.
+  uint8_t strayReportIds = 0;
+};
+
+
 static int passCount = 0;
 static int failCount = 0;
 
@@ -22,6 +36,67 @@ static uint16_t le16(const uint8_t *data)
 {
   return static_cast<uint16_t>(data[0]) | (static_cast<uint16_t>(data[1]) << 8);
 }
+
+// Length of one HID item, or 0 if it is malformed or runs past the end. Mirrors
+// the walker the library uses to merge descriptors, so a merged descriptor that
+// only *looks* right cannot pass this.
+static uint16_t hidItemLen(const uint8_t *item, uint16_t available)
+{
+  if (available == 0)
+  {
+    return 0;
+  }
+  if (item[0] == 0xfe)
+  {
+    if (available < 3)
+    {
+      return 0;
+    }
+    const uint16_t length = static_cast<uint16_t>(3 + item[1]);
+    return length <= available ? length : 0;
+  }
+  static const uint8_t dataSize[4] = {0, 1, 2, 4};
+  const uint16_t length = static_cast<uint16_t>(1 + dataSize[item[0] & 0x03]);
+  return length <= available ? length : 0;
+}
+
+static HidWalk walkHidReportDescriptor(const uint8_t *descriptor, uint16_t length)
+{
+  HidWalk walk;
+  if (!descriptor || length == 0)
+  {
+    return walk;
+  }
+  uint16_t offset = 0;
+  while (offset < length)
+  {
+    const uint16_t itemLength = hidItemLen(&descriptor[offset], static_cast<uint16_t>(length - offset));
+    if (itemLength == 0)
+    {
+      return walk; // wellFormed stays false
+    }
+    const uint8_t prefix = descriptor[offset];
+    if ((prefix & 0xfc) == 0xa0 && itemLength >= 2 && descriptor[offset + 1] == 0x01)
+    {
+      walk.collections++;
+    }
+    else if ((prefix & 0xfc) == 0x84)
+    {
+      if (walk.collections == 0)
+      {
+        walk.strayReportIds++;
+      }
+      if (walk.reportIdCount < 8 && itemLength >= 2)
+      {
+        walk.reportIds[walk.reportIdCount++] = descriptor[offset + 1];
+      }
+    }
+    offset = static_cast<uint16_t>(offset + itemLength);
+  }
+  walk.wellFormed = (offset == length);
+  return walk;
+}
+
 
 static void testKeyboardDescriptor()
 {
@@ -247,6 +322,151 @@ static void testHidVendorReportDescriptor()
   limitConfig.pid = 0x4023;
   limitConfig.startTinyUsb = false;
   check(atLimit.begin(limitConfig), "hid_vendor_limit_accepted");
+}
+
+// Merging two HID classes means giving each its own Report ID, immediately
+// after that class's Collection (Application) item. Finding that point by
+// counting six bytes works only for a descriptor that opens with a one-byte
+// Usage Page; EspUsbDeviceHidVendor opens with a vendor-defined one, which is a
+// three-byte item, so the cut landed inside the Collection item and everything
+// after it shifted by one.
+static void testCompositeHidReportDescriptorMerge()
+{
+  {
+    EspUsbDevice device;
+    EspUsbDeviceHidKeyboard keyboard(device);
+    EspUsbDeviceHidVendor hidVendor(device, 32);
+    EspUsbDeviceConfig config;
+    config.pid = 0x4028;
+    config.startTinyUsb = false;
+    check(device.begin(config), "merge_vendor_begin");
+
+    const uint8_t *merged = device.hidReportDescriptor(0);
+    const HidWalk walk = walkHidReportDescriptor(merged, device.hidReportDescriptorLength(0));
+    check(walk.wellFormed, "merge_vendor_well_formed");
+    check(walk.collections == 2, "merge_vendor_two_collections");
+    check(walk.strayReportIds == 0, "merge_vendor_no_stray_report_id");
+    check(walk.reportIdCount == 2, "merge_vendor_two_report_ids");
+    check(walk.reportIdCount == 2 &&
+              walk.reportIds[0] == ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD &&
+              walk.reportIds[1] == ESP_USB_DEVICE_HID_REPORT_ID_VENDOR,
+          "merge_vendor_report_id_values");
+    // The vendor function's three-byte usage page must survive intact.
+    check(merged && device.hidReportDescriptorLength(0) > 40, "merge_vendor_length");
+  }
+
+  // A class that already declares a Report ID has it replaced, not duplicated.
+  {
+    EspUsbDevice device;
+    EspUsbDeviceHidKeyboard keyboard(device);
+    EspUsbDeviceHidConsumerControl consumer(device);
+    EspUsbDeviceConfig config;
+    config.pid = 0x4029;
+    config.startTinyUsb = false;
+    check(device.begin(config), "merge_consumer_begin");
+
+    const HidWalk walk = walkHidReportDescriptor(
+        device.hidReportDescriptor(0), device.hidReportDescriptorLength(0));
+    check(walk.wellFormed, "merge_consumer_well_formed");
+    check(walk.collections == 2, "merge_consumer_two_collections");
+    check(walk.reportIdCount == 2, "merge_consumer_no_duplicate_report_id");
+    check(walk.reportIdCount == 2 &&
+              walk.reportIds[0] == ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD &&
+              walk.reportIds[1] == ESP_USB_DEVICE_HID_REPORT_ID_CONSUMER_CONTROL,
+          "merge_consumer_report_id_values");
+  }
+
+  // Three classes, one of which opens with the three-byte usage page.
+  {
+    EspUsbDevice device;
+    EspUsbDeviceHidKeyboard keyboard(device);
+    EspUsbDeviceHidMouse mouse(device);
+    EspUsbDeviceHidVendor hidVendor(device, 16);
+    EspUsbDeviceConfig config;
+    config.pid = 0x402a;
+    config.startTinyUsb = false;
+    check(device.begin(config), "merge_three_begin");
+
+    const HidWalk walk = walkHidReportDescriptor(
+        device.hidReportDescriptor(0), device.hidReportDescriptorLength(0));
+    check(walk.wellFormed, "merge_three_well_formed");
+    check(walk.collections == 3, "merge_three_collections");
+    check(walk.reportIdCount == 3 &&
+              walk.reportIds[0] == ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD &&
+              walk.reportIds[1] == ESP_USB_DEVICE_HID_REPORT_ID_MOUSE &&
+              walk.reportIds[2] == ESP_USB_DEVICE_HID_REPORT_ID_VENDOR,
+          "merge_three_report_ids");
+  }
+}
+
+// A report that arrives on the interrupt OUT endpoint carries no report ID in
+// any request field: TinyUSB's HID driver does not parse report descriptors, so
+// it passes 0 and leaves the payload alone (hid_device.c). A merged descriptor
+// declares report IDs, so the ID is the payload's first byte, and without
+// reading it there a composite HID device routes every such report nowhere.
+//
+// Driven directly rather than through a host, because neither host on this
+// bench can send one: usbip does not deliver interrupt OUT at all, and
+// EspUsbHost has no raw endpoint write. What the device is responsible for is
+// the routing, and that is what this checks.
+static void testCompositeOutReportRouting()
+{
+  EspUsbDevice device;
+  EspUsbDeviceHidKeyboard keyboard(device);
+  EspUsbDeviceHidVendor hidVendor(device, 15);
+  EspUsbDeviceConfig config;
+  config.pid = 0x402c;
+  config.startTinyUsb = false;
+  check(device.begin(config), "out_routing_begin");
+
+  static uint8_t seenReportId = 0;
+  static uint16_t seenLength = 0;
+  static uint8_t seenFirstByte = 0;
+  static uint8_t keyboardReports = 0;
+  hidVendor.onOutputReport([](const EspUsbDeviceHidReport &report)
+                           {
+                             seenReportId = report.reportId;
+                             seenLength = report.length;
+                             seenFirstByte = report.length > 0 && report.data ? report.data[0] : 0;
+                           });
+  keyboard.onOutputReport([](const EspUsbDeviceHidKeyboardOutputReport &)
+                          { keyboardReports++; });
+
+  // What the endpoint delivers: report ID 6 followed by 15 payload bytes, and a
+  // report ID of 0 because the class driver does not know any better.
+  uint8_t interruptOut[16] = {ESP_USB_DEVICE_HID_REPORT_ID_VENDOR, 'o', 'u', 't'};
+  device.handleHidSetReport(0, 0, ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT,
+                            interruptOut, sizeof(interruptOut));
+  check(seenReportId == ESP_USB_DEVICE_HID_REPORT_ID_VENDOR, "out_routing_report_id");
+  check(seenLength == 15, "out_routing_length");
+  check(seenFirstByte == 'o', "out_routing_payload");
+  check(keyboardReports == 0, "out_routing_not_keyboard");
+
+  // The keyboard's ID goes to the keyboard, from the same shared endpoint.
+  seenReportId = 0xff;
+  uint8_t ledOut[2] = {ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD, 0x01};
+  device.handleHidSetReport(0, 0, ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT,
+                            ledOut, sizeof(ledOut));
+  check(keyboardReports == 1, "out_routing_keyboard");
+  check(seenReportId == 0xff, "out_routing_keyboard_not_vendor");
+
+  // A first byte that names no class is left alone rather than eaten, so a
+  // device whose classes declare no IDs keeps its payload intact.
+  seenReportId = 0xff;
+  seenLength = 0xffff;
+  uint8_t strangeOut[4] = {0x7f, 'x', 'y', 'z'};
+  device.handleHidSetReport(0, 0, ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT,
+                            strangeOut, sizeof(strangeOut));
+  check(seenReportId == 0xff && seenLength == 0xffff, "out_routing_unknown_id_dropped");
+  check(keyboardReports == 1, "out_routing_unknown_id_not_keyboard");
+
+  // Control SET_REPORT still arrives with its ID in hand and must not be
+  // re-parsed out of the payload.
+  device.handleHidSetReport(0, ESP_USB_DEVICE_HID_REPORT_ID_VENDOR,
+                            ESP_USB_DEVICE_HID_REPORT_TYPE_OUTPUT,
+                            interruptOut, sizeof(interruptOut));
+  check(seenReportId == ESP_USB_DEVICE_HID_REPORT_ID_VENDOR && seenLength == 16,
+        "out_routing_control_untouched");
 }
 
 static void testCompositeWithVendorDescriptor()
@@ -518,6 +738,8 @@ void setup()
   testVendorPerSpeedEndpointSize();
   testVendorSmallEndpointSize();
   testHidVendorReportDescriptor();
+  testCompositeHidReportDescriptorMerge();
+  testCompositeOutReportRouting();
   testCompositeWithVendorDescriptor();
   testWebUsbAndMicrosoftOs20Descriptors();
   testMicrosoftOs20LayoutFollowsInterfaceCount();
