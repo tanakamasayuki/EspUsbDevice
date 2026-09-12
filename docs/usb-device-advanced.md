@@ -921,9 +921,20 @@ while (sent < total) {
 }
 ```
 
-It is worth doing when a producer keeps the FIFO partly full; a sketch that has
-the data ready and nothing else to do will find the FIFO empty at each turn
-anyway and see no short transfers either way.
+It only matters when something limits how much the sketch can offer. A sketch
+with the data already in hand offers more than the FIFO holds, so `write()`
+fills it exactly to capacity every time and each transfer is a whole number of
+packets on its own - and because that sketch refills the moment room appears,
+the FIFO is never empty when a transfer completes, so the ZLP never fires
+either. Put a producer in front of it and both change: partial writes make
+odd-length transfers, and a FIFO that runs dry makes zero-length ones.
+
+Those two are worth telling apart, because they point in opposite directions.
+Odd-length transfers say the sketch is offering the FIFO scraps, and writing
+whole multiples removes them. Zero-length ones say the FIFO ran dry, which
+means the producer is behind - so once the odd lengths are gone, a rising count
+of short URBs on the host says the device is waiting for data rather than for
+the bus.
 
 ---
 
