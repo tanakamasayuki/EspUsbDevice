@@ -13,6 +13,16 @@ static char vendorData[64] = {};
 static volatile uint32_t rxCount = 0;
 static volatile uint32_t controlCount = 0;
 
+// What EspUsbDevice::onAnyControlRequest() saw. These are the requests the
+// library answers itself, which EspUsbDeviceVendor::onControlRequest() never
+// gets to see - the whole reason the device-level hook exists.
+static volatile uint32_t observedSetup = 0;
+static volatile uint32_t observedAck = 0;
+static volatile uint32_t observedMsOs20 = 0;
+static volatile uint16_t observedMsOs20Length = 0;
+static volatile uint32_t observedDescriptors = 0;
+static volatile uint16_t observedConfigLength = 0;
+
 static void pollDeviceVendorRx()
 {
   size_t available = DeviceVendor.available();
@@ -261,6 +271,38 @@ void setup()
   }
   Serial.println("HOST_READY fs");
 
+  // Installed before begin() so enumeration itself is observed. The callback
+  // runs on the usbd task: counters only, no printing.
+  device.onAnyControlRequest(
+      [](const EspUsbDeviceControlRequestInfo &info)
+      {
+        if (info.stage == ESP_USB_DEVICE_CONTROL_STAGE_SETUP)
+        {
+          observedSetup++;
+          // The Microsoft OS 2.0 vendor request: bMS_VendorCode 0x02 with
+          // wIndex 7. Answering it is what makes Windows bind WinUSB, and until
+          // now a sketch had no way to tell whether the host ever asked.
+          if ((info.bmRequestType & 0x80) && info.bRequest == 0x02 &&
+              info.wIndex == 0x0007 && info.handled)
+          {
+            observedMsOs20++;
+            observedMsOs20Length = info.responseLength;
+          }
+        }
+        else if (info.stage == ESP_USB_DEVICE_CONTROL_STAGE_ACK)
+        {
+          observedAck++;
+          if (info.bRequest == 0x06 && info.responseLength > 0)
+          {
+            observedDescriptors++;
+            if ((info.wValue >> 8) == 0x02)
+            {
+              observedConfigLength = info.responseLength;
+            }
+          }
+        }
+      });
+
   DeviceVendor.onRx([](size_t)
                     { pollDeviceVendorRx(); });
 
@@ -324,6 +366,19 @@ void setup()
   ok = ok && readVendorData("echo:ping");
 
   ok = ok && controlIn();
+  // Vendor requests reach the hook at SETUP even when the library answers them
+  // itself - controlIn() above is one the sketch answers, so both paths are
+  // covered by the time this prints.
+  const bool observerSawSetup = observedSetup > 0;
+  const bool observerSawAck = observedAck > 0;
+  const bool observerSawDescriptors = observedDescriptors > 0 &&
+                                      observedConfigLength == 32;
+  Serial.printf("CONTROL_OBSERVER setup=%u ack=%u descriptors=%u config_len=%u\n",
+                observerSawSetup ? 1 : 0,
+                observerSawAck ? 1 : 0,
+                observerSawDescriptors ? 1 : 0,
+                static_cast<unsigned>(observedConfigLength));
+  ok = ok && observerSawSetup && observerSawAck && observerSawDescriptors;
 
   const bool controlOutOk = usb.vendorControlOut(0x11, 0, 0, nullptr, 0, deviceAddress);
   Serial.printf("VENDOR_CONTROL_OUT %u\n", controlOutOk ? 1 : 0);
@@ -331,6 +386,13 @@ void setup()
 
   ok = ok && webUsbUrl();
   ok = ok && microsoftOs20();
+  // The same request, now from the device's own point of view: the library
+  // answered it, and the sketch can see both that it was asked and how many
+  // bytes went back.
+  Serial.printf("CONTROL_OBSERVER_MS_OS_20 seen=%u len=%u\n",
+                observedMsOs20 > 0 ? 1 : 0,
+                static_cast<unsigned>(observedMsOs20Length));
+  ok = ok && observedMsOs20 > 0 && observedMsOs20Length == 162;
 
   Serial.printf("DEVICE_STATUS rx=%lu control=%lu\n",
                 static_cast<unsigned long>(rxCount),
