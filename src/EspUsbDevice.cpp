@@ -2464,7 +2464,13 @@ bool EspUsbDeviceVendor::waitWritable(size_t bytes, uint32_t timeoutMs)
     }
     // Bounded even without a transmit completion: an unplug stops the callbacks
     // for good, and this is what lets the loop notice that mounted() went false.
-    const TickType_t slice = remaining > pdMS_TO_TICKS(10) ? pdMS_TO_TICKS(10) : remaining;
+    // Short, because a slice is also what a missed wake-up costs, and never zero
+    // - a zero timeout would turn this into the spin it exists to replace.
+    TickType_t slice = remaining > pdMS_TO_TICKS(2) ? pdMS_TO_TICKS(2) : remaining;
+    if (slice == 0)
+    {
+      slice = 1;
+    }
     xSemaphoreTake(static_cast<SemaphoreHandle_t>(writableSignal_), slice);
     if (writeAvailable() >= bytes)
     {
@@ -2536,10 +2542,26 @@ void EspUsbDeviceVendor::handleRx()
 void EspUsbDeviceVendor::handleTxComplete()
 {
 #if ESP_USB_DEVICE_HAS_TINYUSB
-  if (writableSignal_)
+  if (!writableSignal_)
   {
-    xSemaphoreGive(static_cast<SemaphoreHandle_t>(writableSignal_));
+    return;
   }
+  // Order matters here, and getting it wrong costs an order of magnitude.
+  //
+  // TinyUSB calls this from vendord_xfer_cb *before* it refills the endpoint
+  // from the transmit FIFO, so at this instant the room a waiter is waiting for
+  // does not exist yet - the completed transfer's bytes left the FIFO when it
+  // was armed, and the FIFO still holds whatever the sketch queued behind it.
+  // Waking a waiter now has it find nothing and block again, and on a
+  // dual-core part the waiter really does run that check before the usbd task
+  // reaches its own refill a few instructions later. Measured on ESP32-P4: a
+  // 4 MiB stream fell from 21 MB/s to 1.8, every wait costing a full timeout
+  // slice because the wake-up that mattered had already been spent.
+  //
+  // Draining here makes the room real before the wake-up. TinyUSB's refill, one
+  // line later, then finds the FIFO empty and does nothing.
+  tud_vendor_n_write_flush(0);
+  xSemaphoreGive(static_cast<SemaphoreHandle_t>(writableSignal_));
 #endif
 }
 

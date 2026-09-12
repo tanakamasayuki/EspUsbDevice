@@ -88,11 +88,16 @@ static_assert(CFG_TUD_CDC_TX_BUFSIZE <= 32768, "CDC TX FIFO within tu_fifo index
 static_assert(CFG_TUD_MIDI_TX_BUFSIZE <= 32768, "MIDI TX FIFO within tu_fifo index space");
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-// High speed is where one packet of transmit FIFO stops being enough: measured
-// 9.03 MB/s at 512 bytes against 10.59 at 8 KiB, with the run-to-run spread
-// collapsing from +-19% to +-2.5%. It saturates at 8 KiB, so that is the default
-// and 16/32 KiB buy nothing.
-static_assert(CFG_TUD_VENDOR_TX_BUFSIZE == 8192, "P4 vendor TX FIFO is 8 KiB");
+// Two numbers, not one. The FIFO is how much a sketch may queue; the transfer
+// size is how much of it one armed transfer carries, and TinyUSB defaults that
+// to a single bulk packet - which is what actually capped a high-speed stream,
+// because every packet then cost a completion interrupt and a usbd task turn.
+// Measured 9.83 MB/s at 512/512 against 21.12 at 4096/4096, using less RAM than
+// the 8192/512 in between.
+static_assert(CFG_TUD_VENDOR_TX_BUFSIZE == 4096, "P4 vendor TX FIFO is 4 KiB");
+static_assert(CFG_TUD_VENDOR_TX_EPSIZE == 4096, "P4 vendor transfer is 8 packets");
+static_assert(CFG_TUD_VENDOR_TX_EPSIZE <= CFG_TUD_VENDOR_TX_BUFSIZE,
+              "a transfer cannot carry more than the FIFO holds");
 // A high-speed interrupt endpoint carries up to 1024 bytes every 125 us. 64
 // capped EspUsbDeviceHidVendor at an eighth of what the bus could move, for no
 // reason on the device side; 1024 has been measured not to enumerate against
@@ -104,6 +109,11 @@ static_assert(CFG_TUD_HID_EP_BUFSIZE == 512, "P4 HID endpoint buffer is 512");
 // exceed 64 bytes at all.
 static_assert(CFG_TUD_VENDOR_TX_BUFSIZE == 512, "S2/S3 vendor TX FIFO is 512");
 static_assert(CFG_TUD_HID_EP_BUFSIZE == 64, "S2/S3 HID endpoint buffer is 64");
+// The transfer size is left to TinyUSB here: a full-speed bulk endpoint is 64
+// bytes and the turnaround the P4 default fixes is not what limits this bus.
+#ifdef CFG_TUD_VENDOR_TX_EPSIZE
+#error "the vendor transfer size is a high-speed knob; S2/S3 keep TinyUSB's"
+#endif
 #endif
 
 int main() { return 0; }

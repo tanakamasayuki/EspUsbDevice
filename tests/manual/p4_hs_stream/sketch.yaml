@@ -1,0 +1,12 @@
+profiles:
+  p4_hs_stream:
+    # Same board and USB layout as the E069-E078 experiments this harness is
+    # meant to be compared against, so the numbers line up with theirs.
+    fqbn: esp32:esp32:esp32p4:FlashSize=16M,PSRAM=enabled,ChipVariant=prev3,USBMode=default,CDCOnBoot=default,UploadMode=default
+    platforms:
+      - platform: esp32:esp32 (3.3.11)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    libraries:
+      - dir: ../../../
+
+default_profile: p4_hs_stream
