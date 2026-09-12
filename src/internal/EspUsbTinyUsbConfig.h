@@ -152,29 +152,54 @@
 #ifndef CFG_TUD_VENDOR_RX_BUFSIZE
 #define CFG_TUD_VENDOR_RX_BUFSIZE 512
 #endif
-// Vendor transmit FIFO. 512 bytes is one high-speed bulk packet, which is the
-// wrong size for a device that streams: EspUsbDeviceVendor::write() returns 0
-// whenever the FIFO is full, and at one packet of depth a sketch pushing 4 MiB
-// out an ESP32-P4 high-speed bulk IN spins on that ~40,000 times and reaches
-// only about 2.4 transactions per microframe out of the 13 high speed allows.
+// Vendor transmit path. Two numbers decide it, and only one of them is the one
+// people reach for.
 //
-// Measured on P4 rev 1.3 over usbip, 4 MiB per transfer, median of 25 runs:
+// CFG_TUD_VENDOR_TX_BUFSIZE is the FIFO: how much a sketch may queue before
+// write() starts returning 0. CFG_TUD_VENDOR_TX_EPSIZE is how much of that FIFO
+// one armed transfer carries, and TinyUSB defaults it to a single bulk packet.
+// That second default is what actually caps a high-speed stream: the vendor
+// class submits one transfer per endpoint and re-arms from the completion
+// callback, so at 512 bytes per transfer every packet costs a completion
+// interrupt, an event-queue hop and a usbd task turn - about 52 us of turnaround
+// for 46 us of wire time, which is why a device measured only ~2.4 transactions
+// per microframe out of the 13 high speed allows. DWC2 is happy to send several
+// packets per transfer; nothing but this default was stopping it.
 //
-//   512 B   9.03 MB/s  (6.79-10.02, 39,746 zero-returns)
-//   8 KiB  10.59 MB/s  (10.27-10.76, 28,844)
-//   16 KiB 10.33 MB/s
-//   32 KiB 10.39 MB/s
+// Measured on ESP32-P4 rev 1.3 over usbip, 4 MiB per run, median of 9, pattern
+// verified on the host, with the sending task pinned to core 0:
 //
-// It saturates at 8 KiB - what the extra depth buys past that is nothing, and
-// the run-to-run spread collapses from +-19% to +-2.5%, which is the part a
-// sketch feels. So P4 defaults to 8 KiB and pays 7680 bytes of RAM for it.
-// S2/S3 stay at 512: a full-speed bulk endpoint is 64 bytes and tops out at
-// 1.5 MB/s, so eight packets of depth is already more than that bus can drain.
+//   FIFO   transfer   MB/s    global RAM
+//    512       512     9.83   (8.33-10.21, and 4-53 ZLP-terminated host URBs)
+//   8192       512    10.76   (10.50-11.06, 0)
+//   8192      1024    14.87
+//   8192      2048    18.64
+//   8192      4096    20.99
+//   8192      8192    22.81
+//   8192     16384    22.78   <- saturated
+//   4096      4096    21.12   81,176 bytes
+//   8192      8192    22.81   89,368 bytes
+//   16384     8192    23.28
+//   32768     8192    23.34
+//
+// So P4 defaults to 4096/4096: it roughly doubles what the previous default did
+// (10.76 -> 21.12 MB/s) while using 512 bytes *less* RAM than that default, and
+// the 8% more that 8192/8192 buys costs another 8 KB. A sketch that wants the
+// last 8% raises both from build_opt.h.
+//
+// S2/S3 keep 512 and TinyUSB's own transfer size. A full-speed bulk endpoint is
+// 64 bytes and tops out near 1.5 MB/s, so eight packets of FIFO is already more
+// than that bus drains, and the turnaround this fixes is not what limits it.
 #ifndef CFG_TUD_VENDOR_TX_BUFSIZE
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-#define CFG_TUD_VENDOR_TX_BUFSIZE 8192
+#define CFG_TUD_VENDOR_TX_BUFSIZE 4096
 #else
 #define CFG_TUD_VENDOR_TX_BUFSIZE 512
+#endif
+#endif
+#ifndef CFG_TUD_VENDOR_TX_EPSIZE
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#define CFG_TUD_VENDOR_TX_EPSIZE 4096
 #endif
 #endif
 

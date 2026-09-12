@@ -50,13 +50,13 @@ def test_class_buffer_sizes_are_overridable():
     This is the one capability the core's precompiled TinyUSB cannot offer, and
     it only exists because every size is behind #ifndef. Compiling with the flag
     an Arduino build_opt.h would produce is the check: the header keeps the
-    override, so the ESP32-P4 static_assert for the 8 KiB default fails.
+    override, so the ESP32-P4 static_assert for the default size fails.
     """
     result = _compile(
-        "ESP32P4", ["-DCFG_TUD_VENDOR_TX_BUFSIZE=4096"], name="_override"
+        "ESP32P4", ["-DCFG_TUD_VENDOR_TX_BUFSIZE=16384"], name="_override"
     )
     assert result.returncode != 0
-    assert "P4 vendor TX FIFO is 8 KiB" in result.stderr
+    assert "P4 vendor TX FIFO is 4 KiB" in result.stderr
 
 
 def test_oversized_fifo_is_a_build_failure():

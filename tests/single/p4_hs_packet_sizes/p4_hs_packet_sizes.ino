@@ -154,7 +154,7 @@ static void testVendorTransmitFifo()
   config.startTinyUsb = false;
   check(device.begin(config), "vendor_fifo_begin");
 
-  check(EspUsbDeviceVendor::writeCapacity() == 8192, "vendor_write_capacity");
+  check(EspUsbDeviceVendor::writeCapacity() == 4096, "vendor_write_capacity");
   // Nothing is mounted, so there is no room and nothing that will ever free any.
   check(vendor.writeAvailable() == 0, "vendor_write_available_unmounted");
   check(!vendor.waitWritable(512, 20), "vendor_wait_writable_unmounted");
