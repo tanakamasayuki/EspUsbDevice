@@ -406,6 +406,22 @@ ID を置く。そこから読むようにした。先頭バイトがどのク�
 | `tests/manual/windows_winusb` | ESP32-P4 + Windows | WinUSB bind と、旧構造での Code 28 対照実験 |
 | `tools/build_check.py` | 不要 | esp32s3 / esp32s2 / esp32p4 の全 example |
 
+最終確認は `uv run --env-file .env pytest --clean` で **71 件すべてパス**（1:08:14）。
+83 本の DUT / peer ログに予期しない不審行は 0、既知の許容が 4 件（MSC の GET_MAX_LUN STALL、
+peer 再書き込み中の Enqueue URB error）。example ビルドは esp32p4 28 / esp32s3 29 /
+esp32s2 26 で失敗 0、unit 17 パス。
+
+### 自動テストで押さえていないもの
+
+**`waitWritable()` の起床順序の修正だけは、手動ハーネスでしか検出できない。**
+症状は「帯域が落ちる」であって「動かない」ではないので、検出するには
+「1 回の待ちが転送時間ではなく timeout の刻みで終わっている」ことを時間で見るしかない。
+loopback は full speed で、1 転送 4096 byte が約 3.4 ms、待ちの刻みが 2 ms なので、
+**同じバグが再発しても時間では分離できない**。high speed で 1 転送が約 195 us になって初めて
+刻みとの差が 10 倍になり、そこで初めて見える（実測 1.85 対 20.94 MB/s）。
+そのため `tests/manual/p4_hs_stream` を実行手順ごと残してある。
+`stalls=0 waits=1022` が出れば正常、`waits` がほぼ同じで帯域が桁で落ちていれば再発である。
+
 **借りたボードについて。** `esp32-p4-30eda0e31478` には、いま
 `tests/manual/windows_winusb` のファーム（VID/PID `303a:4043`、serial `espusb-winusb-flat-2`）が
 入っている。E069〜E078 の sketch は上書きされているので、必要なら `wch-protocols` 側から
