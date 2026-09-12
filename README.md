@@ -223,7 +223,8 @@ By feature:
 - `KeyboardMouse`: composite keyboard + mouse HID.
 - `Gamepad`: HID gamepad that sends axes, hat, and buttons.
 - `MediaKeys`: HID media keys for volume, playback, and system control usages.
-- `VendorHID`: vendor-defined HID for custom 63-byte report exchange.
+- `VendorHID`: vendor-defined HID for custom report exchange (up to 63 bytes
+  per report, or 511 on ESP32-P4).
 - `USBVendor`: vendor-specific interface with bulk IN/OUT and control requests.
 - `CustomHID`: custom HID with a sketch-defined HID report descriptor.
 - `Serial`: CDC ACM serial for text communication with a PC or host.

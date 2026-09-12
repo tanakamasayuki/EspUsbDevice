@@ -127,6 +127,17 @@ EspUsbDeviceで起きる問題を「症状から引ける」形で1か所に集�
    場合、ログとデバイス役が同じ差し込み口を取り合うので、開発中は2コネクタの
    ボードかUARTアダプタを使います
    （[ガイド2.3](usb-device-guide.ja.md#23-開発中のコネクタ構成)）。
+5. **ヘッダは見つかっているのに `undefined reference to EspUsbDeviceVendor::write`
+   などが出る。** `sketch.yaml` の `libraries: - dir:` が**シンボリックリンク**を
+   指していると、arduino-cliはinclude pathだけはたどるのに、その先の `.cpp` を
+   コンパイル対象として集めません。結果、全メソッドがリンク時に消えます。実パスを
+   指すか、Library Manager経由（`- EspUsbDevice (2.2.0)`）にしてください。
+6. **`build_opt.h` に書いたフラグが効いていないように見える。** クラスのバッファ
+   サイズは `#ifndef` で囲ってあるので `-DCFG_TUD_VENDOR_TX_BUFSIZE=8192` は
+   ライブラリまで届きます。ただし `build_opt.h` は `.ino` と同じ場所に必要で、
+   Arduinoはクリーンビルドのときしか読み直しません。変更したら `--clean` を付けて
+   ビルドしてください。32768を超える値は、mountしないデバイスではなくビルドエラーに
+   なります（[上級編5.4](usb-device-advanced.ja.md#54-バッファのサイズ)）。
 
 ## 5. ホストOS別の観測
 
@@ -156,6 +167,17 @@ lsusb -v -d 303a:      # ホストが解釈したディスクリプタ
 - vendorインターフェースはWinUSBがバインドして初めて開けます。
   `config.webusbEnabled = true`でMS OS 2.0 descriptorを返すか、Zadigで手動
   バインドします。
+- **vendorインターフェースに Code 28（`CM_PROB_FAILED_INSTALL`）が出て、
+  `setupapi.dev.log` には何も書かれていない。** この「何も書かれない」が手掛かりです。
+  インストールがそもそも始まっておらず、compatible IDがdevice nodeへ届いていません。
+  デバイスがMS OS 2.0のvendor requestに正しく答えているなら
+  （Linuxから `bmRequestType=0xC0, bRequest=<bMS_VendorCode>, wIndex=7` で確認するか、
+  デバイス側で `EspUsbDevice::onAnyControlRequest()` を使って観測する）、
+  バイト列は正しく**構造**がこのデバイスに合っていません。function subsetを解決するのは
+  usbccgp.sysだけで、Windowsがそれを読み込むのはcomposite deviceのときだけなので、
+  単一インターフェースのデバイスではcompatible IDをset headerの直下に置く必要があります。
+  ライブラリはインターフェース数で自動的に選びますが、`config.msOs20Layout` で強制もできます
+  （[上級編3.7](usb-device-advanced.ja.md#37-bosとmicrosoft-os-20)）。
 - **複数機能のデバイスなのに1機能しか出ない、COMポートが2つのはずが1つしか出ない。**
   Windowsが機能ごとにドライバをバインドするのは、親としてusbccgp.sysがロードされた
   ときだけで、その条件が `bDeviceClass/SubClass/Protocol = 0xEF/0x02/0x01` です。
