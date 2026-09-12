@@ -1,4 +1,5 @@
 #include "EspUsbDevice.h"
+#include <string.h>
 
 static int passCount = 0;
 static int failCount = 0;
@@ -158,6 +159,96 @@ static void testVendorDescriptor()
         "vendor_hs_ep_mps");
 }
 
+// A bulk endpoint may not exceed 64 bytes at full speed (USB 2.0 table 9-13),
+// whatever the sketch asked for. The high-speed configuration is where 512
+// belongs, and the two are separate descriptors.
+static void testVendorPerSpeedEndpointSize()
+{
+  EspUsbDevice device;
+  EspUsbDeviceVendor vendor(device, 512);
+  EspUsbDeviceConfig config;
+  config.pid = 0x401f;
+  config.startTinyUsb = false;
+
+  check(device.begin(config), "vendor_hs_size_begin");
+  check(vendor.endpointSize() == 512, "vendor_hs_size_reported");
+
+  const uint8_t *cfg = device.configurationDescriptor(0);
+  check(le16(&cfg[18 + 4]) == 64 && le16(&cfg[25 + 4]) == 64,
+        "vendor_fs_ep_mps_clamped");
+
+  const uint8_t *highSpeed = device.configurationDescriptorForSpeed(0, true);
+  check(le16(&highSpeed[18 + 4]) == 512 && le16(&highSpeed[25 + 4]) == 512,
+        "vendor_hs_ep_mps_512");
+}
+
+// A sketch that asks for less than the speed allows still gets what it asked
+// for at full speed - the per-speed value is a ceiling, not a replacement.
+//
+// Its own function because only one EspUsbDeviceVendor may be registered at a
+// time: a second one begins false while the first is still alive.
+static void testVendorSmallEndpointSize()
+{
+  EspUsbDevice device;
+  EspUsbDeviceVendor vendor(device, 32);
+  EspUsbDeviceConfig config;
+  config.pid = 0x4020;
+  config.startTinyUsb = false;
+  check(device.begin(config), "vendor_small_begin");
+  const uint8_t *cfg = device.configurationDescriptor(0);
+  check(le16(&cfg[18 + 4]) == 32 && le16(&cfg[25 + 4]) == 32,
+        "vendor_fs_ep_mps_small");
+}
+
+// The report descriptor has to declare the report size the endpoint actually
+// carries: a host sizes its reads from Report Count, so a descriptor frozen at
+// 63 while the endpoint carries more makes the host read the wrong number of
+// bytes.
+static void testHidVendorReportDescriptor()
+{
+  EspUsbDevice device;
+  EspUsbDeviceHidVendor hidVendor(device, 32);
+  EspUsbDeviceConfig config;
+  config.pid = 0x4021;
+  config.startTinyUsb = false;
+
+  check(device.begin(config), "hid_vendor_begin");
+  check(hidVendor.reportSize() == 32, "hid_vendor_report_size");
+
+  const uint8_t *report = device.hidReportDescriptor(0);
+  const uint16_t reportLength = 31; // one-byte Report Count
+  check(report != nullptr, "hid_vendor_report_descriptor");
+  check(report && report[0] == 0x06 && report[1] == 0x00 && report[2] == 0xff,
+        "hid_vendor_usage_page");
+  check(report && report[7] == 0x85 &&
+            report[8] == ESP_USB_DEVICE_HID_REPORT_ID_VENDOR,
+        "hid_vendor_report_id");
+  // Report Size (8 bits) then Report Count, which must be reportSize().
+  check(report && report[14] == 0x75 && report[15] == 0x08,
+        "hid_vendor_report_bits");
+  check(report && report[16] == 0x95 && report[17] == 32,
+        "hid_vendor_report_count");
+  check(report && report[reportLength - 1] == 0xc0, "hid_vendor_end_collection");
+
+  // The ceiling follows CFG_TUD_HID_EP_BUFSIZE rather than a hard-coded 63,
+  // because the report ID takes the first byte of the endpoint buffer.
+  EspUsbDevice tooBig;
+  EspUsbDeviceHidVendor oversize(
+      tooBig, static_cast<uint16_t>(EspUsbDeviceHidVendor::maxReportSize() + 1));
+  EspUsbDeviceConfig tooBigConfig;
+  tooBigConfig.pid = 0x4022;
+  tooBigConfig.startTinyUsb = false;
+  check(!tooBig.begin(tooBigConfig), "hid_vendor_oversize_rejected");
+
+  EspUsbDevice atLimit;
+  EspUsbDeviceHidVendor limitVendor(atLimit,
+                                    EspUsbDeviceHidVendor::maxReportSize());
+  EspUsbDeviceConfig limitConfig;
+  limitConfig.pid = 0x4023;
+  limitConfig.startTinyUsb = false;
+  check(atLimit.begin(limitConfig), "hid_vendor_limit_accepted");
+}
+
 static void testCompositeWithVendorDescriptor()
 {
   EspUsbDevice device;
@@ -240,6 +331,93 @@ static void testWebUsbAndMicrosoftOs20Descriptors()
   check(webUsbOnly.microsoftOs20Descriptor() == nullptr &&
             webUsbOnly.microsoftOs20DescriptorLength() == 0,
         "ms_os_20_without_vendor_absent");
+}
+
+// Windows resolves a Microsoft OS 2.0 function subset through usbccgp.sys, which
+// it loads only for a composite device. On a single-interface device the subsets
+// leave the compatible ID attached to nothing, and Device Manager answers with
+// CM_PROB_FAILED_INSTALL.
+static EspUsbDeviceConfig webUsbConfig(uint16_t pid,
+                                      EspUsbDeviceMsOs20Layout layout)
+{
+  EspUsbDeviceConfig config;
+  config.webusbEnabled = true;
+  config.webusbUrl = "https://example.com/espusbdevice";
+  config.startTinyUsb = false;
+  config.pid = pid;
+  config.msOs20Layout = layout;
+  return config;
+}
+
+static void testMicrosoftOs20LayoutFollowsInterfaceCount()
+{
+  // One interface: no usbccgp, so the compatible ID sits directly under the set
+  // header.
+  {
+    EspUsbDevice single;
+    EspUsbDeviceVendor singleVendor(single);
+    check(single.begin(webUsbConfig(0x4024, ESP_USB_DEVICE_MS_OS_20_AUTO)),
+          "ms_os_20_single_begin");
+    check(single.configurationDescriptor(0)[4] == 1, "ms_os_20_single_interface");
+    check(!single.microsoftOs20UsesSubsets(), "ms_os_20_single_is_flat");
+    const uint8_t *flat = single.microsoftOs20Descriptor();
+    check(flat && single.microsoftOs20DescriptorLength() == 162,
+          "ms_os_20_flat_length");
+    check(flat && le16(&flat[0]) == 10 && le16(&flat[2]) == 0 &&
+              le16(&flat[8]) == 162,
+          "ms_os_20_flat_set_header");
+    check(flat && le16(&flat[10]) == 20 && le16(&flat[12]) == 3 &&
+              memcmp(&flat[14], "WINUSB", 6) == 0,
+          "ms_os_20_flat_compatible_id");
+    check(flat && le16(&flat[30]) == 132 && le16(&flat[32]) == 4,
+          "ms_os_20_flat_registry_property");
+    // The BOS capability must publish the same total length.
+    const uint8_t *flatBos = single.bosDescriptor();
+    check(flatBos && le16(&flatBos[53]) == 162, "ms_os_20_flat_bos_total_length");
+  }
+
+  // Two interfaces means usbccgp, which is where the subsets belong.
+  {
+    EspUsbDevice composite;
+    EspUsbDeviceHidKeyboard compositeKeyboard(composite);
+    EspUsbDeviceVendor compositeVendor(composite);
+    check(composite.begin(webUsbConfig(0x4025, ESP_USB_DEVICE_MS_OS_20_AUTO)),
+          "ms_os_20_composite_begin");
+    check(composite.microsoftOs20UsesSubsets(),
+          "ms_os_20_composite_uses_subsets");
+    check(composite.microsoftOs20DescriptorLength() == 178,
+          "ms_os_20_composite_length");
+  }
+
+  // And the sketch can say so explicitly either way.
+  {
+    EspUsbDevice forcedSubsets;
+    EspUsbDeviceVendor forcedSubsetsVendor(forcedSubsets);
+    check(forcedSubsets.begin(
+              webUsbConfig(0x4026, ESP_USB_DEVICE_MS_OS_20_SUBSETS)),
+          "ms_os_20_forced_subsets_begin");
+    check(forcedSubsets.microsoftOs20UsesSubsets(), "ms_os_20_forced_subsets");
+    check(forcedSubsets.microsoftOs20DescriptorLength() == 178,
+          "ms_os_20_forced_subsets_length");
+    const uint8_t *forced = forcedSubsets.microsoftOs20Descriptor();
+    check(forced && le16(&forced[10]) == 8 && le16(&forced[12]) == 1 &&
+              le16(&forced[16]) == 168,
+          "ms_os_20_forced_configuration_subset");
+    check(forced && le16(&forced[18]) == 8 && le16(&forced[20]) == 2 &&
+              forced[22] == 0 && le16(&forced[24]) == 160,
+          "ms_os_20_forced_function_subset");
+  }
+
+  {
+    EspUsbDevice forcedFlat;
+    EspUsbDeviceHidKeyboard forcedFlatKeyboard(forcedFlat);
+    EspUsbDeviceVendor forcedFlatVendor(forcedFlat);
+    check(forcedFlat.begin(webUsbConfig(0x4027, ESP_USB_DEVICE_MS_OS_20_FLAT)),
+          "ms_os_20_forced_flat_begin");
+    check(!forcedFlat.microsoftOs20UsesSubsets(), "ms_os_20_forced_flat");
+    check(forcedFlat.microsoftOs20DescriptorLength() == 162,
+          "ms_os_20_forced_flat_length");
+  }
 }
 
 static void testStringDescriptors()
@@ -337,8 +515,12 @@ void setup()
   testMouseDescriptor();
   testCompositeDescriptor();
   testVendorDescriptor();
+  testVendorPerSpeedEndpointSize();
+  testVendorSmallEndpointSize();
+  testHidVendorReportDescriptor();
   testCompositeWithVendorDescriptor();
   testWebUsbAndMicrosoftOs20Descriptors();
+  testMicrosoftOs20LayoutFollowsInterfaceCount();
   testStringDescriptors();
   testClassLifecycle();
   testRuntimeLifecycle();
