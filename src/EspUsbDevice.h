@@ -62,6 +62,28 @@ enum EspUsbDeviceKeyboardLayout : uint16_t
   ESP_USB_DEVICE_KEYBOARD_LAYOUT_FR_CH = 0x100C,
 };
 
+// Shape of the Microsoft OS 2.0 descriptor set, which is what decides whether
+// Windows binds WinUSB to a vendor interface without an .inf file.
+//
+// The set may carry the compatible ID directly under its header, or wrap it in a
+// configuration subset and a function subset. The subsets exist to name one
+// function of a composite device, and Windows only resolves them through
+// usbccgp.sys - the parent driver it loads for composite devices and nothing
+// else. Put a function subset on a single-interface device and the compatible ID
+// has no function to attach to: the device node never sees USB\MS_COMP_WINUSB,
+// no driver matches, and Device Manager shows CM_PROB_FAILED_INSTALL (code 28)
+// with not a line written to setupapi.dev.log.
+enum EspUsbDeviceMsOs20Layout : uint8_t
+{
+  // Subsets when the configuration has more than one interface, flat when it has
+  // exactly one. This is the shape Windows expects in both cases.
+  ESP_USB_DEVICE_MS_OS_20_AUTO = 0,
+  // Always put the compatible ID directly under the set header.
+  ESP_USB_DEVICE_MS_OS_20_FLAT,
+  // Always wrap it in configuration and function subsets.
+  ESP_USB_DEVICE_MS_OS_20_SUBSETS,
+};
+
 struct EspUsbDeviceConfig
 {
   const char *manufacturer = "EspUsbDevice";
@@ -73,6 +95,7 @@ struct EspUsbDeviceConfig
   uint16_t maxPowerMilliamps = 100;
   bool webusbEnabled = false;
   const char *webusbUrl = nullptr;
+  EspUsbDeviceMsOs20Layout msOs20Layout = ESP_USB_DEVICE_MS_OS_20_AUTO;
   bool startTinyUsb = true;
   EspUsbController controller = EspUsbController::Auto;
 };
@@ -355,6 +378,31 @@ struct EspUsbDeviceCdcLineState
   bool rts = false;
 };
 
+// Stage of a control transfer, as the observation hook reports it. Same values
+// as TinyUSB's CONTROL_STAGE_*.
+static constexpr uint8_t ESP_USB_DEVICE_CONTROL_STAGE_SETUP = 1;
+static constexpr uint8_t ESP_USB_DEVICE_CONTROL_STAGE_DATA = 2;
+static constexpr uint8_t ESP_USB_DEVICE_CONTROL_STAGE_ACK = 3;
+
+// One control request, as seen by EspUsbDevice::onAnyControlRequest().
+struct EspUsbDeviceControlRequestInfo
+{
+  uint8_t rhport = 0;
+  uint8_t stage = 0;
+  uint8_t bmRequestType = 0;
+  uint8_t bRequest = 0;
+  uint16_t wValue = 0;
+  uint16_t wIndex = 0;
+  uint16_t wLength = 0;
+  // Bytes the library handed to the stack as the answer, before the stack
+  // clamps them to wLength. Non-zero only for the requests the library itself
+  // answers: descriptors, the WebUSB URL and the Microsoft OS 2.0 set.
+  uint16_t responseLength = 0;
+  // At SETUP: the library recognised the request and produced an answer.
+  // At ACK: the transfer completed, which a stalled request never reaches.
+  bool handled = false;
+};
+
 struct EspUsbDeviceVendorControlRequest
 {
   uint8_t rhport = 0;
@@ -450,6 +498,10 @@ public:
   uint16_t bosDescriptorLength() const;
   const uint8_t *microsoftOs20Descriptor() const;
   uint16_t microsoftOs20DescriptorLength() const;
+  // Whether the built descriptor set wraps its compatible ID in configuration
+  // and function subsets. Resolves EspUsbDeviceMsOs20Layout::AUTO against the
+  // configuration that was actually built.
+  bool microsoftOs20UsesSubsets() const;
   // Byte length / interface count of only the HID interface descriptors inside
   // configDescriptor_ (excluding the configuration header and other functions).
   uint16_t hidInterfacesLength() const;
@@ -460,10 +512,35 @@ public:
   // more than this makes begin() fail.
   static uint8_t maxCdcPorts();
   const uint8_t *hidReportDescriptor(uint8_t instance);
+
+  using ControlRequestObserver = std::function<void(const EspUsbDeviceControlRequestInfo &)>;
+  // Watch control requests, including every one the library answers itself.
+  //
+  // EspUsbDeviceVendor::onControlRequest() sees only what is left over: the
+  // library takes the WebUSB and Microsoft OS 2.0 vendor codes, and the whole
+  // standard descriptor path, before that callback runs. Those are exactly the
+  // requests worth watching when a host refuses to bind a driver, and they were
+  // the ones invisible from a sketch.
+  //
+  // Purely an observer - the return value cannot change what the device answers.
+  // It fires at SETUP for every vendor request (whether or not the library
+  // answers it, so a stalled one still shows up) and at ACK for every control
+  // transfer that completes, which covers the standard and class requests the
+  // stack handles internally. Runs on the usbd task; keep it short.
+  void onAnyControlRequest(ControlRequestObserver callback);
   void handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length);
   void handleHidSetProtocol(uint8_t instance, uint8_t protocol);
   void handleBusAttached();
   void handleBusDetached();
+  // Report one control request to the observer, if a sketch installed one.
+  void notifyControlRequest(const EspUsbDeviceControlRequestInfo &info);
+  bool hasControlObserver() const { return static_cast<bool>(controlObserver_); }
+  // Remember what the library just answered, so the ACK observation can say how
+  // many bytes went out. Matched on the request fields rather than assumed to
+  // belong to the next completion, because a request the device stalls never
+  // produces one.
+  void recordControlResponse(uint8_t bRequest, uint16_t wValue, uint16_t wIndex, uint16_t length);
+  uint16_t takeControlResponse(uint8_t bRequest, uint16_t wValue, uint16_t wIndex);
 
 private:
   friend class EspUsbDeviceClass;
@@ -497,13 +574,20 @@ private:
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
   static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
   static constexpr size_t MAX_BOS_DESCRIPTOR = 57;
-  static constexpr size_t MS_OS_20_DESCRIPTOR_SIZE = 178;
+  // Largest descriptor set this builds: 10 (set header) + 8 (configuration
+  // subset) + 8 (function subset) + 20 (compatible ID) + 132 (the
+  // DeviceInterfaceGUIDs registry property). A set without the two subsets is
+  // 162 and stops short in the same buffer.
+  static constexpr size_t MAX_MS_OS_20_DESCRIPTOR = 178;
 
   bool buildDescriptors();
   // Allocates the three configuration descriptor buffers on first use. False (and
   // ESP_ERR_NO_MEM) when the allocation fails, which leaves them null.
   bool allocateDescriptorBuffers();
   void buildWebUsbDescriptors();
+  // Resolves config_.msOs20Layout for the configuration currently in
+  // configDescriptor_. Only meaningful after the configuration is assembled.
+  bool microsoftOs20SubsetLayout() const;
   bool validateControllerEndpoints(const uint8_t *descriptor,
                                    uint16_t length);
   bool compositeHid() const;
@@ -542,7 +626,7 @@ private:
   uint8_t *otherSpeedDescriptor_ = nullptr;
   uint8_t deviceQualifierDescriptor_[10] = {};
   uint8_t bosDescriptor_[MAX_BOS_DESCRIPTOR] = {};
-  uint8_t microsoftOs20Descriptor_[MS_OS_20_DESCRIPTOR_SIZE] = {};
+  uint8_t microsoftOs20Descriptor_[MAX_MS_OS_20_DESCRIPTOR] = {};
   uint8_t hidReportDescriptor_[MAX_HID_REPORT_DESCRIPTOR] = {};
   uint16_t configDescriptorLength_ = 0;
   uint16_t bosDescriptorLength_ = 0;
@@ -552,6 +636,11 @@ private:
   uint8_t hidInterfaceCount_ = 0;
   uint16_t hidReportDescriptorLength_ = 0;
   uint16_t stringDescriptor_[MAX_STRING_DESCRIPTOR] = {};
+  ControlRequestObserver controlObserver_;
+  uint8_t controlResponseRequest_ = 0;
+  uint16_t controlResponseValue_ = 0;
+  uint16_t controlResponseIndex_ = 0;
+  uint16_t controlResponseLength_ = 0;
 };
 
 class EspUsbDeviceClass
@@ -605,6 +694,14 @@ public:
   // preference" (use the default). NKRO keyboards return a larger size so their
   // multi-byte bitmap report fits one packet. Bounded by CFG_TUD_HID_EP_BUFSIZE.
   virtual uint16_t hidInEndpointSize() const { return 0; }
+  // wMaxPacketSize this HID function wants for its interrupt endpoints in the
+  // high-speed configuration, or 0 to keep the full-speed value there too.
+  //
+  // Full speed caps an interrupt endpoint at 64 bytes and high speed at 1024, so
+  // the two configurations genuinely differ for a class that moves more than one
+  // report's worth per interval - which, of the classes here, is only
+  // EspUsbDeviceHidVendor. Everything else sends 8 or 16 bytes and returns 0.
+  virtual uint16_t hidHighSpeedEndpointSize() const { return 0; }
   virtual void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) {}
   virtual void onHidSetProtocol(uint8_t protocol) { (void)protocol; }
   // Bus state changed, so anything the class believes the host currently knows is
@@ -718,6 +815,28 @@ public:
   size_t read(uint8_t *buffer, size_t size);
   size_t write(uint8_t data) override;
   size_t write(const uint8_t *buffer, size_t size) override;
+  // Room left in the transmit FIFO right now. write() never accepts more than
+  // this and returns 0 once it reaches zero, so a sketch that wants to know how
+  // much it may hand over before that happens asks here.
+  size_t writeAvailable() const;
+  // Size of the transmit FIFO, i.e. the largest value writeAvailable() can ever
+  // return. Compile-time (CFG_TUD_VENDOR_TX_BUFSIZE); raise it from build_opt.h.
+  static size_t writeCapacity();
+  // Block the calling task until the transmit FIFO has room for `bytes`, or the
+  // timeout expires. Returns true when the room is there.
+  //
+  // The alternative a sketch has otherwise is to spin: write() returns 0, the
+  // sketch yields, and tries again - about 30,000 times per 4 MiB on an ESP32-P4
+  // high-speed bulk IN. That is harmless when the CPU has nothing else to do and
+  // expensive when it does, because the spinning task competes with whatever
+  // produces the data. Here the task is descheduled instead and woken from the
+  // transmit-complete callback.
+  //
+  // `bytes` is clamped to writeCapacity(): waiting for more than the FIFO can
+  // ever hold would only ever time out. timeoutMs == 0 polls once without
+  // blocking. Returns false if the device is not mounted, since nothing will
+  // drain the FIFO then.
+  bool waitWritable(size_t bytes, uint32_t timeoutMs = 100);
   void flush();
   void onRx(RxCallback callback);
   void onControlRequest(ControlRequestCallback callback);
@@ -726,11 +845,17 @@ public:
 
   void handleRx();
   bool handleControlRequest(uint8_t rhport, uint8_t stage, const void *request);
+  // Called from tud_vendor_tx_cb() on the usbd task when a transmit completes,
+  // i.e. when the FIFO has just given room back.
+  void handleTxComplete();
 
 private:
   uint16_t endpointSize_ = 64;
   RxCallback rxCallback_;
   ControlRequestCallback controlRequestCallback_;
+  // Created on the first waitWritable() and destroyed in end(). A sketch that
+  // only ever spins on write() never pays for it.
+  void *writableSignal_ = nullptr;
 };
 
 // CDC-NCM (USB network / "USB Ethernet") device function. Presents the device
@@ -1489,6 +1614,19 @@ private:
   uint16_t inputReportSize_ = 64;
 };
 
+// Raw byte pipe over a HID interrupt endpoint. The one class here that needs no
+// host-side driver on any OS, which is why it is worth making fast.
+//
+// reportSize is the payload of one report, and the largest value it may take is
+// CFG_TUD_HID_EP_BUFSIZE - 1 (the report ID takes the first byte of the packet).
+// That ceiling is 511 on ESP32-P4 and 63 elsewhere; raise or lower it from
+// build_opt.h with -DCFG_TUD_HID_EP_BUFSIZE=<n>. A size larger than 63 is only
+// carried in one packet when the device enumerates at high speed - full speed
+// caps an interrupt endpoint at 64 bytes, and the report is then split across
+// packets of the one transfer rather than refused.
+//
+// Reports go out once per microframe at high speed (about 8,000/s), so 511 bytes
+// is roughly 4 MB/s of reserved, driverless bandwidth against 0.5 MB/s at 63.
 class EspUsbDeviceHidVendor : public EspUsbDeviceClass
 {
 public:
@@ -1501,18 +1639,33 @@ public:
   void onOutputReport(ReportCallback callback);
   void onFeatureReport(ReportCallback callback);
 
+  // Payload bytes per report, as the report descriptor declares it.
+  uint16_t reportSize() const { return reportSize_; }
+  // Largest reportSize this build accepts (CFG_TUD_HID_EP_BUFSIZE - 1).
+  static uint16_t maxReportSize();
+
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 1; }
   uint8_t hidReportId() const override { return ESP_USB_DEVICE_HID_REPORT_ID_VENDOR; }
   const uint8_t *hidReportDescriptor() const override;
   uint16_t hidReportDescriptorLength() const override;
+  uint16_t hidHighSpeedEndpointSize() const override;
   void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) override;
 
 private:
+  void buildReportDescriptor();
+
   uint16_t reportSize_ = 63;
   ReportCallback outputCallback_;
   ReportCallback featureCallback_;
+  // Built from reportSize_ rather than shared and constant, because Report Count
+  // is part of the contract: a host sizes its reads from what the report
+  // descriptor declares, so a descriptor that says 63 while the endpoint carries
+  // 512 gets the host to read 64 bytes and the device to overrun it. 32 bytes
+  // covers the fixed items plus a two-byte Report Count for sizes above 255.
+  uint8_t reportDescriptor_[32] = {};
+  uint8_t reportDescriptorLength_ = 0;
 };
 
 class EspUsbDeviceHidGamepad : public EspUsbDeviceClass

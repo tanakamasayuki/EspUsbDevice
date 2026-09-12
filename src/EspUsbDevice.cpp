@@ -32,6 +32,8 @@
 #include "class/msc/msc_device.h"
 #include "class/vendor/vendor_device.h"
 #include "class/net/net_device.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #define ESP_USB_DEVICE_HAS_TINYUSB 1
 #if __has_include("esp_mac.h")
 #include "esp_mac.h"
@@ -56,6 +58,17 @@
 #else
 #define ESP_USB_DEVICE_HAS_ESP_NETIF 0
 #endif
+
+// The HID interrupt endpoint buffer this build compiled, which is what bounds a
+// single report. Mirrored here so the code below also compiles on a target
+// without TinyUSB, where nothing defines it.
+#if ESP_USB_DEVICE_HAS_TINYUSB
+static constexpr uint16_t ESP_USB_DEVICE_HID_EP_BUFSIZE = CFG_TUD_HID_EP_BUFSIZE;
+#else
+static constexpr uint16_t ESP_USB_DEVICE_HID_EP_BUFSIZE = 64;
+#endif
+// Full speed caps an interrupt endpoint at 64 bytes (USB 2.0 table 9-13).
+static constexpr uint16_t ESP_USB_DEVICE_FS_INTERRUPT_MAX_PACKET = 64;
 
 static constexpr uint8_t USB_DESC_DEVICE = 0x01;
 static constexpr uint8_t USB_DESC_CONFIGURATION = 0x02;
@@ -320,24 +333,6 @@ static constexpr uint8_t GAMEPAD_REPORT_DESCRIPTOR[] = {
     0xc0,             // End Collection
 };
 
-static constexpr uint8_t VENDOR_REPORT_DESCRIPTOR[] = {
-    0x06, 0x00, 0xff, // Usage Page (Vendor Defined 0xff00)
-    0x09, 0x01,       // Usage (1)
-    0xa1, 0x01,       // Collection (Application)
-    0x85, 0x06,       //   Report ID (6)
-    0x15, 0x00,       //   Logical Minimum (0)
-    0x26, 0xff, 0x00, //   Logical Maximum (255)
-    0x75, 0x08,       //   Report Size (8)
-    0x95, 0x3f,       //   Report Count (63)
-    0x09, 0x01,       //   Usage (1)
-    0x81, 0x02,       //   Input (Data,Var,Abs)
-    0x09, 0x01,       //   Usage (1)
-    0x91, 0x02,       //   Output (Data,Var,Abs)
-    0x09, 0x01,       //   Usage (1)
-    0xb1, 0x02,       //   Feature (Data,Var,Abs)
-    0xc0,             // End Collection
-};
-
 static constexpr uint8_t CONSUMER_CONTROL_REPORT_DESCRIPTOR[] = {
     0x05, 0x0c,       // Usage Page (Consumer)
     0x09, 0x01,       // Usage (Consumer Control)
@@ -378,40 +373,98 @@ static constexpr uint8_t MICROSOFT_OS_20_VENDOR_CODE = 0x02;
 static constexpr uint16_t MICROSOFT_OS_20_DESCRIPTOR_INDEX = 0x0007;
 
 #if ESP_USB_DEVICE_HAS_TINYUSB
+static constexpr uint8_t USB_REQ_GET_DESCRIPTOR = 0x06;
+
+// Note for the descriptor callbacks below: each one records the length it just
+// returned so the ACK observation can report it. The stack asks for a pointer
+// and reads the length out of the descriptor itself, so this is the only place
+// that number exists. Nothing is recorded when no sketch is watching.
+static void recordDescriptorResponse(uint16_t wValue, uint16_t wIndex, uint16_t length)
+{
+  if (g_activeDevice && g_activeDevice->hasControlObserver())
+  {
+    g_activeDevice->recordControlResponse(USB_REQ_GET_DESCRIPTOR, wValue, wIndex,
+                                          length);
+  }
+}
+
 extern "C" uint8_t const *tud_descriptor_device_cb(void)
 {
-  return g_activeDevice ? g_activeDevice->deviceDescriptor() : nullptr;
+  const uint8_t *descriptor = g_activeDevice ? g_activeDevice->deviceDescriptor() : nullptr;
+  recordDescriptorResponse(0x0100, 0, descriptor ? descriptor[0] : 0);
+  return descriptor;
 }
 
 extern "C" uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
 {
-  return g_activeDevice
-             ? g_activeDevice->configurationDescriptorForSpeed(
-                   index, tud_speed_get() == TUSB_SPEED_HIGH)
-             : nullptr;
+  const uint8_t *descriptor =
+      g_activeDevice ? g_activeDevice->configurationDescriptorForSpeed(
+                           index, tud_speed_get() == TUSB_SPEED_HIGH)
+                     : nullptr;
+  recordDescriptorResponse(static_cast<uint16_t>(0x0200 | index), 0,
+                           descriptor ? static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8)) : 0);
+  return descriptor;
 }
 
 extern "C" uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 {
-  return g_activeDevice ? g_activeDevice->stringDescriptor(index, langid) : nullptr;
+  const uint16_t *descriptor =
+      g_activeDevice ? g_activeDevice->stringDescriptor(index, langid) : nullptr;
+  recordDescriptorResponse(static_cast<uint16_t>(0x0300 | index), langid,
+                           descriptor ? static_cast<uint16_t>(descriptor[0] & 0xff) : 0);
+  return descriptor;
 }
 
 extern "C" uint8_t const *tud_descriptor_bos_cb(void)
 {
-  return g_activeDevice ? g_activeDevice->bosDescriptor() : nullptr;
+  const uint8_t *descriptor = g_activeDevice ? g_activeDevice->bosDescriptor() : nullptr;
+  recordDescriptorResponse(0x0f00, 0,
+                           g_activeDevice ? g_activeDevice->bosDescriptorLength() : 0);
+  return descriptor;
 }
 
 extern "C" uint8_t const *tud_descriptor_device_qualifier_cb(void)
 {
-  return g_activeDevice ? g_activeDevice->deviceQualifierDescriptor() : nullptr;
+  const uint8_t *descriptor = g_activeDevice ? g_activeDevice->deviceQualifierDescriptor() : nullptr;
+  recordDescriptorResponse(0x0600, 0, descriptor ? descriptor[0] : 0);
+  return descriptor;
 }
 
 extern "C" uint8_t const *tud_descriptor_other_speed_configuration_cb(uint8_t index)
 {
-  return g_activeDevice
-             ? g_activeDevice->otherSpeedConfigurationDescriptor(
-                   index, tud_speed_get() == TUSB_SPEED_HIGH)
-             : nullptr;
+  const uint8_t *descriptor =
+      g_activeDevice ? g_activeDevice->otherSpeedConfigurationDescriptor(
+                           index, tud_speed_get() == TUSB_SPEED_HIGH)
+                     : nullptr;
+  recordDescriptorResponse(static_cast<uint16_t>(0x0700 | index), 0,
+                           descriptor ? static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8)) : 0);
+  return descriptor;
+}
+
+// Status stage of a control transfer has completed. Weak in device/usbd.c and
+// left undefined by the dwc2 driver, which makes it the one place a library can
+// see the standard and class requests the stack answers by itself - SET_ADDRESS,
+// SET_CONFIGURATION, GET_DESCRIPTOR, a HID SET_REPORT - without editing the
+// vendored TinyUSB. A stalled request has no status stage and so never arrives
+// here, which is why vendor requests are also reported at SETUP below.
+extern "C" void dcd_edpt0_status_complete(uint8_t rhport, const tusb_control_request_t *request)
+{
+  if (!g_activeDevice || !request || !g_activeDevice->hasControlObserver())
+  {
+    return;
+  }
+  EspUsbDeviceControlRequestInfo info;
+  info.rhport = rhport;
+  info.stage = ESP_USB_DEVICE_CONTROL_STAGE_ACK;
+  info.bmRequestType = request->bmRequestType;
+  info.bRequest = request->bRequest;
+  info.wValue = request->wValue;
+  info.wIndex = request->wIndex;
+  info.wLength = request->wLength;
+  info.responseLength = g_activeDevice->takeControlResponse(
+      request->bRequest, request->wValue, request->wIndex);
+  info.handled = true;
+  g_activeDevice->notifyControlRequest(info);
 }
 
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
@@ -577,7 +630,25 @@ void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize)
   }
 }
 
-extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
+// Room has just come back in the transmit FIFO. Same signature rule as
+// tud_vendor_rx_cb above - this must match class/vendor/vendor_device.h exactly
+// or it silently stops overriding TinyUSB's weak default and
+// EspUsbDeviceVendor::waitWritable() waits out its full timeout every call.
+void tud_vendor_tx_cb(uint8_t idx, uint32_t sent_bytes)
+{
+  (void)idx;
+  (void)sent_bytes;
+  if (g_activeVendor)
+  {
+    g_activeVendor->handleTxComplete();
+  }
+}
+
+// The vendor-request handling itself. `observation`, when not null, collects
+// what this decided so the caller can report it.
+static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
+                                    tusb_control_request_t const *request,
+                                    EspUsbDeviceControlRequestInfo *observation)
 {
   if (g_activeDevice && request &&
       request->bRequest == WEBUSB_VENDOR_CODE &&
@@ -616,6 +687,11 @@ extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_c
     g_webUsbUrlDescriptor[1] = 0x03;
     g_webUsbUrlDescriptor[2] = scheme;
     memcpy(&g_webUsbUrlDescriptor[3], url, length);
+    if (observation)
+    {
+      observation->responseLength = g_webUsbUrlDescriptor[0];
+      observation->handled = true;
+    }
     return tud_control_xfer(rhport, request, g_webUsbUrlDescriptor,
                             g_webUsbUrlDescriptor[0]);
   }
@@ -628,12 +704,53 @@ extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_c
     {
       return true;
     }
+    if (observation)
+    {
+      observation->responseLength = g_activeDevice->microsoftOs20DescriptorLength();
+      observation->handled = true;
+    }
     return tud_control_xfer(
         rhport, request,
         const_cast<uint8_t *>(g_activeDevice->microsoftOs20Descriptor()),
         g_activeDevice->microsoftOs20DescriptorLength());
   }
-  return g_activeVendor ? g_activeVendor->handleControlRequest(rhport, stage, request) : false;
+  const bool handled =
+      g_activeVendor ? g_activeVendor->handleControlRequest(rhport, stage, request) : false;
+  if (observation)
+  {
+    observation->handled = handled;
+  }
+  return handled;
+}
+
+extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
+{
+  // Every vendor request is reported at SETUP, before the library decides what
+  // to do with it, so a sketch can tell "the host never asked" from "the host
+  // asked and the answer was wrong" - which is the whole question when Windows
+  // refuses to bind WinUSB to a vendor interface. SETUP rather than ACK because
+  // a request the device stalls never reaches a status stage.
+  const bool observing = g_activeDevice && request &&
+                         stage == CONTROL_STAGE_SETUP &&
+                         g_activeDevice->hasControlObserver();
+  EspUsbDeviceControlRequestInfo observation;
+  if (observing)
+  {
+    observation.rhport = rhport;
+    observation.stage = ESP_USB_DEVICE_CONTROL_STAGE_SETUP;
+    observation.bmRequestType = request->bmRequestType;
+    observation.bRequest = request->bRequest;
+    observation.wValue = request->wValue;
+    observation.wIndex = request->wIndex;
+    observation.wLength = request->wLength;
+  }
+  const bool result = handleVendorControlXfer(rhport, stage, request,
+                                              observing ? &observation : nullptr);
+  if (observing)
+  {
+    g_activeDevice->notifyControlRequest(observation);
+  }
+  return result;
 }
 
 // TinyUSB net (CDC-NCM) callbacks. Signatures must match class/net/net_device.h
@@ -1156,6 +1273,42 @@ void EspUsbDevice::handleHidSetProtocol(uint8_t instance, uint8_t protocol)
   }
 }
 
+void EspUsbDevice::onAnyControlRequest(ControlRequestObserver callback)
+{
+  controlObserver_ = callback;
+  controlResponseLength_ = 0;
+}
+
+void EspUsbDevice::notifyControlRequest(const EspUsbDeviceControlRequestInfo &info)
+{
+  if (controlObserver_)
+  {
+    controlObserver_(info);
+  }
+}
+
+void EspUsbDevice::recordControlResponse(uint8_t bRequest, uint16_t wValue,
+                                         uint16_t wIndex, uint16_t length)
+{
+  controlResponseRequest_ = bRequest;
+  controlResponseValue_ = wValue;
+  controlResponseIndex_ = wIndex;
+  controlResponseLength_ = length;
+}
+
+uint16_t EspUsbDevice::takeControlResponse(uint8_t bRequest, uint16_t wValue,
+                                           uint16_t wIndex)
+{
+  if (controlResponseLength_ == 0 || bRequest != controlResponseRequest_ ||
+      wValue != controlResponseValue_ || wIndex != controlResponseIndex_)
+  {
+    return 0;
+  }
+  const uint16_t length = controlResponseLength_;
+  controlResponseLength_ = 0;
+  return length;
+}
+
 void EspUsbDevice::handleBusAttached()
 {
   // Every class hears this, composite or not: the bus is shared by all of them.
@@ -1263,6 +1416,20 @@ bool EspUsbDevice::buildDescriptors()
   uint8_t interfaceNumber = 0;
   uint8_t endpointNumber = 1;
   uint16_t endpointSize = composite ? 16 : hidEndpointSize();
+  // HID functions whose interrupt endpoints are larger in the high-speed
+  // configuration than in the full-speed one, as byte ranges of the descriptor.
+  // The high-speed copy is made by patching the full-speed bytes below, and
+  // patching per function rather than per descriptor type is what keeps a
+  // keyboard's 8-byte endpoint at 8 while a vendor HID function next to it goes
+  // to 512.
+  struct HidSpeedFixup
+  {
+    uint16_t offset;
+    uint16_t length;
+    uint16_t highSpeedPacketSize;
+  };
+  HidSpeedFixup hidSpeedFixups[MAX_CLASSES] = {};
+  size_t hidSpeedFixupCount = 0;
   if (composite)
   {
     // Raise the shared HID endpoint if any merged class needs more room (e.g. an
@@ -1314,6 +1481,23 @@ bool EspUsbDevice::buildDescriptors()
       setLastError(ESP_FAIL);
       return false;
     }
+    uint16_t compositeHighSpeedSize = 0;
+    for (size_t i = 0; i < classCount_; i++)
+    {
+      if (!classes_[i] || !classes_[i]->isHid())
+      {
+        continue;
+      }
+      const uint16_t hint = classes_[i]->hidHighSpeedEndpointSize();
+      if (hint > compositeHighSpeedSize)
+      {
+        compositeHighSpeedSize = hint;
+      }
+    }
+    if (compositeHighSpeedSize > endpointSize)
+    {
+      hidSpeedFixups[hidSpeedFixupCount++] = {offset, written, compositeHighSpeedSize};
+    }
     offset += written;
     interfaceNumber += 1;
     endpointNumber += 1;
@@ -1327,6 +1511,11 @@ bool EspUsbDevice::buildDescriptors()
         continue;
       }
       uint16_t written = classes_[i]->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, endpointSize);
+      const uint16_t highSpeedSize = classes_[i]->hidHighSpeedEndpointSize();
+      if (written > 0 && highSpeedSize > 0)
+      {
+        hidSpeedFixups[hidSpeedFixupCount++] = {offset, written, highSpeedSize};
+      }
       offset += written;
       interfaceNumber += classes_[i]->interfaceCount();
       endpointNumber += classes_[i]->endpointCount();
@@ -1442,6 +1631,31 @@ bool EspUsbDevice::buildDescriptors()
     }
     descriptorOffset = static_cast<uint16_t>(descriptorOffset + descriptorLength);
   }
+  for (size_t fixup = 0; fixup < hidSpeedFixupCount; fixup++)
+  {
+    const HidSpeedFixup &range = hidSpeedFixups[fixup];
+    for (uint16_t descriptorOffset = range.offset;
+         descriptorOffset + 1 < range.offset + range.length;)
+    {
+      const uint8_t descriptorLength =
+          configDescriptorHighSpeed_[descriptorOffset];
+      if (descriptorLength < 2 ||
+          descriptorOffset + descriptorLength > range.offset + range.length)
+      {
+        setLastError(ESP_FAIL);
+        return false;
+      }
+      if (configDescriptorHighSpeed_[descriptorOffset + 1] == USB_DESC_ENDPOINT &&
+          descriptorLength >= 7 &&
+          (configDescriptorHighSpeed_[descriptorOffset + 3] & 0x03) ==
+              USB_ENDPOINT_ATTR_INTERRUPT)
+      {
+        put16(&configDescriptorHighSpeed_[descriptorOffset + 4],
+              range.highSpeedPacketSize);
+      }
+      descriptorOffset = static_cast<uint16_t>(descriptorOffset + descriptorLength);
+    }
+  }
   if (audioClass)
   {
     const uint16_t highSpeedAudioLength =
@@ -1470,6 +1684,29 @@ bool EspUsbDevice::buildDescriptors()
   return true;
 }
 
+bool EspUsbDevice::microsoftOs20SubsetLayout() const
+{
+  switch (config_.msOs20Layout)
+  {
+  case ESP_USB_DEVICE_MS_OS_20_FLAT:
+    return false;
+  case ESP_USB_DEVICE_MS_OS_20_SUBSETS:
+    return true;
+  default:
+    break;
+  }
+  // Windows resolves a function subset through usbccgp.sys, which it loads only
+  // for a composite device. bNumInterfaces is what decides that here: one
+  // interface means no usbccgp, so the compatible ID has to sit directly under
+  // the set header or it reaches nothing.
+  return configDescriptor_ && configDescriptor_[4] > 1;
+}
+
+bool EspUsbDevice::microsoftOs20UsesSubsets() const
+{
+  return microsoftOs20DescriptorLength_ > 0 && microsoftOs20SubsetLayout();
+}
+
 void EspUsbDevice::buildWebUsbDescriptors()
 {
   memset(bosDescriptor_, 0, sizeof(bosDescriptor_));
@@ -1490,6 +1727,95 @@ void EspUsbDevice::buildWebUsbDescriptors()
       0x9c, 0xd2, 0x65, 0x9d, 0x9e, 0x64, 0x8a, 0x9f,
   };
 
+  // The Microsoft descriptor set is built first: the BOS platform capability has
+  // to publish its total length, and that length now depends on whether the two
+  // subsets are there.
+  if (vendorInterfaceNumber_ != 0xff)
+  {
+    const bool useSubsets = microsoftOs20SubsetLayout();
+    uint8_t *const set = microsoftOs20Descriptor_;
+    size_t offset = 0;
+
+    // Set header: wLength, wDescriptorType, dwWindowsVersion, wTotalLength.
+    // wTotalLength is filled in once the rest is written.
+    put16(&set[offset], 10);
+    offset += 2;
+    put16(&set[offset], 0); // MS_OS_20_SET_HEADER_DESCRIPTOR
+    offset += 2;
+    put32(&set[offset], 0x06030000); // Windows 8.1 and later
+    offset += 4;
+    const size_t setLengthOffset = offset;
+    offset += 2;
+
+    size_t configurationLengthOffset = 0;
+    size_t functionLengthOffset = 0;
+    if (useSubsets)
+    {
+      put16(&set[offset], 8);
+      offset += 2;
+      put16(&set[offset], 1); // MS_OS_20_SUBSET_HEADER_CONFIGURATION
+      offset += 2;
+      set[offset++] = 0; // configuration index, not bConfigurationValue
+      set[offset++] = 0; // bReserved
+      configurationLengthOffset = offset;
+      offset += 2;
+
+      put16(&set[offset], 8);
+      offset += 2;
+      put16(&set[offset], 2); // MS_OS_20_SUBSET_HEADER_FUNCTION
+      offset += 2;
+      set[offset++] = vendorInterfaceNumber_;
+      set[offset++] = 0; // bReserved
+      functionLengthOffset = offset;
+      offset += 2;
+    }
+
+    const size_t featuresOffset = offset;
+    put16(&set[offset], 20);
+    offset += 2;
+    put16(&set[offset], 3); // MS_OS_20_FEATURE_COMPATIBLE_ID
+    offset += 2;
+    static constexpr uint8_t winUsbId[16] = {
+        'W', 'I', 'N', 'U', 'S', 'B', 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+    };
+    memcpy(&set[offset], winUsbId, sizeof(winUsbId));
+    offset += sizeof(winUsbId);
+
+    put16(&set[offset], 132);
+    offset += 2;
+    put16(&set[offset], 4); // MS_OS_20_FEATURE_REG_PROPERTY
+    offset += 2;
+    put16(&set[offset], 7); // REG_MULTI_SZ
+    offset += 2;
+    put16(&set[offset], 42);
+    offset += 2;
+    offset += putUtf16Le(&set[offset], "DeviceInterfaceGUIDs", false);
+    put16(&set[offset], 80);
+    offset += 2;
+    offset += putUtf16Le(&set[offset], "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9D}",
+                         true);
+
+    const size_t expected = featuresOffset + 20 + 132;
+    if (offset == expected && offset <= sizeof(microsoftOs20Descriptor_))
+    {
+      put16(&set[setLengthOffset], static_cast<uint16_t>(offset));
+      if (useSubsets)
+      {
+        put16(&set[configurationLengthOffset],
+              static_cast<uint16_t>(offset - 10));
+        put16(&set[functionLengthOffset], static_cast<uint16_t>(offset - 18));
+      }
+      microsoftOs20DescriptorLength_ = static_cast<uint16_t>(offset);
+    }
+    else
+    {
+      // Keep WebUSB usable without advertising a malformed Microsoft
+      // capability if the fixed feature descriptors are edited inconsistently.
+      memset(microsoftOs20Descriptor_, 0, sizeof(microsoftOs20Descriptor_));
+    }
+  }
+
   size_t bosOffset = 5;
   bosDescriptor_[bosOffset++] = 24;
   bosDescriptor_[bosOffset++] = USB_DESC_DEVICE_CAPABILITY;
@@ -1502,7 +1828,7 @@ void EspUsbDevice::buildWebUsbDescriptors()
   bosDescriptor_[bosOffset++] = WEBUSB_VENDOR_CODE;
   bosDescriptor_[bosOffset++] = 1;
 
-  if (vendorInterfaceNumber_ != 0xff)
+  if (microsoftOs20DescriptorLength_)
   {
     bosDescriptor_[bosOffset++] = 28;
     bosDescriptor_[bosOffset++] = USB_DESC_DEVICE_CAPABILITY;
@@ -1513,78 +1839,10 @@ void EspUsbDevice::buildWebUsbDescriptors()
     bosOffset += sizeof(microsoftOs20Uuid);
     put32(&bosDescriptor_[bosOffset], 0x06030000);
     bosOffset += 4;
-    put16(&bosDescriptor_[bosOffset], MS_OS_20_DESCRIPTOR_SIZE);
+    put16(&bosDescriptor_[bosOffset], microsoftOs20DescriptorLength_);
     bosOffset += 2;
     bosDescriptor_[bosOffset++] = MICROSOFT_OS_20_VENDOR_CODE;
     bosDescriptor_[bosOffset++] = 0;
-
-    size_t offset = 0;
-    put16(&microsoftOs20Descriptor_[offset], 10);
-    offset += 2;
-    put16(&microsoftOs20Descriptor_[offset], 0);
-    offset += 2;
-    put32(&microsoftOs20Descriptor_[offset], 0x06030000);
-    offset += 4;
-    put16(&microsoftOs20Descriptor_[offset], MS_OS_20_DESCRIPTOR_SIZE);
-    offset += 2;
-
-    put16(&microsoftOs20Descriptor_[offset], 8);
-    offset += 2;
-    put16(&microsoftOs20Descriptor_[offset], 1);
-    offset += 2;
-    microsoftOs20Descriptor_[offset++] = 0;
-    microsoftOs20Descriptor_[offset++] = 0;
-    put16(&microsoftOs20Descriptor_[offset], MS_OS_20_DESCRIPTOR_SIZE - 10);
-    offset += 2;
-
-    put16(&microsoftOs20Descriptor_[offset], 8);
-    offset += 2;
-    put16(&microsoftOs20Descriptor_[offset], 2);
-    offset += 2;
-    microsoftOs20Descriptor_[offset++] = vendorInterfaceNumber_;
-    microsoftOs20Descriptor_[offset++] = 0;
-    put16(&microsoftOs20Descriptor_[offset],
-          MS_OS_20_DESCRIPTOR_SIZE - 10 - 8);
-    offset += 2;
-
-    put16(&microsoftOs20Descriptor_[offset], 20);
-    offset += 2;
-    put16(&microsoftOs20Descriptor_[offset], 3);
-    offset += 2;
-    static constexpr uint8_t winUsbId[16] = {
-        'W', 'I', 'N', 'U', 'S', 'B', 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-    };
-    memcpy(&microsoftOs20Descriptor_[offset], winUsbId, sizeof(winUsbId));
-    offset += sizeof(winUsbId);
-
-    put16(&microsoftOs20Descriptor_[offset], 132);
-    offset += 2;
-    put16(&microsoftOs20Descriptor_[offset], 4);
-    offset += 2;
-    put16(&microsoftOs20Descriptor_[offset], 7);
-    offset += 2;
-    put16(&microsoftOs20Descriptor_[offset], 42);
-    offset += 2;
-    offset += putUtf16Le(&microsoftOs20Descriptor_[offset],
-                         "DeviceInterfaceGUIDs", false);
-    put16(&microsoftOs20Descriptor_[offset], 80);
-    offset += 2;
-    offset += putUtf16Le(
-        &microsoftOs20Descriptor_[offset],
-        "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9D}", true);
-    if (offset == sizeof(microsoftOs20Descriptor_))
-    {
-      microsoftOs20DescriptorLength_ = static_cast<uint16_t>(offset);
-    }
-    else
-    {
-      // Keep WebUSB usable without advertising a malformed Microsoft
-      // capability if this fixed descriptor is edited inconsistently.
-      memset(microsoftOs20Descriptor_, 0,
-             sizeof(microsoftOs20Descriptor_));
-      bosOffset = 29;
-    }
   }
 
   bosDescriptor_[0] = 5;
@@ -2037,6 +2295,13 @@ void EspUsbDeviceVendor::end()
   {
     g_activeVendor = nullptr;
   }
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (writableSignal_)
+  {
+    vSemaphoreDelete(static_cast<SemaphoreHandle_t>(writableSignal_));
+    writableSignal_ = nullptr;
+  }
+#endif
 }
 
 bool EspUsbDeviceVendor::begin()
@@ -2051,13 +2316,24 @@ bool EspUsbDeviceVendor::begin()
 
 uint16_t EspUsbDeviceVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  (void)endpointSize;
+  // endpointSize is the per-speed ceiling the caller has already worked out:
+  // configurationDescriptorForSpeed() passes 64 while building the full-speed
+  // configuration and 512 for high speed. Ignoring it and writing the
+  // constructor's value into both is how OTHER_SPEED_CONFIGURATION came to
+  // advertise wMaxPacketSize = 512 on a bulk endpoint, which USB 2.0 caps at 64
+  // at full speed. The constructor still decides how small the endpoint may be;
+  // the speed decides how large.
+  uint16_t maxPacket = endpointSize_;
+  if (endpointSize != 0 && maxPacket > endpointSize)
+  {
+    maxPacket = endpointSize;
+  }
   const uint8_t epOut = endpointNumber;
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   uint8_t descriptor[] = {
       9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_VENDOR_SPECIFIC, 0x00, 0x00, 0,
-      7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(endpointSize_ & 0xff), static_cast<uint8_t>((endpointSize_ >> 8) & 0xff), 0,
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(endpointSize_ & 0xff), static_cast<uint8_t>((endpointSize_ >> 8) & 0xff), 0,
+      7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(maxPacket & 0xff), static_cast<uint8_t>((maxPacket >> 8) & 0xff), 0,
+      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(maxPacket & 0xff), static_cast<uint8_t>((maxPacket >> 8) & 0xff), 0,
   };
   memcpy(dst, descriptor, sizeof(descriptor));
   return sizeof(descriptor);
@@ -2127,6 +2403,85 @@ size_t EspUsbDeviceVendor::write(const uint8_t *buffer, size_t size)
 #endif
 }
 
+size_t EspUsbDeviceVendor::writeAvailable() const
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  return static_cast<size_t>(tud_vendor_n_write_available(0));
+#else
+  return 0;
+#endif
+}
+
+size_t EspUsbDeviceVendor::writeCapacity()
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  return CFG_TUD_VENDOR_TX_BUFSIZE;
+#else
+  return 0;
+#endif
+}
+
+bool EspUsbDeviceVendor::waitWritable(size_t bytes, uint32_t timeoutMs)
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (bytes == 0)
+  {
+    return true;
+  }
+  if (bytes > writeCapacity())
+  {
+    bytes = writeCapacity();
+  }
+  if (writeAvailable() >= bytes)
+  {
+    return true;
+  }
+  if (timeoutMs == 0 || !mounted())
+  {
+    return false;
+  }
+  if (!writableSignal_)
+  {
+    // Binary rather than counting: the wait re-reads the FIFO after every wake,
+    // so a give that arrives while the task is already running is not a lost
+    // wake-up, it is a redundant one.
+    writableSignal_ = xSemaphoreCreateBinary();
+    if (!writableSignal_)
+    {
+      return false;
+    }
+  }
+  const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeoutMs);
+  for (;;)
+  {
+    const TickType_t now = xTaskGetTickCount();
+    // Signed compare so the subtraction survives the tick counter wrapping.
+    const TickType_t remaining =
+        static_cast<int32_t>(deadline - now) > 0 ? deadline - now : 0;
+    if (remaining == 0)
+    {
+      return writeAvailable() >= bytes;
+    }
+    // Bounded even without a transmit completion: an unplug stops the callbacks
+    // for good, and this is what lets the loop notice that mounted() went false.
+    const TickType_t slice = remaining > pdMS_TO_TICKS(10) ? pdMS_TO_TICKS(10) : remaining;
+    xSemaphoreTake(static_cast<SemaphoreHandle_t>(writableSignal_), slice);
+    if (writeAvailable() >= bytes)
+    {
+      return true;
+    }
+    if (!mounted())
+    {
+      return false;
+    }
+  }
+#else
+  (void)bytes;
+  (void)timeoutMs;
+  return false;
+#endif
+}
+
 void EspUsbDeviceVendor::flush()
 {
 #if ESP_USB_DEVICE_HAS_TINYUSB
@@ -2176,6 +2531,16 @@ void EspUsbDeviceVendor::handleRx()
   {
     rxCallback_(available());
   }
+}
+
+void EspUsbDeviceVendor::handleTxComplete()
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (writableSignal_)
+  {
+    xSemaphoreGive(static_cast<SemaphoreHandle_t>(writableSignal_));
+  }
+#endif
 }
 
 bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, const void *request)
@@ -4450,11 +4815,64 @@ uint16_t EspUsbDeviceHidCustom::hidReportDescriptorLength() const
 EspUsbDeviceHidVendor::EspUsbDeviceHidVendor(EspUsbDevice &device, uint16_t reportSize)
     : EspUsbDeviceClass(device), reportSize_(reportSize)
 {
+  buildReportDescriptor();
+}
+
+uint16_t EspUsbDeviceHidVendor::maxReportSize()
+{
+  // tud_hid_n_report() puts the report ID in byte 0 of the endpoint buffer and
+  // copies the payload behind it, so one byte of the packet is never payload.
+  return static_cast<uint16_t>(ESP_USB_DEVICE_HID_EP_BUFSIZE - 1);
+}
+
+void EspUsbDeviceHidVendor::buildReportDescriptor()
+{
+  uint8_t *dst = reportDescriptor_;
+  const uint8_t head[] = {
+      0x06, 0x00, 0xff, // Usage Page (Vendor Defined 0xff00)
+      0x09, 0x01,       // Usage (1)
+      0xa1, 0x01,       // Collection (Application)
+      0x85, ESP_USB_DEVICE_HID_REPORT_ID_VENDOR, //   Report ID
+      0x15, 0x00,       //   Logical Minimum (0)
+      0x26, 0xff, 0x00, //   Logical Maximum (255)
+      0x75, 0x08,       //   Report Size (8 bits)
+  };
+  memcpy(dst, head, sizeof(head));
+  size_t offset = sizeof(head);
+  if (reportSize_ > 0xff)
+  {
+    // Report Count with a two-byte payload. Anything above 255 needs it, and a
+    // high-speed interrupt endpoint makes those sizes reachable.
+    dst[offset++] = 0x96;
+    dst[offset++] = static_cast<uint8_t>(reportSize_ & 0xff);
+    dst[offset++] = static_cast<uint8_t>((reportSize_ >> 8) & 0xff);
+  }
+  else
+  {
+    dst[offset++] = 0x95;
+    dst[offset++] = static_cast<uint8_t>(reportSize_ & 0xff);
+  }
+  const uint8_t tail[] = {
+      0x09, 0x01, //   Usage (1)
+      0x81, 0x02, //   Input (Data,Var,Abs)
+      0x09, 0x01, //   Usage (1)
+      0x91, 0x02, //   Output (Data,Var,Abs)
+      0x09, 0x01, //   Usage (1)
+      0xb1, 0x02, //   Feature (Data,Var,Abs)
+      0xc0,       // End Collection
+  };
+  memcpy(dst + offset, tail, sizeof(tail));
+  offset += sizeof(tail);
+  reportDescriptorLength_ = static_cast<uint8_t>(offset);
 }
 
 bool EspUsbDeviceHidVendor::begin()
 {
-  return reportSize_ > 0 && reportSize_ <= 63;
+  // The old ceiling was a literal 63, which is maxReportSize() for a 64-byte
+  // endpoint buffer and nothing more: at high speed the endpoint may be up to
+  // 1024 bytes, and refusing anything past 63 there capped the class at an
+  // eighth of what the bus carries for no reason on the device side.
+  return reportSize_ > 0 && reportSize_ <= maxReportSize();
 }
 
 bool EspUsbDeviceHidVendor::sendInput(const void *data, size_t length, uint32_t timeoutMs)
@@ -4482,14 +4900,18 @@ void EspUsbDeviceHidVendor::onFeatureReport(ReportCallback callback)
 
 uint16_t EspUsbDeviceHidVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
+  // This writes the full-speed configuration, where 64 is the hard ceiling.
+  // buildDescriptors() raises the high-speed copy to hidHighSpeedEndpointSize()
+  // afterwards; a report larger than one full-speed packet is still delivered
+  // there, just split over several packets of the same transfer.
   uint16_t mps = static_cast<uint16_t>(reportSize_ + 1);
   if (mps < endpointSize)
   {
     mps = endpointSize;
   }
-  if (mps > 64)
+  if (mps > ESP_USB_DEVICE_FS_INTERRUPT_MAX_PACKET)
   {
-    mps = 64;
+    mps = ESP_USB_DEVICE_FS_INTERRUPT_MAX_PACKET;
   }
   return writeHidConfigurationDescriptor(dst,
                                          interfaceNumber,
@@ -4503,12 +4925,22 @@ uint16_t EspUsbDeviceHidVendor::configurationDescriptor(uint8_t *dst, uint8_t in
 
 const uint8_t *EspUsbDeviceHidVendor::hidReportDescriptor() const
 {
-  return VENDOR_REPORT_DESCRIPTOR;
+  return reportDescriptor_;
 }
 
 uint16_t EspUsbDeviceHidVendor::hidReportDescriptorLength() const
 {
-  return sizeof(VENDOR_REPORT_DESCRIPTOR);
+  return reportDescriptorLength_;
+}
+
+uint16_t EspUsbDeviceHidVendor::hidHighSpeedEndpointSize() const
+{
+  const uint16_t wanted = static_cast<uint16_t>(reportSize_ + 1);
+  if (wanted <= ESP_USB_DEVICE_FS_INTERRUPT_MAX_PACKET)
+  {
+    return 0; // one full-speed packet is already enough; both speeds agree
+  }
+  return wanted > ESP_USB_DEVICE_HID_EP_BUFSIZE ? ESP_USB_DEVICE_HID_EP_BUFSIZE : wanted;
 }
 
 void EspUsbDeviceHidVendor::onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)

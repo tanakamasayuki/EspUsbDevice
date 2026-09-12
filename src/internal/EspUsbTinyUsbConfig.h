@@ -95,14 +95,94 @@
 #define CFG_TUD_VENDOR 1
 #define CFG_TUD_NCM 1
 
+// Class buffer sizes. Every one of these is behind #ifndef so a sketch can
+// raise it from build_opt.h (-DCFG_TUD_VENDOR_TX_BUFSIZE=8192) without copying
+// the library: the flag reaches the library's own translation units because
+// Arduino puts build_opt.h on the command line for the whole build. That is the
+// one thing the core's precompiled TinyUSB cannot offer - its sizes are baked
+// into the shipped sdkconfig - so leaving them unguarded here threw away the
+// only lever this library has.
+//
+// The ceiling is 32768 for every tu_fifo-backed buffer, not a matter of RAM:
+// tu_edpt_stream_init() takes the size as uint16_t, and tu_fifo keeps its read
+// and write indices in the range [0, 2*depth) with uint16_t indices. 65536
+// truncates to a depth of 0 - the device still reports usb_ready but never
+// mounts - and anything above 32768 overflows the index space. The #error below
+// turns both into a build failure instead of a device that enumerates wrong.
+#ifndef CFG_TUD_CDC_RX_BUFSIZE
 #define CFG_TUD_CDC_RX_BUFSIZE 512
+#endif
+#ifndef CFG_TUD_CDC_TX_BUFSIZE
 #define CFG_TUD_CDC_TX_BUFSIZE 512
+#endif
+#ifndef CFG_TUD_MSC_EP_BUFSIZE
 #define CFG_TUD_MSC_EP_BUFSIZE 4096
+#endif
+// HID interrupt endpoint buffer, which is also the ceiling on a single HID
+// report: tud_hid_n_report() writes the report ID into byte 0 and copies the
+// payload behind it, so the largest report a class may declare is
+// CFG_TUD_HID_EP_BUFSIZE - 1.
+//
+// High speed moves the interesting limit. A full-speed interrupt endpoint tops
+// out at 64 bytes per packet, but a high-speed one carries up to 1024 every 125
+// us, so the 64 that used to be hard-coded here capped ESP32-P4 HID at 0.5 MB/s
+// when the bus could carry eight times that. 512 is the default on P4 for that
+// reason and because 1024 has been measured not to enumerate against every host
+// (the host's periodic FIFO budget, not this device). The cost is 3 * (512 - 64)
+// = 1344 bytes of RAM on P4 whether or not a sketch uses HID, since hid_device.c
+// defines its control, IN and OUT buffers statically.
+//
+// Only EspUsbDeviceHidVendor asks for packets this large. Keyboards, mice,
+// gamepads and the composite HID interface size their endpoint from the report
+// they actually send (8 or 16 bytes), so raising this changes no descriptor
+// they emit.
+#ifndef CFG_TUD_HID_EP_BUFSIZE
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#define CFG_TUD_HID_EP_BUFSIZE 512
+#else
 #define CFG_TUD_HID_EP_BUFSIZE 64
+#endif
+#endif
+#ifndef CFG_TUD_MIDI_RX_BUFSIZE
 #define CFG_TUD_MIDI_RX_BUFSIZE 512
+#endif
+#ifndef CFG_TUD_MIDI_TX_BUFSIZE
 #define CFG_TUD_MIDI_TX_BUFSIZE 512
+#endif
+#ifndef CFG_TUD_VENDOR_RX_BUFSIZE
 #define CFG_TUD_VENDOR_RX_BUFSIZE 512
+#endif
+// Vendor transmit FIFO. 512 bytes is one high-speed bulk packet, which is the
+// wrong size for a device that streams: EspUsbDeviceVendor::write() returns 0
+// whenever the FIFO is full, and at one packet of depth a sketch pushing 4 MiB
+// out an ESP32-P4 high-speed bulk IN spins on that ~40,000 times and reaches
+// only about 2.4 transactions per microframe out of the 13 high speed allows.
+//
+// Measured on P4 rev 1.3 over usbip, 4 MiB per transfer, median of 25 runs:
+//
+//   512 B   9.03 MB/s  (6.79-10.02, 39,746 zero-returns)
+//   8 KiB  10.59 MB/s  (10.27-10.76, 28,844)
+//   16 KiB 10.33 MB/s
+//   32 KiB 10.39 MB/s
+//
+// It saturates at 8 KiB - what the extra depth buys past that is nothing, and
+// the run-to-run spread collapses from +-19% to +-2.5%, which is the part a
+// sketch feels. So P4 defaults to 8 KiB and pays 7680 bytes of RAM for it.
+// S2/S3 stay at 512: a full-speed bulk endpoint is 64 bytes and tops out at
+// 1.5 MB/s, so eight packets of depth is already more than that bus can drain.
+#ifndef CFG_TUD_VENDOR_TX_BUFSIZE
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#define CFG_TUD_VENDOR_TX_BUFSIZE 8192
+#else
 #define CFG_TUD_VENDOR_TX_BUFSIZE 512
+#endif
+#endif
+
+#if CFG_TUD_CDC_RX_BUFSIZE > 32768 || CFG_TUD_CDC_TX_BUFSIZE > 32768 ||       \
+    CFG_TUD_MIDI_RX_BUFSIZE > 32768 || CFG_TUD_MIDI_TX_BUFSIZE > 32768 ||     \
+    CFG_TUD_VENDOR_RX_BUFSIZE > 32768 || CFG_TUD_VENDOR_TX_BUFSIZE > 32768
+#error "tu_fifo indices are uint16_t over [0, 2*depth): class FIFOs cannot exceed 32768 bytes"
+#endif
 
 // TinyUSB defaults both NCM NTB pools to 1, which leaves the transmitter with a
 // single buffer: it can only ever have one NTB in flight, so every frame waits

@@ -190,6 +190,10 @@ static bool webUsbUrl()
   return ok && found;
 }
 
+// This device has a single vendor interface, so Windows never loads usbccgp
+// for it and the compatible ID has to sit directly under the set header - no
+// configuration subset, no function subset. 162 bytes rather than 178, with
+// "WINUSB" at offset 14 rather than 30.
 static bool microsoftOs20()
 {
   uint8_t buffer[178] = {};
@@ -197,20 +201,26 @@ static bool microsoftOs20()
   const bool ok = usb.vendorControlIn(
       0x02, 0, 0x0007, buffer, sizeof(buffer), &actualLength, deviceAddress);
   const bool headerOk =
-      actualLength == sizeof(buffer) &&
+      actualLength == 162 &&
       buffer[0] == 10 && buffer[1] == 0 &&
-      buffer[8] == sizeof(buffer) && buffer[9] == 0;
-  const bool interfaceOk =
-      headerOk && buffer[18] == 8 && buffer[19] == 0 &&
-      buffer[20] == 2 && buffer[21] == 0 && buffer[22] == 0;
+      buffer[8] == 162 && buffer[9] == 0;
+  // Compatible ID feature descriptor, directly under the set header.
+  const bool flatOk =
+      headerOk && buffer[10] == 20 && buffer[11] == 0 &&
+      buffer[12] == 3 && buffer[13] == 0;
   const bool winUsbOk =
-      interfaceOk && memcmp(&buffer[30], "WINUSB", 6) == 0;
-  Serial.printf("MS_OS_20 ok=%u len=%u interface=%u winusb=%u\n",
+      flatOk && memcmp(&buffer[14], "WINUSB", 6) == 0;
+  // Registry property (DeviceInterfaceGUIDs) follows the compatible ID.
+  const bool propertyOk =
+      winUsbOk && buffer[30] == 132 && buffer[31] == 0 &&
+      buffer[32] == 4 && buffer[33] == 0;
+  Serial.printf("MS_OS_20 ok=%u len=%u flat=%u winusb=%u property=%u\n",
                 ok ? 1 : 0,
                 static_cast<unsigned>(actualLength),
-                interfaceOk ? 1 : 0,
-                winUsbOk ? 1 : 0);
-  return ok && headerOk && interfaceOk && winUsbOk;
+                flatOk ? 1 : 0,
+                winUsbOk ? 1 : 0,
+                propertyOk ? 1 : 0);
+  return ok && headerOk && flatOk && winUsbOk && propertyOk;
 }
 
 void setup()

@@ -68,4 +68,42 @@ static_assert(CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX == 776,
               "96 kHz stereo 32-bit FS packet capacity");
 #endif
 
+// Class buffer sizes are overridable from build_opt.h, which is the whole point
+// of the library carrying its own tusb_config.h: the core's precompiled TinyUSB
+// bakes these into a shipped sdkconfig and no sketch can move them.
+#if !defined(CFG_TUD_VENDOR_TX_BUFSIZE) || !defined(CFG_TUD_VENDOR_RX_BUFSIZE) || \
+    !defined(CFG_TUD_HID_EP_BUFSIZE) || !defined(CFG_TUD_CDC_TX_BUFSIZE) ||       \
+    !defined(CFG_TUD_CDC_RX_BUFSIZE) || !defined(CFG_TUD_MIDI_TX_BUFSIZE) ||      \
+    !defined(CFG_TUD_MIDI_RX_BUFSIZE) || !defined(CFG_TUD_MSC_EP_BUFSIZE)
+#error "every class buffer size must be defined"
+#endif
+
+// tu_edpt_stream_init() takes the FIFO size as uint16_t and tu_fifo runs its
+// indices over [0, 2*depth), so nothing tu_fifo-backed may exceed 32768. A
+// 65536-byte vendor FIFO truncates to a depth of 0: the device reports ready and
+// never mounts. The header turns that into a build failure instead.
+static_assert(CFG_TUD_VENDOR_TX_BUFSIZE <= 32768, "vendor TX FIFO within tu_fifo index space");
+static_assert(CFG_TUD_VENDOR_RX_BUFSIZE <= 32768, "vendor RX FIFO within tu_fifo index space");
+static_assert(CFG_TUD_CDC_TX_BUFSIZE <= 32768, "CDC TX FIFO within tu_fifo index space");
+static_assert(CFG_TUD_MIDI_TX_BUFSIZE <= 32768, "MIDI TX FIFO within tu_fifo index space");
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+// High speed is where one packet of transmit FIFO stops being enough: measured
+// 9.03 MB/s at 512 bytes against 10.59 at 8 KiB, with the run-to-run spread
+// collapsing from +-19% to +-2.5%. It saturates at 8 KiB, so that is the default
+// and 16/32 KiB buy nothing.
+static_assert(CFG_TUD_VENDOR_TX_BUFSIZE == 8192, "P4 vendor TX FIFO is 8 KiB");
+// A high-speed interrupt endpoint carries up to 1024 bytes every 125 us. 64
+// capped EspUsbDeviceHidVendor at an eighth of what the bus could move, for no
+// reason on the device side; 1024 has been measured not to enumerate against
+// every host, so 512.
+static_assert(CFG_TUD_HID_EP_BUFSIZE == 512, "P4 HID endpoint buffer is 512");
+#else
+// Full speed: bulk is 64 bytes and tops out near 1.5 MB/s, so eight packets of
+// FIFO is already more than the bus drains, and an interrupt endpoint may not
+// exceed 64 bytes at all.
+static_assert(CFG_TUD_VENDOR_TX_BUFSIZE == 512, "S2/S3 vendor TX FIFO is 512");
+static_assert(CFG_TUD_HID_EP_BUFSIZE == 64, "S2/S3 HID endpoint buffer is 64");
+#endif
+
 int main() { return 0; }
