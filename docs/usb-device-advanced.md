@@ -900,7 +900,30 @@ MB/s with the FIFO and transfer TinyUSB defaults to, and 21.5 with the 4096/4096
 this library sets there ([5.4](#54-buffer-sizes)). A sketch that streams while
 it also produces the data should use `EspUsbDeviceVendor::waitWritable()` rather
 than spinning on `write()` returning 0: measured at the same 21 MB/s with the
-spin count going from ~25,000 per 4 MiB to zero, one block per transfer.
+spin count going from ~25,000 per 4 MiB to zero, one block per transfer. The
+gain there is not bandwidth but the CPU the spin was taking from whatever
+produces the data - a two-channel capture streaming out of a P4 lost 7-16% of
+its USB throughput to the spin loop and loses none to the blocking wait.
+
+**Write in whole packets if you can.** `write()` accepts only what the FIFO has
+room for, so a caller that offers the rest of its buffer whenever a little room
+appears queues odd lengths - 4032 bytes, say - and TinyUSB arms a transfer as
+soon as one packet's worth is present. A transfer that is not a multiple of the
+packet size ends in a short packet, which completes the host's in-flight URB
+early and costs it a resubmission. Waiting for room for a whole multiple, and
+writing exactly that, keeps every transfer full:
+
+```cpp
+while (sent < total) {
+  const size_t chunk = min(EspUsbDeviceVendor::writeCapacity(), total - sent);
+  if (!vendor.waitWritable(chunk, 1000)) { break; }   // false when unplugged
+  sent += vendor.write(data + sent, chunk);
+}
+```
+
+It is worth doing when a producer keeps the FIFO partly full; a sketch that has
+the data ready and nothing else to do will find the FIFO empty at each turn
+anyway and see no short transfers either way.
 
 ---
 
