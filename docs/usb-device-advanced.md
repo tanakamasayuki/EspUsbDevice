@@ -791,22 +791,39 @@ packets per transfer perfectly happily; only that default stopped it.
 Measured on ESP32-P4 rev 1.3 over usbip, 4 MiB per run, median of 9, pattern
 verified on the host:
 
-| FIFO | transfer | MB/s | global RAM |
-|-----:|---------:|-----:|-----------:|
-| 512 | 512 | 9.83 | 74,008 |
-| 8192 | 512 | 10.76 | 81,688 |
-| 8192 | 2048 | 18.64 | 83,224 |
-| **4096** | **4096** | **21.12** | **81,176** |
-| 8192 | 8192 | 22.81 | 89,368 |
-| 8192 | 16384 | 22.78 | 97,560 |
-| 32768 | 8192 | 23.34 | 113,936 |
+| FIFO | transfer | MB/s (median) | min-max | global RAM |
+|-----:|---------:|--------------:|---------|-----------:|
+| 512 | 512 | 9.83 | 8.33-10.21 | 74,008 |
+| 8192 | 512 | 10.76 | 10.50-11.06 | 81,688 |
+| 8192 | 2048 | 18.64 | 18.11-19.74 | 83,224 |
+| **4096** | **4096** | **21.12** | **20.27-22.31** | **81,176** |
+| 8192 | 8192 | 22.81 | 21.63-24.20 | 89,368 |
+| 8192 | 16384 | 22.78 | 20.75-23.40 | 97,560 |
+| 16384 | 8192 | 23.28 | 20.93-24.05 | 97,560 |
+| 32768 | 8192 | 23.34 | 20.98-23.92 | 113,936 |
 
 It saturates around 8192, and 4096/4096 gets 93% of that ceiling while using
 **less** RAM than raising the FIFO alone did. Raising the host's URB depth past
-2 adds nothing, so ~23 MB/s is the device's ceiling on this path rather than
-the host's. Together with `CFG_TUD_HID_EP_BUFSIZE` the P4 defaults cost 7168
-bytes of RAM over a full-speed build, whether or not a sketch uses those
-classes, because TinyUSB defines the buffers statically.
+2 adds nothing, and neither does the size of the host's reads, so ~23 MB/s is
+the device's ceiling on this path rather than the host's. Together with
+`CFG_TUD_HID_EP_BUFSIZE` the P4 defaults cost 7168 bytes of RAM over a
+full-speed build, whether or not a sketch uses those classes, because TinyUSB
+defines the buffers statically.
+
+**The default stops at 4096/4096 because of what the last 8% costs**, not
+because more does not help: 8192/8192 is +8 KB of static RAM for about +8%, and
+32768/8192 is +33 KB for about +11%. That is a bad trade to make for every
+sketch on the part and a fine one for a sketch that streams continuously, which
+is what the two flags are for. A separate measurement with a two-channel
+capture running alongside saw the same shape - 21.97 MB/s at the default
+against 23.69 at 32768/8192 - so the figures hold with a producer in front of
+the FIFO too.
+
+**Size what you hand to `write()` from `writeCapacity()`.** A chunk fixed at
+4096 in the sketch caps the transfer at 4096 no matter how deep the FIFO is,
+because `write()` never accepts more than it is offered - raising
+`CFG_TUD_VENDOR_TX_BUFSIZE` then changes nothing and looks like the flag was
+ignored.
 
 **Nothing `tu_fifo` backs may exceed 32768 bytes**, and the reason is not RAM:
 `tu_edpt_stream_init()` takes the size as `uint16_t` and `tu_fifo` runs its
