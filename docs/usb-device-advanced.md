@@ -1186,11 +1186,11 @@ indirection links your driver into sketches that never use the class.
 | Audio dropouts | `stats()` overrun / underrun counters |
 | Automated descriptor checks | `config.startTinyUsb = false` plus [`tests/unit/`](../tests/unit/) |
 | Automated two-board tests | [`tests/peer/`](../tests/peer/) |
-| Identifying a P4 port | [`tests/probe/`](../tests/probe/) |
+| Identifying a P4 port | [`tests/manual/`](../tests/manual/) |
 
-`tests/probe/` is not a regression suite - it is **the place for throwaway
-sketches used during bring-up and diagnosis**. Adding a new investigation there
-is the existing convention.
+`tests/manual/` is not a regression suite - it is **the place for sketches that
+need a person**: a host OS to look at, a cable to move, a browser to open.
+Adding a new investigation there is the existing convention.
 
 ### 10.2 Reading the logs
 
