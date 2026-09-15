@@ -911,6 +911,25 @@ rather than starting a device whose endpoints did not open.
 `EspUsbDevice::bulkInDoubleBuffered()` reports the bitmap that was applied,
 which is the thing to check when a stream is slower than expected.
 
+The arithmetic above was checked against the controller. On an ESP32-P4 high
+speed link with one vendor interface (512-byte bulk pair), reading the DWC2
+registers gives GRXFSIZ 304 words, EP0's IN FIFO 16 words at offset 976, and the
+bulk IN endpoint 256 words at 720 - 576 of the 992 the buffer-DMA budget leaves,
+and 256 words is exactly two 512-byte packets. `bulkInDoubleBuffered()` reads
+`0x0002` for the same device.
+
+**Read those registers after the host has configured the device, not after
+`begin()`.** The FIFO is carved up in `dcd_edpt_open()`, which runs on
+SET_CONFIGURATION - long after `begin()` has returned. Probing earlier returns
+whatever the registers held before the allocation, which looks like a plausible
+but wrong answer: it read GRXFSIZ 1024 and a 512-word endpoint FIFO here, adding
+up to twice the RAM the controller has.
+
+A control, same device and host, 8 reads in flight, direct transfers of 27,136
+and 65,024 bytes: 46.4 and 46.3 MB/s with the default doubling, against 27.0 and
+27.0 with `EspUsbBulkInBuffering::Single`. **+72%** - which is what the default
+is for.
+
 ### 5.6 Which core the usbd task runs on
 
 `config.taskCoreId` pins the USB device task to a core, and **defaults to -1:
