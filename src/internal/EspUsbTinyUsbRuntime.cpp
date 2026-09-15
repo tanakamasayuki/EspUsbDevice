@@ -78,6 +78,17 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   }
 
   g_rhport = selected == UsbController::HighSpeed ? 1 : 0;
+
+  // Has to come before tusb_init(): the DWC2 port reads this once, at
+  // dfifo_device_init(), and the transmit FIFO sizes are fixed from then on.
+  // vbus_sensing keeps the value the default configuration would have used,
+  // because this call replaces the whole structure rather than merging into it.
+  const tud_configure_dwc2_t dwc2Config = {
+      .bm_double_buffered = options.bulkInDoubleBuffered,
+      .vbus_sensing = CFG_TUD_VBUS_DETECT_HW,
+  };
+  tud_configure(g_rhport, TUD_CFGID_DWC2, &dwc2Config);
+
   const tusb_rhport_init_t init = {
       .role = TUSB_ROLE_DEVICE,
       .speed = selected == UsbController::HighSpeed ? TUSB_SPEED_HIGH : TUSB_SPEED_FULL,
@@ -92,8 +103,20 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
 
   const UBaseType_t priority =
       options.taskPriority == 0 ? configMAX_PRIORITIES - 1 : options.taskPriority;
-  if (xTaskCreate(tinyUsbDeviceTask, "espusb-device", options.taskStackSize,
-                  nullptr, priority, &g_deviceTask) != pdPASS)
+  // xTaskCreate() leaves the task unpinned, which on a dual-core ESP32 means it
+  // can run beside whatever else is busy. Pinning it away from the core the
+  // sketch produces data on is what keeps the two from taking slices from each
+  // other; which core that is belongs to the sketch, so this only does what it
+  // was told.
+  const BaseType_t created =
+      options.taskCoreId < 0
+          ? xTaskCreate(tinyUsbDeviceTask, "espusb-device", options.taskStackSize,
+                        nullptr, priority, &g_deviceTask)
+          : xTaskCreatePinnedToCore(tinyUsbDeviceTask, "espusb-device",
+                                    options.taskStackSize, nullptr, priority,
+                                    &g_deviceTask,
+                                    static_cast<BaseType_t>(options.taskCoreId));
+  if (created != pdPASS)
   {
     tusb_deinit(g_rhport);
     usb_del_phy(g_phy);

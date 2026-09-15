@@ -534,11 +534,17 @@ Composite:
 - Direct flash / SPIFFS / LittleFS exposure as USB MSC is not a standard goal.
 - When an SD card is exposed to the host as MSC, do not use ESP32-side file APIs
   for the same card while the host owns it.
-- WebUSB and Microsoft OS 2.0 descriptors are owned by this library. When
-  WebUSB is enabled with `USBVendor`, Windows receives a fixed WinUSB
-  compatible-ID and device-interface GUID for the allocated vendor interface.
-  Custom vendor-code, GUID, and descriptor replacement APIs are not implemented
-  yet.
+- WebUSB and Microsoft OS 2.0 descriptors are owned by this library. Windows
+  receives a fixed WinUSB compatible ID for every interface no in-box driver
+  claims - the vendor interface and DFU - plus a device-interface GUID for the
+  vendor one, so neither needs Zadig. Custom vendor-code, GUID, and descriptor
+  replacement APIs are not implemented yet.
+- Bulk IN endpoints get a two-packet controller transmit FIFO when the
+  controller's FIFO can hold it (`config.bulkInBuffering`), which measured
+  22.98 -> 28.93 MB/s one way on an ESP32-P4 high-speed link. It is all or
+  nothing per device, and on the P4 high-speed controller three bulk IN
+  endpoints do not fit - see the
+  [advanced guide, 5.5](docs/usb-device-advanced.md#55-the-transmit-fifo-per-endpoint).
 
 USB device fundamentals, the ESP32-specific constraints, and how to diagnose a
 device the host will not accept are covered in
@@ -555,6 +561,11 @@ Porting a sketch from the core's USB API is covered in
 [docs/migrating-from-arduino-esp32-usb.md](docs/migrating-from-arduino-esp32-usb.md).
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged
 coverage plan.
+Answers to the change requests raised against this library from the ESP32-P4
+high-speed measurements in
+[ch32-riscv-ug/wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) -
+what was adopted, what was measured and then not adopted, and why - are in
+[docs/CHANGE_REQUESTS.ja.md](docs/CHANGE_REQUESTS.ja.md) (Japanese).
 Design background and migration notes from existing EspUsbHost tests are in
 [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md) (Japanese).
 Current development policy and remaining work are in

@@ -162,7 +162,7 @@ endpointバッファのサイズは、FSとHSの両方の最大パケットか�
 
 ### 2.3 DMAモードとslaveモード
 
-DWC2には2つの転送モードがあり、このライブラリは**DMAモードを使います**。
+DWC2には2つの転送モードがあり、このライブラリは**対応する全ターゲットでDMAモードを使います**。slaveモードはサポート構成ではなく、ビルドの選択肢でもありません。2つのうち片方はここでは動かないからです（理由は下記）。slaveモードだと思って読むと、FIFOから先の説明がすべてずれます。
 
 ```c
 #define CFG_TUD_DWC2_DMA_ENABLE 1
@@ -327,14 +327,18 @@ DescriptorDumpがレポートディスクリプタの長さをここから読ん
 
 ### 3.7 BOSとMicrosoft OS 2.0
 
-`config.webusbEnabled = true` のときだけ生成されます。
+Windows標準ドライバが当たらないインターフェース——vendorインターフェースかDFUインターフェース——が構成に含まれるとき、または `config.webusbEnabled = true` のときに生成されます。
 
 | ディスクリプタ | サイズ | 内容 |
 |---------------|--------|------|
-| BOS | 最大57バイト | WebUSB platform capability（landing URL）と Microsoft OS 2.0 platform capability |
-| MS OS 2.0 | 162バイトまたは178バイト | 実際に割り当てたvendorインターフェースに対する WinUSB compatible ID と device interface GUID |
+| BOS | 33または57バイト | Microsoft OS 2.0 platform capability、`webusbEnabled` のときは WebUSB のものも |
+| MS OS 2.0 | 30／162／206バイト | WinUSBが要るインターフェースごとの compatible ID と、vendorインターフェースに対する device interface GUID |
 
-**Windowsでvendorインターフェースを開けるようにするのがMS OS 2.0の役割**です。これがないと、`0xff` のインターフェースはドライバなしのまま残ります。vendor code、GUID、内容を差し替えるAPIは未実装です。
+**Windowsでこれらのインターフェースを開けるようにするのがMS OS 2.0の役割**です。これがないと `0xff` やDFUのインターフェースはドライバなしのまま残り、ユーザーはZadigへ案内されます。製品として配れるものではありません。vendor code、GUID、内容を差し替えるAPIは未実装です。
+
+3つのサイズは、DFUインターフェース単体が30（set header + compatible ID 1つ）、vendorインターフェース単体が162（それに registry property）、両方で206（configuration subsetの中にfunction subsetが2つ）です。**DFU側には `DeviceInterfaceGUIDs` を付けていません。** libusb（つまり `dfu-util`）はWinUSB deviceをper-function GUIDではなくUSB device interface classで見つけますし、GUIDなしでWindowsがbindすることを実測しています。
+
+`bcdUSB` はBOSを出すときだけ0x0201、出さないときは0x0200です。0x0201はhostがそもそもBOSを要求し始める閾値で、0x0210にすると実装していないUSB 2.1準拠を主張することになります。
 
 **2つのサイズは2つの構造であり、選び間違えるとドライバが当たりません。** descriptor setは、compatible IDをset headerの直下に置くことも、configuration subsetとfunction subsetで包むこともできます。
 
@@ -344,8 +348,12 @@ Set header (10)                      Set header (10)
   Registry property (132)                Function subset (8, bFirstInterface)
 = 162、"flat"                                Compatible ID (20)
                                              Registry property (132)
-                                     = 178、"subsets"
+                                           Function subset (8, bFirstInterface)
+                                             Compatible ID (20)
+                                     = 206、"subsets"
 ```
+
+function subsetはWinUSBが要るインターフェースごとに1つずつ、`bFirstInterface` の昇順で出します。**一部しか指していないsubsetは、指されなかったインターフェースをドライバなしのまま残します。** 実測: DFU + vendor のdeviceでvendorインターフェースだけを指すsetを出したところ、vendorの子にはWinUSBが当たり、DFUの子は `problem=28` のままでした。
 
 subsetは**composite deviceの「1つのfunction」を指すため**の入れ子で、Windowsがこれを解決するのは **usbccgp.sys** ——composite deviceに対してだけ読み込む親ドライバ——を通したときだけです。単一インターフェースのデバイスにfunction subsetを付けると、compatible IDは結び付く先を持ちません。`USB\MS_COMP_WINUSB` はdevice nodeに届かず、どのドライバも一致せず、デバイスマネージャーは `CM_PROB_FAILED_INSTALL`（コード28）を出します。しかも **`setupapi.dev.log` には1行も書かれません**——インストールが始まらないので、記録すべきものが無いからです。その間デバイスはvendor requestに正しく答え続けているので、ドライバの要らないLinux側からは見えません。
 
@@ -595,6 +603,56 @@ ESP32-P4 rev 1.3、usbip 経由、1 run 4 MiB、9 回の median、パターン�
 
 **`tu_fifo` を使うバッファは32768バイトを超えられません。** 理由はRAMではなく、`tu_edpt_stream_init()` がサイズを `uint16_t` で受け取り、`tu_fifo` が読み書きindexを `[0, 2*depth)` で回すためです。65536はdepth 0として届き、デバイスはreadyを報告したまま一度もmountしません。原因のフラグを指すものは何も出ません。ヘッダ側でビルドエラーにしてあります。
 
+### 5.5 endpointごとの送信FIFO
+
+5.4は**クラスが持つ**バッファ（RAM）の話でした。ここは**コントローラが持つ**バッファの話で、資源も壊れ方も別物です。
+
+IN endpointはDWC2コアのdata FIFOの一部を割り当てられ、既定ではそれが**1パケット分**です。1パケット分だと、今のパケットがコントローラから出ていくまで次を用意できないので、device→hostの連続ストリームは毎microframeの一部をバスではなくendpoint待ちに使います。2パケット分あれば、1つを送出しながらもう1つをスタックが埋められます。
+
+ESP32-P4 high speed、一方向bulk IN、1回32 MiB、3回の最良で実測:
+
+| 送信FIFO | スループット |
+|---|---|
+| 1パケット（コントローラの既定） | 22.98 MB/s |
+| **2パケット** | **28.93 MB/s** |
+
+回ごとのばらつきも ±0.7 MB/s から ±0.1 に縮みます。
+
+**代償はRAMではありません。** このFIFOはコントローラ内部の固定ブロックで、ESP32-S2/S3とP4のfull-speedコントローラが256ワード（32ビット）、P4のhigh-speedコントローラが1024ワード。受信FIFOと全IN endpointがこれを分け合います。足りないと `dcd_edpt_open()` が失敗し、endpointが開かず、deviceが列挙に失敗します。遅いdeviceではなく**壊れたdevice**になります。
+
+そのため `config.bulkInBuffering` の既定は `EspUsbBulkInBuffering::Auto` で、PHYを起動する前にconfiguration descriptorから収支を計算し、**全部のbulk IN endpointが収まるときだけ**2パケットにします。
+
+```
+available = fifo_depth - 2 * endpoint_count        （buffer DMAのendpoint info領域）
+receive   = 14 + 2 * (largest_out_packet / 4 + 1) + 2 * endpoint_count
+needed    = ceil(64/4) + IN endpointごとの ceil(packet/4) の総和
+          + bulk IN endpointごとの ceil(packet/4) の総和
+```
+
+全部か無しかにしているのは、一部だけ2パケットにする規則だとスループットがfunctionの登録順に依存してしまうからです。具体的には:
+
+- **ESP32-S2 / ESP32-S3: 必ず収まります。** 64バイトのbulk IN 4本を全部2倍にしても128ワード、EP0と受信FIFOを足して242中206。
+- **ESP32-P4 high speed: bulk IN 2本までは収まり、3本は収まりません。** 512バイトのパケットが128ワード、受信FIFOが304を取るのでIN用に残るのは672。2本を2倍で512、3本だと768。
+
+`EspUsbBulkInBuffering::Single` はコントローラの既定のままにします。`Double` は要求で、収まらない場合は endpointが開かないdeviceを起動する代わりに `begin()` が `ESP_ERR_INVALID_SIZE` で失敗します。実際に適用されたビットマップは `EspUsbDevice::bulkInDoubleBuffered()` が返します。ストリームが思ったより遅いときに最初に見る値です。
+
+### 5.6 usbd taskをどのcoreで走らせるか
+
+`config.taskCoreId` はUSB device taskをcoreに固定します。**既定は -1、つまり固定しません。** これまでのリリースと同じ挙動です。
+
+既定がこうなのは見落としではありません。[5.5](#55-endpointごとの送信fifo)と同じ一方向bulk IN harness（producerは静的バッファからの`memcpy`だけ）を使い、ESP32-P4 high speedで実測しました。
+
+| usbd task | スループット |
+|---|---|
+| 固定しない | 28.61 MB/s |
+| core 0に固定、loopはcore 1 | 28.90 MB/s |
+
+差がありません。producerがほぼ何もしていないので、スケジューラが分離すべきものが無く、固定はtaskの配置の自由を奪うだけになります。
+
+**効くのはproducerが本物のときです。** core 1で数十Msppsの取り込みをしながらcore 0から流すスケッチは重いtaskが2つ競合している状態で、そこを分離するのは測る価値があります。[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols)は、この変更だけで取り込みpipelineが44→52 Mspsになったと実測しています。そういう形のときに手を伸ばすもので、**そのときも測ってください**。どのcoreが効くかは、残りの仕事がすでにどこにいるかで決まります。
+
+`begin()` は通常core 1のArduino loop taskから呼ばれ、固定しないusbd taskはその隣に落ち着きがちです。「そのままにする」が答えでないときの答えは、たいてい `taskCoreId = 0` です。single coreのターゲットでは何もしません。
+
 ---
 
 ## 6. 転送のタイミングと帯域
@@ -642,12 +700,17 @@ NKROキーボードはビットマップレポートが1パケットに収まら
 | | 条件 | 実測 |
 |---|---|---|
 | ESP32-P4 HS bulk | `tests/manual/p4_hs_bulk`、512バイト同期echo | スクリプトが MiB/s を表示 |
+| ESP32-P4 HS bulk IN、一方向 | 1回32 MiB、3回の最良、usbip経由 | **送信FIFOが1パケットで22.98 MB/s、2パケットで28.93**（[5.5](#55-endpointごとの送信fifo)） |
+
+**デバイスを疑う前に、ホスト側プログラムが転送完了時に何をしているかを見てください。** libusbの完了callbackの中で自前の処理——解析・検証・探索——を走らせるホストは、その間URBを再投入しません。数百ミリ秒を超えると、ストリームは「約200 msの穴が繰り返す」状態に落ちて回復しません。デバイス側からはコントローラが転送を落としているようにしか見えません（arm済みの転送の完了が数百ミリ秒来ない）。[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols)の実測で、解析をcallbackの外——取り込み後の走査——へ出したところ、止まっていた187 Mbpsのストリームが間隙なしのsoakになりました。測定用ホストはcallbackではbufferを溜めて再投入するだけにしてください。
 
 `p4_hs_bulk` が表示する値は**パケットごとの同期echoを含む健全性確認値であり、最大帯域のベンチマークではありません**。1パケット送って1パケット受けるたびにバスが空くので、実運用のストリーミングより低く出ます。設計の見積りに使うなら、自分の転送パターンで測り直してください。
 
 なお、512バイトちょうどの転送を `flush()` するとTinyUSBは終端のZLPを送ります。チェッカがこの正規の0バイトパケットを数えて読み飛ばしているのは、それが**プロトコル上正しい**からです（[7.2](#72-zlp)）。
 
 片方向のストリームで効くのは送出ループではなく、送信FIFOの深さと転送長です。P4では同じ4 MiBの転送が、TinyUSB既定のFIFOと転送長で9.83 MB/s、このライブラリがP4に設定する4096/4096で21.5 MB/sになります（[5.4](#54-バッファのサイズ)）。データを作りながら流すスケッチは、`write()` が0を返すのをspinするのではなく `EspUsbDeviceVendor::waitWritable()` を使ってください。実測で帯域は同じ21 MB/sのまま、spinの回数が4 MiBあたり約25,000回から0になり、1転送につき1回だけblockする形になります。ここで得られるのは帯域ではなく、spinがデータの生産側から奪っていたCPUです。P4で2chのcaptureを流しながら測ると、spinループではUSB側が7〜16%落ちていたものが、blockする待ちでは落ちません。
+
+**1 packetに満たない書き込みは、それだけでは出て行きません。** TinyUSBはFIFOに`wMaxPacketSize`分たまってから転送をarmするので、16 byteの返信は`flush()`するまで——または後続の書き込みで合計が1 packetを超えるまで——FIFOに留まります。ストリーミングするスケッチは気づきませんが、要求に答えるスケッチは答えるたびに`flush()`が要ります。`waitWritable()`が待つ前にflushするのはこのためで、空きを待って止まっている呼び出し側が、端数を切り上げるバイトを追加してくれることはないからです。
 
 **可能ならpacketの整数倍で書いてください。** `write()` はFIFOに空いているぶんしか受け取らないので、少し空くたびに残り全部を差し出す書き方だと4032 byteのような半端な長さが積まれ、TinyUSBは1 packet分溜まった時点で転送をarmします。packet sizeの倍数でない転送は短いpacketで終わるため、ホストの実行中URBがそこで早期完了し、再投入の往復が入ります。倍数ぶんの空きを待って、ちょうどその量を書けば、どの転送も満杯のままです。
 

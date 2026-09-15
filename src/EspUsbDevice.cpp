@@ -117,6 +117,13 @@ static constexpr uint16_t ESP_USB_DEVICE_HID_EP_BUFSIZE = 64;
 #endif
 // Full speed caps an interrupt endpoint at 64 bytes (USB 2.0 table 9-13).
 static constexpr uint16_t ESP_USB_DEVICE_FS_INTERRUPT_MAX_PACKET = 64;
+// What EspUsbController::Auto resolves to. Only the P4 has a high-speed
+// controller to resolve to.
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+static constexpr bool ESP_USB_DEVICE_HIGH_SPEED_DEFAULT = true;
+#else
+static constexpr bool ESP_USB_DEVICE_HIGH_SPEED_DEFAULT = false;
+#endif
 
 static constexpr uint8_t USB_DESC_DEVICE = 0x01;
 static constexpr uint8_t USB_DESC_CONFIGURATION = 0x02;
@@ -913,6 +920,24 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
   {
     return false;
   }
+
+  // Decided here rather than beside the runtime start so a sketch that only
+  // builds descriptors (config.startTinyUsb = false) can still read it back,
+  // which is how the arithmetic is checked without a host.
+  const bool highSpeedBudget =
+      config_.controller == EspUsbController::HighSpeed ||
+      (config_.controller == EspUsbController::Auto && ESP_USB_DEVICE_HIGH_SPEED_DEFAULT);
+  bool doubleBufferFits = true;
+  bulkInDoubleBuffered_ = bulkInDoubleBufferMask(highSpeedBudget, &doubleBufferFits);
+  if (config_.bulkInBuffering == EspUsbBulkInBuffering::Double && !doubleBufferFits)
+  {
+    // Asked for two packets per bulk IN endpoint and the controller's FIFO
+    // cannot hold that. Saying so here is the whole point: the alternative is
+    // an endpoint that silently fails to open at enumeration.
+    setLastError(ESP_ERR_INVALID_SIZE);
+    return false;
+  }
+
   size_t begunClassCount = 0;
   for (size_t i = 0; i < classCount_; i++)
   {
@@ -958,6 +983,9 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
       runtimeOptions.controller = espusb::internal::UsbController::Auto;
       break;
     }
+
+    runtimeOptions.bulkInDoubleBuffered = bulkInDoubleBuffered_;
+    runtimeOptions.taskCoreId = config_.taskCoreId;
 
     const esp_err_t err = espusb::internal::startTinyUsbRuntime(runtimeOptions);
     if (err != ESP_OK)
@@ -1050,6 +1078,11 @@ bool EspUsbDevice::ready() const
 const EspUsbDeviceConfig &EspUsbDevice::config() const
 {
   return config_;
+}
+
+uint16_t EspUsbDevice::bulkInDoubleBuffered() const
+{
+  return bulkInDoubleBuffered_;
 }
 
 uint16_t EspUsbDevice::hidEndpointSize() const
@@ -1459,6 +1492,7 @@ bool EspUsbDevice::buildDescriptors()
     return false;
   }
   vendorInterfaceNumber_ = 0xff;
+  dfuInterfaceNumber_ = 0xff;
 
   // Hand every function its identity before any descriptor bytes are written.
   // The CDC instance index has to match the order the functions appear in the
@@ -1508,7 +1542,8 @@ bool EspUsbDevice::buildDescriptors()
   memset(deviceDescriptor_, 0, sizeof(deviceDescriptor_));
   deviceDescriptor_[0] = 18;
   deviceDescriptor_[1] = USB_DESC_DEVICE;
-  put16(&deviceDescriptor_[2], config_.webusbEnabled ? 0x0201 : 0x0200);
+  // Raised to 0x0201 below if this configuration ends up publishing a BOS.
+  put16(&deviceDescriptor_[2], 0x0200);
   deviceDescriptor_[4] = 0x00;
   deviceDescriptor_[5] = 0x00;
   deviceDescriptor_[6] = 0x00;
@@ -1743,6 +1778,10 @@ bool EspUsbDevice::buildDescriptors()
     {
       vendorInterfaceNumber_ = classInterface;
     }
+    if (classes_[i]->isDfu())
+    {
+      dfuInterfaceNumber_ = classInterface;
+    }
     interfaceNumber += classes_[i]->interfaceCount();
     endpointNumber += classes_[i]->endpointCount();
     if (offset > MAX_CONFIG_DESCRIPTOR)
@@ -1851,13 +1890,28 @@ bool EspUsbDevice::buildDescriptors()
   memset(deviceQualifierDescriptor_, 0, sizeof(deviceQualifierDescriptor_));
   deviceQualifierDescriptor_[0] = sizeof(deviceQualifierDescriptor_);
   deviceQualifierDescriptor_[1] = 0x06;
-  put16(&deviceQualifierDescriptor_[2], config_.webusbEnabled ? 0x0201 : 0x0200);
+  put16(&deviceQualifierDescriptor_[2], 0x0200);
   deviceQualifierDescriptor_[4] = deviceDescriptor_[4];
   deviceQualifierDescriptor_[5] = deviceDescriptor_[5];
   deviceQualifierDescriptor_[6] = deviceDescriptor_[6];
   deviceQualifierDescriptor_[7] = deviceDescriptor_[7];
   deviceQualifierDescriptor_[8] = 1;
   buildWebUsbDescriptors();
+
+  // bcdUSB has to say 0x0201 or later or a host does not ask for the BOS at
+  // all, and the BOS is where both the WebUSB and the Microsoft OS 2.0
+  // capabilities live. 0x0201 rather than 0x0210 on purpose: it is the exact
+  // threshold at which hosts read the BOS (Linux and Windows both), and
+  // claiming 2.10 would assert a level of USB 2.1 compliance this device does
+  // not implement. Measured to bind WinUSB on Windows 11 either way.
+  //
+  // Tied to whether a BOS was actually built rather than to config_.webusbEnabled:
+  // a DFU-only device publishes a Microsoft capability and no WebUSB one.
+  if (bosDescriptorLength_ > 0)
+  {
+    put16(&deviceDescriptor_[2], 0x0201);
+    put16(&deviceQualifierDescriptor_[2], 0x0201);
+  }
   setLastError(ESP_OK);
   return true;
 }
@@ -1891,7 +1945,48 @@ void EspUsbDevice::buildWebUsbDescriptors()
   memset(microsoftOs20Descriptor_, 0, sizeof(microsoftOs20Descriptor_));
   bosDescriptorLength_ = 0;
   microsoftOs20DescriptorLength_ = 0;
-  if (!config_.webusbEnabled)
+
+  // Which interfaces want Windows to bind WinUSB to them. Both of these are
+  // classes no in-box driver claims by its class code, so without this a
+  // Windows user is sent to Zadig - which is not "driverless" and cannot be
+  // shipped to anyone.
+  //
+  // Deliberately independent of config_.webusbEnabled. WebUSB is about a
+  // browser reaching the device; WinUSB is about the device being reachable at
+  // all. A DFU function needs the second and not the first.
+  uint8_t winUsbInterfaces[2];
+  bool winUsbRegistryProperty[2];
+  uint8_t winUsbCount = 0;
+  if (vendorInterfaceNumber_ != 0xff)
+  {
+    winUsbRegistryProperty[winUsbCount] = true;
+    winUsbInterfaces[winUsbCount++] = vendorInterfaceNumber_;
+  }
+  if (dfuInterfaceNumber_ != 0xff)
+  {
+    // No DeviceInterfaceGUIDs for DFU: libusb - and therefore dfu-util - finds
+    // a WinUSB device through the USB device interface class, not through a
+    // per-function GUID, so the 132 bytes would buy nothing. The compatible ID
+    // is the part that binds the driver.
+    winUsbRegistryProperty[winUsbCount] = false;
+    winUsbInterfaces[winUsbCount++] = dfuInterfaceNumber_;
+  }
+  // Ascending bFirstInterface. The specification does not require the subsets
+  // to be ordered, but every set Microsoft publishes is, and a host walking
+  // them in one pass is the obvious implementation to write - so emitting them
+  // out of order is a risk taken for nothing. Two entries, so a swap is the
+  // whole sort.
+  if (winUsbCount == 2 && winUsbInterfaces[0] > winUsbInterfaces[1])
+  {
+    const uint8_t interfaceNumber = winUsbInterfaces[0];
+    const bool property = winUsbRegistryProperty[0];
+    winUsbInterfaces[0] = winUsbInterfaces[1];
+    winUsbRegistryProperty[0] = winUsbRegistryProperty[1];
+    winUsbInterfaces[1] = interfaceNumber;
+    winUsbRegistryProperty[1] = property;
+  }
+
+  if (!config_.webusbEnabled && winUsbCount == 0)
   {
     return;
   }
@@ -1905,10 +2000,10 @@ void EspUsbDevice::buildWebUsbDescriptors()
       0x9c, 0xd2, 0x65, 0x9d, 0x9e, 0x64, 0x8a, 0x9f,
   };
 
-  // The Microsoft descriptor set is built first: the BOS platform capability has
-  // to publish its total length, and that length now depends on whether the two
-  // subsets are there.
-  if (vendorInterfaceNumber_ != 0xff)
+  // The Microsoft descriptor set is built first: the BOS platform capability
+  // has to publish its total length, and that length depends on how many
+  // functions are named and whether the subsets are there at all.
+  if (winUsbCount > 0)
   {
     const bool useSubsets = microsoftOs20SubsetLayout();
     uint8_t *const set = microsoftOs20Descriptor_;
@@ -1926,7 +2021,6 @@ void EspUsbDevice::buildWebUsbDescriptors()
     offset += 2;
 
     size_t configurationLengthOffset = 0;
-    size_t functionLengthOffset = 0;
     if (useSubsets)
     {
       put16(&set[offset], 8);
@@ -1937,74 +2031,104 @@ void EspUsbDevice::buildWebUsbDescriptors()
       set[offset++] = 0; // bReserved
       configurationLengthOffset = offset;
       offset += 2;
-
-      put16(&set[offset], 8);
-      offset += 2;
-      put16(&set[offset], 2); // MS_OS_20_SUBSET_HEADER_FUNCTION
-      offset += 2;
-      set[offset++] = vendorInterfaceNumber_;
-      set[offset++] = 0; // bReserved
-      functionLengthOffset = offset;
-      offset += 2;
     }
 
-    const size_t featuresOffset = offset;
-    put16(&set[offset], 20);
-    offset += 2;
-    put16(&set[offset], 3); // MS_OS_20_FEATURE_COMPATIBLE_ID
-    offset += 2;
-    static constexpr uint8_t winUsbId[16] = {
-        'W', 'I', 'N', 'U', 'S', 'B', 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-    };
-    memcpy(&set[offset], winUsbId, sizeof(winUsbId));
-    offset += sizeof(winUsbId);
+    bool built = true;
+    for (uint8_t i = 0; i < winUsbCount; i++)
+    {
+      size_t functionLengthOffset = 0;
+      const size_t functionOffset = offset;
+      if (useSubsets)
+      {
+        put16(&set[offset], 8);
+        offset += 2;
+        put16(&set[offset], 2); // MS_OS_20_SUBSET_HEADER_FUNCTION
+        offset += 2;
+        set[offset++] = winUsbInterfaces[i];
+        set[offset++] = 0; // bReserved
+        functionLengthOffset = offset;
+        offset += 2;
+      }
 
-    put16(&set[offset], 132);
-    offset += 2;
-    put16(&set[offset], 4); // MS_OS_20_FEATURE_REG_PROPERTY
-    offset += 2;
-    put16(&set[offset], 7); // REG_MULTI_SZ
-    offset += 2;
-    put16(&set[offset], 42);
-    offset += 2;
-    offset += putUtf16Le(&set[offset], "DeviceInterfaceGUIDs", false);
-    put16(&set[offset], 80);
-    offset += 2;
-    offset += putUtf16Le(&set[offset], "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9D}",
-                         true);
+      put16(&set[offset], 20);
+      offset += 2;
+      put16(&set[offset], 3); // MS_OS_20_FEATURE_COMPATIBLE_ID
+      offset += 2;
+      static constexpr uint8_t winUsbId[16] = {
+          'W', 'I', 'N', 'U', 'S', 'B', 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+      };
+      memcpy(&set[offset], winUsbId, sizeof(winUsbId));
+      offset += sizeof(winUsbId);
 
-    const size_t expected = featuresOffset + 20 + 132;
-    if (offset == expected && offset <= sizeof(microsoftOs20Descriptor_))
+      if (winUsbRegistryProperty[i])
+      {
+        const size_t propertyOffset = offset;
+        put16(&set[offset], 132);
+        offset += 2;
+        put16(&set[offset], 4); // MS_OS_20_FEATURE_REG_PROPERTY
+        offset += 2;
+        put16(&set[offset], 7); // REG_MULTI_SZ
+        offset += 2;
+        put16(&set[offset], 42);
+        offset += 2;
+        offset += putUtf16Le(&set[offset], "DeviceInterfaceGUIDs", false);
+        put16(&set[offset], 80);
+        offset += 2;
+        offset += putUtf16Le(&set[offset], "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9D}",
+                             true);
+        if (offset != propertyOffset + 132)
+        {
+          built = false;
+          break;
+        }
+      }
+
+      if (offset > sizeof(microsoftOs20Descriptor_))
+      {
+        built = false;
+        break;
+      }
+      if (useSubsets)
+      {
+        put16(&set[functionLengthOffset], static_cast<uint16_t>(offset - functionOffset));
+      }
+    }
+
+    if (built && offset <= sizeof(microsoftOs20Descriptor_))
     {
       put16(&set[setLengthOffset], static_cast<uint16_t>(offset));
       if (useSubsets)
       {
-        put16(&set[configurationLengthOffset],
-              static_cast<uint16_t>(offset - 10));
-        put16(&set[functionLengthOffset], static_cast<uint16_t>(offset - 18));
+        put16(&set[configurationLengthOffset], static_cast<uint16_t>(offset - 10));
       }
       microsoftOs20DescriptorLength_ = static_cast<uint16_t>(offset);
     }
     else
     {
-      // Keep WebUSB usable without advertising a malformed Microsoft
-      // capability if the fixed feature descriptors are edited inconsistently.
+      // Keep whatever else the BOS carries usable rather than advertising a
+      // malformed Microsoft capability.
       memset(microsoftOs20Descriptor_, 0, sizeof(microsoftOs20Descriptor_));
+      microsoftOs20DescriptorLength_ = 0;
     }
   }
 
+  uint8_t capabilities = 0;
   size_t bosOffset = 5;
-  bosDescriptor_[bosOffset++] = 24;
-  bosDescriptor_[bosOffset++] = USB_DESC_DEVICE_CAPABILITY;
-  bosDescriptor_[bosOffset++] = 0x05;
-  bosDescriptor_[bosOffset++] = 0x00;
-  memcpy(&bosDescriptor_[bosOffset], webUsbUuid, sizeof(webUsbUuid));
-  bosOffset += sizeof(webUsbUuid);
-  put16(&bosDescriptor_[bosOffset], 0x0100);
-  bosOffset += 2;
-  bosDescriptor_[bosOffset++] = WEBUSB_VENDOR_CODE;
-  bosDescriptor_[bosOffset++] = 1;
+  if (config_.webusbEnabled)
+  {
+    bosDescriptor_[bosOffset++] = 24;
+    bosDescriptor_[bosOffset++] = USB_DESC_DEVICE_CAPABILITY;
+    bosDescriptor_[bosOffset++] = 0x05;
+    bosDescriptor_[bosOffset++] = 0x00;
+    memcpy(&bosDescriptor_[bosOffset], webUsbUuid, sizeof(webUsbUuid));
+    bosOffset += sizeof(webUsbUuid);
+    put16(&bosDescriptor_[bosOffset], 0x0100);
+    bosOffset += 2;
+    bosDescriptor_[bosOffset++] = WEBUSB_VENDOR_CODE;
+    bosDescriptor_[bosOffset++] = 1;
+    capabilities++;
+  }
 
   if (microsoftOs20DescriptorLength_)
   {
@@ -2021,13 +2145,130 @@ void EspUsbDevice::buildWebUsbDescriptors()
     bosOffset += 2;
     bosDescriptor_[bosOffset++] = MICROSOFT_OS_20_VENDOR_CODE;
     bosDescriptor_[bosOffset++] = 0;
+    capabilities++;
+  }
+
+  if (capabilities == 0)
+  {
+    return;
   }
 
   bosDescriptor_[0] = 5;
   bosDescriptor_[1] = USB_DESC_BOS;
   put16(&bosDescriptor_[2], static_cast<uint16_t>(bosOffset));
-  bosDescriptor_[4] = microsoftOs20DescriptorLength_ ? 2 : 1;
+  bosDescriptor_[4] = capabilities;
   bosDescriptorLength_ = static_cast<uint16_t>(bosOffset);
+}
+
+uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
+{
+  if (fits)
+  {
+    *fits = true;
+  }
+  if (config_.bulkInBuffering == EspUsbBulkInBuffering::Single)
+  {
+    return 0;
+  }
+
+  // The DWC2 port's own geometry, from _dwc2_controller[] in dwc2_esp32.h.
+  // Mirrored rather than read back because the decision has to be made before
+  // tusb_init(), which is where those tables first become reachable.
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  (void)highSpeed;
+  constexpr uint16_t fifoDepthWords = 256;
+  constexpr uint8_t endpointCount = 7;
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+  const uint16_t fifoDepthWords = highSpeed ? 1024 : 256;
+  const uint8_t endpointCount = highSpeed ? 16 : 7;
+#else
+  (void)highSpeed;
+  if (fits)
+  {
+    *fits = false;
+  }
+  return 0;
+#endif
+
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || \
+    defined(CONFIG_IDF_TARGET_ESP32P4)
+  // grxfsiz as calc_device_grxfsiz() computes it: a fixed overhead plus room
+  // for the largest OUT packet, plus two words per endpoint.
+  const auto receiveWords = [endpointCount](uint16_t largestOutPacket) -> uint16_t {
+    return static_cast<uint16_t>(14 + 2 * ((largestOutPacket / 4) + 1) + 2 * endpointCount);
+  };
+  const auto packetWords = [](uint16_t packet) -> uint16_t {
+    return static_cast<uint16_t>((packet + 3) / 4);
+  };
+
+  const uint8_t *descriptor =
+      const_cast<EspUsbDevice *>(this)->configurationDescriptorForSpeed(0, highSpeed);
+  if (!descriptor)
+  {
+    if (fits)
+    {
+      *fits = false;
+    }
+    return 0;
+  }
+  const uint16_t total = static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8));
+
+  // EP0 IN is allocated before any class endpoint, and its packet size sets the
+  // receive FIFO's floor.
+  uint32_t inWords = packetWords(CFG_TUD_ENDPOINT0_SIZE);
+  uint16_t largestOutPacket = CFG_TUD_ENDPOINT0_SIZE;
+  uint16_t candidateMask = 0;
+  uint32_t candidateWords = 0;
+
+  uint16_t offset = 0;
+  while (offset + 2 <= total && descriptor[offset] > 0)
+  {
+    const uint8_t length = descriptor[offset];
+    if (descriptor[offset + 1] == USB_DESC_ENDPOINT && length >= 7)
+    {
+      const uint8_t address = descriptor[offset + 2];
+      const uint8_t transferType = static_cast<uint8_t>(descriptor[offset + 3] & 0x03);
+      const uint16_t packet =
+          static_cast<uint16_t>((descriptor[offset + 4] | (descriptor[offset + 5] << 8)) & 0x07ff);
+      if (address & 0x80)
+      {
+        const uint16_t words = packetWords(packet);
+        inWords += words;
+        if (transferType == USB_ENDPOINT_ATTR_BULK)
+        {
+          // Only bulk IN endpoints are double buffered; the port ignores the
+          // bit for anything else.
+          candidateMask = static_cast<uint16_t>(candidateMask | (1u << (address & 0x0f)));
+          candidateWords += words;
+        }
+      }
+      else if (packet > largestOutPacket)
+      {
+        largestOutPacket = packet;
+      }
+    }
+    offset = static_cast<uint16_t>(offset + length);
+  }
+
+  if (candidateMask == 0)
+  {
+    return 0;
+  }
+
+  // Buffer DMA reserves two words per endpoint for its endpoint-info area
+  // before anything else is allocated.
+  const uint32_t available = fifoDepthWords - (2u * endpointCount);
+  const uint32_t needed = inWords + candidateWords + receiveWords(largestOutPacket);
+  if (needed > available)
+  {
+    if (fits)
+    {
+      *fits = false;
+    }
+    return 0;
+  }
+  return candidateMask;
+#endif
 }
 
 bool EspUsbDevice::validateControllerEndpoints(const uint8_t *descriptor,
@@ -2618,6 +2859,13 @@ bool EspUsbDeviceVendor::waitWritable(size_t bytes, uint32_t timeoutMs)
   {
     return false;
   }
+  // TinyUSB only arms a transfer once the FIFO holds a whole packet, so a
+  // remainder shorter than wMaxPacketSize sits there until something flushes
+  // it. Nothing here would: the caller is blocked precisely because it has no
+  // more data to push in behind it, which is how this wait used to hang
+  // forever on the last fragment of a stream. Flushing before waiting costs a
+  // short packet only in the case where the alternative was never finishing.
+  flush();
   if (!writableSignal_)
   {
     // Binary rather than counting: the wait re-reads the FIFO after every wake,

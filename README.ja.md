@@ -482,10 +482,15 @@ USB ネットワーク（CDC-NCM）:
   するには FAT RAM disk helper または SD card などを使います。
 - flash / SPIFFS / LittleFS を USB MSC として直接公開することは標準方針にしません。
 - SD card を MSC として Host に公開している間は、ESP32 側で同じ card の file API を使わないでください。
-- WebUSB / Microsoft OS 2.0 descriptor はこのライブラリが生成します。WebUSB と
-  `USBVendor` を有効にすると、実際に割り当てた vendor interface に対する固定の WinUSB
-  compatible ID と device interface GUID を Windows へ返します。custom vendor code、
-  GUID、descriptor 内容の差し替え API は未実装です。
+- WebUSB / Microsoft OS 2.0 descriptor はこのライブラリが生成します。Windows 標準
+  ドライバが当たらない interface（vendor と DFU）それぞれに固定の WinUSB compatible ID
+  を返し、vendor 側には device interface GUID も返すので、どちらも Zadig が要りません。
+  custom vendor code、GUID、descriptor 内容の差し替え API は未実装です。
+- bulk IN endpoint は、コントローラの FIFO に収まるときだけ送信 FIFO を 2 パケット分に
+  します（`config.bulkInBuffering`）。ESP32-P4 の high-speed リンクで一方向 22.98 →
+  28.93 MB/s の実測です。device 単位で全部か無しかで、P4 high-speed では bulk IN 3 本は
+  収まりません。[応用ガイド 5.5節](docs/usb-device-advanced.ja.md#55-endpointごとの送信fifo)
+  を参照してください。
 
 USB device そのものの基礎、ESP32 固有の制約、動かないときの切り分け手順は
 [docs/usb-device-guide.ja.md](docs/usb-device-guide.ja.md) にまとめています。
@@ -500,6 +505,10 @@ Core 標準 USB API からの移行手順は
 にまとめています。
 テスト構造と段階的なカバレッジ計画は [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)
 を参照してください。
+[ch32-riscv-ug/wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) の
+ESP32-P4 high-speed 実測から起票された改修依頼への回答——採用したもの、実測したうえで
+採用しなかったものとその理由——は [docs/CHANGE_REQUESTS.ja.md](docs/CHANGE_REQUESTS.ja.md)
+にまとめています。
 設計背景と `EspUsbHost` 既存テストからの移行メモは [docs/DESIGN_NOTES.ja.md](docs/DESIGN_NOTES.ja.md)
 にまとめています。
 現在の開発方針と残作業は [docs/DEVELOPMENT_PLAN.ja.md](docs/DEVELOPMENT_PLAN.ja.md)

@@ -535,6 +535,53 @@ drive is trusting the host to behave. Ship DFU when the person doing the update
 has a terminal, the drive when they do not, and both when you do not know -
 DFU is free to add.
 
+### 3.7 Windows binds the driver itself
+
+DFU has no in-box Windows driver of its own: nothing claims interface class
+0xFE, so a DFU device would land in Device Manager with a yellow mark and the
+user would be sent to [Zadig](https://zadig.akeo.ie/) - which is not something
+you can ship.
+
+The device asks for WinUSB instead, in a Microsoft OS 2.0 descriptor set, and
+the library builds that set for every interface that needs it: the vendor
+interface and DFU. Nothing to configure.
+
+Two rules decide the shape of that set, and both were measured rather than
+assumed:
+
+- **One interface: flat.** The compatible ID goes directly under the set header.
+  The configuration and function subsets exist to attach a compatible ID to one
+  *function* of a composite device, and Windows resolves them through
+  `usbccgp.sys` - which it only loads for a composite. On a single-interface
+  device the subsets have nothing to attach to and Windows binds nothing.
+- **More than one: one function subset per interface that wants WinUSB.** A
+  function subset naming only some of them leaves the others with no driver.
+
+Measured on an ESP32-P4 against Windows 11, same board, same composite, only
+the descriptor set changed:
+
+| Configuration | DFU interface | vendor interface |
+|---|---|---|
+| DFU alone, no Microsoft descriptor | `Error`, no driver | - |
+| DFU + vendor, one function subset (vendor only) | `problem=28` | `WINUSB` |
+| **DFU alone, flat set** | **`WINUSB`** | - |
+| **DFU + vendor, two function subsets** | **`WINUSB`** | **`WINUSB`** |
+
+The DFU function is given the compatible ID and **no** `DeviceInterfaceGUIDs`
+property: libusb - and so `dfu-util` - finds a WinUSB device through the USB
+device interface class rather than a per-function GUID, and the measurement
+above confirms the binding does not need one. That keeps the set at 30 bytes for
+a DFU-only device.
+
+`bcdUSB` is raised to 0x0201 whenever a BOS exists, which is the threshold at
+which a host asks for one at all. Not 0x0210: that would claim a level of USB
+2.1 compliance this device does not implement, and 0x0201 is measured to bind
+WinUSB on Windows 11.
+
+On Linux and macOS none of this is needed - they bind by class or let libusb
+claim the interface directly - but emitting it costs 30 bytes and removes the
+one platform where a user would otherwise have to install something.
+
 ---
 
 ## 4. Route comparison
@@ -549,7 +596,7 @@ DFU is free to add.
 | Self-OTA over CDC-NCM + HTTP | all | no | a browser | yes, without rollback | ✅ [`FirmwareHTTP`](../examples/FirmwareHTTP/) |
 | Self-OTA over MSC (drag and drop) | all | no | the file manager | yes, without rollback | ✅ `EspUsbDeviceMscFirmwareDisk` - [3.6](#36-the-firmware-drive) |
 | Self-OTA over MSC, UF2 container | all | no | the file manager | yes, without rollback | ✅ same class, any write order - [3.6](#36-the-firmware-drive) |
-| UF2 *bootloader* (TinyUF2) | S2 / S3 | n/a | drag and drop | no | ❌ out of scope - [6.2](#62-uf2-as-a-bootloader) |
+| UF2 *bootloader* (TinyUF2) | S2 / S3 | n/a | drag and drop | no | ❌ out of scope - [6.1](#61-uf2-as-a-bootloader) |
 
 ---
 
@@ -600,32 +647,12 @@ sketch owns policy.** Applied to firmware update:
 
 Everything the first version of this document listed is now in the library:
 `EspUsbDeviceDfu`, `EspUsbDeviceMscFirmwareDisk` (raw and UF2),
-`EspUsbDeviceFirmwareUpdate` and `EspUsbDevice::rebootToBootloader()`. What
-follows is what is genuinely left, and one thing that is deliberately out of
-scope.
+`EspUsbDeviceFirmwareUpdate`, `EspUsbDevice::rebootToBootloader()` - and the
+Microsoft OS 2.0 descriptors that let Windows bind WinUSB to a DFU interface
+without Zadig ([3.7](#37-windows-binds-the-driver-itself)). What follows is one
+thing that is deliberately out of scope.
 
-### 6.1 WinUSB for the DFU interface on Windows
-
-`dfu-util` talks to a device through WinUSB, and Windows binds WinUSB by itself
-only when the device asks for it in a Microsoft OS 2.0 descriptor. This library
-emits that descriptor set, but only for a **vendor** interface
-([advanced guide, 3.7](usb-device-advanced.md#37-bos-and-microsoft-os-20)) - so
-a DFU function on Windows today needs [Zadig](https://zadig.akeo.ie/) once per
-machine, while on Linux and macOS it needs nothing.
-
-Fixing it means emitting a function subset for the DFU interface with the
-WinUSB compatible ID, which the descriptor builder already knows how to do for
-the vendor case: the shape (flat versus subsets) is decided by
-`EspUsbDeviceMsOs20Layout` and a DFU-plus-anything device is the subsets case.
-The work is in deciding *when* to claim the DFU interface for WinUSB - always,
-or only when the sketch asks - since a device that also has a vendor interface
-then has two functions competing for the same compatible ID, and Windows
-resolves those through `usbccgp.sys` rather than in any way this library
-controls.
-
-Worth doing, worth measuring on a real Windows box, and not worth guessing at.
-
-### 6.2 UF2 as a bootloader
+### 6.1 UF2 as a bootloader
 
 [TinyUF2](https://github.com/adafruit/tinyuf2) replaces the second-stage
 bootloader with one that presents a UF2 drive, and Espressif's

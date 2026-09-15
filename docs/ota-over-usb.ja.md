@@ -509,6 +509,50 @@ DFU は endpoint を消費せず、ドライブは bulk 1 対を使います。`
 両者は近く、素の `.bin` を渡すとドライブは host の行儀を信じることになります。更新する人が
 端末を使えるなら DFU、使えないならドライブ、分からないなら両方。DFU は足すのが無料です。
 
+### 3.7 Windows が自分でdriverを当てる
+
+DFUにはWindows標準のdriverがありません。interface class 0xFEを要求するものが何も
+無いので、DFU deviceはデバイスマネージャで黄色い印が付き、ユーザーは
+[Zadig](https://zadig.akeo.ie/)へ案内されることになります。それは配れるものでは
+ありません。
+
+代わりにdevice側からWinUSBを要求します。Microsoft OS 2.0 descriptor setで、
+ライブラリはそれを必要なinterfaceすべて（vendorとDFU）について組み立てます。
+設定は要りません。
+
+setの形を決める規則は2つあり、どちらも推測ではなく実測で決めました。
+
+- **interfaceが1本なら flat。** compatible IDをset headerの直下に置きます。
+  configuration / function subsetは、compositeの*function*にcompatible IDを結び付ける
+  ためのもので、Windowsはそれを`usbccgp.sys`経由で解決します。そして`usbccgp.sys`は
+  compositeにしか載りません。単一interfaceのdeviceではsubsetsは結び付く先を持たず、
+  Windowsは何も当てません。
+- **2本以上なら、WinUSBが要るinterfaceごとにfunction subsetを1つずつ。** 一部しか
+  指していないsubsetは、指されなかったinterfaceをdriver無しのまま残します。
+
+ESP32-P4をWindows 11に繋いで実測しました。同じboard、同じcomposite、変えたのは
+descriptor setの中身だけです。
+
+| 構成 | DFU interface | vendor interface |
+|---|---|---|
+| DFU単体、Microsoft descriptor無し | `Error`、driver無し | — |
+| DFU + vendor、function subsetが1つ（vendorのみ） | `problem=28` | `WINUSB` |
+| **DFU単体、flat set** | **`WINUSB`** | — |
+| **DFU + vendor、function subsetが2つ** | **`WINUSB`** | **`WINUSB`** |
+
+DFU側にはcompatible IDだけを与え、`DeviceInterfaceGUIDs`は**付けていません**。
+libusb（つまり`dfu-util`）はWinUSB deviceをper-function GUIDではなくUSB device
+interface classで見つけますし、上の実測でbindingにGUIDが要らないことが確認できて
+います。おかげでDFU単体のsetは30 byteで済みます。
+
+`bcdUSB`はBOSを出すときだけ0x0201に上げます。これがhostがそもそもBOSを要求し始める
+閾値です。0x0210にはしていません。それは実装していないUSB 2.1準拠を主張することに
+なりますし、0x0201のままWindows 11でWinUSBが当たることを実測しています。
+
+LinuxとmacOSにはこれは要りません（classで当てるか、libusbが直接claimします）。
+それでも30 byteでWindowsだけが抱える「何かをインストールさせる」問題が消えるので、
+出す価値があります。
+
 ---
 
 ## 4. 経路の比較
@@ -523,7 +567,7 @@ DFU は endpoint を消費せず、ドライブは bulk 1 対を使います。`
 | CDC-NCM + HTTP経由の自力OTA | 全部 | 不要 | ブラウザ | rollback無しならしうる | ✅ [`FirmwareHTTP`](../examples/FirmwareHTTP/) |
 | MSC経由の自力OTA (drag and drop) | 全部 | 不要 | ファイルマネージャ | rollback無しならしうる | ✅ `EspUsbDeviceMscFirmwareDisk` — [3.6](#36-ファームウェアドライブ) |
 | MSC経由の自力OTA (UF2 コンテナ) | 全部 | 不要 | ファイルマネージャ | rollback無しならしうる | ✅ 同じ class、書き込み順は任意 — [3.6](#36-ファームウェアドライブ) |
-| UF2 *bootloader* (TinyUF2) | S2 / S3 | — | drag and drop | しない | ❌ 対象外 — [6.2](#62-uf2-を-bootloader-として使う) |
+| UF2 *bootloader* (TinyUF2) | S2 / S3 | — | drag and drop | しない | ❌ 対象外 — [6.1](#61-uf2-を-bootloader-として使う) |
 
 ---
 
@@ -573,29 +617,12 @@ DFU は endpoint を消費せず、ドライブは bulk 1 対を使います。`
 
 このドキュメントの初版が挙げていたものは、すべてライブラリに入りました。
 `EspUsbDeviceDfu`、`EspUsbDeviceMscFirmwareDisk`（素の `.bin` と UF2）、
-`EspUsbDeviceFirmwareUpdate`、`EspUsbDevice::rebootToBootloader()` です。
-以下は本当に残っているものと、意図的に対象外にしているものです。
+`EspUsbDeviceFirmwareUpdate`、`EspUsbDevice::rebootToBootloader()`、そして
+Zadig なしで Windows が DFU interface に WinUSB を当てるための Microsoft OS 2.0
+descriptor（[3.7](#37-windows-が自分でdriverを当てる)）です。以下は意図的に対象外に
+しているものだけです。
 
-### 6.1 Windows で DFU interface に WinUSB を当てる
-
-`dfu-util` は WinUSB 経由で device と話し、Windows が自動で WinUSB を当てるのは
-device が Microsoft OS 2.0 descriptor でそう要求したときだけです。このライブラリは
-その descriptor set を出しますが、**vendor** interface に対してだけです
-（[応用ガイド 3.7節](usb-device-advanced.ja.md#37-bosとmicrosoft-os-20)）。
-そのため Windows では DFU function に対して 1 台につき 1 回
-[Zadig](https://zadig.akeo.ie/) が要り、Linux と macOS では何も要りません。
-
-直すには、WinUSB compatible ID を持つ function subset を DFU interface に対しても
-出すことになります。descriptor builder は vendor 向けに同じことを既にやっており、
-形（flat か subsets か）は `EspUsbDeviceMsOs20Layout` が決め、DFU＋何かの device は
-subsets の側です。難しいのは**いつ** DFU interface を WinUSB として主張するかで、
-常にするのか sketch が要求したときだけにするのか。vendor interface も持つ device では
-2 つの function が同じ compatible ID を取り合い、その解決は `usbccgp.sys` の仕事で
-このライブラリの制御外だからです。
-
-やる価値はあり、実機の Windows で測る価値もあり、推測で書く価値はありません。
-
-### 6.2 UF2 を bootloader として使う
+### 6.1 UF2 を bootloader として使う
 
 [TinyUF2](https://github.com/adafruit/tinyuf2) は second-stage bootloader を
 UF2 ドライブを出すものに置き換えます。Espressif の

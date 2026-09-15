@@ -1,6 +1,109 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Windows binds a driver to the DFU and vendor interfaces by itself, with
+  no Zadig step. The Microsoft OS 2.0 descriptor set is now built for every
+  interface no in-box driver claims, rather than only for a vendor interface of
+  a WebUSB-enabled device, and a composite gets one function subset per such
+  interface in ascending `bFirstInterface`. Measured on an ESP32-P4 against
+  Windows 11, same board and same composite with only the descriptor changed: a
+  DFU-only device went from `Status=Error` with no driver to `service=WINUSB`,
+  and a DFU + vendor device went from the DFU child sitting on
+  `problem=28` (CM_PROB_FAILED_INSTALL) to both children on `WINUSB`. The DFU
+  function is given the compatible ID and no `DeviceInterfaceGUIDs`, which the
+  same measurement shows is enough - libusb, and therefore `dfu-util`, finds a
+  WinUSB device through the USB device interface class. `bcdUSB` now reads
+  0x0201 whenever a BOS exists rather than only when WebUSB is enabled, because
+  a DFU-only device publishes a Microsoft capability and no WebUSB one.
+- (EN) Bulk IN endpoints get a two-packet controller transmit FIFO when there
+  is room for it. The DWC2 core gives an IN endpoint one packet by default, so
+  the next packet cannot be staged until the current one has left; two lets the
+  controller send one while the stack fills the other. Measured on an ESP32-P4
+  high-speed link, one-way bulk IN, 32 MiB per run, best of three: **22.98 ->
+  28.93 MB/s**, with the run-to-run spread narrowing from ±0.7 to ±0.1. The
+  cost is not RAM - the FIFO is a fixed block inside the controller - so the new
+  `config.bulkInBuffering` defaults to `Auto`, which computes the budget from
+  the configuration descriptor before the PHY starts and doubles every bulk IN
+  endpoint only if they all fit. All or nothing per device, because a rule that
+  doubled some and not others would make throughput depend on registration
+  order. On ESP32-S2/S3 they always fit; on the P4 high-speed controller two
+  bulk IN endpoints fit and three do not. `Single` keeps the controller
+  default and `Double` demands it, failing `begin()` with
+  `ESP_ERR_INVALID_SIZE` rather than starting a device whose endpoints did not
+  open. `EspUsbDevice::bulkInDoubleBuffered()` reports what was applied. New
+  test `tests/single/bulk_in_fifo`.
+- (EN) `EspUsbDeviceVendor::waitWritable()` no longer hangs on the tail of a
+  stream. TinyUSB arms a transfer only once the transmit FIFO holds a whole
+  packet, so a remainder shorter than `wMaxPacketSize` sat there until
+  something flushed it - and a caller blocked waiting for room is by definition
+  not about to add the bytes that would round it up. It flushes before it
+  waits. The same rule is why a short reply needs `flush()` while a streaming
+  sketch never notices; both are now stated in the advanced guide, together
+  with a plain statement that this library builds DWC2 DMA mode on every
+  supported target and slave mode is not a supported configuration, and a note
+  that a host which does its own work inside a libusb completion callback
+  produces stalls that look like device faults.
+- (EN) `docs/CHANGE_REQUESTS.ja.md` gains the second round of answers to
+  [ch32-riscv-ug/wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols):
+  the four default-value items (D1 to D4) and the five feature requests (F1 to
+  F5) raised from their E107 to E114 measurements. Every number in it was
+  measured again here rather than taken from the request - which is why D1 was
+  adopted and D2, raised on the same evidence, was not: the same change is worth
+  26% on a bulk IN stream and nothing at all when the sketch's producer is
+  trivial. The document now names its source by URL rather than by path.
+- (EN) New `config.taskCoreId` pins the USB device task to a core, defaulting to
+  -1 (not pinned, as before). Measured on ESP32-P4 high speed with a trivial
+  producer: 28.61 MB/s unpinned against 28.90 pinned, which is no difference -
+  so it stays off by default, and the advanced guide says when it is worth
+  reaching for, which is when the sketch's own producer is heavy enough to
+  compete with the usbd task.
+- (JA) Windows が DFU / vendor interface に自分でドライバを当てるようになりました。
+  Zadig は不要です。Microsoft OS 2.0 descriptor set を「WebUSB 有効な device の
+  vendor interface」だけでなく「Windows 標準ドライバが当たらない全 interface」に対して
+  生成し、composite では該当 interface ごとに function subset を `bFirstInterface` 昇順で
+  出します。ESP32-P4 を Windows 11 に繋ぎ、同じ board・同じ composite で descriptor だけ
+  変えて実測: DFU 単体は `Status=Error`（ドライバ無し）から `service=WINUSB` へ、
+  DFU + vendor は DFU の子が `problem=28`（CM_PROB_FAILED_INSTALL）だったところから
+  両方の子が `WINUSB` へ変わりました。DFU 側には compatible ID だけを与え
+  `DeviceInterfaceGUIDs` は付けていません。同じ実測でそれで足りることが確認できています
+  （libusb、つまり `dfu-util` は WinUSB device を USB device interface class で見つけます）。
+  `bcdUSB` は WebUSB 有効時だけでなく BOS を出すとき常に 0x0201 になりました。DFU 単体の
+  device は WebUSB capability を持たず Microsoft capability だけを持つためです。
+- (JA) bulk IN endpoint の送信 FIFO を、収まるときだけ 2 パケット分にするようにしました。
+  DWC2 コアは既定で IN endpoint に 1 パケット分しか与えないため、今のパケットが出るまで
+  次を用意できません。2 パケット分あれば送出と充填が重なります。ESP32-P4 の high-speed
+  リンク、一方向 bulk IN、1 回 32 MiB、3 回の最良で実測: **22.98 → 28.93 MB/s**。回ごとの
+  ばらつきも ±0.7 から ±0.1 に縮みました。代償は RAM ではなくコントローラ内部の固定
+  FIFO なので、新設の `config.bulkInBuffering` の既定を `Auto` とし、PHY 起動前に
+  configuration descriptor から収支を計算して、bulk IN が全部収まるときだけ有効にします。
+  device 単位で全部か無しかにしているのは、一部だけ有効にする規則だとスループットが
+  function の登録順に依存するからです。ESP32-S2/S3 は常に収まり、P4 high-speed は
+  bulk IN 2 本まで収まり 3 本は収まりません。`Single` はコントローラ既定のまま、`Double` は
+  要求で、収まらない場合は endpoint が開かない device を起動する代わりに `begin()` が
+  `ESP_ERR_INVALID_SIZE` で失敗します。適用結果は
+  `EspUsbDevice::bulkInDoubleBuffered()` が返します。テスト
+  `tests/single/bulk_in_fifo` を追加しました。
+- (JA) `EspUsbDeviceVendor::waitWritable()` がストリームの末尾で止まらなくなりました。
+  TinyUSB は送信 FIFO に 1 パケット分たまってからでないと転送を arm しないので、
+  `wMaxPacketSize` 未満の端数は何かが flush するまで残ります。そして空きを待って
+  止まっている呼び出し側が、その端数を切り上げるバイトを追加することはありません。
+  待つ前に flush するようにしました。短い返信に `flush()` が要るのも、ストリーミング
+  するスケッチが気づかないのも同じ理由で、どちらも応用ガイドに明記しました。あわせて
+  「このライブラリは対応する全ターゲットで DWC2 の DMA モードをビルドし、slave は
+  サポート構成ではない」ことと、「host が libusb の完了 callback 内で処理をすると
+  device 側の不具合に見える停止が起きる」ことも書きました。
+- (JA) `docs/CHANGE_REQUESTS.ja.md` に第 2 回の回答を追加しました。
+  [ch32-riscv-ug/wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) の
+  E107〜E114 から起票された既定値 4 件（D1〜D4）と機能 5 件（F1〜F5）です。数字は
+  すべて依頼書から採らずこちらで測り直しており、それが D1 を採用し、同じ根拠から
+  起票された D2 を採用しなかった理由でもあります。同じ変更が bulk IN ストリームでは
+  26% の価値を持ち、スケッチ側の producer が軽ければ何の価値も持ちません。依頼元の
+  参照はパスではなく URL にしました。
+- (JA) `config.taskCoreId` を追加しました。USB device task を core に固定します。既定は
+  -1（固定しない＝従来どおり）です。ESP32-P4 high speed で producer が軽い構成を実測
+  すると、固定なし 28.61 MB/s に対し core 0 固定 28.90 MB/s で差がありません。よって
+  既定は変えず、どういうときに手を伸ばす価値があるか（スケッチ側の producer が usbd
+  task と競合するほど重いとき）を応用ガイドに書きました。
 - (EN) USB firmware update. New `EspUsbDeviceDfu` implements the DFU class in
   both shapes: `Download`, where `dfu-util -D firmware.bin` writes an image into
   the spare OTA partition and the device verifies it and restarts into it, and
