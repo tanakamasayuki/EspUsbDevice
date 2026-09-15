@@ -852,9 +852,9 @@ CCIDが実例です。手順は次のようになります。
 | Audioの取りこぼし | `stats()` の overrun / underrun |
 | ディスクリプタの自動検証 | `config.startTinyUsb = false` ＋ [`tests/unit/`](../tests/unit/) |
 | 2台構成での自動テスト | [`tests/peer/`](../tests/peer/) |
-| P4のポート特定 | [`tests/probe/`](../tests/probe/) |
+| P4のポート特定 | [`tests/manual/`](../tests/manual/) |
 
-`tests/probe/` は正式な回帰テストではなく、**ブリングアップと切り分けのための使い捨てスケッチ置き場**です。同じ用途の新しい調査を始めるときは、ここに追加するのが既存の作法です。
+`tests/manual/` は正式な回帰テストではなく、**人が要るスケッチの置き場**です（ホストOSを見る、ケーブルを挿し替える、ブラウザを開く）。同じ用途の新しい調査を始めるときは、ここに追加するのが既存の作法です。
 
 ### 10.2 ログを読む
 
