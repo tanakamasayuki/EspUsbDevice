@@ -1,4 +1,4 @@
-"""TEMPORARY - prototype coverage for CR-10 / F1. Delete with the prototype.
+"""The direct transfer path, end to end against a real USB host.
 
 DUT = the USB host (EspUsbHost); the peer = an EspUsbDevice vendor device built
 non-buffered (``CFG_TUD_VENDOR_TXRX_BUFFERED=0``), streaming 21-byte blocks with

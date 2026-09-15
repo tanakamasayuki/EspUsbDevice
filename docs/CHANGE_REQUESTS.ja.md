@@ -813,14 +813,19 @@ ghwcfg2_arch=2 dieptxf1=0x02000600 → depth 512 words（512 byte packet 4 個�
 
 | | 判断 | 根拠 |
 |---|---|---|
-| F1 | **試作が動いた。公開 API は A で実装する** | patch 不要を実証（`usbd_edpt_claim()` + `usbd_edpt_xfer()` はすでに同梱・使用中で、`EspUsbDeviceAppDriver` が同じ不変条件のもとで先例になっている）。P4 HS 実測で non-buffered 27.86 / buffered 24.43 MB/s |
+| F1 | **2.4.0 で採用**（A の形、patch なし） | `usbd_edpt_claim()` + `usbd_edpt_xfer()` は同梱ツリーにもともとあり、`EspUsbDeviceAppDriver` が同じ不変条件の先例。条件を揃えた実測で buffered 33.9 に対し direct 42.6 MB/s、依頼元ハーネスでは 46.6〜48.3 で独自 patch 版と数 % 差 |
 | F2 | **F1 の前提条件**（付属品ではない） | buffered では完了 callback の中で arm しないと ZLP に claim を取られて停止する。non-buffered でも、完了駆動でなければ転送が繋がらない |
 | F3 | A を採れば同時に入る | non-buffered の `tud_vendor_rx_cb()` は buffer を直接渡す。S2/S3 で有効にすると 64 byte clamp に落ちる点は変わらないので、既定は buffered のまま |
 
-試作の位置: `EspUsbDeviceVendor::writeDirect()` と `onTxComplete()` を working tree に
-入れてある。同梱 TinyUSB は byte-for-byte のまま。自前リグの
-`tests/peer/usb_vendor_direct`（一時）で end-to-end も通している。**正規実装では
-これを A の形に整え、フル回帰を通してからリリースする。**
+**2.4.0 でリリース済み。** 公開 API は `writeDirect()` / `onTxComplete()` /
+`onRxData()` / `directWriteSupported()` / `lastDirectError()` /
+`lastDirectErrorName()`。同梱 TinyUSB は byte-for-byte のまま。テストは
+`tests/single/vendor_direct`（契約の全拒否理由）、`tests/single/vendor_direct_off`
+（既定ビルドは `NotSupported`）、`tests/peer/usb_vendor_direct`（実機 end-to-end）。
+リリース前のフル回帰は unit 17、build_check 35/32/34、実機 45 passed。
+
+依頼元は pin 版での取り直しを **E116** として採番している。そちらが製品目安に使える
+最初の正式な数値になる。
 
 ### F4 `tud_configure()` の露出
 

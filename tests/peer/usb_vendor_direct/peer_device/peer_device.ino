@@ -1,4 +1,4 @@
-// TEMPORARY - prototype device for CR-10 / F1. Delete with the prototype.
+// The device half of the direct transfer path test.
 //
 // Streams fixed blocks with EspUsbDeviceVendor::writeDirect(), arming the next
 // one from inside onTxComplete(). Non-buffered build (build_opt.h) so the
