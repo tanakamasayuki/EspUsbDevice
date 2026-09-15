@@ -32,6 +32,8 @@
 #include "class/midi/midi_device.h"
 #include "class/msc/msc_device.h"
 #include "class/vendor/vendor_device.h"
+// usbd_edpt_claim() / usbd_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
+#include "device/usbd_pvt.h"
 #include "class/net/net_device.h"
 #include "class/dfu/dfu_device.h"
 #include "class/dfu/dfu_rt_device.h"
@@ -744,10 +746,9 @@ void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize)
 void tud_vendor_tx_cb(uint8_t idx, uint32_t sent_bytes)
 {
   (void)idx;
-  (void)sent_bytes;
   if (g_activeVendor)
   {
-    g_activeVendor->handleTxComplete();
+    g_activeVendor->handleTxComplete(static_cast<size_t>(sent_bytes));
   }
 }
 
@@ -2768,6 +2769,9 @@ uint16_t EspUsbDeviceVendor::configurationDescriptor(uint8_t *dst, uint8_t inter
   }
   const uint8_t epOut = endpointNumber;
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
+  // writeDirect() addresses the IN endpoint itself, and this is the only place
+  // the number is known.
+  endpointNumber_ = endpointNumber;
   uint8_t descriptor[] = {
       9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_VENDOR_SPECIFIC, 0x00, 0x00, 0,
       7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(maxPacket & 0xff), static_cast<uint8_t>((maxPacket >> 8) & 0xff), 0,
@@ -2788,9 +2792,11 @@ bool EspUsbDeviceVendor::mounted() const
 
 int EspUsbDeviceVendor::available()
 {
-#if ESP_USB_DEVICE_HAS_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB && CFG_TUD_VENDOR_TXRX_BUFFERED
   return static_cast<int>(tud_vendor_n_available(0));
 #else
+  // Non-buffered builds have no RX FIFO to count: TinyUSB hands the payload to
+  // tud_vendor_rx_cb() instead and there is nothing to poll.
   return 0;
 #endif
 }
@@ -2807,9 +2813,11 @@ size_t EspUsbDeviceVendor::read(uint8_t *buffer, size_t size)
   {
     return 0;
   }
-#if ESP_USB_DEVICE_HAS_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB && CFG_TUD_VENDOR_TXRX_BUFFERED
   return tud_vendor_n_read(0, buffer, static_cast<uint32_t>(size));
 #else
+  (void)buffer;
+  (void)size;
   return 0;
 #endif
 }
@@ -2935,9 +2943,54 @@ bool EspUsbDeviceVendor::waitWritable(size_t bytes, uint32_t timeoutMs)
 
 void EspUsbDeviceVendor::flush()
 {
-#if ESP_USB_DEVICE_HAS_TINYUSB
+#if ESP_USB_DEVICE_HAS_TINYUSB && CFG_TUD_VENDOR_TXRX_BUFFERED
   tud_vendor_n_write_flush(0);
 #endif
+}
+
+bool EspUsbDeviceVendor::writeDirect(const void *buffer, size_t length)
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  // usbd_edpt_xfer() takes a uint16_t length; there is no partial-write
+  // contract here, so an oversized request is refused rather than truncated.
+  if (!buffer || length == 0 || length > 0xffffu)
+  {
+    return false;
+  }
+  if (endpointNumber_ == 0 || !mounted())
+  {
+    return false;
+  }
+  const uint8_t rhport = espusb::internal::tinyUsbRuntimeRhport();
+  if (rhport == 0xff)
+  {
+    return false;
+  }
+  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber_);
+  // The same claim the vendor class itself takes, so a transfer already in
+  // flight - the class's or ours - makes this fail rather than corrupt it.
+  if (!usbd_edpt_claim(rhport, epIn))
+  {
+    return false;
+  }
+  if (!usbd_edpt_xfer(rhport, epIn,
+                      static_cast<uint8_t *>(const_cast<void *>(buffer)),
+                      static_cast<uint16_t>(length), false))
+  {
+    usbd_edpt_release(rhport, epIn);
+    return false;
+  }
+  return true;
+#else
+  (void)buffer;
+  (void)length;
+  return false;
+#endif
+}
+
+void EspUsbDeviceVendor::onTxComplete(TxCompleteCallback callback)
+{
+  txCompleteCallback_ = callback;
 }
 
 void EspUsbDeviceVendor::onRx(RxCallback callback)
@@ -2984,9 +3037,19 @@ void EspUsbDeviceVendor::handleRx()
   }
 }
 
-void EspUsbDeviceVendor::handleTxComplete()
+void EspUsbDeviceVendor::handleTxComplete(size_t sentBytes)
 {
 #if ESP_USB_DEVICE_HAS_TINYUSB
+  // First, and deliberately. This runs inside vendord_xfer_cb before the class
+  // refills the endpoint from its FIFO, so a callback that arms the next
+  // writeDirect() here takes usbd_edpt_claim() ahead of that refill - and,
+  // in a buffered build, ahead of the ZLP the class would otherwise arm after
+  // a transfer whose length is a multiple of wMaxPacketSize. Arming from any
+  // other task loses that race. See docs/CHANGE_REQUESTS.ja.md (F1).
+  if (txCompleteCallback_)
+  {
+    txCompleteCallback_(sentBytes);
+  }
   if (!writableSignal_)
   {
     return;
@@ -3005,8 +3068,12 @@ void EspUsbDeviceVendor::handleTxComplete()
   //
   // Draining here makes the room real before the wake-up. TinyUSB's refill, one
   // line later, then finds the FIFO empty and does nothing.
+#if CFG_TUD_VENDOR_TXRX_BUFFERED
   tud_vendor_n_write_flush(0);
+#endif
   xSemaphoreGive(static_cast<SemaphoreHandle_t>(writableSignal_));
+#else
+  (void)sentBytes;
 #endif
 }
 

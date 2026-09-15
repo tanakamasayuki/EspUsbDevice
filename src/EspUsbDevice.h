@@ -887,6 +887,8 @@ class EspUsbDeviceVendor : public EspUsbDeviceClass, public Print
 {
 public:
   using RxCallback = std::function<void(size_t)>;
+  // callback(sentBytes): a transmit on the bulk IN endpoint has completed.
+  using TxCompleteCallback = std::function<void(size_t)>;
   using ControlRequestCallback = std::function<bool(const EspUsbDeviceVendorControlRequest &)>;
 
   explicit EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize = 64);
@@ -941,6 +943,41 @@ public:
   // called. A sketch that streams in large blocks never notices; one that
   // answers requests has to call it after every answer.
   void flush();
+
+  // --- EXPERIMENTAL, subject to change or removal -------------------------
+  //
+  // Hand `buffer` straight to the controller instead of copying it through the
+  // class transmit FIFO: claim the bulk IN endpoint and arm one transfer of
+  // `length` bytes on the caller's own memory.
+  //
+  // This exists to be measured, not to be depended on. See
+  // docs/CHANGE_REQUESTS.ja.md (F1) for what it is for and which of two shapes
+  // the shipped API is expected to take.
+  //
+  // The caller's contract, and none of it is checked:
+  //  - `buffer` must stay untouched and alive until the completion callback
+  //    reports it. Ownership is the caller's until then.
+  //  - `buffer` must be DMA-capable internal RAM, 64-byte aligned, with an
+  //    aligned length. PSRAM must be staged through an internal bounce buffer.
+  //  - A buffer written from another core needs esp_cache_msync(C2M) before it
+  //    is handed over.
+  //  - Do not mix with write() on the same interface. They claim the same
+  //    endpoint, and in the library's default buffered build the class arms a
+  //    ZLP of its own after every completion whose length is a multiple of
+  //    wMaxPacketSize, which terminates the host's transfer early.
+  //
+  // `length` is capped at 65535 by usbd_edpt_xfer(). Returns false when the
+  // endpoint is not open, not claimable (a transfer is already in flight), or
+  // the transfer could not be armed.
+  bool writeDirect(const void *buffer, size_t length);
+  // Called from the usbd task when a transmit completes, with the number of
+  // bytes that went out. Arming the next writeDirect() from inside this
+  // callback is not a convenience: it is what wins the endpoint claim against
+  // the class's own refill, and arming from another task loses that race.
+  // Do nothing else here - this runs on the usbd task.
+  void onTxComplete(TxCompleteCallback callback);
+  // ------------------------------------------------------------------------
+
   void onRx(RxCallback callback);
   void onControlRequest(ControlRequestCallback callback);
   bool sendControlResponse(const EspUsbDeviceVendorControlRequest &request, const void *data = nullptr, size_t length = 0);
@@ -950,11 +987,16 @@ public:
   bool handleControlRequest(uint8_t rhport, uint8_t stage, const void *request);
   // Called from tud_vendor_tx_cb() on the usbd task when a transmit completes,
   // i.e. when the FIFO has just given room back.
-  void handleTxComplete();
+  void handleTxComplete(size_t sentBytes);
 
 private:
   uint16_t endpointSize_ = 64;
+  // The endpoint number the device handed this interface, learned while the
+  // configuration descriptor is built. writeDirect() needs it to address the
+  // bulk IN endpoint; 0 means "not built yet".
+  uint8_t endpointNumber_ = 0;
   RxCallback rxCallback_;
+  TxCompleteCallback txCompleteCallback_;
   ControlRequestCallback controlRequestCallback_;
   // Created on the first waitWritable() and destroyed in end(). A sketch that
   // only ever spins on write() never pays for it.
