@@ -439,6 +439,12 @@ was deleted rather than carried forward. See
     by default restarts into the chip's ROM download loader.
   - `onProgress()` / `onComplete()` / `onError()` / `onDetach()` and
     `restartWhenComplete(false)` are the hooks; all of them run on the usbd task.
+- `EspUsbDeviceMscFirmwareDisk` presents a small FAT volume whose data region
+  **is** the OTA partition: the host drops a firmware `.bin` on the drive and
+  the device streams it into flash, verifies it and restarts into it. The image
+  is never held in RAM - only the volume metadata and a scratch area for
+  whatever the host's file manager leaves behind. Writes into the firmware
+  region must ascend; one that does not is refused rather than half-applied.
 - `EspUsbDeviceFirmwareUpdate` writes an image into the OTA partition that is not
   running, verifies it, and switches the boot partition. Transport-independent:
   the DFU class drives it, and so can a sketch receiving bytes over CDC, vendor

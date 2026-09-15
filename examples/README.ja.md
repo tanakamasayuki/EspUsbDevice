@@ -324,6 +324,18 @@ HID keyboard + CDC serial + MSC FAT RAM disk を 1 つの `EspUsbDevice` に載�
 - ROM を使わないため S2 / S3 / P4 で同じように動きます。
 - application partition が 2 つある partition scheme が必要です。
 
+## FirmwareMSC
+
+ボードが見せるドライブにファイルを放り込むファームウェア更新です。
+詳しくは [FirmwareMSC/README.ja.md](FirmwareMSC/README.ja.md) を参照してください。
+
+- `EspUsbDeviceMscFirmwareDisk` はデータ領域が OTA partition **そのもの**の FAT
+  ボリュームを提供するので、イメージが RAM に載りません。
+- ESP イメージを `0xE9` magic で検出し、directory entry の長さに達するか eject された
+  時点で commit、切り替え前に検証します。
+- 書き込みは昇順が前提です。逆戻りは中途半端に適用せず拒否します。
+- application partition が 2 つある partition scheme が必要です。
+
 ## FirmwareHTTP
 
 host 側にブラウザ以外なにも要らない USB 経由のファームウェア更新です。

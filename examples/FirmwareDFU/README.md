@@ -64,6 +64,15 @@ is a different thing ([guide, 2.6](../../docs/ota-over-usb.md#26-rom-dfu-instead
 - `EspUsbDeviceFirmwareUpdate::markValid()` confirms the running image, which
   cancels a pending bootloader rollback.
 
+## Verified
+
+An ESP32-P4 running this sketch, driven from a PC: the DFU interface enumerated
+at high speed, the host read `wTransferSize=1024` / `bcdDFU=0x0110` /
+`canDnload` / `manifestationTolerant=0` from the functional descriptor, and a
+385 KB image transferred in 376 blocks in 2.7 s (139 KiB/s) over EP0 alone. The
+device reported `dfuMANIFEST-WAIT-RESET`, switched the boot partition and
+restarted into the new image.
+
 ## Notes
 
 - **The image you send replaces this sketch.** Send a build that also has a DFU

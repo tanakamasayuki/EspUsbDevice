@@ -4761,6 +4761,626 @@ bool EspUsbDevice::rebootToRomDfu()
 #endif
 }
 
+// --- MSC firmware disk ------------------------------------------------------
+
+namespace
+{
+constexpr uint32_t kFirmwareDiskSectorSize = 512;
+// FAT12 addresses at most 4084 data clusters (0xFF5 is the first reserved
+// value). Beyond that the volume would have to be FAT16, and raising the
+// cluster size is both simpler and better here: 4 KiB clusters already line up
+// with the flash sector, so a cluster boundary is an erase boundary.
+constexpr uint32_t kFirmwareDiskMaxClusters = 4084;
+constexpr uint16_t kFirmwareDiskClusterOptions[] = {8, 16, 32, 64, 128};
+
+void firmwareDiskPut16(uint8_t *dst, uint16_t value)
+{
+  dst[0] = static_cast<uint8_t>(value & 0xff);
+  dst[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+}
+
+void firmwareDiskPut32(uint8_t *dst, uint32_t value)
+{
+  dst[0] = static_cast<uint8_t>(value & 0xff);
+  dst[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+  dst[2] = static_cast<uint8_t>((value >> 16) & 0xff);
+  dst[3] = static_cast<uint8_t>((value >> 24) & 0xff);
+}
+
+uint32_t firmwareDiskRead32(const uint8_t *src)
+{
+  return static_cast<uint32_t>(src[0]) | (static_cast<uint32_t>(src[1]) << 8) |
+         (static_cast<uint32_t>(src[2]) << 16) | (static_cast<uint32_t>(src[3]) << 24);
+}
+
+uint16_t firmwareDiskRead16(const uint8_t *src)
+{
+  return static_cast<uint16_t>(static_cast<uint16_t>(src[0]) |
+                               (static_cast<uint16_t>(src[1]) << 8));
+}
+
+// "README  TXT" from "README.TXT". False for anything 8.3 cannot hold, which is
+// the whole of what this volume needs to name.
+bool firmwareDiskNormalizeName(const char *name, char out[11])
+{
+  if (!name)
+  {
+    return false;
+  }
+  memset(out, ' ', 11);
+  size_t i = 0;
+  for (; name[i] && name[i] != '.'; i++)
+  {
+    if (i >= 8)
+    {
+      return false;
+    }
+    out[i] = static_cast<char>(toupper(static_cast<unsigned char>(name[i])));
+  }
+  if (i == 0)
+  {
+    return false;
+  }
+  if (name[i] == '.')
+  {
+    const char *extension = name + i + 1;
+    for (size_t j = 0; extension[j]; j++)
+    {
+      if (j >= 3)
+      {
+        return false;
+      }
+      out[8 + j] = static_cast<char>(toupper(static_cast<unsigned char>(extension[j])));
+    }
+  }
+  return true;
+}
+} // namespace
+
+EspUsbDeviceMscFirmwareDisk::EspUsbDeviceMscFirmwareDisk(uint8_t *storage, size_t size)
+    : storage_(storage), size_(size)
+{
+}
+
+EspUsbDeviceMscFirmwareDisk::~EspUsbDeviceMscFirmwareDisk()
+{
+  if (updating_)
+  {
+    firmware_.abort();
+  }
+}
+
+bool EspUsbDeviceMscFirmwareDisk::begin(const char *volumeLabel)
+{
+  formatted_ = false;
+  if (!storage_ || size_ < 8 * 1024)
+  {
+    return false;
+  }
+  const size_t capacity = EspUsbDeviceFirmwareUpdate::capacity();
+  if (capacity == 0)
+  {
+    // Single-app partition scheme: there is nothing for this drive to write to,
+    // and presenting one anyway would be a lie the host discovers late.
+    return false;
+  }
+
+  const uint32_t ramSectorsAvailable = static_cast<uint32_t>(size_ / kFirmwareDiskSectorSize);
+  bool laidOut = false;
+  for (uint16_t candidate : kFirmwareDiskClusterOptions)
+  {
+    const uint32_t clusterBytes = static_cast<uint32_t>(candidate) * kFirmwareDiskSectorSize;
+    const uint32_t firmwareClusters =
+        static_cast<uint32_t>((capacity + clusterBytes - 1) / clusterBytes);
+
+    // The FAT has to be big enough for every cluster, and how many clusters
+    // there are depends on how much RAM the FAT leaves for the scratch area.
+    // Three passes settle it; the loop guards against a layout that oscillates.
+    uint16_t fatSectors = 1;
+    uint32_t scratchClusters = 0;
+    bool converged = false;
+    for (int attempt = 0; attempt < 8; attempt++)
+    {
+      const uint32_t metadataSectors =
+          1 + (2 * static_cast<uint32_t>(fatSectors)) + rootDirSectors_;
+      if (ramSectorsAvailable <= metadataSectors)
+      {
+        break;
+      }
+      scratchClusters = (ramSectorsAvailable - metadataSectors) / candidate;
+      if (scratchClusters == 0)
+      {
+        break;
+      }
+      const uint32_t totalClusters = scratchClusters + firmwareClusters;
+      const uint32_t fatBytes = ((totalClusters + 2) * 3 + 1) / 2;
+      const uint16_t required =
+          static_cast<uint16_t>((fatBytes + kFirmwareDiskSectorSize - 1) / kFirmwareDiskSectorSize);
+      if (required == fatSectors)
+      {
+        converged = true;
+        break;
+      }
+      fatSectors = required;
+    }
+    if (!converged || scratchClusters + firmwareClusters > kFirmwareDiskMaxClusters)
+    {
+      continue;
+    }
+
+    sectorsPerCluster_ = candidate;
+    sectorsPerFat_ = fatSectors;
+    dataStartSector_ = 1 + (2u * fatSectors) + rootDirSectors_;
+    scratchSectors_ = scratchClusters * candidate;
+    ramSectors_ = dataStartSector_ + scratchSectors_;
+    firmwareSectors_ = firmwareClusters * candidate;
+    blockCount_ = ramSectors_ + firmwareSectors_;
+    laidOut = true;
+    break;
+  }
+  if (!laidOut)
+  {
+    return false;
+  }
+
+  memset(storage_, 0, ramSectors_ * kFirmwareDiskSectorSize);
+  nextScratchCluster_ = 2;
+  nextRootEntry_ = 0;
+
+  uint8_t *boot = storage_;
+  boot[0] = 0xeb;
+  boot[1] = 0x3c;
+  boot[2] = 0x90;
+  memcpy(boot + 3, "MSDOS5.0", 8);
+  firmwareDiskPut16(boot + 11, static_cast<uint16_t>(kFirmwareDiskSectorSize));
+  boot[13] = static_cast<uint8_t>(sectorsPerCluster_);
+  firmwareDiskPut16(boot + 14, 1); // reserved sectors
+  boot[16] = 2;                    // FAT copies
+  firmwareDiskPut16(boot + 17, rootEntryCount_);
+  // A volume larger than 65535 sectors has to use the 32-bit count instead, and
+  // the 16-bit one must then read zero.
+  if (blockCount_ < 0x10000)
+  {
+    firmwareDiskPut16(boot + 19, static_cast<uint16_t>(blockCount_));
+  }
+  else
+  {
+    firmwareDiskPut16(boot + 19, 0);
+    firmwareDiskPut32(boot + 32, blockCount_);
+  }
+  boot[21] = 0xf8; // fixed disk
+  firmwareDiskPut16(boot + 22, sectorsPerFat_);
+  firmwareDiskPut16(boot + 24, 1); // sectors per track
+  firmwareDiskPut16(boot + 26, 1); // heads
+  boot[36] = 0x80;
+  boot[38] = 0x29;
+  firmwareDiskPut32(boot + 39, 0x45535055);
+  memset(boot + 43, ' ', 11);
+  if (volumeLabel)
+  {
+    for (uint8_t i = 0; i < 11 && volumeLabel[i]; ++i)
+    {
+      boot[43 + i] = static_cast<uint8_t>(toupper(static_cast<unsigned char>(volumeLabel[i])));
+    }
+  }
+  memcpy(boot + 54, "FAT12   ", 8);
+  boot[510] = 0x55;
+  boot[511] = 0xaa;
+
+  // Cluster 0 and 1 are the media descriptor and the end-of-chain marker; every
+  // other cluster is free, including the ones that map onto the partition. The
+  // host allocates them itself when it copies the image.
+  uint8_t *fat = storage_ + kFirmwareDiskSectorSize;
+  fat[0] = 0xf8;
+  fat[1] = 0xff;
+  fat[2] = 0xff;
+  memcpy(storage_ + (1 + sectorsPerFat_) * kFirmwareDiskSectorSize, fat,
+         sectorsPerFat_ * kFirmwareDiskSectorSize);
+
+  formatted_ = true;
+  return true;
+}
+
+void EspUsbDeviceMscFirmwareDisk::setFatEntry(uint16_t cluster, uint16_t value)
+{
+  const uint32_t index = (static_cast<uint32_t>(cluster) * 3) / 2;
+  uint8_t *fat = storage_ + kFirmwareDiskSectorSize;
+  if (index + 1 >= static_cast<uint32_t>(sectorsPerFat_) * kFirmwareDiskSectorSize)
+  {
+    return;
+  }
+  if (cluster & 1)
+  {
+    fat[index] = static_cast<uint8_t>((fat[index] & 0x0f) | ((value & 0x0f) << 4));
+    fat[index + 1] = static_cast<uint8_t>((value >> 4) & 0xff);
+  }
+  else
+  {
+    fat[index] = static_cast<uint8_t>(value & 0xff);
+    fat[index + 1] = static_cast<uint8_t>((fat[index + 1] & 0xf0) | ((value >> 8) & 0x0f));
+  }
+  memcpy(storage_ + (1 + sectorsPerFat_) * kFirmwareDiskSectorSize, fat,
+         sectorsPerFat_ * kFirmwareDiskSectorSize);
+}
+
+uint8_t *EspUsbDeviceMscFirmwareDisk::rootEntry(uint16_t index)
+{
+  const uint32_t rootStart = 1 + (2u * sectorsPerFat_);
+  return storage_ + (rootStart * kFirmwareDiskSectorSize) + (index * 32);
+}
+
+const uint8_t *EspUsbDeviceMscFirmwareDisk::rootEntry(uint16_t index) const
+{
+  const uint32_t rootStart = 1 + (2u * sectorsPerFat_);
+  return storage_ + (rootStart * kFirmwareDiskSectorSize) + (index * 32);
+}
+
+bool EspUsbDeviceMscFirmwareDisk::allocateScratchFile(const char name[11], size_t size,
+                                                      uint16_t *firstCluster)
+{
+  const uint32_t clusterBytes =
+      static_cast<uint32_t>(sectorsPerCluster_) * kFirmwareDiskSectorSize;
+  const uint32_t needed = static_cast<uint32_t>((size + clusterBytes - 1) / clusterBytes);
+  const uint32_t scratchClusters = scratchSectors_ / sectorsPerCluster_;
+  if (needed == 0 || nextRootEntry_ >= rootEntryCount_ ||
+      nextScratchCluster_ - 2 + needed > scratchClusters)
+  {
+    return false;
+  }
+
+  *firstCluster = nextScratchCluster_;
+  for (uint32_t i = 0; i < needed; i++)
+  {
+    const uint16_t cluster = static_cast<uint16_t>(nextScratchCluster_ + i);
+    setFatEntry(cluster, i + 1 == needed ? 0xfff : static_cast<uint16_t>(cluster + 1));
+  }
+  nextScratchCluster_ = static_cast<uint16_t>(nextScratchCluster_ + needed);
+
+  uint8_t *entry = rootEntry(nextRootEntry_++);
+  memcpy(entry, name, 11);
+  entry[11] = 0x20; // archive
+  firmwareDiskPut16(entry + 26, *firstCluster);
+  firmwareDiskPut32(entry + 28, static_cast<uint32_t>(size));
+  return true;
+}
+
+bool EspUsbDeviceMscFirmwareDisk::addTextFile(const char *name, const char *text)
+{
+  if (!formatted_ || !text)
+  {
+    return false;
+  }
+  char normalized[11];
+  if (!firmwareDiskNormalizeName(name, normalized))
+  {
+    return false;
+  }
+  const size_t length = strlen(text);
+  uint16_t firstCluster = 0;
+  if (!allocateScratchFile(normalized, length, &firstCluster))
+  {
+    return false;
+  }
+  const uint32_t clusterSector =
+      dataStartSector_ + (static_cast<uint32_t>(firstCluster - 2) * sectorsPerCluster_);
+  memcpy(storage_ + (clusterSector * kFirmwareDiskSectorSize), text, length);
+  return true;
+}
+
+bool EspUsbDeviceMscFirmwareDisk::attach(EspUsbDeviceMsc &msc)
+{
+  if (!formatted_)
+  {
+    return false;
+  }
+  msc.onRead([this](uint32_t lba, uint32_t offset, void *buffer, uint32_t size)
+             { return read(lba, offset, buffer, size); });
+  msc.onWrite([this](uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)
+              { return write(lba, offset, buffer, size); });
+  msc.onStartStop([this](uint8_t powerCondition, bool start, bool loadEject)
+                  { return handleStartStop(powerCondition, start, loadEject); });
+  msc.mediaPresent(true);
+  msc.isWritable(true);
+  return msc.begin(blockCount_, static_cast<uint16_t>(kFirmwareDiskSectorSize));
+}
+
+void EspUsbDeviceMscFirmwareDisk::onProgress(ProgressCallback callback)
+{
+  progressCallback_ = callback;
+}
+
+void EspUsbDeviceMscFirmwareDisk::onComplete(CompleteCallback callback)
+{
+  completeCallback_ = callback;
+}
+
+void EspUsbDeviceMscFirmwareDisk::onError(ErrorCallback callback)
+{
+  errorCallback_ = callback;
+}
+
+void EspUsbDeviceMscFirmwareDisk::onEject(EjectCallback callback)
+{
+  ejectCallback_ = callback;
+}
+
+void EspUsbDeviceMscFirmwareDisk::restartWhenComplete(bool enable)
+{
+  restartWhenComplete_ = enable;
+}
+
+uint32_t EspUsbDeviceMscFirmwareDisk::blockCount() const
+{
+  return blockCount_;
+}
+
+uint16_t EspUsbDeviceMscFirmwareDisk::blockSize() const
+{
+  return static_cast<uint16_t>(kFirmwareDiskSectorSize);
+}
+
+uint32_t EspUsbDeviceMscFirmwareDisk::ramSectorCount() const
+{
+  return ramSectors_;
+}
+
+size_t EspUsbDeviceMscFirmwareDisk::written() const
+{
+  return firmware_.written();
+}
+
+bool EspUsbDeviceMscFirmwareDisk::updating() const
+{
+  return updating_;
+}
+
+EspUsbDeviceFirmwareUpdate &EspUsbDeviceMscFirmwareDisk::firmware()
+{
+  return firmware_;
+}
+
+int32_t EspUsbDeviceMscFirmwareDisk::read(uint32_t lba, uint32_t offset, void *buffer, uint32_t size)
+{
+  if (!formatted_ || !buffer || lba >= blockCount_)
+  {
+    return -1;
+  }
+  const uint64_t address = (static_cast<uint64_t>(lba) * kFirmwareDiskSectorSize) + offset;
+  uint8_t *out = static_cast<uint8_t *>(buffer);
+  const uint64_t ramBytes = static_cast<uint64_t>(ramSectors_) * kFirmwareDiskSectorSize;
+
+  uint32_t done = 0;
+  if (address < ramBytes)
+  {
+    const uint32_t chunk =
+        static_cast<uint32_t>(ramBytes - address < size ? ramBytes - address : size);
+    memcpy(out, storage_ + address, chunk);
+    done = chunk;
+  }
+  if (done < size)
+  {
+#if ESP_USB_DEVICE_HAS_OTA
+    // Past the scratch area the volume is the partition itself. Reading it back
+    // rather than answering with zeros is what lets a host verify the file it
+    // just copied - and an untouched partition reads as erased flash, which is
+    // the truth about what is there.
+    const esp_partition_t *target = firmwareTargetPartition();
+    const uint64_t partitionOffset = (address + done) - ramBytes;
+    if (target && partitionOffset < target->size)
+    {
+      const uint32_t chunk = static_cast<uint32_t>(
+          target->size - partitionOffset < (size - done) ? target->size - partitionOffset
+                                                         : (size - done));
+      if (esp_partition_read(target, static_cast<size_t>(partitionOffset), out + done, chunk) != ESP_OK)
+      {
+        return -1;
+      }
+      done += chunk;
+    }
+#endif
+    if (done < size)
+    {
+      memset(out + done, 0, size - done);
+      done = size;
+    }
+  }
+  return static_cast<int32_t>(size);
+}
+
+bool EspUsbDeviceMscFirmwareDisk::writeFirmwareRegion(size_t partitionOffset,
+                                                      const uint8_t *data, uint32_t size)
+{
+  if (!updating_)
+  {
+    // An ESP application image starts with 0xE9. Anything else written into
+    // this region is the host's business - a file the user dropped by mistake,
+    // or metadata that spilled out of the scratch area - and is dropped rather
+    // than flashed.
+    if (size == 0 || data[0] != 0xe9)
+    {
+      return true;
+    }
+    if (!firmware_.begin())
+    {
+      failUpdate(firmware_.lastError());
+      return false;
+    }
+    updating_ = true;
+    imageStartSector_ = static_cast<uint32_t>(partitionOffset / kFirmwareDiskSectorSize);
+    partitionOffset = 0;
+  }
+  else
+  {
+    const size_t imageBase =
+        static_cast<size_t>(imageStartSector_) * kFirmwareDiskSectorSize;
+    if (partitionOffset < imageBase)
+    {
+      failUpdate(ESP_ERR_INVALID_STATE);
+      return false;
+    }
+    partitionOffset -= imageBase;
+  }
+
+  // Sequential only, and loudly so. esp_ota_write() appends; a host that jumps
+  // backwards or leaves a hole would otherwise produce an image that looks
+  // written and is not.
+  if (partitionOffset != firmware_.written())
+  {
+    failUpdate(ESP_ERR_INVALID_STATE);
+    return false;
+  }
+  if (!firmware_.write(data, size))
+  {
+    failUpdate(firmware_.lastError());
+    return false;
+  }
+  if (progressCallback_)
+  {
+    progressCallback_(firmware_.written());
+  }
+  return true;
+}
+
+int32_t EspUsbDeviceMscFirmwareDisk::write(uint32_t lba, uint32_t offset, uint8_t *buffer,
+                                           uint32_t size)
+{
+  if (!formatted_ || !buffer || lba >= blockCount_)
+  {
+    return -1;
+  }
+  const uint64_t address = (static_cast<uint64_t>(lba) * kFirmwareDiskSectorSize) + offset;
+  const uint64_t ramBytes = static_cast<uint64_t>(ramSectors_) * kFirmwareDiskSectorSize;
+
+  uint32_t done = 0;
+  if (address < ramBytes)
+  {
+    const uint32_t chunk =
+        static_cast<uint32_t>(ramBytes - address < size ? ramBytes - address : size);
+    memcpy(storage_ + address, buffer, chunk);
+    done = chunk;
+    // The directory entry is how the host says how long the file is, and it may
+    // write it before, during or after the data.
+    checkForCompletion();
+  }
+  if (done < size)
+  {
+    if (!writeFirmwareRegion(static_cast<size_t>((address + done) - ramBytes), buffer + done,
+                             size - done))
+    {
+      return -1;
+    }
+    checkForCompletion();
+  }
+  return static_cast<int32_t>(size);
+}
+
+size_t EspUsbDeviceMscFirmwareDisk::announcedImageSize() const
+{
+  const uint32_t scratchClusters = scratchSectors_ / sectorsPerCluster_;
+  for (uint16_t i = 0; i < rootEntryCount_; i++)
+  {
+    const uint8_t *entry = rootEntry(i);
+    if (entry[0] == 0x00)
+    {
+      break; // no entry has ever been used past here
+    }
+    if (entry[0] == 0xe5 || (entry[11] & 0x08) != 0 || (entry[11] & 0x10) != 0)
+    {
+      continue; // deleted, volume label, or directory
+    }
+    const uint16_t firstCluster = firmwareDiskRead16(entry + 26);
+    if (firstCluster < 2 || firstCluster - 2 < scratchClusters)
+    {
+      continue; // lives in the scratch area, so it is not the image
+    }
+    const uint32_t size = firmwareDiskRead32(entry + 28);
+    if (size > 0)
+    {
+      return size;
+    }
+  }
+  return 0;
+}
+
+void EspUsbDeviceMscFirmwareDisk::checkForCompletion()
+{
+  if (!updating_)
+  {
+    return;
+  }
+  const size_t announced = announcedImageSize();
+  if (announced == 0 || firmware_.written() < announced)
+  {
+    return;
+  }
+  commit();
+}
+
+void EspUsbDeviceMscFirmwareDisk::failUpdate(esp_err_t error)
+{
+  firmware_.abort();
+  updating_ = false;
+  imageStartSector_ = 0;
+  if (errorCallback_)
+  {
+    errorCallback_(error);
+  }
+}
+
+bool EspUsbDeviceMscFirmwareDisk::commit()
+{
+  if (!updating_)
+  {
+    return false;
+  }
+  updating_ = false;
+  imageStartSector_ = 0;
+
+  if (!firmware_.end())
+  {
+    if (errorCallback_)
+    {
+      errorCallback_(firmware_.lastError());
+    }
+    return false;
+  }
+  if (completeCallback_ && !completeCallback_())
+  {
+    EspUsbDeviceFirmwareUpdate::cancelPendingBoot();
+    return false;
+  }
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (restartWhenComplete_)
+  {
+    // Long enough for the host to finish the command that carried the last
+    // block, short enough that the new firmware is up before anyone wonders.
+    espUsbDeviceScheduleRestart(nullptr, 500, false);
+  }
+#endif
+  return true;
+}
+
+bool EspUsbDeviceMscFirmwareDisk::handleStartStop(uint8_t powerCondition, bool start,
+                                                  bool loadEject)
+{
+  (void)powerCondition;
+  (void)loadEject;
+  if (!start)
+  {
+    // Ejecting is the second way an update finishes, and the only one when the
+    // host never wrote a directory entry this code could read.
+    if (updating_)
+    {
+      commit();
+    }
+    if (ejectCallback_)
+    {
+      ejectCallback_();
+    }
+  }
+  return true;
+}
+
 // --- DFU -------------------------------------------------------------------
 
 EspUsbDeviceDfu::EspUsbDeviceDfu(EspUsbDevice &device, EspUsbDeviceDfuMode mode,

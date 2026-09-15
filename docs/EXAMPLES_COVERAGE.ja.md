@@ -28,7 +28,7 @@
 | `CustomHIDDevice` | `CustomHID` | 対応済み | sketch 定義 descriptor と fixed input report。 |
 | `HIDVendor` | `VendorHID` | 対応済み | vendor-defined HID input/output/feature report。 |
 | `USBMSC` | `MSC` / `MSCFatRamDisk` | 対応済み | raw block I/O と FAT RAM disk helper に分離。 |
-| `FirmwareMSC` | `FirmwareDFU` / `FirmwareHTTP` / `FirmwareBootMode` | 別形で対応 | MSC drag and drop 自体は未対応（設計と罠は [ota-over-usb.ja.md 6.1](ota-over-usb.ja.md#61-msc経由のdrag-and-drop)）。USB 経由の更新は DFU（endpoint 消費 0）、NCM+HTTP（host 側ブラウザのみ）、ROM loader への再起動でカバー済み。 |
+| `FirmwareMSC` | `FirmwareMSC` | 対応済み | `EspUsbDeviceMscFirmwareDisk`。データ領域が OTA partition そのもので、イメージは RAM に載らない。ほかに DFU（endpoint 消費 0）、NCM+HTTP（host 側ブラウザのみ）、ROM loader への再起動も提供。 |
 | `MIDI/MidiMusicBox` | `MIDI` | 一部対応 | note sequence の基本は対応。曲 example は未作成。 |
 | `MIDI/MidiController` | `MIDIController` | 対応済み | ADC -> CC、button -> Note。 |
 | `MIDI/MidiInterface` | `MIDIInterface` | 対応済み | UART MIDI 31250 baud と USB MIDI の bridge。 |
@@ -159,9 +159,9 @@ USB 経由のファームウェア更新は経路が複数あり、調査結果�
 - `FirmwareVendor`: `EspUsbDeviceVendor` の bulk + control request で独自 updater。
   P4 HS では最速。host 側は PyUSB / WebUSB ページ。
 - `FirmwareCDC`: 最小構成。`EspUsbDeviceFirmwareUpdate` を CDC から駆動するだけ。
-- `FirmwareMSC`: `EspUsbDeviceMscFatRamDisk` と組み合わせる drag and drop。UX は
-  最良ですが、host が書き込む順序・OS のメタデータ・完了検知の罠があるため、
-  library 側の helper（`EspUsbDeviceMscFirmwareDisk`）を先に作る想定です。
+- `FirmwareMSC`: `EspUsbDeviceMscFirmwareDisk` による drag and drop（追加済み）。
+  UX は最良ですが host 依存の挙動が最も多く、順序規則とスクラッチ領域のサイズが
+  効きます。
 
 ### Keyboard / Mouse 応用
 
@@ -191,7 +191,7 @@ USB 経由のファームウェア更新は経路が複数あり、調査結果�
 | ~~`EspUsbDeviceDfu`~~ | 実装済み。DFU runtime / full DFU、endpoint 消費 0。 | 完了 |
 | ~~`EspUsbDevice::rebootToBootloader()`~~ | 実装済み。S3 / P4 実機確認済み。 | 完了 |
 | ~~Firmware sink helper~~ | 実装済み（`EspUsbDeviceFirmwareUpdate`）。 | 完了 |
-| `EspUsbDeviceMscFirmwareDisk` | FAT RAM disk 上の `firmware.bin` / `.uf2` を安全に扱う。書き込み側は `EspUsbDeviceFirmwareUpdate` で完成済み。 | 低-中 |
+| ~~`EspUsbDeviceMscFirmwareDisk`~~ | 実装済み。残るのは UF2 block の受理（順不同書き込みへの耐性）。 | 完了 |
 | Keyboard macro helper | shortcut / modifier sequence を読みやすくする。 | 低 |
 | Button/debounce helper | examples 用。library 本体より example-local が適切。 | 低 |
 
