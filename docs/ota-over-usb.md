@@ -341,10 +341,12 @@ None of them needs a library change.
 | **MSC** (`EspUsbDeviceMscFirmwareDisk`) | drag and drop | 1 (bulk duplex) | The nicest UX, and the one with the most host-dependent behaviour. [3.6](#36-the-firmware-drive). |
 | **DFU** (`EspUsbDeviceDfu`) | `dfu-util` | **0** | A standard host tool and a standard protocol, on EP0. The library implements the whole path; the sketch supplies callbacks. [3.5](#35-the-dfu-function). |
 
-Three of these ship as examples:
-[`FirmwareDFU`](../examples/FirmwareDFU/),
-[`FirmwareHTTP`](../examples/FirmwareHTTP/) and
-[`FirmwareMSC`](../examples/FirmwareMSC/).
+All five ship as examples:
+[`FirmwareCDC`](../examples/FirmwareCDC/),
+[`FirmwareVendor`](../examples/FirmwareVendor/),
+[`FirmwareHTTP`](../examples/FirmwareHTTP/),
+[`FirmwareMSC`](../examples/FirmwareMSC/) and
+[`FirmwareDFU`](../examples/FirmwareDFU/).
 
 The NCM route deserves a note: it is the only one where the host needs **no**
 software at all beyond a browser. If your users are not developers, that is the
@@ -479,23 +481,59 @@ oversight:
   entry says how long it is and the byte count reaches that, or the host ejects
   the drive. The directory entry usually lands first; the eject is the backstop
   for a host that never writes one this code can read.
-- **What it will not do.** Writes into the firmware region must ascend. A write
-  that jumps backwards or leaves a hole is refused with
+- **What a raw `.bin` will not do.** Writes must ascend. A raw image says
+  nothing about where its bytes belong, so the write position is the only thing
+  that can; a write that jumps backwards or leaves a hole is refused with
   `ESP_ERR_INVALID_STATE`, `onError()` fires and the update is abandoned. It is
   never left half-applied and looking finished.
+
+**Give it a `.uf2` and that last restriction goes away.** A UF2 file is a
+sequence of self-describing 512-byte blocks, each carrying its own target
+address, block index and total count, and the drive takes those too - the format
+is chosen from the first bytes to arrive, so the same drive accepts either.
+What the container buys:
+
+| | raw `.bin` | `.uf2` |
+|---|---|---|
+| Write order | ascending only | **any** - each block says where it goes |
+| Host metadata | ignored by the `0xE9` heuristic | rejected by the block magic |
+| Length | from the FAT directory entry | from the header |
+| Completion | byte count reaches that length, or eject | exact: every block index seen |
+| A block written twice | indistinguishable from progress | counted once |
+| Image for the wrong chip | accepted, fails verification later | refused on the first block |
+
+The last two are worth dwelling on. A host that rewrites a block is normal, and
+with a raw image it inflates the byte count toward an early commit; with UF2 a
+seen-block bitmap makes the count exact. And the family ID is the only check in
+any of this that catches an ESP32-S3 image on an ESP32-P4 *before* flash is
+touched - `EspUsbDeviceMscFirmwareDisk::uf2FamilyId()` returns the one this
+build expects, which is what `uf2conv.py --family` has to be given.
+
+Underneath, UF2 switches the writer into
+`EspUsbDeviceFirmwareUpdate::beginRandomAccess()` / `writeAt()`: the header says
+how long the image is, so that much partition is erased before the first block
+lands and every later block can go anywhere inside it. A raw stream cannot do
+that, because nothing tells it the length until the end.
+
+Verified on hardware: eight UF2 blocks written in **reverse order** produce the
+same image, a duplicated block does not advance the count, and a block carrying
+the original ESP32's family ID is refused before anything is written.
+
+The friction is host-side: producing a `.uf2` from an Arduino build means a
+conversion step (`uf2conv.py --family <id> --base 0x0`) that Arduino does not do
+for you. That is the trade - a raw `.bin` is what the IDE already gives you.
 
 The scratch area is the part to size deliberately. It is what absorbs
 `System Volume Information`, `.fseventsd` and `.Spotlight-V100`, and a host that
 fills it starts allocating clusters inside the firmware region. 16 KB of
 `storage` leaves a comfortable scratch; 8 KB is the floor.
 
-Compared with [3.5](#35-the-dfu-function): this has the better UX and DFU has
-the better guarantees. DFU's block numbers make ordering the host's problem to
-get right and the device's to check exactly, and it costs no endpoints. A drive
-costs one bulk pair and inherits whatever the host's file manager does. Ship DFU
-when the person doing the update has a terminal; ship the drive when they do
-not. [6.1](#61-uf2) is the container format that would give the drive DFU's
-ordering guarantees.
+Compared with [3.5](#35-the-dfu-function): the drive has the better UX, DFU has
+the better guarantees for less - it costs no endpoints, where a drive costs a
+bulk pair. Fed a `.uf2` the two are close on correctness; fed a raw `.bin` the
+drive is trusting the host to behave. Ship DFU when the person doing the update
+has a terminal, the drive when they do not, and both when you do not know -
+DFU is free to add.
 
 ---
 
@@ -510,7 +548,8 @@ ordering guarantees.
 | Self-OTA over Vendor / WebUSB | all | no | PyUSB / browser | yes, without rollback | ✅ classes + `EspUsbDeviceFirmwareUpdate` |
 | Self-OTA over CDC-NCM + HTTP | all | no | a browser | yes, without rollback | ✅ [`FirmwareHTTP`](../examples/FirmwareHTTP/) |
 | Self-OTA over MSC (drag and drop) | all | no | the file manager | yes, without rollback | ✅ `EspUsbDeviceMscFirmwareDisk` - [3.6](#36-the-firmware-drive) |
-| UF2 | S2 / S3 (TinyUF2) | depends | drag and drop | no (bootloader variant) | ❌ - external project, [6.1](#61-uf2) |
+| Self-OTA over MSC, UF2 container | all | no | the file manager | yes, without rollback | ✅ same class, any write order - [3.6](#36-the-firmware-drive) |
+| UF2 *bootloader* (TinyUF2) | S2 / S3 | n/a | drag and drop | no | ❌ out of scope - [6.2](#62-uf2-as-a-bootloader) |
 
 ---
 
@@ -559,45 +598,48 @@ sketch owns policy.** Applied to firmware update:
 
 ## 6. Not implemented yet
 
-`EspUsbDeviceDfu`, `EspUsbDeviceMscFirmwareDisk`,
-`EspUsbDeviceFirmwareUpdate` and `EspUsbDevice::rebootToBootloader()` were the
-first four items on this list and are now in the library. One entry is left, and
-it is the container format that would make the drive in
-[3.6](#36-the-firmware-drive) tolerate a host that writes out of order.
+Everything the first version of this document listed is now in the library:
+`EspUsbDeviceDfu`, `EspUsbDeviceMscFirmwareDisk` (raw and UF2),
+`EspUsbDeviceFirmwareUpdate` and `EspUsbDevice::rebootToBootloader()`. What
+follows is what is genuinely left, and one thing that is deliberately out of
+scope.
 
-A design sketch and a cost estimate, not a promise.
+### 6.1 WinUSB for the DFU interface on Windows
 
-### 6.1 UF2
+`dfu-util` talks to a device through WinUSB, and Windows binds WinUSB by itself
+only when the device asks for it in a Microsoft OS 2.0 descriptor. This library
+emits that descriptor set, but only for a **vendor** interface
+([advanced guide, 3.7](usb-device-advanced.md#37-bos-and-microsoft-os-20)) - so
+a DFU function on Windows today needs [Zadig](https://zadig.akeo.ie/) once per
+machine, while on Linux and macOS it needs nothing.
 
-[TinyUF2](https://github.com/adafruit/tinyuf2) is a UF2 bootloader for S2/S3
-that replaces the second-stage bootloader, and Espressif's
+Fixing it means emitting a function subset for the DFU interface with the
+WinUSB compatible ID, which the descriptor builder already knows how to do for
+the vendor case: the shape (flat versus subsets) is decided by
+`EspUsbDeviceMsOs20Layout` and a DFU-plus-anything device is the subsets case.
+The work is in deciding *when* to claim the DFU interface for WinUSB - always,
+or only when the sketch asks - since a device that also has a vendor interface
+then has two functions competing for the same compatible ID, and Windows
+resolves those through `usbccgp.sys` rather than in any way this library
+controls.
+
+Worth doing, worth measuring on a real Windows box, and not worth guessing at.
+
+### 6.2 UF2 as a bootloader
+
+[TinyUF2](https://github.com/adafruit/tinyuf2) replaces the second-stage
+bootloader with one that presents a UF2 drive, and Espressif's
 [`esp_tinyuf2`](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_device/esp_tinyuf2.html)
-packages both that and an application-side variant (`usb_uf2_ota`) that runs
-inside a normal app and requires two OTA partitions, plus an NVS-to-`.ini`
-feature.
+packages it for ESP-IDF along with an application-side variant.
 
-The bootloader variant is out of scope: it replaces the bootloader, it is an
-ESP-IDF component, and nothing about it is an Arduino USB *device library*
-concern. The application-side variant is [3.6](#36-the-firmware-drive) with a
-better container format.
+The application-side variant is [3.6](#36-the-firmware-drive), which this
+library now has. The bootloader variant is **out of scope**: it replaces the
+bootloader, it is an ESP-IDF component rather than an Arduino library, and its
+advantage - working when the application is too broken to run - is the one
+[route A](#2-route-a-hand-the-chip-to-the-rom) already provides from mask ROM
+with nothing to install and nothing to go wrong.
 
-**What it would buy.** A UF2 file is a sequence of self-describing 512-byte
-blocks, each carrying its own target address, block index and total count. Every
-restriction the firmware drive documents disappears: out-of-order writes are
-fine because each block says where it goes, host metadata is rejected because it
-has no UF2 magic, and completion is exact because block *n of N* is in the data
-rather than inferred from a directory entry. Accepting UF2 blocks alongside raw
-`.bin` is an addition to `EspUsbDeviceMscFirmwareDisk`, not a new class: the
-detection and the offset both come from the block header instead of from the
-`0xE9` magic and the write position.
-
-Note that UF2 does not replace DFU. They answer different questions: DFU is for
-a host with a tool, UF2 is for a host with a file manager. A device can have
-both, because DFU costs no endpoints.
-
-The friction is host-side: producing a `.uf2` from an Arduino build means a
-conversion step (`uf2conv.py`, family ID for the target, base address 0x00) that
-Arduino does not do for you.
+---
 
 ## Related documents
 

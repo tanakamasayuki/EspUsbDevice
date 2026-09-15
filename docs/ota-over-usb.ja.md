@@ -327,10 +327,12 @@ if (update.end()) {                   // 検証してから boot partition を�
 | **MSC** (`EspUsbDeviceMscFirmwareDisk`) | drag and drop | 1 (bulk duplex) | UXは最良で、host依存の挙動が最も多い経路。[3.6](#36-ファームウェアドライブ)。 |
 | **DFU** (`EspUsbDeviceDfu`) | `dfu-util` | **0** | 標準のhost toolと標準のprotocolがEP0上で動きます。経路全体をライブラリが実装し、スケッチはcallbackを渡すだけ。[3.5](#35-dfu-function)。 |
 
-このうち3つはexampleとして同梱しています。
-[`FirmwareDFU`](../examples/FirmwareDFU/)、
+5つすべてexampleとして同梱しています。
+[`FirmwareCDC`](../examples/FirmwareCDC/)、
+[`FirmwareVendor`](../examples/FirmwareVendor/)、
 [`FirmwareHTTP`](../examples/FirmwareHTTP/)、
-[`FirmwareMSC`](../examples/FirmwareMSC/) です。
+[`FirmwareMSC`](../examples/FirmwareMSC/)、
+[`FirmwareDFU`](../examples/FirmwareDFU/) です。
 
 NCM経路には補足が要ります。**hostにブラウザ以外のソフトが一切要らない唯一の経路**です。
 利用者が開発者でないならこれを、開発者ならDFU（1コマンド、endpoint消費ゼロ）を
@@ -458,19 +460,54 @@ classが決めていること。どれも見落としではなく判断です。
   バイト数が達したとき、または host がドライブを eject したとき。通常は directory entry
   が先に来ます。eject は、このコードが読める directory entry を書かない host のための
   保険です。
-- **やらないこと。** firmware 領域への書き込みは昇順でなければなりません。逆戻りや
-  穴あきは `ESP_ERR_INVALID_STATE` で拒否し、`onError()` を呼んで更新を中止します。
-  中途半端に書かれた状態が「完成」に見えることはありません。
+- **素の `.bin` にできないこと。** 書き込みは昇順でなければなりません。素のイメージは
+  「このバイトがどこに属するか」を何も言わないので、判断できるのは書き込み位置だけ
+  です。逆戻りや穴あきは `ESP_ERR_INVALID_STATE` で拒否し、`onError()` を呼んで
+  更新を中止します。中途半端に書かれた状態が「完成」に見えることはありません。
+
+**`.uf2` を渡せば、その最後の制約が消えます。** UF2ファイルは自己記述的な512 byte
+blockの列で、各blockが自分のtarget address、block index、総数を持ちます。このドライブは
+それも受け付けます。形式は最初に届いたバイトから自動判別するので、同じドライブが
+どちらも扱えます。コンテナで得られるもの:
+
+| | 素の `.bin` | `.uf2` |
+|---|---|---|
+| 書き込み順 | 昇順のみ | **任意**。各blockが行き先を持つ |
+| hostのメタデータ | `0xE9` heuristicで無視 | block magicで拒否 |
+| 長さ | FATのdirectory entryから | headerから |
+| 完了判定 | バイト数がその長さに達する、またはeject | 正確。全block indexを見たとき |
+| 同じblockの二重書き込み | 進捗と区別できない | 1回として数える |
+| 別chip向けのイメージ | 受理し、後の検証で落ちる | 最初のblockで拒否 |
+
+後ろ2つは強調する価値があります。hostがblockを書き直すのは普通のことで、素のイメージ
+ではそれがバイト数を水増しして早すぎるcommitに向かいます。UF2では「見たblock」の
+bitmapがあるので数が正確です。そしてfamily IDは、ESP32-S3向けイメージをESP32-P4へ
+という間違いを**flashに触れる前に**捕まえられる唯一の検査です。
+`EspUsbDeviceMscFirmwareDisk::uf2FamilyId()` がこのビルドの期待値を返します。
+`uf2conv.py --family` に渡すのがこの値です。
+
+内部では、UF2のときだけwriterが
+`EspUsbDeviceFirmwareUpdate::beginRandomAccess()` / `writeAt()` に切り替わります。
+headerがイメージ長を教えるので、最初のblockが届く前にその分だけpartitionをeraseでき、
+以降のblockはその中のどこへでも書けます。素のstreamでは最後まで長さが分からないので
+これができません。
+
+実機確認済み: UF2 block 8個を**逆順**に書いても同じイメージになること、重複blockが
+カウントを進めないこと、無印ESP32のfamily IDを持つblockが何も書かれる前に拒否される
+こと。
+
+摩擦はhost側にあります。Arduinoのbuildから `.uf2` を作るには変換の一手間
+(`uf2conv.py --family <id> --base 0x0`) が要り、Arduinoはやってくれません。そこが
+取引です。素の `.bin` はIDEがそのまま出してくれます。
 
 意識してサイズを決めるべきはスクラッチ領域です。`System Volume Information`、
 `.fseventsd`、`.Spotlight-V100` を吸収するのがここで、埋まると host は firmware 領域の
 cluster を割り当て始めます。`storage` が 16KB あればスクラッチに余裕があり、8KB が下限です。
 
-[3.5](#35-dfu-function) との比較: UX はこちらが上、保証は DFU が上です。DFU は block
-番号があるので順序は host が守るべきもの・device が正確に検査できるものになり、しかも
-endpoint を消費しません。ドライブは bulk 1 対を使い、host のファイルマネージャの挙動を
-そのまま引き受けます。更新する人が端末を使えるなら DFU、使えないならドライブ。
-ドライブに DFU 並みの順序保証を与えるコンテナ形式が [6.1](#61-uf2) です。
+[3.5](#35-dfu-function) との比較: UX はドライブが上、保証は DFU が少ないコストで上です。
+DFU は endpoint を消費せず、ドライブは bulk 1 対を使います。`.uf2` を渡せば正しさでは
+両者は近く、素の `.bin` を渡すとドライブは host の行儀を信じることになります。更新する人が
+端末を使えるなら DFU、使えないならドライブ、分からないなら両方。DFU は足すのが無料です。
 
 ---
 
@@ -485,7 +522,8 @@ endpoint を消費しません。ドライブは bulk 1 対を使い、host の�
 | Vendor / WebUSB経由の自力OTA | 全部 | 不要 | PyUSB / ブラウザ | rollback無しならしうる | ✅ class + `EspUsbDeviceFirmwareUpdate` |
 | CDC-NCM + HTTP経由の自力OTA | 全部 | 不要 | ブラウザ | rollback無しならしうる | ✅ [`FirmwareHTTP`](../examples/FirmwareHTTP/) |
 | MSC経由の自力OTA (drag and drop) | 全部 | 不要 | ファイルマネージャ | rollback無しならしうる | ✅ `EspUsbDeviceMscFirmwareDisk` — [3.6](#36-ファームウェアドライブ) |
-| UF2 | S2 / S3 (TinyUF2) | 場合による | drag and drop | bootloader版はしない | ❌ — 外部プロジェクト、[6.1](#61-uf2) |
+| MSC経由の自力OTA (UF2 コンテナ) | 全部 | 不要 | ファイルマネージャ | rollback無しならしうる | ✅ 同じ class、書き込み順は任意 — [3.6](#36-ファームウェアドライブ) |
+| UF2 *bootloader* (TinyUF2) | S2 / S3 | — | drag and drop | しない | ❌ 対象外 — [6.2](#62-uf2-を-bootloader-として使う) |
 
 ---
 
@@ -533,39 +571,44 @@ endpoint を消費しません。ドライブは bulk 1 対を使い、host の�
 
 ## 6. 未実装のもの
 
-`EspUsbDeviceDfu`、`EspUsbDeviceMscFirmwareDisk`、
-`EspUsbDeviceFirmwareUpdate`、`EspUsbDevice::rebootToBootloader()` はこのリストの
-最初の4項目で、ライブラリに入りました。残りは1つ。[3.6](#36-ファームウェアドライブ)の
-ドライブが、順不同で書く host にも耐えられるようになるコンテナ形式です。
+このドキュメントの初版が挙げていたものは、すべてライブラリに入りました。
+`EspUsbDeviceDfu`、`EspUsbDeviceMscFirmwareDisk`（素の `.bin` と UF2）、
+`EspUsbDeviceFirmwareUpdate`、`EspUsbDevice::rebootToBootloader()` です。
+以下は本当に残っているものと、意図的に対象外にしているものです。
 
-設計スケッチとコスト見積もりであって、約束ではありません。
+### 6.1 Windows で DFU interface に WinUSB を当てる
 
-### 6.1 UF2
+`dfu-util` は WinUSB 経由で device と話し、Windows が自動で WinUSB を当てるのは
+device が Microsoft OS 2.0 descriptor でそう要求したときだけです。このライブラリは
+その descriptor set を出しますが、**vendor** interface に対してだけです
+（[応用ガイド 3.7節](usb-device-advanced.ja.md#37-bosとmicrosoft-os-20)）。
+そのため Windows では DFU function に対して 1 台につき 1 回
+[Zadig](https://zadig.akeo.ie/) が要り、Linux と macOS では何も要りません。
 
-[TinyUF2](https://github.com/adafruit/tinyuf2) はsecond-stage bootloaderを置き換える
-S2/S3向けUF2 bootloaderで、Espressifの
+直すには、WinUSB compatible ID を持つ function subset を DFU interface に対しても
+出すことになります。descriptor builder は vendor 向けに同じことを既にやっており、
+形（flat か subsets か）は `EspUsbDeviceMsOs20Layout` が決め、DFU＋何かの device は
+subsets の側です。難しいのは**いつ** DFU interface を WinUSB として主張するかで、
+常にするのか sketch が要求したときだけにするのか。vendor interface も持つ device では
+2 つの function が同じ compatible ID を取り合い、その解決は `usbccgp.sys` の仕事で
+このライブラリの制御外だからです。
+
+やる価値はあり、実機の Windows で測る価値もあり、推測で書く価値はありません。
+
+### 6.2 UF2 を bootloader として使う
+
+[TinyUF2](https://github.com/adafruit/tinyuf2) は second-stage bootloader を
+UF2 ドライブを出すものに置き換えます。Espressif の
 [`esp_tinyuf2`](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_device/esp_tinyuf2.html)
-はそれと、通常のapp内で動きOTA partitionを2つ要求するapplication側の版
-(`usb_uf2_ota`)、さらにNVSを `.ini` に落とす機能をまとめています。
+はそれと application 側の版を ESP-IDF 向けにまとめたものです。
 
-bootloader版は対象外です。bootloaderを置き換えるものであり、ESP-IDF componentであり、
-ArduinoのUSB *device library* の関心事ではありません。application側の版は
-[3.6](#36-ファームウェアドライブ)をより良いコンテナ形式でやるものです。
+application 側の版は [3.6](#36-ファームウェアドライブ) で、これはライブラリに入りました。
+bootloader 版は**対象外**です。bootloader を置き換えるものであり、Arduino のライブラリ
+ではなく ESP-IDF component であり、その利点である「application が壊れていても動く」は
+[経路A](#2-経路a-chipをromに明け渡す) が mask ROM から、入れるものも壊れるものも無しで
+既に提供しているからです。
 
-**何が手に入るか。** UF2ファイルは自己記述的な512 byte blockの列で、各blockが自分の
-target address、block index、総数を持ちます。ファームウェアドライブが明記している制約は
-すべて消えます。各blockが行き先を持つので順不同でよく、hostのmetadataはUF2 magicを
-持たないので弾かれ、完了は directory entry からの推測ではなく「N個中n個目」がデータに
-入っているので正確です。素の `.bin` と並べてUF2 blockも受け付けるのは
-`EspUsbDeviceMscFirmwareDisk` への追加であって新しいclassではありません。検出もoffsetも、
-`0xE9` magic と書き込み位置ではなく block header から取るようになるだけです。
-
-摩擦はhost側にあります。Arduinoのbuildから `.uf2` を作るには変換の一手間
-(`uf2conv.py`、targetのfamily ID、base address 0x00) が要り、Arduinoはやってくれません。
-
-なおUF2はDFUの代わりではありません。答える問いが違います。DFUはtoolを持つhost向け、
-UF2はファイルマネージャしか無いhost向けです。DFUはendpointを消費しないので、
-1台に両方載せられます。
+---
 
 ## 関連ドキュメント
 

@@ -154,11 +154,9 @@ USB 経由のファームウェア更新は経路が複数あり、調査結果�
 - `FirmwareBootMode`: ROM download loader への再起動。1200bps touch / `dfu-util -e`
   / serial の 1 バイト、の 3 通り。
 
-未着手:
-
-- `FirmwareVendor`: `EspUsbDeviceVendor` の bulk + control request で独自 updater。
-  P4 HS では最速。host 側は PyUSB / WebUSB ページ。
-- `FirmwareCDC`: 最小構成。`EspUsbDeviceFirmwareUpdate` を CDC から駆動するだけ。
+- `FirmwareVendor`: `EspUsbDeviceVendor` の bulk + control request で独自 updater
+  （追加済み）。P4 HS では最速。host 側は pyusb スクリプト同梱。
+- `FirmwareCDC`: 最小構成（追加済み）。長さ＋バイト列だけ。pyserial スクリプト同梱。
 - `FirmwareMSC`: `EspUsbDeviceMscFirmwareDisk` による drag and drop（追加済み）。
   UX は最良ですが host 依存の挙動が最も多く、順序規則とスクラッチ領域のサイズが
   効きます。

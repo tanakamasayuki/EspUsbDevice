@@ -324,6 +324,28 @@ HID keyboard + CDC serial + MSC FAT RAM disk を 1 つの `EspUsbDevice` に載�
 - ROM を使わないため S2 / S3 / P4 で同じように動きます。
 - application partition が 2 つある partition scheme が必要です。
 
+## FirmwareCDC
+
+最小のファームウェア更新です。素の CDC serial port に長さを送ってからその分の
+バイトを送るだけ。
+詳しくは [FirmwareCDC/README.ja.md](FirmwareCDC/README.ja.md) を参照してください。
+
+- `EspUsbDeviceCdcSerial` と `EspUsbDeviceFirmwareUpdate`、それと 60 行の Python
+  host スクリプト。
+- すでに serial port を持つ機器に更新コマンドを足すときの雛形。
+- flash への書き込みは USB callback ではなく `loop()` で行います。これは偶然では
+  なくパターンです。
+
+## FirmwareVendor
+
+vendor interface 経由の更新です。コマンドは control request、イメージは bulk OUT。
+ライブラリ内で最速の経路です。
+詳しくは [FirmwareVendor/README.ja.md](FirmwareVendor/README.ja.md) を参照してください。
+
+- コマンドを EP0、データを bulk に分けるので、host は転送を邪魔せず進捗を読めます。
+- ESP32-P4 の high-speed リンクでは DFU の EP0 転送よりはるかに短時間で渡ります。
+  代償は host スクリプトを自分で配る必要があること。
+
 ## FirmwareMSC
 
 ボードが見せるドライブにファイルを放り込むファームウェア更新です。

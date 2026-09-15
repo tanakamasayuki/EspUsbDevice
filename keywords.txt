@@ -205,6 +205,11 @@ expectedSize	KEYWORD2
 markValid	KEYWORD2
 rollback	KEYWORD2
 cancelPendingBoot	KEYWORD2
+beginRandomAccess	KEYWORD2
+writeAt	KEYWORD2
+randomAccess	KEYWORD2
+uf2FamilyId	KEYWORD2
+updatingUf2	KEYWORD2
 ramSectorCount	KEYWORD2
 updating	KEYWORD2
 abort	KEYWORD2

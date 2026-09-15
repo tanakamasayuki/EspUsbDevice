@@ -51,6 +51,44 @@ static void fillImageBlock(uint8_t *data, size_t length, bool magic, uint8_t see
   data[0] = magic ? 0xe9 : 0x00;
 }
 
+// One UF2 block, as microsoft/uf2 defines it. payload is 256 bytes, which is
+// what uf2conv.py emits.
+static void buildUf2Block(uint8_t *block, uint32_t blockNumber, uint32_t totalBlocks,
+                          uint32_t baseAddress, uint32_t familyId, uint32_t flags)
+{
+  const uint32_t payload = 256;
+  memset(block, 0, 512);
+  const uint32_t words[8] = {
+      0x0a324655,                             // magicStart0
+      0x9e5d5157,                             // magicStart1
+      flags,                                  // flags
+      baseAddress + (blockNumber * payload),  // targetAddr
+      payload,                                // payloadSize
+      blockNumber,                            // blockNo
+      totalBlocks,                            // numBlocks
+      familyId,                               // familyID (flags say so)
+  };
+  for (int i = 0; i < 8; i++)
+  {
+    block[i * 4 + 0] = static_cast<uint8_t>(words[i] & 0xff);
+    block[i * 4 + 1] = static_cast<uint8_t>((words[i] >> 8) & 0xff);
+    block[i * 4 + 2] = static_cast<uint8_t>((words[i] >> 16) & 0xff);
+    block[i * 4 + 3] = static_cast<uint8_t>((words[i] >> 24) & 0xff);
+  }
+  for (uint32_t i = 0; i < payload; i++)
+  {
+    block[32 + i] = static_cast<uint8_t>(blockNumber * 7 + i);
+  }
+  if (blockNumber == 0)
+  {
+    block[32] = 0xe9; // the ESP image magic, at the start of the image
+  }
+  block[508] = 0x30;
+  block[509] = 0x6f;
+  block[510] = 0xb1;
+  block[511] = 0x0a; // magicEnd
+}
+
 static const char *bootLabel()
 {
   const esp_partition_t *boot = esp_ota_get_boot_partition();
@@ -221,6 +259,83 @@ static void testStreamAndVerify()
   check(strcmp(bootLabel(), esp_ota_get_running_partition()->label) == 0, "stream_boot_unchanged");
 }
 
+// UF2's reason to exist: every block says where it goes, so the host may write
+// them in any order at all. This writes them backwards.
+static void testUf2OutOfOrder()
+{
+  EspUsbDeviceMscFirmwareDisk disk(storage, sizeof(storage));
+  check(disk.begin("ESPUSB"), "uf2_begin");
+  check(EspUsbDeviceMscFirmwareDisk::uf2FamilyId() != 0, "uf2_family_id_known");
+
+  static volatile int errors = 0;
+  static volatile int completes = 0;
+  disk.onError([](esp_err_t error)
+               {
+                 (void)error;
+                 errors++;
+               });
+  disk.onComplete([]() -> bool
+                  {
+                    completes++;
+                    return false;
+                  });
+  disk.restartWhenComplete(false);
+
+  const uint32_t total = 8;
+  const uint32_t start = disk.ramSectorCount();
+  uint8_t block[512];
+
+  // Backwards, and at the sector the block's own address implies - which is
+  // exactly what a host that allocated clusters out of order would do.
+  for (uint32_t i = total; i > 1; i--)
+  {
+    const uint32_t blockNumber = i - 1;
+    buildUf2Block(block, blockNumber, total, 0, EspUsbDeviceMscFirmwareDisk::uf2FamilyId(),
+                  0x00002000);
+    check(disk.write(start + blockNumber, 0, block, sizeof(block)) == 512, "uf2_block_written");
+  }
+  check(disk.updating(), "uf2_update_open");
+  check(disk.updatingUf2(), "uf2_format_detected");
+  check(disk.written() == 256 * (total - 1), "uf2_seven_blocks_written");
+
+  // A block the host writes twice must not count twice, or the update commits
+  // before the rest of the image is there.
+  buildUf2Block(block, 3, total, 0, EspUsbDeviceMscFirmwareDisk::uf2FamilyId(), 0x00002000);
+  check(disk.write(start + 3, 0, block, sizeof(block)) == 512, "uf2_duplicate_accepted");
+  check(disk.updating(), "uf2_duplicate_did_not_complete");
+
+  // The last missing block finishes it. The image is nonsense, so the commit
+  // fails verification - which is the assertion that the commit really ran.
+  buildUf2Block(block, 0, total, 0, EspUsbDeviceMscFirmwareDisk::uf2FamilyId(), 0x00002000);
+  check(disk.write(start, 0, block, sizeof(block)) == 512, "uf2_last_block");
+  check(!disk.updating(), "uf2_update_closed");
+  check(completes == 0, "uf2_complete_not_called_for_bad_image");
+  check(errors == 1, "uf2_verification_error_reported");
+  check(strcmp(bootLabel(), esp_ota_get_running_partition()->label) == 0, "uf2_boot_unchanged");
+}
+
+// An image built for another chip carries a family ID that says so, and that is
+// the one mistake a raw .bin cannot be checked for.
+static void testUf2WrongFamilyRefused()
+{
+  EspUsbDeviceMscFirmwareDisk disk(storage, sizeof(storage));
+  check(disk.begin("ESPUSB"), "uf2_family_begin");
+
+  static volatile int errors = 0;
+  disk.onError([](esp_err_t error)
+               {
+                 (void)error;
+                 errors++;
+               });
+
+  uint8_t block[512];
+  // 0x1c5f21b0 is the original ESP32, which none of the targets here is.
+  buildUf2Block(block, 0, 4, 0, 0x1c5f21b0, 0x00002000);
+  check(disk.write(disk.ramSectorCount(), 0, block, sizeof(block)) == -1, "uf2_wrong_family_refused");
+  check(!disk.updating(), "uf2_wrong_family_no_update");
+  check(errors == 1, "uf2_wrong_family_error_reported");
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -234,6 +349,8 @@ void setup()
   testNonImageIgnored();
   testOutOfOrderRefused();
   testStreamAndVerify();
+  testUf2OutOfOrder();
+  testUf2WrongFamilyRefused();
 
   Serial.print("BOOT_AFTER ");
   Serial.println(bootLabel());

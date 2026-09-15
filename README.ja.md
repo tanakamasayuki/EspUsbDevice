@@ -404,7 +404,9 @@ Espressif USBAudioCard由来sourceを継続改変せず削除しています。�
   flash へ流し込み、検証し、そのイメージで再起動します。イメージは RAM に載りません。
   載るのはボリュームのメタデータと、host のファイルマネージャが残すものを吸収する
   スクラッチ領域だけです。firmware 領域への書き込みは昇順が前提で、そうでないものは
-  中途半端に適用せず拒否します。
+  中途半端に適用せず拒否します。**UF2** を渡せばこの制約は消えます。block ごとに
+  自分の target address を持つので書き込み順は任意、完了判定は正確、family ID が
+  別 chip 向けのイメージを flash に触れる前に拒否します。
 - `EspUsbDeviceFirmwareUpdate` は動作していない側の OTA partition へイメージを
   書き、検証し、boot partition を切り替えます。転送路に依存しません。DFU class が
   使うほか、CDC / vendor bulk / MSC / NCM 越しの HTTP アップロードでバイトを
@@ -413,7 +415,8 @@ Espressif USBAudioCard由来sourceを継続改変せず削除しています。�
     そもそも成立するかを答えます。application partition が 1 つだけの scheme
     （`huge_app`）には新しいイメージの置き場所がありません。
   - `begin()` / `write()` / `end()` / `abort()` でストリーム書き込み。flash は
-    先頭でまとめてではなく、書き込みが進むにつれて erase します。
+    先頭でまとめてではなく、書き込みが進むにつれて erase します。長さが分かっていて
+    順不同で届く転送路向けには `beginRandomAccess()` / `writeAt()` があります。
   - `markValid()` は動作中のイメージを確定し、bootloader の rollback 待ちを
     解除します。戻る手段は `rollback()` と `cancelPendingBoot()` です。
 - `EspUsbDevice::rebootToBootloader()` はチップの ROM download loader へ再起動し、

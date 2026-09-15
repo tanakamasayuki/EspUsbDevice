@@ -1544,9 +1544,25 @@ public:
   // front: erasing a whole 1.25 MB partition takes seconds, and a USB callback
   // is the wrong place to spend them.
   bool begin(size_t expectedSize = 0);
+  // Open the update for writes that arrive in any order.
+  //
+  // imageSize is required rather than optional here, and that is the whole
+  // difference: flash cannot be erased a byte at a time, so a write that
+  // arrives out of order cannot erase around itself. The image's worth of
+  // partition is erased before the first write instead of as the write
+  // advances - a few hundred milliseconds for a typical image, paid once.
+  //
+  // Only a transport that is told the length up front can use this. UF2 is the
+  // case it exists for: every block carries its own target address and the
+  // header says how many there are.
+  bool beginRandomAccess(size_t imageSize);
   // Append the next bytes of the image, in order. Erases the sectors it
   // reaches. False leaves the update aborted; read lastErrorName().
   bool write(const void *data, size_t length);
+  // Write at an explicit offset within the image. Needs beginRandomAccess();
+  // the two write calls cannot be mixed on one update, and the wrong one fails
+  // with ESP_ERR_INVALID_STATE rather than writing to the wrong place.
+  bool writeAt(size_t offset, const void *data, size_t length);
   // Verify what was written and make it the partition that boots next.
   //
   // Checks the image header, the length, and the checksum, so a truncated or
@@ -1559,9 +1575,15 @@ public:
 
   bool active() const;
   // Bytes accepted by write() so far.
+  // Bytes accepted so far. For a random-access update that is the sum of what
+  // every writeAt() took, which says how much of the image has arrived but not
+  // which parts.
   size_t written() const;
-  // The expectedSize begin() was given, or 0 when it was not told.
+  // The size begin() or beginRandomAccess() was given, or 0 when begin() was
+  // not told.
   size_t expectedSize() const;
+  // Whether this update is taking writes at explicit offsets.
+  bool randomAccess() const;
   esp_err_t lastError() const;
   const char *lastErrorName() const;
 
@@ -1588,6 +1610,7 @@ private:
   size_t written_ = 0;
   size_t expectedSize_ = 0;
   bool active_ = false;
+  bool randomAccess_ = false;
   esp_err_t lastError_ = ESP_OK;
 };
 
@@ -1600,12 +1623,19 @@ private:
 // streamed into EspUsbDeviceFirmwareUpdate as it arrives, which is what lets a
 // board with 320 KB of RAM accept a 1.25 MB image.
 //
-// The contract with the host is the one every file manager already keeps when
-// it copies a file onto an empty volume: the firmware region is written in
-// ascending order. A write that jumps backwards or leaves a gap is refused and
-// the update is abandoned with ESP_ERR_INVALID_STATE rather than half-written -
-// see docs/ota-over-usb.md section 6.1 for why a container format (UF2) is the
-// way out of that restriction rather than more code here.
+// Two file formats, and the difference between them is what the host is allowed
+// to do:
+//
+//  - A raw `.bin` is recognised by the ESP image magic `0xE9`, and must be
+//    written in ascending order. That is what every file manager does when
+//    copying onto an empty volume, but nothing makes it promise to. A write
+//    that jumps backwards or leaves a gap is refused and the update abandoned
+//    with ESP_ERR_INVALID_STATE rather than half-written.
+//  - A `.uf2` carries its own target address in every 512-byte block, so any
+//    order works, host metadata is rejected rather than guessed at, the length
+//    is known from the header instead of from a directory entry, and a family
+//    ID stops an image for the wrong chip. Produce one with uf2conv.py using
+//    uf2FamilyId() and base address 0.
 class EspUsbDeviceMscFirmwareDisk
 {
 public:
@@ -1636,6 +1666,11 @@ public:
   bool begin(const char *volumeLabel = "ESPUSB");
   bool attach(EspUsbDeviceMsc &msc);
 
+  // The UF2 family ID for the chip this was built for, which is what
+  // `uf2conv.py --family` has to be given for the image to be accepted here.
+  // From the registry in microsoft/uf2.
+  static uint32_t uf2FamilyId();
+
   // A file the volume shows before anything is copied to it. Call between
   // begin() and attach(); the text lives in the scratch area. Mostly useful for
   // saying what to drop on the drive and what happens next.
@@ -1662,6 +1697,9 @@ public:
   uint32_t ramSectorCount() const;
   size_t written() const;
   bool updating() const;
+  // Whether the update in progress arrived as UF2 blocks rather than a raw
+  // image. Meaningless while updating() is false.
+  bool updatingUf2() const;
   EspUsbDeviceFirmwareUpdate &firmware();
 
   // Internal (called from the MSC callbacks on the usbd task).
@@ -1670,7 +1708,20 @@ public:
   bool handleStartStop(uint8_t powerCondition, bool start, bool loadEject);
 
 private:
-  bool writeFirmwareRegion(size_t partitionOffset, const uint8_t *data, uint32_t size);
+  // How the file the host is writing is packaged. Decided once, from the first
+  // bytes to reach the firmware region, and reset when the update ends.
+  enum class ImageFormat : uint8_t
+  {
+    Unknown,
+    Raw,
+    Uf2,
+  };
+
+  bool writeFirmwareRegion(size_t regionOffset, const uint8_t *data, uint32_t size);
+  bool writeRawImage(size_t regionOffset, const uint8_t *data, uint32_t size);
+  bool writeUf2Stream(size_t regionOffset, const uint8_t *data, uint32_t size);
+  bool writeUf2Block(const uint8_t *block);
+  void releaseUf2State();
   void failUpdate(esp_err_t error);
   bool commit();
   // Length of the file the host is copying, taken from the root directory entry
@@ -1704,6 +1755,15 @@ private:
   uint32_t imageStartSector_ = 0;
   bool updating_ = false;
   bool restartWhenComplete_ = true;
+  ImageFormat format_ = ImageFormat::Unknown;
+
+  // UF2 bookkeeping. The bitmap is what makes the block count exact: a host
+  // that writes a block twice must not look like progress, or the update would
+  // commit early on an image that is not all there.
+  uint32_t uf2BaseAddress_ = 0;
+  uint32_t uf2TotalBlocks_ = 0;
+  uint32_t uf2BlocksSeen_ = 0;
+  uint8_t *uf2SeenBitmap_ = nullptr;
 
   EspUsbDeviceFirmwareUpdate firmware_;
   ProgressCallback progressCallback_;
