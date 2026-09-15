@@ -22,6 +22,7 @@ EspUsbDeviceDfuMode	KEYWORD1
 EspUsbDeviceFirmwareUpdate	KEYWORD1
 EspUsbDeviceMscFirmwareDisk	KEYWORD1
 EspUsbBulkInBuffering	KEYWORD1
+EspUsbDeviceVendorDirectError	KEYWORD1
 EspUsbAudioFunction	KEYWORD1
 EspUsbAudioPlaybackStream	KEYWORD1
 EspUsbAudioCaptureStream	KEYWORD1
@@ -121,6 +122,12 @@ endpointSize	KEYWORD2
 writeAvailable	KEYWORD2
 writeCapacity	KEYWORD2
 waitWritable	KEYWORD2
+directWriteSupported	KEYWORD2
+writeDirect	KEYWORD2
+lastDirectError	KEYWORD2
+lastDirectErrorName	KEYWORD2
+onTxComplete	KEYWORD2
+onRxData	KEYWORD2
 reportSize	KEYWORD2
 maxReportSize	KEYWORD2
 hidReportDescriptorLength	KEYWORD2

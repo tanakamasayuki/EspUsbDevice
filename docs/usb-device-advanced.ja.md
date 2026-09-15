@@ -653,6 +653,51 @@ needed    = ceil(64/4) + IN endpointごとの ceil(packet/4) の総和
 
 `begin()` は通常core 1のArduino loop taskから呼ばれ、固定しないusbd taskはその隣に落ち着きがちです。「そのままにする」が答えでないときの答えは、たいてい `taskCoreId = 0` です。single coreのターゲットでは何もしません。
 
+### 5.7 direct転送経路（opt-in）
+
+ここまでは全部buffered経路の話です。`write()` がclass FIFOへcopyし、TinyUSBがそのFIFOからcontrollerのendpoint bufferへcopyし、controllerが送ります。1 byteあたりcopy 2回で、FIFOがあるおかげでスケッチは所有権を考えずにデータを渡せます。
+
+すでにメモリ上にある大きなblockを流すスケッチなら、この2回とも省けます。`EspUsbDeviceVendor::writeDirect()` はbulk IN endpointをclaimして、**呼び出し側自身のbuffer**で転送を1本armします。
+
+```cpp
+static uint8_t __attribute__((aligned(64))) stage[2][27136];
+
+Vendor.onTxComplete([](size_t sent) {   // usbd task。短く保つこと
+  fill(stage[next]);
+  Vendor.writeDirect(stage[next], sizeof(stage[next]));
+  next ^= 1;
+});
+```
+
+**ビルドが要求しない限り無効です。** スケッチの `build_opt.h` に `-DCFG_TUD_VENDOR_TXRX_BUFFERED=0` を入れ、`arduino-cli compile --clean` でビルドします。`--clean` が無いとスケッチだけが再ビルドされ、**ライブラリは前のオブジェクトのまま**です。`build_opt.h` は応答ファイル経由で全translation unitのコマンドラインに乗りますが、stale buildではライブラリを再コンパイルしないので、スケッチはマクロを見てライブラリは見ない状態になります。このフラグが違う2つのビルドはサイズが違うはずで、ESP32-P4ではclass FIFOが消えて静的RAMが136,728→131,872 byteになります。**サイズが同じなら効いていません。** `EspUsbDeviceVendor::directWriteSupported()` はライブラリ自身の視点を返すので、スケッチは自分のマクロではなくこちらをassertできます。
+
+このビルドで失うもの: class FIFOが無いので `available()` と `read()` は0を返し、`flush()` は何もしません。受信は `onRxData(data, length)` でcontrollerのbufferから直接渡り、**ポインタはcallbackの間だけ有効**です。`write()` は動きますがendpoint bufferへ1回1 buffer分copyする経路で、同じinterfaceで `writeDirect()` と混ぜてはいけません（同じendpointをclaimするため）。
+
+呼び出し側の契約。最初の1つ以外はすべて検査します。
+
+| 規則 | 拒否理由 |
+|---|---|
+| `onTxComplete()` が報告するまでbufferを生かし、触らない | 検査不能 |
+| 先頭アドレスが64 byte整列 | `NotAligned` |
+| DMA可能なメモリ（PSRAMは不可。自分で退避すること） | `NotDmaCapable` |
+| 別coreで書いたなら `esp_cache_msync(..., C2M)` 済み | 検査不能 |
+| 1〜65535 byte | `BadArgument` |
+
+**長さには整列の規則を意図的に置いていません。** runの最後のblockやstatus行は短くて半端で、それは普通に送ってよいものです。単にhost側のtransferがshort packetで終わるだけです。`lastDirectError()` が理由を返し、`Busy`（転送がまだin flight）は間違いではなく**通常のbackpressure**です。
+
+**なぜruntimeの選択ではなくbuild flagなのか。** bufferedビルドでは、長さが `wMaxPacketSize` の倍数だった転送の完了後にvendor classが自前のZLPをarmし、そのZLPがendpointのclaimを取ります。ESP32-P4 high speed・27,136 byte stageでの実測では、`onTxComplete()` の中でarmすればapplication側がclaimを取れてstreamは流れ、**別のtaskからarmすると**ZLPが勝って次の `writeDirect()` が拒否され、**1本で止まります**。どのtaskから呼んだかに正しさが乗るAPIを出すより、directビルドではその経路自体をcompileしない、という形にしました。そうすればarmするtaskは問題でなくなります。
+
+ESP32-P4 high speed、一方向bulk IN、pyusbがURBを1本ずつ読む構成での実測です（絶対値はhost律速なので、意味があるのは構成間の差です）。
+
+| ビルド | 次のarm元 | stage | 結果 |
+|---|---|---|---|
+| direct | `onTxComplete()` | 27,136 | **27.2 MB/s** |
+| direct | 別task | 27,136 | 26.8 MB/s |
+| direct | `onTxComplete()` | 27,000（非整列） | 27.6 MB/s |
+| buffered | どちらでも | 27,136 | `writeDirect()` が `NotSupported` で拒否 |
+
+directビルドでは完了callbackからのarmは必須ではありませんが、スケジューリングの隙間でendpointを遊ばせないのはこの形です。[5.5](#55-endpointごとの送信fifo)のbulk IN送信FIFOの2 packet化は影響を受けず、両ビルドとも既定で有効のままです。
+
 ---
 
 ## 6. 転送のタイミングと帯域
