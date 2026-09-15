@@ -636,6 +636,12 @@ needed    = ceil(64/4) + IN endpointごとの ceil(packet/4) の総和
 
 `EspUsbBulkInBuffering::Single` はコントローラの既定のままにします。`Double` は要求で、収まらない場合は endpointが開かないdeviceを起動する代わりに `begin()` が `ESP_ERR_INVALID_SIZE` で失敗します。実際に適用されたビットマップは `EspUsbDevice::bulkInDoubleBuffered()` が返します。ストリームが思ったより遅いときに最初に見る値です。
 
+上の計算はコントローラと突き合わせて確認しています。ESP32-P4 high speed で vendor interface 1 本（512 byte の bulk pair）のとき、DWC2 のレジスタは GRXFSIZ 304 words、EP0 の IN FIFO が offset 976 に 16 words、bulk IN endpoint が offset 720 に 256 words でした。buffer DMA のぶんを引いた 992 words のうち 576 words で、**256 words はちょうど 512 byte パケット 2 個分**です。同じデバイスで `bulkInDoubleBuffered()` は `0x0002` を返します。
+
+**これらのレジスタは、`begin()` の直後ではなく host がデバイスを configure したあとに読んでください。** FIFO が切り分けられるのは `dcd_edpt_open()`、つまり SET_CONFIGURATION の時点で、`begin()` が戻ったずっとあとです。それより早く読むと割り当て前の値が返り、**もっともらしいが間違った答え**になります。ここでは GRXFSIZ 1024、endpoint FIFO 512 words と読め、合計がコントローラの持つ RAM の 2 倍になりました。global 側のレジスタ（`GAHBCFG` / `GHWCFG2` / `GHWCFG3`）は core 初期化時に確定するのでその時点でも正しく読め、**ダンプの半分だけが正しい**のがこの罠のたちの悪いところです。
+
+対照として、同じデバイス・同じ host・読み 8 本 in flight、27,136 と 65,024 byte の direct 転送では、既定の 2 packet 化で 46.4 / 46.3 MB/s、`EspUsbBulkInBuffering::Single` では 27.0 / 27.0 MB/s でした。**+72%** で、既定がこうなっている理由がこれです。
+
 ### 5.6 usbd taskをどのcoreで走らせるか
 
 `config.taskCoreId` はUSB device taskをcoreに固定します。**既定は -1、つまり固定しません。** これまでのリリースと同じ挙動です。
