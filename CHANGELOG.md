@@ -20,8 +20,6 @@
   16 ch stream を本来の速度に戻すために取り除いた 2 つのうちの 1 つでした。
   コード変更はありません。挙動は最初からこうでした。
 
-## Unreleased
-
 ## 2.4.0
 - (EN) New opt-in direct transfer path on `EspUsbDeviceVendor`, for sketches
   that stream large blocks they already hold in memory.
