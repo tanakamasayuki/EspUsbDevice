@@ -368,6 +368,30 @@ See [FirmwareDFU/README.md](FirmwareDFU/README.md) for details.
 - The ROM is not involved, so it behaves the same on S2, S3 and P4.
 - Needs a partition scheme with two application partitions.
 
+## FirmwareCDC
+
+The smallest firmware update there is: a length, then that many bytes, over a
+plain CDC serial port.
+See [FirmwareCDC/README.md](FirmwareCDC/README.md) for details.
+
+- `EspUsbDeviceCdcSerial` plus `EspUsbDeviceFirmwareUpdate`, and a 60-line
+  Python host script.
+- The shape to copy when adding an update command to a device that already has
+  a serial port.
+- The flash writing happens in `loop()`, not in the USB callback - that is the
+  pattern, not an accident.
+
+## FirmwareVendor
+
+Firmware update over a vendor interface: control requests for the commands, bulk
+OUT for the image. The fastest route in the library.
+See [FirmwareVendor/README.md](FirmwareVendor/README.md) for details.
+
+- Commands on EP0 and data on bulk, so the host can read progress without
+  interrupting the transfer.
+- On an ESP32-P4 high-speed link this moves an image in a fraction of the time
+  DFU's EP0 transfers take; the cost is a host script you have to ship.
+
 ## FirmwareMSC
 
 Firmware update by dragging a file onto a drive the board presents.

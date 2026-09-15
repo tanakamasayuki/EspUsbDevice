@@ -445,6 +445,9 @@ was deleted rather than carried forward. See
   is never held in RAM - only the volume metadata and a scratch area for
   whatever the host's file manager leaves behind. Writes into the firmware
   region must ascend; one that does not is refused rather than half-applied.
+  Feed it a **UF2** instead and that restriction goes away - each block carries
+  its own target address, so any write order works, completion is exact, and a
+  family ID refuses an image built for another chip before flash is touched.
 - `EspUsbDeviceFirmwareUpdate` writes an image into the OTA partition that is not
   running, verifies it, and switches the boot partition. Transport-independent:
   the DFU class drives it, and so can a sketch receiving bytes over CDC, vendor
@@ -453,7 +456,8 @@ was deleted rather than carried forward. See
     whether one can work at all - a single-app partition scheme (`huge_app`) has
     nowhere to put a new image.
   - `begin()` / `write()` / `end()` / `abort()` stream it in; the flash is erased
-    as the write advances, not up front.
+    as the write advances, not up front. `beginRandomAccess()` / `writeAt()` are
+    the pair for a transport that knows the length and delivers out of order.
   - `markValid()` confirms the running image, cancelling a pending bootloader
     rollback; `rollback()` and `cancelPendingBoot()` are the ways back.
 - `EspUsbDevice::rebootToBootloader()` restarts into the chip's ROM download

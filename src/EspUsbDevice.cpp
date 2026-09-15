@@ -4452,6 +4452,7 @@ bool EspUsbDeviceFirmwareUpdate::begin(size_t expectedSize)
   abort();
   written_ = 0;
   expectedSize_ = 0;
+  randomAccess_ = false;
   lastError_ = ESP_OK;
 
   const esp_partition_t *target = firmwareTargetPartition();
@@ -4494,10 +4495,61 @@ bool EspUsbDeviceFirmwareUpdate::begin(size_t expectedSize)
 #endif
 }
 
+bool EspUsbDeviceFirmwareUpdate::beginRandomAccess(size_t imageSize)
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  abort();
+  written_ = 0;
+  expectedSize_ = 0;
+  randomAccess_ = false;
+  lastError_ = ESP_OK;
+
+  if (imageSize == 0)
+  {
+    lastError_ = ESP_ERR_INVALID_ARG;
+    return false;
+  }
+  const esp_partition_t *target = firmwareTargetPartition();
+  if (!target)
+  {
+    lastError_ = ESP_ERR_NOT_FOUND;
+    return false;
+  }
+  if (imageSize > static_cast<size_t>(target->size))
+  {
+    lastError_ = ESP_ERR_INVALID_SIZE;
+    return false;
+  }
+
+  // The real size rather than OTA_WITH_SEQUENTIAL_WRITES: esp_ota_begin()
+  // erases exactly this much before returning, which is what makes a later
+  // write at an arbitrary offset land in erased flash. Erasing the whole
+  // partition instead would cost the caller a second it does not need to spend.
+  esp_ota_handle_t handle = 0;
+  const esp_err_t err = esp_ota_begin(target, imageSize, &handle);
+  if (err != ESP_OK)
+  {
+    lastError_ = err;
+    return false;
+  }
+
+  handle_ = static_cast<uint32_t>(handle);
+  partition_ = target;
+  expectedSize_ = imageSize;
+  randomAccess_ = true;
+  active_ = true;
+  return true;
+#else
+  (void)imageSize;
+  lastError_ = ESP_ERR_NOT_SUPPORTED;
+  return false;
+#endif
+}
+
 bool EspUsbDeviceFirmwareUpdate::write(const void *data, size_t length)
 {
 #if ESP_USB_DEVICE_HAS_OTA
-  if (!active_)
+  if (!active_ || randomAccess_)
   {
     lastError_ = ESP_ERR_INVALID_STATE;
     return false;
@@ -4541,6 +4593,51 @@ bool EspUsbDeviceFirmwareUpdate::write(const void *data, size_t length)
 #endif
 }
 
+bool EspUsbDeviceFirmwareUpdate::writeAt(size_t offset, const void *data, size_t length)
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  if (!active_ || !randomAccess_)
+  {
+    lastError_ = ESP_ERR_INVALID_STATE;
+    return false;
+  }
+  if (length == 0)
+  {
+    return true;
+  }
+  if (!data)
+  {
+    lastError_ = ESP_ERR_INVALID_ARG;
+    return false;
+  }
+  if (offset + length > expectedSize_)
+  {
+    // Past the end of what beginRandomAccess() erased, so the write would land
+    // in flash nobody prepared.
+    lastError_ = ESP_ERR_INVALID_SIZE;
+    abort();
+    return false;
+  }
+
+  const esp_err_t err = esp_ota_write_with_offset(static_cast<esp_ota_handle_t>(handle_),
+                                                 data, length, offset);
+  if (err != ESP_OK)
+  {
+    lastError_ = err;
+    abort();
+    return false;
+  }
+  written_ += length;
+  return true;
+#else
+  (void)offset;
+  (void)data;
+  (void)length;
+  lastError_ = ESP_ERR_NOT_SUPPORTED;
+  return false;
+#endif
+}
+
 bool EspUsbDeviceFirmwareUpdate::end()
 {
 #if ESP_USB_DEVICE_HAS_OTA
@@ -4556,6 +4653,7 @@ bool EspUsbDeviceFirmwareUpdate::end()
   // partition moved.
   const esp_err_t closed = esp_ota_end(static_cast<esp_ota_handle_t>(handle_));
   active_ = false;
+  randomAccess_ = false;
   handle_ = 0;
   if (closed != ESP_OK)
   {
@@ -4587,6 +4685,7 @@ void EspUsbDeviceFirmwareUpdate::abort()
   }
 #endif
   active_ = false;
+  randomAccess_ = false;
   handle_ = 0;
 }
 
@@ -4603,6 +4702,11 @@ size_t EspUsbDeviceFirmwareUpdate::written() const
 size_t EspUsbDeviceFirmwareUpdate::expectedSize() const
 {
   return expectedSize_;
+}
+
+bool EspUsbDeviceFirmwareUpdate::randomAccess() const
+{
+  return randomAccess_;
 }
 
 esp_err_t EspUsbDeviceFirmwareUpdate::lastError() const
@@ -4773,6 +4877,19 @@ constexpr uint32_t kFirmwareDiskSectorSize = 512;
 constexpr uint32_t kFirmwareDiskMaxClusters = 4084;
 constexpr uint16_t kFirmwareDiskClusterOptions[] = {8, 16, 32, 64, 128};
 
+// UF2, as microsoft/uf2 defines it: 512-byte blocks, three magic words, and a
+// 476-byte payload window.
+constexpr uint32_t kUf2MagicStart0 = 0x0a324655; // "UF2\n"
+constexpr uint32_t kUf2MagicStart1 = 0x9e5d5157;
+constexpr uint32_t kUf2MagicEnd = 0x0ab16f30;
+constexpr uint32_t kUf2BlockSize = 512;
+constexpr uint32_t kUf2MaxPayload = 476;
+constexpr uint32_t kUf2FlagNotMainFlash = 0x00000001;
+constexpr uint32_t kUf2FlagFamilyIdPresent = 0x00002000;
+// A ceiling on what a header may claim, so a corrupt numBlocks cannot ask for
+// an absurd bitmap. 65536 blocks is 16 MiB even at the smallest useful payload.
+constexpr uint32_t kUf2MaxBlocks = 65536;
+
 void firmwareDiskPut16(uint8_t *dst, uint16_t value)
 {
   dst[0] = static_cast<uint8_t>(value & 0xff);
@@ -4797,6 +4914,19 @@ uint16_t firmwareDiskRead16(const uint8_t *src)
 {
   return static_cast<uint16_t>(static_cast<uint16_t>(src[0]) |
                                (static_cast<uint16_t>(src[1]) << 8));
+}
+
+uint32_t firmwareDiskReadLe32(const uint8_t *src)
+{
+  return static_cast<uint32_t>(src[0]) | (static_cast<uint32_t>(src[1]) << 8) |
+         (static_cast<uint32_t>(src[2]) << 16) | (static_cast<uint32_t>(src[3]) << 24);
+}
+
+bool firmwareDiskIsUf2Block(const uint8_t *block)
+{
+  return firmwareDiskReadLe32(block) == kUf2MagicStart0 &&
+         firmwareDiskReadLe32(block + 4) == kUf2MagicStart1 &&
+         firmwareDiskReadLe32(block + kUf2BlockSize - 4) == kUf2MagicEnd;
 }
 
 // "README  TXT" from "README.TXT". False for anything 8.3 cannot hold, which is
@@ -4842,12 +4972,36 @@ EspUsbDeviceMscFirmwareDisk::EspUsbDeviceMscFirmwareDisk(uint8_t *storage, size_
 {
 }
 
+uint32_t EspUsbDeviceMscFirmwareDisk::uf2FamilyId()
+{
+  // The registry in microsoft/uf2 (utils/uf2families.json).
+#if defined(CONFIG_IDF_TARGET_ESP32S2)
+  return 0xbfdd4eeeu;
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+  return 0xc47e5767u;
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+  return 0x3d308e94u;
+#else
+  return 0;
+#endif
+}
+
 EspUsbDeviceMscFirmwareDisk::~EspUsbDeviceMscFirmwareDisk()
 {
   if (updating_)
   {
     firmware_.abort();
   }
+  releaseUf2State();
+}
+
+void EspUsbDeviceMscFirmwareDisk::releaseUf2State()
+{
+  free(uf2SeenBitmap_);
+  uf2SeenBitmap_ = nullptr;
+  uf2BaseAddress_ = 0;
+  uf2TotalBlocks_ = 0;
+  uf2BlocksSeen_ = 0;
 }
 
 bool EspUsbDeviceMscFirmwareDisk::begin(const char *volumeLabel)
@@ -4926,6 +5080,8 @@ bool EspUsbDeviceMscFirmwareDisk::begin(const char *volumeLabel)
   memset(storage_, 0, ramSectors_ * kFirmwareDiskSectorSize);
   nextScratchCluster_ = 2;
   nextRootEntry_ = 0;
+  format_ = ImageFormat::Unknown;
+  releaseUf2State();
 
   uint8_t *boot = storage_;
   boot[0] = 0xeb;
@@ -5134,6 +5290,11 @@ bool EspUsbDeviceMscFirmwareDisk::updating() const
   return updating_;
 }
 
+bool EspUsbDeviceMscFirmwareDisk::updatingUf2() const
+{
+  return format_ == ImageFormat::Uf2;
+}
+
 EspUsbDeviceFirmwareUpdate &EspUsbDeviceMscFirmwareDisk::firmware()
 {
   return firmware_;
@@ -5187,44 +5348,72 @@ int32_t EspUsbDeviceMscFirmwareDisk::read(uint32_t lba, uint32_t offset, void *b
   return static_cast<int32_t>(size);
 }
 
-bool EspUsbDeviceMscFirmwareDisk::writeFirmwareRegion(size_t partitionOffset,
+bool EspUsbDeviceMscFirmwareDisk::writeFirmwareRegion(size_t regionOffset,
                                                       const uint8_t *data, uint32_t size)
 {
-  if (!updating_)
+  if (size == 0)
   {
-    // An ESP application image starts with 0xE9. Anything else written into
-    // this region is the host's business - a file the user dropped by mistake,
-    // or metadata that spilled out of the scratch area - and is dropped rather
-    // than flashed.
-    if (size == 0 || data[0] != 0xe9)
+    return true;
+  }
+  if (format_ == ImageFormat::Unknown)
+  {
+    // What the host is copying is decided once, from the first bytes to land in
+    // this region. Anything that is neither format is left alone - it is a file
+    // dropped by mistake, or metadata that spilled out of the scratch area, and
+    // the next write gets the same chance.
+    if (size >= kUf2BlockSize && regionOffset % kUf2BlockSize == 0 &&
+        firmwareDiskIsUf2Block(data))
+    {
+      format_ = ImageFormat::Uf2;
+    }
+    else if (data[0] == 0xe9)
+    {
+      format_ = ImageFormat::Raw;
+    }
+    else
     {
       return true;
     }
+  }
+
+  if (format_ == ImageFormat::Uf2)
+  {
+    return writeUf2Stream(regionOffset, data, size);
+  }
+  return writeRawImage(regionOffset, data, size);
+}
+
+bool EspUsbDeviceMscFirmwareDisk::writeRawImage(size_t regionOffset, const uint8_t *data,
+                                                uint32_t size)
+{
+  if (!updating_)
+  {
     if (!firmware_.begin())
     {
       failUpdate(firmware_.lastError());
       return false;
     }
     updating_ = true;
-    imageStartSector_ = static_cast<uint32_t>(partitionOffset / kFirmwareDiskSectorSize);
-    partitionOffset = 0;
+    imageStartSector_ = static_cast<uint32_t>(regionOffset / kFirmwareDiskSectorSize);
+    regionOffset = 0;
   }
   else
   {
     const size_t imageBase =
         static_cast<size_t>(imageStartSector_) * kFirmwareDiskSectorSize;
-    if (partitionOffset < imageBase)
+    if (regionOffset < imageBase)
     {
       failUpdate(ESP_ERR_INVALID_STATE);
       return false;
     }
-    partitionOffset -= imageBase;
+    regionOffset -= imageBase;
   }
 
-  // Sequential only, and loudly so. esp_ota_write() appends; a host that jumps
-  // backwards or leaves a hole would otherwise produce an image that looks
-  // written and is not.
-  if (partitionOffset != firmware_.written())
+  // Sequential only, and loudly so. A raw image says nothing about where its
+  // bytes belong, so the write position is the only thing that can; a host that
+  // jumps backwards or leaves a hole would otherwise produce an image that
+  // looks written and is not. UF2 is the format that removes this restriction.
+  if (regionOffset != firmware_.written())
   {
     failUpdate(ESP_ERR_INVALID_STATE);
     return false;
@@ -5237,6 +5426,122 @@ bool EspUsbDeviceMscFirmwareDisk::writeFirmwareRegion(size_t partitionOffset,
   if (progressCallback_)
   {
     progressCallback_(firmware_.written());
+  }
+  return true;
+}
+
+bool EspUsbDeviceMscFirmwareDisk::writeUf2Stream(size_t regionOffset, const uint8_t *data,
+                                                 uint32_t size)
+{
+  if (regionOffset % kUf2BlockSize != 0)
+  {
+    // A UF2 file is a whole number of 512-byte blocks and a 512-byte-sector
+    // volume delivers it that way. Anything else is not a block boundary and
+    // cannot be parsed as one.
+    return true;
+  }
+  while (size >= kUf2BlockSize)
+  {
+    if (firmwareDiskIsUf2Block(data))
+    {
+      if (!writeUf2Block(data))
+      {
+        return false;
+      }
+    }
+    data += kUf2BlockSize;
+    size -= kUf2BlockSize;
+  }
+  return true;
+}
+
+bool EspUsbDeviceMscFirmwareDisk::writeUf2Block(const uint8_t *block)
+{
+  const uint32_t flags = firmwareDiskReadLe32(block + 8);
+  const uint32_t targetAddress = firmwareDiskReadLe32(block + 12);
+  const uint32_t payloadSize = firmwareDiskReadLe32(block + 16);
+  const uint32_t blockNumber = firmwareDiskReadLe32(block + 20);
+  const uint32_t totalBlocks = firmwareDiskReadLe32(block + 24);
+  const uint32_t fileSizeOrFamily = firmwareDiskReadLe32(block + 28);
+
+  if (payloadSize > kUf2MaxPayload || totalBlocks == 0 || totalBlocks > kUf2MaxBlocks ||
+      blockNumber >= totalBlocks)
+  {
+    failUpdate(ESP_ERR_INVALID_SIZE);
+    return false;
+  }
+  if ((flags & kUf2FlagFamilyIdPresent) != 0 && fileSizeOrFamily != uf2FamilyId())
+  {
+    // An image for a different chip. Refusing it here is the whole reason the
+    // family ID exists, and it is the one mistake a raw `.bin` cannot catch.
+    failUpdate(ESP_ERR_INVALID_VERSION);
+    return false;
+  }
+
+  if (!updating_)
+  {
+    // Every block says where it goes, so the start of the image is derivable
+    // from any block - which is what makes the order the host writes in
+    // irrelevant.
+    uf2BaseAddress_ = targetAddress - (blockNumber * payloadSize);
+    uf2TotalBlocks_ = totalBlocks;
+    uf2BlocksSeen_ = 0;
+
+    const size_t imageSize = static_cast<size_t>(totalBlocks) * payloadSize;
+    uf2SeenBitmap_ = static_cast<uint8_t *>(calloc((totalBlocks + 7) / 8, 1));
+    if (!uf2SeenBitmap_)
+    {
+      failUpdate(ESP_ERR_NO_MEM);
+      return false;
+    }
+    if (!firmware_.beginRandomAccess(imageSize))
+    {
+      failUpdate(firmware_.lastError());
+      return false;
+    }
+    updating_ = true;
+  }
+  else if (totalBlocks != uf2TotalBlocks_)
+  {
+    // Two different files interleaved into one region.
+    failUpdate(ESP_ERR_INVALID_STATE);
+    return false;
+  }
+
+  const uint32_t byteIndex = blockNumber / 8;
+  const uint8_t bit = static_cast<uint8_t>(1u << (blockNumber % 8));
+  if ((uf2SeenBitmap_[byteIndex] & bit) != 0)
+  {
+    // Already had this one. Writing it again would be harmless; counting it
+    // again would commit the update before the rest of the image arrived.
+    return true;
+  }
+
+  if ((flags & kUf2FlagNotMainFlash) == 0)
+  {
+    if (targetAddress < uf2BaseAddress_)
+    {
+      failUpdate(ESP_ERR_INVALID_ARG);
+      return false;
+    }
+    if (!firmware_.writeAt(targetAddress - uf2BaseAddress_, block + 32, payloadSize))
+    {
+      failUpdate(firmware_.lastError());
+      return false;
+    }
+  }
+
+  uf2SeenBitmap_[byteIndex] = static_cast<uint8_t>(uf2SeenBitmap_[byteIndex] | bit);
+  uf2BlocksSeen_++;
+  if (progressCallback_)
+  {
+    progressCallback_(firmware_.written());
+  }
+  if (uf2BlocksSeen_ >= uf2TotalBlocks_)
+  {
+    // Exact, unlike the raw path: the header said how many blocks there are and
+    // every one of them has been seen.
+    commit();
   }
   return true;
 }
@@ -5304,7 +5609,9 @@ size_t EspUsbDeviceMscFirmwareDisk::announcedImageSize() const
 
 void EspUsbDeviceMscFirmwareDisk::checkForCompletion()
 {
-  if (!updating_)
+  // UF2 knows exactly when it is finished - the header says how many blocks
+  // there are - so the directory-entry heuristic is the raw path's alone.
+  if (!updating_ || format_ != ImageFormat::Raw)
   {
     return;
   }
@@ -5321,6 +5628,8 @@ void EspUsbDeviceMscFirmwareDisk::failUpdate(esp_err_t error)
   firmware_.abort();
   updating_ = false;
   imageStartSector_ = 0;
+  format_ = ImageFormat::Unknown;
+  releaseUf2State();
   if (errorCallback_)
   {
     errorCallback_(error);
@@ -5335,6 +5644,8 @@ bool EspUsbDeviceMscFirmwareDisk::commit()
   }
   updating_ = false;
   imageStartSector_ = 0;
+  format_ = ImageFormat::Unknown;
+  releaseUf2State();
 
   if (!firmware_.end())
   {

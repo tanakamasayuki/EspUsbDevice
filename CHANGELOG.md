@@ -51,7 +51,20 @@
   `tests/single/msc_firmware_disk`, which drives the block callbacks directly
   and covers the geometry, the published FAT, image detection, the ordering
   rule, the directory-entry commit and the verification that refuses a bad
-  image.
+  image. The drive also takes **UF2**, which removes the ordering rule
+  altogether: each 512-byte block carries its own target address, so any write
+  order works, host metadata is rejected by the block magic rather than guessed
+  at, completion is exact (a seen-block bitmap, so a block written twice is not
+  counted twice), and a family ID refuses an image built for a different chip
+  before any flash is touched -
+  `EspUsbDeviceMscFirmwareDisk::uf2FamilyId()` is what `uf2conv.py --family`
+  needs. Underneath, UF2 uses new
+  `EspUsbDeviceFirmwareUpdate::beginRandomAccess()` / `writeAt()`, which erase
+  the image's worth of partition up front so a later write can land anywhere in
+  it. Verified on hardware with eight blocks written in reverse order. New
+  examples `FirmwareCDC` (a length and then the bytes, over a CDC port, with a
+  Python host script) and `FirmwareVendor` (control requests for the commands,
+  bulk OUT for the image - the fastest route here, with a pyusb host script).
 - (JA) ドライブにファイルを放り込むファームウェア更新に対応しました。
   `EspUsbDeviceMscFirmwareDisk` は、データ領域が OTA partition **そのもの**である
   FAT12 ボリュームを提供します。host が `.bin` をコピーすると、device が ESP image の
@@ -67,7 +80,18 @@
   コピーしたものを host が読み返しても一致します。example `FirmwareMSC`、テスト
   `tests/single/msc_firmware_disk`（block callback を直接叩いて、幾何・公開する FAT・
   イメージ検出・順序規則・directory entry による commit・不正イメージの検証拒否を
-  カバー）を追加しました。
+  カバー）を追加しました。このドライブは **UF2** も受け付け、その場合は順序規則が
+  完全に消えます。512 byte block ごとに自分の target address を持つので書き込み順は
+  任意、host のメタデータは block magic で（推測ではなく）拒否、完了判定は正確
+  （「見た block」の bitmap を持つので二重書き込みを二重に数えない）、そして family ID が
+  別 chip 向けのイメージを flash に触れる前に拒否します。`uf2conv.py --family` に渡す値は
+  `EspUsbDeviceMscFirmwareDisk::uf2FamilyId()` が返します。内部では UF2 のときだけ
+  新しい `EspUsbDeviceFirmwareUpdate::beginRandomAccess()` / `writeAt()` を使い、
+  イメージ長ぶんの partition を先に erase しておくことで後続の書き込みがどこへでも
+  落ちられるようにしています。block 8 個を逆順に書く実機確認済み。example
+  `FirmwareCDC`（CDC port に長さ＋バイト列、Python host スクリプト付き）と
+  `FirmwareVendor`（コマンドは control request、イメージは bulk OUT。ここで最速、
+  pyusb host スクリプト付き）も追加しました。
 - (JA) USB 経由のファームウェア更新に対応しました。`EspUsbDeviceDfu` は DFU class を
   2 形態で実装します。`Download` は `dfu-util -D firmware.bin` が空いている OTA
   partition へイメージを書き、device が検証してそのイメージで再起動するもの、
