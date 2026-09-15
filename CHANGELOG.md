@@ -8,10 +8,15 @@
   completion on the usbd task, and `onRxData(data, length)` hands received
   packets over from the controller's buffer. That removes both copies the
   buffered path makes. Measured on an ESP32-P4 high-speed link, one-way bulk IN,
-  27,136-byte stages: **27.2 MB/s against 24.4** for the same stream through the
-  class FIFO, and an unaligned 27,000-byte stage runs at 27.6 MB/s - the length
-  deliberately has no alignment rule, because a run's last block and a status
-  line are short and odd and that is a normal thing to send.
+  same host, same data, 8 reads in flight: **42.6 MB/s against 33.9** for the
+  same stream through the class FIFO at 65,024-byte stages, and 41.1 against
+  33.0 at 27,136 - **+26% and +24%**. The requester measured the same firmware
+  with a 1 MiB / 8-deep URB harness at 46.6-48.3 MB/s, within a few percent of
+  what their own patched TinyUSB reached, which this gets to with the vendored
+  tree untouched. An unaligned 27,000-byte stage streams as well as an aligned
+  one - the length deliberately has no alignment rule, because a run's last
+  block and a status line are short and odd and that is a normal thing to
+  send.
   It needs `-DCFG_TUD_VENDOR_TXRX_BUFFERED=0` in the sketch's `build_opt.h` and
   `arduino-cli compile --clean`; `directWriteSupported()` reports the library's
   own view of the build, which is what a sketch should assert, because
@@ -25,6 +30,13 @@
   flight, which is backpressure rather than a mistake. New tests
   `tests/single/vendor_direct`, `tests/single/vendor_direct_off` and
   `tests/peer/usb_vendor_direct`.
+- (EN) `onTxComplete()` should be handed a buffer that is already full. Filling
+  one inside the callback puts the cost of producing the data between a transfer
+  completing and the next being armed, and the endpoint is idle for exactly that
+  long: measured at 27,136-byte stages, 22.8 MB/s filling in the callback
+  against 27.4 MB/s when the callback only arms. Documented in the header and in
+  the advanced guide, because it is the shape a sketch naturally reaches for
+  first.
 - (EN) The direct path is a build flag rather than a runtime choice because of
   what the buffered build does around it: the vendor class arms a zero-length
   packet of its own after any transfer whose length is a multiple of
@@ -44,10 +56,14 @@
   `onTxComplete(sentBytes)` が usbd task で完了を通知し、`onRxData(data, length)` が
   受信パケットを controller の buffer から直接渡します。buffered 経路の copy 2 回が
   どちらも無くなります。ESP32-P4 high speed・一方向 bulk IN・27,136 byte stage での
-  実測は、同じ stream を class FIFO 経由で流した **24.4 MB/s に対して 27.2 MB/s**。
-  非整列の 27,000 byte stage でも 27.6 MB/s で流れます——長さに整列の規則を置いて
-  いないのは、run の最後の block や status 行が短くて半端で、それを普通に送れる
-  必要があるからです。有効化にはスケッチの `build_opt.h` に
+  実測は、host もデータも同じにして読みを 8 本 in flight にした条件で、同じ stream を
+  class FIFO 経由で流した **33.9 MB/s に対して 42.6 MB/s**（65,024 byte stage）、
+  27,136 byte stage では 33.0 に対して 41.1 で、**+26% と +24%** です。依頼元が同じ
+  firmware を 1 MiB・深さ 8 の URB ハーネスで測った値は 46.6〜48.3 MB/s で、**独自に
+  TinyUSB へ patch を当てた版と数 % 差**でした。このライブラリは同梱ツリーを無改変の
+  ままそこへ届いています。非整列の 27,000 byte stage も整列したものと同じように流れます
+  ——長さに整列の規則を置いていないのは、run の最後の block や status 行が短くて半端で、
+  それを普通に送れる必要があるからです。有効化にはスケッチの `build_opt.h` に
   `-DCFG_TUD_VENDOR_TXRX_BUFFERED=0` と `arduino-cli compile --clean` が要ります。
   `directWriteSupported()` はライブラリ自身の視点を返すので、スケッチはこちらを
   assert してください。`build_opt.h` は応答ファイル経由でスケッチに届くため、
@@ -58,6 +74,11 @@
   検査し、`lastDirectError()` が理由を返します。`Busy` は転送が in flight という意味で、
   間違いではなく backpressure です。テストは `tests/single/vendor_direct`、
   `tests/single/vendor_direct_off`、`tests/peer/usb_vendor_direct` を追加しました。
+- (JA) `onTxComplete()` には「すでに埋まった buffer」を渡してください。callback の中で
+  埋めると、データを作るコストが「転送完了から次の arm まで」の区間に入り、endpoint は
+  その間ちょうど遊びます。27,136 byte stage での実測で、callback 内で埋めると
+  22.8 MB/s、callback は arm だけなら 27.4 MB/s でした。スケッチが最初に書きたくなる形が
+  一番損をするので、ヘッダと応用ガイドの両方に書いてあります。
 - (JA) direct 経路を runtime ではなく build flag にしたのは、buffered ビルドの挙動の
   ためです。vendor class は、長さが `wMaxPacketSize` の倍数だった転送の完了後に自前の
   ZLP を arm し、その ZLP が endpoint の claim を取ります。ESP32-P4 high speed・

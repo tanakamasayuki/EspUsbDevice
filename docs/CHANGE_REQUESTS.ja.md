@@ -777,6 +777,38 @@ B は残す価値がある。A で消える `available()` / `read()` / `flush()`
 だけで、S2/S3 の 64 byte clamp も避けられる。ただし class driver を 1 つ背負うので、
 A で数字と使い勝手を確かめてからでよい。
 
+#### 正規実装の実測（決着）
+
+公開 API を実装したうえで測り直した。送るデータは事前に用意し、host は同じもので、
+「読み」は host が同時に投げている bulk read の本数である。
+
+| 経路 | stage | 読み 1 本 | 読み 8 本 |
+|---|---|---|---|
+| buffered `write()` ＋ `waitWritable()` | — | 21.8 | 33.9 |
+| direct `writeDirect()` | 8,192 | — | 39.7 |
+| direct `writeDirect()` | 27,136 | 27.4 | 41.1 |
+| direct `writeDirect()` | 65,024 | 30.4 | **42.6** |
+
+条件を揃えて **+26%**（65,024）と +24%（27,136）。
+
+**依頼元のハーネス（1 MiB URB × 深さ 8）では 46.6〜48.3 MB/s** で、**独自に TinyUSB へ
+patch を当てた E110 の 49.0〜49.3 と数 % 差**だった。**同梱 TinyUSB を無改変のまま、
+patch 版と同じ天井に届いている。** これで F1 の目的は達成である。
+
+途中で「device が 23 MB/s で律速している」という疑いが出たが、原因は 2 つとも測定側
+だった。(1) こちらの計測スケッチが stage ごとに 27 KB を usbd task 上で埋めていた
+（事前計算にして 22.8 → 27.4 MB/s）。(2) こちらの reader が URB を 1 本ずつ同期で
+読んでいた（8 本 in flight にして 30.4 → 42.6 MB/s）。依頼元から出た 2 つの仮説
+——slave mode ではないか、FIFO が 1 packet のままではないか——はレジスタの実測で
+どちらも否定された。
+
+```
+gahbcfg=0x00000027 dmaen=1 gintmsk=0x80003004 rxflvl=0
+ghwcfg2_arch=2 dieptxf1=0x02000600 → depth 512 words（512 byte packet 4 個分）
+```
+
+`gahbcfg` の値は依頼元が 2.3.0 release で記録したものと同一である。
+
 #### 結論（現時点）
 
 | | 判断 | 根拠 |

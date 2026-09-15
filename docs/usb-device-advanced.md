@@ -1006,21 +1006,49 @@ the stream **stops dead after one transfer**. Rather than ship an API whose
 correctness rests on which task called it, the direct build does not compile
 that path at all - and then the arming task stops mattering.
 
-Measured on an ESP32-P4 high-speed link, one-way bulk IN, pyusb reading one URB
-at a time (so the absolute numbers are bounded by the host, and the comparison
-is the point):
+Measured on an ESP32-P4 high-speed link, one-way bulk IN, source data prepared
+ahead of time, against the same host. "Reads in flight" is how many bulk reads
+the host keeps outstanding: one at a time leaves the endpoint idle between URBs,
+which is the host's limit rather than the device's, so both columns are here.
 
-| Build | Next transfer armed from | Stage | Result |
+| Path | Stage | 1 read in flight | 8 reads in flight |
 |---|---|---|---|
-| direct | `onTxComplete()` | 27,136 | **27.2 MB/s** |
-| direct | another task | 27,136 | 26.8 MB/s |
-| direct | `onTxComplete()` | 27,000 (unaligned) | 27.6 MB/s |
-| buffered | either | 27,136 | `writeDirect()` refused, `NotSupported` |
+| buffered `write()` + `waitWritable()` | - | 21.8 MB/s | 33.9 MB/s |
+| direct `writeDirect()` | 8,192 | - | 39.7 MB/s |
+| direct `writeDirect()` | 27,136 | 27.4 MB/s | 41.1 MB/s |
+| direct `writeDirect()` | 65,024 | 30.4 MB/s | **42.6 MB/s** |
+
+Like for like - 8 reads in flight, same host, same data - the direct path is
+**+26%** over the buffered one at 65,024 and +24% at 27,136. The requester
+measured the same firmware with a better host harness (1 MiB URBs, 8 deep) at
+46.6-48.3 MB/s, which is within a few percent of what their own patched TinyUSB
+reached; this library gets there with the vendored tree untouched.
+
+Arming from another task instead of the completion callback costs a few percent
+in a direct build (26.8 against 27.2 MB/s at one read in flight), and on a
+buffered build it is the difference between running and stopping, which is what
+the flag exists to prevent.
 
 Arming from inside the completion callback is not required in a direct build,
 but it is what keeps the endpoint from idling over a scheduling gap. The bulk IN
 transmit FIFO doubling from [5.5](#55-the-transmit-fifo-per-endpoint) is
 unaffected and stays on by default in both builds.
+
+**Hand the callback a buffer that is already full.** The obvious shape - fill a
+buffer inside `onTxComplete()` and arm it - puts the cost of producing the data
+on the usbd task, between one transfer completing and the next being armed, and
+the endpoint is idle for exactly that long. Measured on the same link, the same
+27,136-byte stages, changing only where the bytes come from:
+
+| Stage | Filled inside the callback | Pre-filled, callback only arms |
+|---|---|---|
+| 27,136 | 22.8 MB/s | **27.4 MB/s** |
+| 65,024 | 23.6 MB/s | **30.4 MB/s** |
+
+Produce into one buffer while the other is in flight, and let the callback do
+nothing but arm. The same reasoning is why longer stages pay: fitting
+`t = a + b x bytes` to those two points gives about 170 us of per-transfer
+overhead, so a stage twice as long spreads it over twice the data.
 
 ---
 

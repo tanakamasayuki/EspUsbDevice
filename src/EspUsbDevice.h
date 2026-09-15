@@ -993,11 +993,13 @@ public:
   // class arms a zero-length packet of its own after any transfer whose length
   // is a multiple of wMaxPacketSize, and that ZLP takes the endpoint claim.
   // Measured on an ESP32-P4 high-speed link, 27,136-byte stages: armed from the
-  // completion callback the application wins the claim and the stream runs at
-  // 24.4 MB/s; armed from any other task the ZLP wins, the next writeDirect()
-  // is refused and the stream stops dead after one transfer. The direct build
-  // does not compile that ZLP path at all, runs at 27.9 MB/s, and does not care
-  // which task arms the next transfer (26.8 MB/s from another task).
+  // completion callback the application wins the claim and the stream runs;
+  // armed from any other task the ZLP wins, the next writeDirect() is refused
+  // and the stream stops dead after one transfer. The direct build does not
+  // compile that ZLP path at all and does not care which task arms the next
+  // transfer. Like for like against the same host with 8 reads in flight, the
+  // direct path moves 42.6 MB/s at 65,024-byte stages where the buffered one
+  // moves 33.9.
   static bool directWriteSupported();
 
   // Hand `buffer` to the controller instead of copying it through the class
@@ -1033,6 +1035,12 @@ public:
   // writeDirect() here is what keeps a stream gapless - there is no rule that
   // it must happen here, and arming from another task works too, but then the
   // endpoint sits idle for the scheduling gap.
+  //
+  // Hand it a buffer that is **already full**. Filling one here, between a
+  // transfer completing and the next being armed, is time the endpoint spends
+  // idle: measured on an ESP32-P4 high-speed link with 27,136-byte stages,
+  // 22.8 MB/s filling inside the callback against 27.4 MB/s when the callback
+  // only arms. Produce into one buffer while the other is in flight.
   void onTxComplete(TxCompleteCallback callback);
 
   // Received data, straight from the controller's endpoint buffer. Direct
