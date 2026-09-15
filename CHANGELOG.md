@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 2.4.0
 - (EN) New opt-in direct transfer path on `EspUsbDeviceVendor`, for sketches
   that stream large blocks they already hold in memory.
   `writeDirect(buffer, length)` claims the bulk IN endpoint and arms one
