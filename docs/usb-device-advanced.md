@@ -941,6 +941,87 @@ unpinned usbd task tends to end up beside it. `taskCoreId = 0` is the usual
 answer when the answer is not "leave it alone". On a single-core target it does
 nothing.
 
+### 5.7 The direct transfer path (opt-in)
+
+Everything above is about the buffered path: `write()` copies into a class FIFO,
+TinyUSB copies from that FIFO into the controller's endpoint buffer, and the
+controller sends. Two copies per byte, and the FIFO is what lets a sketch hand
+over data without thinking about who owns it.
+
+A sketch that streams large blocks it already has in memory can skip both
+copies. `EspUsbDeviceVendor::writeDirect()` claims the bulk IN endpoint and arms
+one transfer **on the caller's own buffer**:
+
+```cpp
+static uint8_t __attribute__((aligned(64))) stage[2][27136];
+
+Vendor.onTxComplete([](size_t sent) {   // usbd task - keep it short
+  fill(stage[next]);
+  Vendor.writeDirect(stage[next], sizeof(stage[next]));
+  next ^= 1;
+});
+```
+
+**It is off unless the build asks for it.** Put
+`-DCFG_TUD_VENDOR_TXRX_BUFFERED=0` in the sketch's `build_opt.h` and compile
+with `arduino-cli compile --clean`. Without `--clean` the sketch is rebuilt and
+the library is not: `build_opt.h` reaches the compiler through a response file
+on every translation unit, but a stale build does not recompile the library at
+all, so the sketch sees the macro and the library does not. Two builds differing
+in this flag must differ in size - on an ESP32-P4, 136,728 -> 131,872 bytes of
+static RAM as the class FIFOs go away. Identical sizes mean it did not take.
+`EspUsbDeviceVendor::directWriteSupported()` reports the library's own view, so
+a sketch can assert it rather than trusting its own macro.
+
+What the build costs: `available()` and `read()` return 0 and `flush()` does
+nothing, because there are no class FIFOs. Received data arrives through
+`onRxData(data, length)` instead, straight from the controller's buffer and
+valid only for the duration of the call. `write()` still works but copies into
+the endpoint buffer one buffer at a time, and must not be mixed with
+`writeDirect()` on the same interface - both claim the same endpoint.
+
+The caller's side of the bargain, all of it checked except the first:
+
+| Rule | Refusal |
+|---|---|
+| The buffer stays alive and untouched until `onTxComplete()` reports it | not checkable |
+| Address 64-byte aligned | `NotAligned` |
+| DMA-capable memory (PSRAM is not; stage it yourself) | `NotDmaCapable` |
+| `esp_cache_msync(..., C2M)` if it was written from another core | not checkable |
+| 1..65535 bytes | `BadArgument` |
+
+The **length** deliberately has no alignment rule: a run's last block and a
+status line are short and odd, and that is a normal thing to send - it just ends
+the host's transfer with a short packet. `lastDirectError()` names the reason,
+and `Busy` - a transfer still in flight - is ordinary backpressure rather than a
+mistake.
+
+**Why a build flag rather than a runtime choice.** In a buffered build the
+vendor class arms a zero-length packet of its own after any transfer whose
+length is a multiple of `wMaxPacketSize`, and that ZLP takes the endpoint claim.
+Measured on an ESP32-P4 high-speed link with 27,136-byte stages: armed from
+inside `onTxComplete()` the application wins the claim and the stream runs;
+armed from any other task the ZLP wins, the next `writeDirect()` is refused, and
+the stream **stops dead after one transfer**. Rather than ship an API whose
+correctness rests on which task called it, the direct build does not compile
+that path at all - and then the arming task stops mattering.
+
+Measured on an ESP32-P4 high-speed link, one-way bulk IN, pyusb reading one URB
+at a time (so the absolute numbers are bounded by the host, and the comparison
+is the point):
+
+| Build | Next transfer armed from | Stage | Result |
+|---|---|---|---|
+| direct | `onTxComplete()` | 27,136 | **27.2 MB/s** |
+| direct | another task | 27,136 | 26.8 MB/s |
+| direct | `onTxComplete()` | 27,000 (unaligned) | 27.6 MB/s |
+| buffered | either | 27,136 | `writeDirect()` refused, `NotSupported` |
+
+Arming from inside the completion callback is not required in a direct build,
+but it is what keeps the endpoint from idling over a scheduling gap. The bulk IN
+transmit FIFO doubling from [5.5](#55-the-transmit-fifo-per-endpoint) is
+unaffected and stays on by default in both builds.
+
 ---
 
 ## 6. Transfer timing and bandwidth

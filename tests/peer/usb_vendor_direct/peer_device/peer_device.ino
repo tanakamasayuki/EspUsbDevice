@@ -12,10 +12,11 @@
 EspUsbDevice device;
 EspUsbDeviceVendor Vendor(device);
 
-// Deliberately shorter than the host's 63-byte read limit, so one read returns
-// exactly one whole block and a torn transfer is unambiguous. Throughput is the
-// P4's job, not this rig's - full speed cannot show it.
-static constexpr size_t kBlock = 32;
+// 21 bytes, because the host reads 63 at a time: three whole blocks per read,
+// no partial block at either end, so a torn or reordered transfer is
+// unambiguous rather than a boundary artifact. Throughput is the P4's job, not
+// this rig's - full speed cannot show it.
+static constexpr size_t kBlock = 21;
 static uint8_t __attribute__((aligned(64))) bufA[kBlock];
 static uint8_t __attribute__((aligned(64))) bufB[kBlock];
 
@@ -28,6 +29,7 @@ static uint8_t g_which = 0;
 
 static void fill(uint8_t *dst, uint32_t seq)
 {
+  // snprintf writes its own NUL at dst[6]; the loop below overwrites it.
   snprintf(reinterpret_cast<char *>(dst), 7, "D%04u:", static_cast<unsigned>(seq % 10000));
   for (size_t i = 6; i < kBlock; i++)
   {
@@ -43,6 +45,7 @@ static bool armNext()
   if (!Vendor.writeDirect(buf, kBlock))
   {
     g_armFail++;
+    Serial.printf("DEVICE_DIRECT_ARMFAIL %s\n", Vendor.lastDirectErrorName());
     return false;
   }
   return true;
@@ -84,8 +87,12 @@ void loop()
     delay(100);
     started = true;
     g_running = true;
-    Serial.printf("DEVICE_DIRECT_START ok=%d buffered=%d\n", armNext() ? 1 : 0,
-                  (int)CFG_TUD_VENDOR_TXRX_BUFFERED);
+    // directWriteSupported() is the *library's* view. The sketch can see
+    // CFG_TUD_VENDOR_TXRX_BUFFERED from its own command line while the library
+    // was built without it - that is what a stale build (no --clean) looks
+    // like - so asserting the sketch's macro would pass for the wrong reason.
+    Serial.printf("DEVICE_DIRECT_START ok=%d direct=%d\n", armNext() ? 1 : 0,
+                  EspUsbDeviceVendor::directWriteSupported() ? 1 : 0);
   }
   if (started && !Vendor.mounted())
   {

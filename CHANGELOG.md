@@ -1,6 +1,74 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) New opt-in direct transfer path on `EspUsbDeviceVendor`, for sketches
+  that stream large blocks they already hold in memory.
+  `writeDirect(buffer, length)` claims the bulk IN endpoint and arms one
+  transfer on the caller's own memory, `onTxComplete(sentBytes)` reports
+  completion on the usbd task, and `onRxData(data, length)` hands received
+  packets over from the controller's buffer. That removes both copies the
+  buffered path makes. Measured on an ESP32-P4 high-speed link, one-way bulk IN,
+  27,136-byte stages: **27.2 MB/s against 24.4** for the same stream through the
+  class FIFO, and an unaligned 27,000-byte stage runs at 27.6 MB/s - the length
+  deliberately has no alignment rule, because a run's last block and a status
+  line are short and odd and that is a normal thing to send.
+  It needs `-DCFG_TUD_VENDOR_TXRX_BUFFERED=0` in the sketch's `build_opt.h` and
+  `arduino-cli compile --clean`; `directWriteSupported()` reports the library's
+  own view of the build, which is what a sketch should assert, because
+  `build_opt.h` reaches the sketch through a response file and a build without
+  `--clean` leaves the library compiled the old way. The vendored TinyUSB is
+  untouched: `usbd_edpt_claim()` / `usbd_edpt_xfer()` were already part of the
+  byte-for-byte tree. The buffer contract - 64-byte aligned address,
+  DMA-capable memory, 1..65535 bytes, `esp_cache_msync(C2M)` after writing from
+  another core, and ownership until the completion callback - is checked, and
+  `lastDirectError()` names the reason; `Busy` means a transfer is still in
+  flight, which is backpressure rather than a mistake. New tests
+  `tests/single/vendor_direct`, `tests/single/vendor_direct_off` and
+  `tests/peer/usb_vendor_direct`.
+- (EN) The direct path is a build flag rather than a runtime choice because of
+  what the buffered build does around it: the vendor class arms a zero-length
+  packet of its own after any transfer whose length is a multiple of
+  `wMaxPacketSize`, and that ZLP takes the endpoint claim. Measured on ESP32-P4
+  high speed with 27,136-byte stages, armed from inside `onTxComplete()` the
+  application wins the claim and the stream runs; armed from any other task the
+  ZLP wins, the next `writeDirect()` is refused and the stream stops dead after
+  one transfer. Host and device agree on it independently - in the control run,
+  the host counted 8183 short URBs and the device 8183 zero-length completions.
+  A direct build does not compile that path, and then the arming task stops
+  mattering (26.8 MB/s from another task, against 27.2 from the callback). So
+  `writeDirect()` returns `NotSupported` on a buffered build rather than working
+  in a way that depends on which task called it.
+- (JA) `EspUsbDeviceVendor` に opt-in の direct 転送経路を追加しました。すでにメモリ上に
+  ある大きな block を流すスケッチ向けです。`writeDirect(buffer, length)` が bulk IN
+  endpoint を claim して**呼び出し側自身のメモリ**で転送を 1 本 arm し、
+  `onTxComplete(sentBytes)` が usbd task で完了を通知し、`onRxData(data, length)` が
+  受信パケットを controller の buffer から直接渡します。buffered 経路の copy 2 回が
+  どちらも無くなります。ESP32-P4 high speed・一方向 bulk IN・27,136 byte stage での
+  実測は、同じ stream を class FIFO 経由で流した **24.4 MB/s に対して 27.2 MB/s**。
+  非整列の 27,000 byte stage でも 27.6 MB/s で流れます——長さに整列の規則を置いて
+  いないのは、run の最後の block や status 行が短くて半端で、それを普通に送れる
+  必要があるからです。有効化にはスケッチの `build_opt.h` に
+  `-DCFG_TUD_VENDOR_TXRX_BUFFERED=0` と `arduino-cli compile --clean` が要ります。
+  `directWriteSupported()` はライブラリ自身の視点を返すので、スケッチはこちらを
+  assert してください。`build_opt.h` は応答ファイル経由でスケッチに届くため、
+  `--clean` の無いビルドではライブラリだけ以前のままになります。同梱 TinyUSB は
+  無改変で、`usbd_edpt_claim()` / `usbd_edpt_xfer()` は byte-for-byte の同梱ツリーに
+  もともと含まれていたものです。buffer の契約（先頭 64 byte 整列、DMA 可能、
+  1〜65535 byte、別 core で書いたら `esp_cache_msync(C2M)`、完了 callback まで所有権）は
+  検査し、`lastDirectError()` が理由を返します。`Busy` は転送が in flight という意味で、
+  間違いではなく backpressure です。テストは `tests/single/vendor_direct`、
+  `tests/single/vendor_direct_off`、`tests/peer/usb_vendor_direct` を追加しました。
+- (JA) direct 経路を runtime ではなく build flag にしたのは、buffered ビルドの挙動の
+  ためです。vendor class は、長さが `wMaxPacketSize` の倍数だった転送の完了後に自前の
+  ZLP を arm し、その ZLP が endpoint の claim を取ります。ESP32-P4 high speed・
+  27,136 byte stage の実測では、`onTxComplete()` の中で arm すれば application 側が
+  claim を取れて stream は流れ、別の task から arm すると ZLP が勝って次の
+  `writeDirect()` が拒否され、**1 本で止まります**。host と device が独立に同じものを
+  数えており、対照実験では host が short URB 8183 本、device が 0 byte 完了 8183 回でした。
+  direct ビルドではこの経路を compile しないので、arm する task は問題でなくなります
+  （別 task から 26.8 MB/s、完了 callback から 27.2 MB/s）。したがって buffered ビルドの
+  `writeDirect()` は、呼び出した task に正しさが依存する形で動くのではなく
+  `NotSupported` を返します。
 - (EN) Fix `EspUsbDevice::rebootToBootloader()` leaving an ESP32-S3's USB
   connector dark. The library takes the shared internal PHY for USB-OTG at
   `begin()`, and that selection lives in `RTC_CNTL_USB_CONF_REG` - an RTC-domain
