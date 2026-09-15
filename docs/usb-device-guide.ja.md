@@ -178,6 +178,8 @@ Host側では「VBUSを出せるか」が最初の関門でした。Device側で
 
 もう一つの手は、ホスト役に別のESP32（[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost)）を使うことです。このリポジトリの [`tests/peer`](../tests/peer/) はその構成で、両側のログをPCから同時に読めます。
 
+コネクタが1つのESP32-S3でも、同じケーブルのまま書き込めます。リセットすると共有PHYがUSB Serial/JTAGへ戻るため、デバイスがいた場所にROMのローダが出てきます。リセット後にどのコネクタが応答するか、動作中のスケッチがBOOTボタンなしでチップをそこへ運ぶ方法は [USB経由のファームウェア更新](ota-over-usb.ja.md) にまとめています。
+
 ---
 
 ## 3. ESP32シリーズ固有の注意点
@@ -253,6 +255,7 @@ ESP32-S3で**IN方向が4本まで**というのが実際の効き方です。HI
 - **`USB.begin()` を呼ばないでください。** `USBHIDKeyboard`、`USBHIDMouse`、`USBCDC` も併用できません。
 - **ビルド時の USB Mode は「USB-OTG (TinyUSB)」にしてください。** ESP32-S3/P4 のボードメニューにある `USB Mode` を `Hardware CDC and JTAG` にすると、D+/D-がUSB Serial/JTAGペリフェラルへ回り、OTG controllerは使えません。`arduino-cli` では `esp32:esp32:esp32s3:USBMode=default` が「USB-OTG (TinyUSB)」です（このリポジトリの `sketch.yaml` はすべてこれを指定しています）。
 - **`USB CDC On Boot` は無効のままにしてください。** 有効にすると Arduino 側が別の USB CDC を立てようとします。
+- **`usb_persist_restart()` も link できません。** core が持つ「bootloaderへ再起動する」ヘルパを呼ぶと `esp32-hal-tinyusb.c` が link に引き込まれ、このライブラリが定義しているのと同じ TinyUSB callback を2つ定義しているため衝突します。代わりの手段と、chip別に書くレジスタは [USB経由のファームウェア更新 2.5節](ota-over-usb.ja.md#25-usb_persist_restart-はこのライブラリではlinkできない) にあります。
 
 この構成では `Serial` はUART側に出ます。ログを見る口を別に用意する必要があるのはこのためです（[2.3](#23-開発中のコネクタ構成)）。
 
@@ -524,4 +527,5 @@ PC側で実行するPyUSBスクリプトです。実行方法は [tests/manual/R
 - [TinyUSB](https://docs.tinyusb.org/) — このライブラリが同梱するデバイススタック
 - [pid.codes](https://pid.codes/) — オープンソースプロジェクト向けのVID/PID
 - このリポジトリの [README.ja.md](../README.ja.md) — API仕様と各クラスの対応状況
+- [USB経由のファームウェア更新](ota-over-usb.ja.md) — chip別のboot mode、スケッチからの入り方、OTA経路
 - [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) — ESP32をホスト側にするライブラリ。[USB Host開発ガイド](https://github.com/tanakamasayuki/EspUsbHost/blob/main/docs/usb-host-guide.ja.md)

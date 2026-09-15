@@ -11,8 +11,8 @@ USB configuration and runtime do not depend on Arduino-ESP32's prebuilt
 - License: MIT
 - Arduino build tree: only the selected `.c` files and their S2/S3/P4
   transitive headers under the library `src/` directory
-- Build manifest: `BUILD_FILES.txt` (43 files: 12 sources and 31 headers)
-- Verification cache: the pinned upstream tarball and its 43 selected files are
+- Build manifest: `BUILD_FILES.txt` (48 files: 14 sources and 34 headers)
+- Verification cache: the pinned upstream tarball and its 48 selected files are
   downloaded on demand under ignored `.upstream-cache/`
 - Local patches: none at initial import
 
@@ -40,6 +40,8 @@ Classes:
 - `src/class/vendor/vendor_device.c`
 - `src/class/net/ncm_device.c`
 - `src/class/audio/audio_device.c`
+- `src/class/dfu/dfu_device.c`
+- `src/class/dfu/dfu_rt_device.c`
 
 ESP32 DWC2 device controller:
 
@@ -48,12 +50,14 @@ ESP32 DWC2 device controller:
 
 The complete upstream source tree is not stored in this repository. The
 verification script downloads the tarball for the pinned commit when its
-ignored local cache is absent, extracts only the 43 manifest entries, and
+ignored local cache is absent, extracts only the 48 manifest entries, and
 compares them byte-for-byte with the Arduino build tree. Normal Arduino builds
 never download anything. The build tree is a minimal projection measured from
-clean S2, S3, and P4 compiler dependency files. Host, Type-C, DFU, video,
-printer, MTP, MIDI 2.0, ECM/RNDIS, non-FreeRTOS OSALs, and non-ESP32 portable
-files are not copied into the build tree.
+clean S2, S3, and P4 compiler dependency files. Host, Type-C, video, printer,
+MTP, MIDI 2.0, ECM/RNDIS, non-FreeRTOS OSALs, and non-ESP32 portable files are
+not copied into the build tree. DFU joined the selection when
+`EspUsbDeviceDfu` was added; it is the one class here that costs no endpoint,
+so the two drivers are carried for every sketch.
 
 The `src/` build tree is a mechanical copy from the pinned snapshot. Its
 upstream files are not patched. `src/tusb_config.h` and

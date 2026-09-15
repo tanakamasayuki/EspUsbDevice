@@ -260,6 +260,12 @@ The other option is to use a second ESP32 running
 what [`tests/peer`](../tests/peer/) in this repository does, and it lets you read
 both sides' logs from the PC at once.
 
+On a one-connector ESP32-S3 the same cable can still flash the board: a reset
+hands the shared PHY back to USB Serial/JTAG, so the ROM loader appears where
+your device was. Which connector answers after a reset, and how a running sketch
+gets the chip there without the BOOT button, are in
+[Firmware update over USB](ota-over-usb.md).
+
 ---
 
 ## 3. ESP32-specific notes
@@ -358,6 +364,11 @@ directly. Therefore:
   (every `sketch.yaml` in this repository specifies it).
 - **Leave `USB CDC On Boot` disabled**, or Arduino tries to bring up a second
   USB CDC of its own.
+- **`usb_persist_restart()` does not link either.** The core's
+  reboot-into-the-bootloader helper drags `esp32-hal-tinyusb.c` into the link,
+  which defines two of the same TinyUSB callbacks this library defines. The
+  replacement, and the per-chip register it writes, are in
+  [Firmware update over USB, 2.5](ota-over-usb.md#25-usb_persist_restart-does-not-link-in-this-library).
 
 In this configuration `Serial` comes out on the UART, which is why you need a
 separate port for logs ([2.3](#23-connector-layout-while-developing)).
@@ -682,4 +693,5 @@ The automated tests live in [`tests/peer`](../tests/peer/) (two boards) and
 - [TinyUSB](https://docs.tinyusb.org/) - the device stack this library vendors
 - [pid.codes](https://pid.codes/) - VID/PID for open source projects
 - This repository's [README.md](../README.md) - API reference and per-class status
+- [Firmware update over USB](ota-over-usb.md) - boot mode per chip, entering it from a sketch, and the OTA routes
 - [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) - the library for making an ESP32 the host, with its [USB Host development guide](https://github.com/tanakamasayuki/EspUsbHost/blob/main/docs/usb-host-guide.md)

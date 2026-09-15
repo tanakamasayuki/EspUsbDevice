@@ -489,6 +489,38 @@ public:
   bool addClass(EspUsbDeviceClass *deviceClass);
   bool sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs = 100);
 
+  // Restart into the chip's ROM download loader - "boot mode", the state the
+  // BOOT button produces at reset - so esptool can rewrite the whole flash over
+  // the port the ROM answers on. Detaches the USB device first so the host sees
+  // a disconnect rather than a vanished device. Does not return.
+  //
+  // The register differs per target and getting the ESP32-P4 one wrong is
+  // costly: there the flag shares LP_SYSTEM_REG_SYS_CTRL_REG with the
+  // software-reset bit and IO_MUX_RESET_DISABLE, so it has to be set rather
+  // than written. That is the reason this is a library call and not four lines
+  // in every sketch.
+  //
+  // Which connector the loader then answers on is a property of the chip, not
+  // of this call: on a one-connector ESP32-S3 the shared PHY returns to
+  // USB Serial/JTAG, so the same cable works; on ESP32-P4 it is the
+  // USB Serial/JTAG port, which is not the high-speed OTG connector. See
+  // docs/ota-over-usb.md.
+  //
+  // Arduino-ESP32's usb_persist_restart() does the same job and cannot be used
+  // from a sketch that links this library - it drags esp32-hal-tinyusb.c in,
+  // which defines tud_descriptor_bos_cb() and tud_vendor_control_xfer_cb() a
+  // second time - and is a no-op on ESP32-P4 in any case.
+  bool rebootToBootloader();
+  // Restart into the ROM's DFU device on USB-OTG instead of its serial loader,
+  // for a host that drives dfu-util rather than esptool. ESP32-S2 and ESP32-S3
+  // only; returns false without restarting on ESP32-P4, whose ROM exposes no
+  // USB stack to ESP-IDF and whose ROM DFU is defective from silicon v3.1.
+  //
+  // Not the same thing as EspUsbDeviceDfu: this hands the chip to the ROM,
+  // which replaces the whole flash. EspUsbDeviceDfu keeps the sketch running
+  // and writes an OTA partition.
+  bool rebootToRomDfu();
+
   const uint8_t *deviceDescriptor();
   const uint8_t *configurationDescriptor(uint8_t index);
   const uint8_t *configurationDescriptorForSpeed(uint8_t index, bool highSpeed);
@@ -559,6 +591,7 @@ private:
   friend class EspUsbAudioFunction;
   friend class EspUsbDeviceNet;
   friend class EspUsbDeviceCcid;
+  friend class EspUsbDeviceDfu;
   // Raised from 4 when CDC became multi-instance: the P4 HS controller's 7
   // non-control IN endpoints admit HID + MSC + Vendor + CDC x2, which is five
   // functions. Each slot is one pointer, so the ceiling costs nothing to carry;
@@ -660,6 +693,7 @@ public:
   virtual bool isVendor() const { return false; }
   virtual bool isAudio() const { return false; }
   virtual bool isNet() const { return false; }
+  virtual bool isDfu() const { return false; }
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
   virtual uint16_t configurationDescriptorForSpeed(
       uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
@@ -1463,6 +1497,201 @@ private:
   EjectCallback ejectCallback_;
 };
 #endif
+
+// --- Firmware update ------------------------------------------------------
+
+// Writes a new application image into the OTA partition that is not running,
+// verifies it, and switches the boot partition.
+//
+// Transport-independent on purpose: EspUsbDeviceDfu drives it, and so can a
+// sketch that receives an image over CDC, vendor bulk, MSC or an HTTP upload
+// across the CDC-NCM interface. It is not a USB class - it registers nothing
+// with EspUsbDevice and works on its own.
+//
+// Nothing here is reversible by itself: end() makes the new image the one that
+// boots. A device that must survive a bad image needs bootloader rollback
+// (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE) plus a markValid() call once the new
+// firmware has proved itself; without that, the only way back is the ROM
+// loader. See docs/ota-over-usb.md.
+class EspUsbDeviceFirmwareUpdate
+{
+public:
+  EspUsbDeviceFirmwareUpdate();
+  ~EspUsbDeviceFirmwareUpdate();
+
+  // Holds an open OTA handle, which is a flash resource and not copyable.
+  EspUsbDeviceFirmwareUpdate(const EspUsbDeviceFirmwareUpdate &) = delete;
+  EspUsbDeviceFirmwareUpdate &operator=(const EspUsbDeviceFirmwareUpdate &) = delete;
+
+  // Whether this firmware has a second application partition to write into.
+  // False under a single-app partition scheme such as `huge_app`, where no
+  // self-update can work at all - check it before telling a host an update
+  // path exists, rather than failing halfway through an upload.
+  static bool available();
+  // Byte capacity of the partition an update would be written into, or 0 when
+  // there is none. The largest image begin() accepts.
+  static size_t capacity();
+  // Label of the partition an update would be written into ("app1", say), or
+  // nullptr when there is none.
+  static const char *targetLabel();
+
+  // Open the update.
+  //
+  // expectedSize is the image length when the transport knows it in advance,
+  // which lets write() reject an overrun on the first byte past the end rather
+  // than at the end of a long upload. 0 means unknown, which is normal for a
+  // stream. Either way the flash is erased as the write advances, never up
+  // front: erasing a whole 1.25 MB partition takes seconds, and a USB callback
+  // is the wrong place to spend them.
+  bool begin(size_t expectedSize = 0);
+  // Append the next bytes of the image, in order. Erases the sectors it
+  // reaches. False leaves the update aborted; read lastErrorName().
+  bool write(const void *data, size_t length);
+  // Verify what was written and make it the partition that boots next.
+  //
+  // Checks the image header, the length, and the checksum, so a truncated or
+  // corrupt upload fails here rather than at the next boot. The running
+  // firmware is untouched until the next restart.
+  bool end();
+  // Give up. The boot partition is left alone and the target partition keeps
+  // whatever half-written bytes it has, which the next begin() overwrites.
+  void abort();
+
+  bool active() const;
+  // Bytes accepted by write() so far.
+  size_t written() const;
+  // The expectedSize begin() was given, or 0 when it was not told.
+  size_t expectedSize() const;
+  esp_err_t lastError() const;
+  const char *lastErrorName() const;
+
+  // Confirm the firmware that is running now, cancelling the rollback that a
+  // bootloader built with CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE would otherwise
+  // perform at the next restart. Call it once the new image has shown it works
+  // - after the USB device enumerates again, not in setup().
+  //
+  // True also when no rollback was pending, since there is then nothing to
+  // confirm; a stock Arduino build is that case.
+  static bool markValid();
+  // Roll back to the previously running image and restart. Only possible when
+  // a valid previous application partition exists. Does not return on success.
+  static bool rollback();
+  // Point the boot partition back at the firmware running now, undoing a
+  // successful end(). For a caller that inspected the image after it verified
+  // and decided against it; the written bytes stay where they are and the next
+  // begin() overwrites them.
+  static bool cancelPendingBoot();
+
+private:
+  uint32_t handle_ = 0;
+  const void *partition_ = nullptr;   // const esp_partition_t*
+  size_t written_ = 0;
+  size_t expectedSize_ = 0;
+  bool active_ = false;
+  esp_err_t lastError_ = ESP_OK;
+};
+
+// --- DFU (USB Device Firmware Upgrade, bInterfaceClass 0xfe / subclass 1) ---
+
+enum class EspUsbDeviceDfuMode : uint8_t
+{
+  // Advertise that the device can be put into DFU mode, and answer exactly one
+  // request: DFU_DETACH. `dfu-util -e` sends it. The default action is to
+  // restart into the chip's ROM download loader, so a host tool can ask for
+  // boot mode without a protocol of this library's own.
+  Runtime,
+  // Implement the download. `dfu-util -D firmware.bin` writes the image into
+  // the spare OTA partition through EspUsbDeviceFirmwareUpdate, and the device
+  // restarts into it. The ROM is not involved, so this behaves identically on
+  // ESP32-S2, ESP32-S3 and ESP32-P4.
+  Download,
+};
+
+// A DFU function. Costs one interface and no endpoints: every DFU transfer
+// travels on EP0, which is why this is the one class that can be added to a
+// device whose endpoint budget is already spent.
+class EspUsbDeviceDfu : public EspUsbDeviceClass
+{
+public:
+  // Called instead of the default action when the host sends DFU_DETACH in
+  // Runtime mode. Runs on the usbd task: set a flag and act from loop().
+  using DetachCallback = std::function<void()>;
+  // Download progress, in bytes written so far.
+  //
+  // There is no second "total" argument because DFU 1.1 has no field for one:
+  // the host never tells the device how long the image is, so a percentage is
+  // not something this class can honestly offer. A sketch that wants one has to
+  // learn the size some other way.
+  using ProgressCallback = std::function<void(size_t written)>;
+  // The image was written and verified, and the boot partition has moved to it.
+  // Return false to refuse it after all, which points the boot partition back
+  // at the running firmware and fails the transfer on the host.
+  using CompleteCallback = std::function<bool()>;
+  // The download failed. `status` is the DFU status code reported to the host.
+  using ErrorCallback = std::function<void(uint8_t status)>;
+
+  explicit EspUsbDeviceDfu(EspUsbDevice &device,
+                           EspUsbDeviceDfuMode mode = EspUsbDeviceDfuMode::Download,
+                           const char *name = nullptr);
+  ~EspUsbDeviceDfu() override;
+
+  bool begin() override;
+  void end() override;
+  bool isHid() const override { return false; }
+  bool isDfu() const override { return true; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 0; }
+  const char *functionName() const override { return name_; }
+  void assignFunctionIds(uint8_t instance, uint8_t stringIndex) override;
+
+  EspUsbDeviceDfuMode mode() const { return mode_; }
+  // Block size this function declares (wTransferSize), which is
+  // CFG_TUD_DFU_XFER_BUFSIZE. Raise it from build_opt.h.
+  static uint16_t transferSize();
+
+  // Runtime mode only. Without one, DFU_DETACH restarts into the ROM download
+  // loader - which is what a host that sent DETACH asked for.
+  void onDetach(DetachCallback callback);
+
+  // Download mode only.
+  void onProgress(ProgressCallback callback);
+  void onComplete(CompleteCallback callback);
+  void onError(ErrorCallback callback);
+  // Restart into the newly written firmware once the host's download is
+  // verified. On by default: a DFU download that does not reach the new image
+  // has not finished, and the function declares itself manifestation-intolerant
+  // so the host already expects the device to reset. Turn it off to restart at
+  // a moment the sketch chooses, and note the device stays unusable for DFU
+  // until it does.
+  void restartWhenComplete(bool enable);
+  // Bytes written so far.
+  size_t written() const;
+  // The update this function drives, for a sketch that wants to inspect it.
+  EspUsbDeviceFirmwareUpdate &firmware();
+
+  // Internal (called from the tud_dfu_* callbacks on the usbd task).
+  void handleDetach();
+  void handleDownload(uint16_t blockNumber, const uint8_t *data, uint16_t length);
+  void handleManifest();
+  void handleAbort();
+  uint32_t pollTimeout(uint8_t state) const;
+  void onBusDetached() override;
+
+private:
+  void failDownload(uint8_t status);
+
+  EspUsbDeviceDfuMode mode_ = EspUsbDeviceDfuMode::Download;
+  const char *name_ = nullptr;
+  uint8_t stringIndex_ = 0;
+  bool restartWhenComplete_ = true;
+  bool downloadOpen_ = false;
+  EspUsbDeviceFirmwareUpdate firmware_;
+  DetachCallback detachCallback_;
+  ProgressCallback progressCallback_;
+  CompleteCallback completeCallback_;
+  ErrorCallback errorCallback_;
+};
 
 class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass
 {

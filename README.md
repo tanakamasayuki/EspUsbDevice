@@ -32,11 +32,11 @@ The automatic matrix observes releases from 3.3.0 onward, but results below
 
 ## Supported chips and classes
 
-| Chip | Max speed | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Vendor / WebUSB](examples/USBVendor/) | [NCM network](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) |
-|------|-----------|-----|------------|-----|------|-------|-----------------|-------------|------|
-| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ○ |
+| Chip | Max speed | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Vendor / WebUSB](examples/USBVendor/) | [NCM network](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) | [DFU](examples/FirmwareDFU/) |
+|------|-----------|-----|------------|-----|------|-------|-----------------|-------------|------|-----|
+| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ |
 
 ✅ = verified by the automated hardware tests (two-board peer rig for the S3,
 loopback/manual rigs for the P4; see [tests/TEST_PLAN.md](tests/TEST_PLAN.md)).
@@ -44,7 +44,8 @@ loopback/manual rigs for the P4; see [tests/TEST_PLAN.md](tests/TEST_PLAN.md)).
 (the `COMPATIBILITY` files above); hardware verification is pending for these
 cells. Up to four classes combine into one composite device within the
 controller's endpoint budget - see the
-[guide, section 3.3](docs/usb-device-guide.md#33-the-endpoint-budget).
+[guide, section 3.3](docs/usb-device-guide.md#33-the-endpoint-budget). DFU is
+the exception: it costs no endpoint, so it fits beside any of the others.
 
 ## Library-owned TinyUSB stack
 
@@ -80,8 +81,8 @@ Owning this boundary makes the following possible:
 
 This release covers HID keyboard / mouse / gamepad / consumer / system / custom /
 vendor HID, CDC ACM, USB MIDI, MSC, USBVendor, USB Audio (speaker / microphone),
-a CDC-NCM network device, a CCID smart card reader, and multi-function
-composite devices.
+a CDC-NCM network device, a CCID smart card reader, USB DFU firmware update,
+and multi-function composite devices.
 
 Typical use cases:
 
@@ -96,6 +97,8 @@ Typical use cases:
   so a PC can reach a page or API on the device over USB.
 - Present the board as a USB smart card reader (CCID) whose card is implemented
   by the sketch, and answer APDUs from a PC/SC host.
+- Update the board's own firmware over USB - with `dfu-util`, with a browser
+  over the USB network interface, or by handing the chip to its ROM loader.
 - Combine several of the above as one composite device.
 
 ## Design Goals
@@ -136,6 +139,9 @@ available:
   integration (DHCP server / client / static address).
 - CCID smart card reader with one slot: sketch-supplied ATR, APDU and escape
   callbacks, and slot change notifications.
+- USB DFU: a device-implemented download into the OTA partition, a runtime
+  interface that answers `dfu-util -e`, and an OTA writer any transport can use.
+- Restarting into the chip's ROM download loader from a running sketch.
 - Multi-function composite devices (e.g. HID + CDC + MSC on one device).
 - Serial command sketches for pytest-embedded peer and loopback tests.
 
@@ -420,6 +426,40 @@ was deleted rather than carried forward. See
 - Callbacks run in the TinyUSB device task: return promptly and do not call back
   into USB from them.
 
+## Firmware update APIs
+
+- `EspUsbDeviceDfu` adds a USB DFU function. It costs one interface and **no
+  endpoints** - every DFU transfer travels on EP0 - so it fits on a device whose
+  endpoint budget is already spent.
+  - `EspUsbDeviceDfuMode::Download` implements the update itself:
+    `dfu-util -D firmware.bin` writes the image into the spare OTA partition,
+    the device verifies it and restarts into it. The ROM is not involved, so it
+    behaves identically on ESP32-S2, ESP32-S3 and ESP32-P4.
+  - `EspUsbDeviceDfuMode::Runtime` answers only `DFU_DETACH` (`dfu-util -e`) and
+    by default restarts into the chip's ROM download loader.
+  - `onProgress()` / `onComplete()` / `onError()` / `onDetach()` and
+    `restartWhenComplete(false)` are the hooks; all of them run on the usbd task.
+- `EspUsbDeviceFirmwareUpdate` writes an image into the OTA partition that is not
+  running, verifies it, and switches the boot partition. Transport-independent:
+  the DFU class drives it, and so can a sketch receiving bytes over CDC, vendor
+  bulk, MSC, or an HTTP upload across the NCM interface.
+  - `available()` / `capacity()` / `targetLabel()` answer before an upload starts
+    whether one can work at all - a single-app partition scheme (`huge_app`) has
+    nowhere to put a new image.
+  - `begin()` / `write()` / `end()` / `abort()` stream it in; the flash is erased
+    as the write advances, not up front.
+  - `markValid()` confirms the running image, cancelling a pending bootloader
+    rollback; `rollback()` and `cancelPendingBoot()` are the ways back.
+- `EspUsbDevice::rebootToBootloader()` restarts into the chip's ROM download
+  loader so `esptool` can rewrite the whole flash, and
+  `rebootToRomDfu()` asks the S2/S3 ROM for DFU instead. The download-boot flag
+  lives in a different register per target - and on ESP32-P4 shares one with the
+  software-reset bit - which is why this is a library call. Arduino-ESP32's
+  `usb_persist_restart()` cannot be linked from a sketch that uses this library.
+
+Boot mode per chip, which connector the ROM answers on, and the full route
+comparison are in [docs/ota-over-usb.md](docs/ota-over-usb.md).
+
 ## Network / Composite APIs
 
 USB network (CDC-NCM):
@@ -498,6 +538,9 @@ implementing your own class are covered in
 [docs/usb-device-advanced.md](docs/usb-device-advanced.md).
 Symptom-first fixes are collected in
 [docs/troubleshooting.md](docs/troubleshooting.md).
+Boot-mode entry per chip, entering it from a running sketch, and the USB
+firmware-update routes are covered in
+[docs/ota-over-usb.md](docs/ota-over-usb.md).
 Porting a sketch from the core's USB API is covered in
 [docs/migrating-from-arduino-esp32-usb.md](docs/migrating-from-arduino-esp32-usb.md).
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for the test structure and staged

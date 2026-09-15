@@ -29,18 +29,19 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 
 ## 対応チップとクラス
 
-| チップ | 最大速度 | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Vendor / WebUSB](examples/USBVendor/) | [NCMネットワーク](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) |
-|--------|----------|-----|------------|-----|------|-------|-----------------|--------------|------|
-| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ○ |
+| チップ | 最大速度 | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Vendor / WebUSB](examples/USBVendor/) | [NCMネットワーク](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) | [DFU](examples/FirmwareDFU/) |
+|--------|----------|-----|------------|-----|------|-------|-----------------|--------------|------|-----|
+| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ |
 
 ✅ = 自動実機テストで検証済み（S3は2台peer構成、P4はloopback/手動構成。
 [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)参照）。
 ○ = 対応済みで、リリースごとにCore version別のbuild検証を実施
 （上記`COMPATIBILITY`ファイル）。これらのセルの実機検証は今後の課題です。
 最大4クラスをcontrollerのendpoint予算内で1つの複合デバイスに組み合わせられます
-（[ガイド3.3](docs/usb-device-guide.ja.md#33-endpoint予算)参照）。
+（[ガイド3.3](docs/usb-device-guide.ja.md#33-endpoint予算)参照）。DFUは例外で、
+endpointを消費しないため他のどれの隣にも載ります。
 
 ## ライブラリ所有のTinyUSB stack
 
@@ -70,7 +71,8 @@ forkしたわけではありません。選択したfile、pin、license、更�
 
 このリリースでは、HID keyboard / mouse / gamepad / consumer / system / custom / vendor HID、
 CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC-NCM
-ネットワークデバイス、CCID スマートカードリーダー、多機能な複合デバイスを扱えます。
+ネットワークデバイス、CCID スマートカードリーダー、USB DFU ファームウェア更新、
+多機能な複合デバイスを扱えます。
 
 代表的な用途:
 
@@ -78,6 +80,8 @@ CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC
 - PC や `EspUsbHost` と CDC ACM serial / USB MIDI で通信する。
 - RAM disk、FAT RAM disk、SD card を USB MSC として公開する。
 - HID ではない vendor-specific bulk/control interface を作る。
+- ボード自身のファームウェアを USB 経由で更新する（`dfu-util`、USB ネットワーク
+  インターフェース越しのブラウザ、またはチップを ROM loader へ渡す方法）。
 - 実転送を検証済みのUAC1 Audio Playback/Capture PCMをbounded FIFO経由で読み書きする。
   UAC2は明示選択でき、EspUsbHost 2.7.1のUAC2 hostに対する2台テスト `peer/usb_audio_uac2` でend-to-endにカバー。
 - ボードを USB ネットワークアダプタ（CDC-NCM）として見せ、任意で lwIP/DHCP を有効にして
@@ -120,6 +124,9 @@ loopback テストで確認できる範囲を広げています。
   サーバ / クライアント / 静的アドレス）。
 - CCID スマートカードリーダー（1 slot、スケッチが与える ATR、APDU / escape callback、
   カード挿抜通知）。
+- USB DFU: デバイス自身が OTA partition へ書き込む download、`dfu-util -e` に応える
+  runtime interface、どの転送路からでも使える OTA writer。
+- 動作中のスケッチからチップの ROM download loader へ再起動する。
 - 多機能な複合デバイス（例: HID + CDC + MSC を 1 台に）。
 - pytest-embedded peer / loopback テスト用の serial command sketch。
 
@@ -379,6 +386,40 @@ Espressif USBAudioCard由来sourceを継続改変せず削除しています。�
 - callback は TinyUSB device task で実行されます。長く止めず、中から USB API を
   呼び返さないでください。
 
+## ファームウェア更新 APIs
+
+- `EspUsbDeviceDfu` は USB DFU function を追加します。消費するのは interface 1 本と
+  **endpoint 0 本**（全転送が EP0 を通ります）なので、endpoint 予算を使い切った
+  デバイスにも載ります。
+  - `EspUsbDeviceDfuMode::Download` は更新自体を実装します。`dfu-util -D
+    firmware.bin` が空いている OTA partition へ書き込み、デバイスが検証して
+    そのイメージで再起動します。ROM を使わないので ESP32-S2 / S3 / P4 で同じ
+    動作です。
+  - `EspUsbDeviceDfuMode::Runtime` は `DFU_DETACH`（`dfu-util -e`）にだけ応え、
+    既定ではチップの ROM download loader へ再起動します。
+  - hook は `onProgress()` / `onComplete()` / `onError()` / `onDetach()` と
+    `restartWhenComplete(false)`。いずれも usbd task 上で動きます。
+- `EspUsbDeviceFirmwareUpdate` は動作していない側の OTA partition へイメージを
+  書き、検証し、boot partition を切り替えます。転送路に依存しません。DFU class が
+  使うほか、CDC / vendor bulk / MSC / NCM 越しの HTTP アップロードでバイトを
+  受け取るスケッチからも使えます。
+  - `available()` / `capacity()` / `targetLabel()` は、アップロードを始める前に
+    そもそも成立するかを答えます。application partition が 1 つだけの scheme
+    （`huge_app`）には新しいイメージの置き場所がありません。
+  - `begin()` / `write()` / `end()` / `abort()` でストリーム書き込み。flash は
+    先頭でまとめてではなく、書き込みが進むにつれて erase します。
+  - `markValid()` は動作中のイメージを確定し、bootloader の rollback 待ちを
+    解除します。戻る手段は `rollback()` と `cancelPendingBoot()` です。
+- `EspUsbDevice::rebootToBootloader()` はチップの ROM download loader へ再起動し、
+  `esptool` で flash 全体を書き換えられるようにします。`rebootToRomDfu()` は
+  S2/S3 の ROM に DFU で立ち上がるよう頼みます。download-boot フラグのレジスタは
+  ターゲットごとに違い、ESP32-P4 ではソフトウェアリセットのビットと同居して
+  いるため、ライブラリの API にしています。Arduino-ESP32 の
+  `usb_persist_restart()` はこのライブラリを使うスケッチからは link できません。
+
+chip 別の boot mode、ROM がどのコネクタで応答するか、経路の比較表は
+[docs/ota-over-usb.ja.md](docs/ota-over-usb.ja.md) にあります。
+
 ## Network / Composite APIs
 
 USB ネットワーク（CDC-NCM）:
@@ -441,6 +482,9 @@ USB device そのものの基礎、ESP32 固有の制約、動かないときの
 [docs/usb-device-guide.ja.md](docs/usb-device-guide.ja.md) にまとめています。
 TinyUSB との関係、descriptor のバイト構造、callback context、独自 class の実装は
 [docs/usb-device-advanced.ja.md](docs/usb-device-advanced.ja.md) にまとめています。
+chip 別の boot mode の入り方、動作中のスケッチから入る方法、USB経由の
+ファームウェア更新経路は [docs/ota-over-usb.ja.md](docs/ota-over-usb.ja.md)
+にまとめています。
 症状から引ける対処集は [docs/troubleshooting.ja.md](docs/troubleshooting.ja.md) に、
 Core 標準 USB API からの移行手順は
 [docs/migrating-from-arduino-esp32-usb.ja.md](docs/migrating-from-arduino-esp32-usb.ja.md)

@@ -1,6 +1,59 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) USB firmware update. New `EspUsbDeviceDfu` implements the DFU class in
+  both shapes: `Download`, where `dfu-util -D firmware.bin` writes an image into
+  the spare OTA partition and the device verifies it and restarts into it, and
+  `Runtime`, where `dfu-util -e` asks the device to enter the chip's ROM
+  download loader. The function costs **one interface and no endpoints** -
+  every DFU transfer travels on EP0 - so it can be added to a device whose
+  endpoint budget is already spent; `tests/peer/usb_dfu` asserts exactly that
+  against a keyboard that keeps both of its endpoints. New
+  `EspUsbDeviceFirmwareUpdate` is the transport-independent OTA writer
+  underneath it (`available()` / `capacity()` / `targetLabel()` before an upload
+  starts, `begin()` / `write()` / `end()` to stream it in with the flash erased
+  as the write advances, `markValid()` / `rollback()` / `cancelPendingBoot()`
+  around the commit), usable from CDC, vendor bulk, MSC or an HTTP upload over
+  the NCM interface. New `EspUsbDevice::rebootToBootloader()` and
+  `rebootToRomDfu()` restart into the ROM loader from a running sketch:
+  Arduino-ESP32's `usb_persist_restart()` cannot be linked from a sketch that
+  uses this library (it drags in `esp32-hal-tinyusb.c`, which defines
+  `tud_descriptor_bos_cb()` and `tud_vendor_control_xfer_cb()` a second time)
+  and is a no-op on ESP32-P4 in any case. The download-boot flag is a different
+  register per target, and on P4 shares one with the software-reset bit, so it
+  must be set rather than written - verified in the download loader on ESP32-S3
+  rev v0.2 and ESP32-P4 rev v1.3 with the USB stack running. TinyUSB
+  `class/dfu/dfu_device.c` and `dfu_rt_device.c` joined the vendored selection
+  (48 files, 14 sources). New examples `FirmwareDFU`, `FirmwareHTTP` (a browser
+  uploads over the USB network interface, no host tool at all) and
+  `FirmwareBootMode`; new tests `tests/single/dfu_descriptor` and
+  `tests/peer/usb_dfu`; new guide `docs/ota-over-usb.md`, which covers boot mode
+  per chip, entering it from a sketch, and the full route comparison.
+- (JA) USB 経由のファームウェア更新に対応しました。`EspUsbDeviceDfu` は DFU class を
+  2 形態で実装します。`Download` は `dfu-util -D firmware.bin` が空いている OTA
+  partition へイメージを書き、device が検証してそのイメージで再起動するもの、
+  `Runtime` は `dfu-util -e` で device にチップの ROM download loader へ入るよう
+  頼むものです。消費するのは **interface 1 本と endpoint 0 本**（全転送が EP0 を
+  通ります）なので、endpoint 予算を使い切った device にも足せます。
+  `tests/peer/usb_dfu` が、endpoint 2 本を保ったままの keyboard の隣で実際にそれを
+  確認します。その下にある `EspUsbDeviceFirmwareUpdate` は転送路に依存しない OTA
+  writer で（upload 前に答える `available()` / `capacity()` / `targetLabel()`、
+  書き込みの進行に合わせて flash を erase しながら流し込む `begin()` / `write()` /
+  `end()`、commit 前後の `markValid()` / `rollback()` / `cancelPendingBoot()`）、
+  CDC・vendor bulk・MSC・NCM 越しの HTTP アップロードからも使えます。
+  `EspUsbDevice::rebootToBootloader()` と `rebootToRomDfu()` は動作中のスケッチから
+  ROM loader へ再起動します。Arduino-ESP32 の `usb_persist_restart()` はこの
+  ライブラリを使うスケッチからは link できず（`esp32-hal-tinyusb.c` を引き込み、
+  `tud_descriptor_bos_cb()` と `tud_vendor_control_xfer_cb()` を二重定義します）、
+  そもそも ESP32-P4 では何もしません。download-boot フラグのレジスタはターゲット
+  ごとに違い、P4 ではソフトウェアリセットのビットと同居しているため書き込みでは
+  なく set が必要です。USB stack を動かした状態の ESP32-S3 rev v0.2 と ESP32-P4
+  rev v1.3 で download loader への到達を実機確認しました。TinyUSB の
+  `class/dfu/dfu_device.c` と `dfu_rt_device.c` を vendoring 対象に追加しています
+  （48 file、source 14）。example `FirmwareDFU` / `FirmwareHTTP`（host 側は
+  ブラウザだけ）/ `FirmwareBootMode`、テスト `tests/single/dfu_descriptor` と
+  `tests/peer/usb_dfu`、ガイド `docs/ota-over-usb.ja.md`（chip 別の boot mode、
+  スケッチからの入り方、経路の比較）を追加しました。
 
 ## 2.3.0
 - (EN) Fix a composite HID device merging its classes' report descriptors at the wrong byte. The merge gives each class its own Report ID and has to put it immediately after that class's Collection (Application) item; it found that point by copying six bytes, which holds only for a descriptor opening with a one-byte Usage Page and a one-byte Usage. `EspUsbDeviceHidVendor` opens with a vendor-defined Usage Page - a three-byte item - so the cut landed *inside* the Collection item and every item after it shifted by one: the host read `A1 85` as "Collection (vendor-defined)" and the rest of the descriptor was nonsense. The device still enumerated, which is why nothing noticed. The merge now walks HID items, and a class that already declares a Report ID (gamepad, consumer control, system control, vendor HID) has it replaced rather than duplicated - those were emitting the same item twice, harmlessly but pointlessly. New `EspUsbDevice::hidReportDescriptorLength(instance)` reports the length of whatever `hidReportDescriptor(instance)` returns, which for a composite HID is the merged descriptor and not any one class's own.

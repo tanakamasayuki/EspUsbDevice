@@ -312,6 +312,41 @@ HID keyboard + CDC serial + MSC FAT RAM disk を 1 つの `EspUsbDevice` に載�
   PC/SC の Get UID 疑似 APDU と echo 命令に応答します。
 - シリアルモニタの 'i' / 'r' でカードを出し入れすると、Host には挿抜通知として届きます。
 
+## FirmwareDFU
+
+スケッチを動かしたまま `dfu-util` で USB 経由のファームウェア更新を行う例です。
+詳しくは [FirmwareDFU/README.ja.md](FirmwareDFU/README.ja.md) を参照してください。
+
+- `EspUsbDeviceDfu` を `Download` mode で登録すると、`dfu-util -D firmware.bin`
+  が空いている OTA partition へ書き込み、ボードがそのイメージで再起動します。
+- interface 1 本、**endpoint 0 本**（全転送が EP0）なので、endpoint 予算を
+  使い切ったデバイスにも足せます。
+- ROM を使わないため S2 / S3 / P4 で同じように動きます。
+- application partition が 2 つある partition scheme が必要です。
+
+## FirmwareHTTP
+
+host 側にブラウザ以外なにも要らない USB 経由のファームウェア更新です。
+詳しくは [FirmwareHTTP/README.ja.md](FirmwareHTTP/README.ja.md) を参照してください。
+
+- `EspUsbDeviceNet` と Arduino の `HTTPUpdateServer` の組み合わせ。PC は USB 経由で
+  アドレスを受け取り、`http://192.168.7.1/update` で `.bin` をアップロードします。
+- ドライバ不要、host tool 不要、boot mode 不要。
+- 机の外に出す前に `setup()` へ認証を付けてください。
+
+## FirmwareBootMode
+
+動作中のスケッチから ROM download loader へ入り、誰も BOOT を押さずに `esptool` で
+flash 全体を書き換える例です。
+詳しくは [FirmwareBootMode/README.ja.md](FirmwareBootMode/README.ja.md) を参照してください。
+
+- `device.rebootToBootloader()` がターゲットの download-boot フラグを立てて再起動、
+  `device.rebootToRomDfu()` は S2/S3 の ROM に DFU で立ち上がるよう頼みます。
+- 要求の仕方は 3 通り: CDC の 1200bps touch、DFU runtime interface 経由の
+  `dfu-util -e`、シリアルへの 1 バイト。
+- loader がどのコネクタで応答するかはチップごとに違います。
+  [docs/ota-over-usb.ja.md](../docs/ota-over-usb.ja.md) を参照してください。
+
 ## 注意
 
 - USB device として使う側の ESP32-S3 などを USB host に接続してください。

@@ -11,8 +11,8 @@ EspUsbDevice v2は、USB設定とruntimeをArduino-ESP32のprebuilt
 - License: MIT
 - Arduino build tree: 選択済み`.c` fileと、S2/S3/P4で必要になるtransitive
   headerだけをlibraryの`src/`以下へ配置
-- Build manifest: `BUILD_FILES.txt`（43 file: source 12、header 31）
-- Verification cache: 固定したupstream tarballと選択済み43 fileを、検証時だけ
+- Build manifest: `BUILD_FILES.txt`（48 file: source 14、header 34）
+- Verification cache: 固定したupstream tarballと選択済み48 fileを、検証時だけ
   ignoredな`.upstream-cache/`以下へ取得
 - 初回import時のlocal patch: なし
 
@@ -39,6 +39,8 @@ Class:
 - `src/class/vendor/vendor_device.c`
 - `src/class/net/ncm_device.c`
 - `src/class/audio/audio_device.c`
+- `src/class/dfu/dfu_device.c`
+- `src/class/dfu/dfu_rt_device.c`
 
 ESP32 DWC2 device controller:
 
@@ -46,13 +48,15 @@ ESP32 DWC2 device controller:
 - `src/portable/synopsys/dwc2/dwc2_common.c`
 
 完全なupstream source treeはこのrepositoryで管理しません。検証scriptは、固定commitの
-tarballがignored local cacheにない場合だけdownloadし、manifestにある43 fileだけを
+tarballがignored local cacheにない場合だけdownloadし、manifestにある48 fileだけを
 展開してArduino build treeとbyte-for-byteで比較します。通常のArduino buildは何も
 downloadしません。
 
 Arduino build treeは、S2/S3/P4のclean buildで生成したcompiler dependencyから求めた
-最小構成です。Host、Type-C、DFU、Video、Printer、MTP、MIDI 2.0、ECM/RNDIS、
-FreeRTOS以外のOSAL、ESP32以外のportable fileはbuild treeへコピーしません。
+最小構成です。Host、Type-C、Video、Printer、MTP、MIDI 2.0、ECM/RNDIS、
+FreeRTOS以外のOSAL、ESP32以外のportable fileはbuild treeへコピーしません。DFUは
+`EspUsbDeviceDfu`の追加時に選択対象へ入りました。endpointを消費しない唯一のclassなので、
+2つのdriverは全スケッチが抱えます。
 
 `src/`内のTinyUSB build treeは固定snapshotからの機械的なcopyで、upstream fileへ
 patchを加えていません。`src/tusb_config.h`と

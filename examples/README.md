@@ -356,6 +356,41 @@ See [SmartCardReader/README.md](SmartCardReader/README.md) for details.
 - 'i' and 'r' on the serial monitor put the card in and take it out, which the
   host sees as slot change notifications.
 
+## FirmwareDFU
+
+Firmware update over USB with `dfu-util`, while the sketch keeps running.
+See [FirmwareDFU/README.md](FirmwareDFU/README.md) for details.
+
+- Register `EspUsbDeviceDfu` in `Download` mode; `dfu-util -D firmware.bin`
+  writes the image into the spare OTA partition and the board restarts into it.
+- Costs one interface and **no endpoints** - every DFU transfer travels on EP0 -
+  so it fits on a device whose endpoint budget is already spent.
+- The ROM is not involved, so it behaves the same on S2, S3 and P4.
+- Needs a partition scheme with two application partitions.
+
+## FirmwareHTTP
+
+Firmware update over USB with nothing on the host but a browser.
+See [FirmwareHTTP/README.md](FirmwareHTTP/README.md) for details.
+
+- `EspUsbDeviceNet` plus Arduino's `HTTPUpdateServer`: the PC gets an address
+  over USB and uploads a `.bin` at `http://192.168.7.1/update`.
+- No driver, no host tool, no boot mode.
+- Add credentials to `setup()` before this leaves a desk.
+
+## FirmwareBootMode
+
+Entering the ROM download loader from the running sketch, so `esptool` can
+rewrite the whole flash without anyone pressing BOOT.
+See [FirmwareBootMode/README.md](FirmwareBootMode/README.md) for details.
+
+- `device.rebootToBootloader()` writes the target's download-boot flag and
+  restarts; `device.rebootToRomDfu()` asks the S2/S3 ROM for DFU instead.
+- Three ways to ask: the 1200-baud CDC touch, `dfu-util -e` through a DFU
+  runtime interface, or a byte on the serial port.
+- Which connector the loader answers on differs per chip - see
+  [docs/ota-over-usb.md](../docs/ota-over-usb.md).
+
 ## Notes
 
 - Connect the USB-device-capable ESP32-S3 or similar board to a USB host.

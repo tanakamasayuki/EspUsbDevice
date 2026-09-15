@@ -3,6 +3,7 @@
 #include "internal/EspUsbTinyUsbRuntime.h"
 
 #include <ctype.h>
+#include <new>
 #include <string.h>
 #include "keymap/keymap_da_dk.h"
 #include "keymap/keymap_de_de.h"
@@ -32,7 +33,10 @@
 #include "class/msc/msc_device.h"
 #include "class/vendor/vendor_device.h"
 #include "class/net/net_device.h"
+#include "class/dfu/dfu_device.h"
+#include "class/dfu/dfu_rt_device.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/semphr.h"
 #define ESP_USB_DEVICE_HAS_TINYUSB 1
 #if __has_include("esp_mac.h")
@@ -57,6 +61,50 @@
 #define ESP_USB_DEVICE_HAS_ESP_NETIF 1
 #else
 #define ESP_USB_DEVICE_HAS_ESP_NETIF 0
+#endif
+
+// OTA partition access for EspUsbDeviceFirmwareUpdate. Part of ESP-IDF's
+// app_update component, which Arduino-ESP32 always builds - unlike Arduino's
+// Update library, referencing it adds no Arduino library dependency to a sketch
+// that never touches firmware update.
+#if __has_include("esp_ota_ops.h")
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
+#include "esp_err.h"
+#define ESP_USB_DEVICE_HAS_OTA 1
+#else
+#define ESP_USB_DEVICE_HAS_OTA 0
+#endif
+
+// The always-on register that asks the ROM to stay in its download loader after
+// the next reset, plus the S2/S3 ROM persist flags that ask it to come up as a
+// DFU device rather than a serial loader.
+#if __has_include("esp_system.h")
+#include "esp_system.h"
+#include "soc/soc.h"
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+#include "soc/rtc_cntl_reg.h"
+#define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 1
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+#include "soc/lp_system_reg.h"
+#define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 1
+#else
+#define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 0
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && __has_include("esp32s3/rom/usb/usb_persist.h")
+#include "esp32s3/rom/usb/usb_persist.h"
+#include "esp32s3/rom/usb/chip_usb_dw_wrapper.h"
+#define ESP_USB_DEVICE_HAS_ROM_DFU 1
+#elif defined(CONFIG_IDF_TARGET_ESP32S2) && __has_include("esp32s2/rom/usb/usb_persist.h")
+#include "esp32s2/rom/usb/usb_persist.h"
+#include "esp32s2/rom/usb/chip_usb_dw_wrapper.h"
+#define ESP_USB_DEVICE_HAS_ROM_DFU 1
+#else
+#define ESP_USB_DEVICE_HAS_ROM_DFU 0
+#endif
+#else
+#define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 0
+#define ESP_USB_DEVICE_HAS_ROM_DFU 0
 #endif
 
 // The HID interrupt endpoint buffer this build compiled, which is what bounds a
@@ -108,6 +156,7 @@ static EspUsbDeviceMidi *g_activeMidi = nullptr;
 static EspUsbDeviceMsc *g_activeMsc = nullptr;
 static EspUsbDeviceVendor *g_activeVendor = nullptr;
 static EspUsbDeviceNet *g_activeNet = nullptr;
+static EspUsbDeviceDfu *g_activeDfu = nullptr;
 // The active Audio function registry lives in EspUsbAudio.cpp.
 
 static void put16(uint8_t *dst, uint16_t value)
@@ -4347,6 +4396,700 @@ bool EspUsbDeviceMscSdCard::handleStartStop(uint8_t powerCondition, bool start, 
     ejectCallback_();
   }
   return true;
+}
+#endif
+
+// --- Firmware update -------------------------------------------------------
+
+#if ESP_USB_DEVICE_HAS_OTA
+static const esp_partition_t *firmwareTargetPartition()
+{
+  return esp_ota_get_next_update_partition(nullptr);
+}
+#endif
+
+EspUsbDeviceFirmwareUpdate::EspUsbDeviceFirmwareUpdate()
+{
+}
+
+EspUsbDeviceFirmwareUpdate::~EspUsbDeviceFirmwareUpdate()
+{
+  abort();
+}
+
+bool EspUsbDeviceFirmwareUpdate::available()
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  return firmwareTargetPartition() != nullptr;
+#else
+  return false;
+#endif
+}
+
+size_t EspUsbDeviceFirmwareUpdate::capacity()
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  const esp_partition_t *target = firmwareTargetPartition();
+  return target ? static_cast<size_t>(target->size) : 0;
+#else
+  return 0;
+#endif
+}
+
+const char *EspUsbDeviceFirmwareUpdate::targetLabel()
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  const esp_partition_t *target = firmwareTargetPartition();
+  return target ? target->label : nullptr;
+#else
+  return nullptr;
+#endif
+}
+
+bool EspUsbDeviceFirmwareUpdate::begin(size_t expectedSize)
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  abort();
+  written_ = 0;
+  expectedSize_ = 0;
+  lastError_ = ESP_OK;
+
+  const esp_partition_t *target = firmwareTargetPartition();
+  if (!target)
+  {
+    // Single-app partition scheme: there is nowhere to put a new image. Worth
+    // saying plainly rather than failing on the first write, because the fix is
+    // a different partition scheme and not a different upload.
+    lastError_ = ESP_ERR_NOT_FOUND;
+    return false;
+  }
+  if (expectedSize > static_cast<size_t>(target->size))
+  {
+    lastError_ = ESP_ERR_INVALID_SIZE;
+    return false;
+  }
+
+  // OTA_WITH_SEQUENTIAL_WRITES rather than the real size on purpose: given a
+  // size, esp_ota_begin() erases that many bytes before returning, and erasing
+  // even a 1.25 MB partition takes seconds the caller is usually spending
+  // inside a USB callback. Sequential mode erases each sector as the write
+  // first reaches it, which spreads the same work across the transfer.
+  esp_ota_handle_t handle = 0;
+  const esp_err_t err = esp_ota_begin(target, OTA_WITH_SEQUENTIAL_WRITES, &handle);
+  if (err != ESP_OK)
+  {
+    lastError_ = err;
+    return false;
+  }
+
+  handle_ = static_cast<uint32_t>(handle);
+  partition_ = target;
+  expectedSize_ = expectedSize;
+  active_ = true;
+  return true;
+#else
+  (void)expectedSize;
+  lastError_ = ESP_ERR_NOT_SUPPORTED;
+  return false;
+#endif
+}
+
+bool EspUsbDeviceFirmwareUpdate::write(const void *data, size_t length)
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  if (!active_)
+  {
+    lastError_ = ESP_ERR_INVALID_STATE;
+    return false;
+  }
+  if (length == 0)
+  {
+    return true;
+  }
+  if (!data)
+  {
+    lastError_ = ESP_ERR_INVALID_ARG;
+    return false;
+  }
+
+  const esp_partition_t *target = static_cast<const esp_partition_t *>(partition_);
+  const size_t limit = expectedSize_ ? expectedSize_ : static_cast<size_t>(target->size);
+  if (written_ + length > limit)
+  {
+    // Overrunning the partition would be caught by esp_ota_write() too, but a
+    // host that keeps sending deserves to be stopped at the first byte past the
+    // end rather than at the end of a long upload.
+    lastError_ = ESP_ERR_INVALID_SIZE;
+    abort();
+    return false;
+  }
+
+  const esp_err_t err = esp_ota_write(static_cast<esp_ota_handle_t>(handle_), data, length);
+  if (err != ESP_OK)
+  {
+    lastError_ = err;
+    abort();
+    return false;
+  }
+  written_ += length;
+  return true;
+#else
+  (void)data;
+  (void)length;
+  lastError_ = ESP_ERR_NOT_SUPPORTED;
+  return false;
+#endif
+}
+
+bool EspUsbDeviceFirmwareUpdate::end()
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  if (!active_)
+  {
+    lastError_ = ESP_ERR_INVALID_STATE;
+    return false;
+  }
+
+  // esp_ota_end() is the verification step: it checks the image header, the
+  // declared length and the checksum, so a truncated or corrupted upload fails
+  // here instead of at the next boot. Only after it passes is the boot
+  // partition moved.
+  const esp_err_t closed = esp_ota_end(static_cast<esp_ota_handle_t>(handle_));
+  active_ = false;
+  handle_ = 0;
+  if (closed != ESP_OK)
+  {
+    lastError_ = closed;
+    return false;
+  }
+
+  const esp_partition_t *target = static_cast<const esp_partition_t *>(partition_);
+  const esp_err_t selected = esp_ota_set_boot_partition(target);
+  if (selected != ESP_OK)
+  {
+    lastError_ = selected;
+    return false;
+  }
+  lastError_ = ESP_OK;
+  return true;
+#else
+  lastError_ = ESP_ERR_NOT_SUPPORTED;
+  return false;
+#endif
+}
+
+void EspUsbDeviceFirmwareUpdate::abort()
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  if (active_)
+  {
+    esp_ota_abort(static_cast<esp_ota_handle_t>(handle_));
+  }
+#endif
+  active_ = false;
+  handle_ = 0;
+}
+
+bool EspUsbDeviceFirmwareUpdate::active() const
+{
+  return active_;
+}
+
+size_t EspUsbDeviceFirmwareUpdate::written() const
+{
+  return written_;
+}
+
+size_t EspUsbDeviceFirmwareUpdate::expectedSize() const
+{
+  return expectedSize_;
+}
+
+esp_err_t EspUsbDeviceFirmwareUpdate::lastError() const
+{
+  return lastError_;
+}
+
+const char *EspUsbDeviceFirmwareUpdate::lastErrorName() const
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  return esp_err_to_name(lastError_);
+#else
+  return lastError_ == ESP_OK ? "ESP_OK" : "ESP_ERR_NOT_SUPPORTED";
+#endif
+}
+
+bool EspUsbDeviceFirmwareUpdate::markValid()
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  return esp_ota_mark_app_valid_cancel_rollback() == ESP_OK;
+#else
+  return false;
+#endif
+}
+
+bool EspUsbDeviceFirmwareUpdate::rollback()
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  return esp_ota_mark_app_invalid_rollback_and_reboot() == ESP_OK;
+#else
+  return false;
+#endif
+}
+
+bool EspUsbDeviceFirmwareUpdate::cancelPendingBoot()
+{
+#if ESP_USB_DEVICE_HAS_OTA
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  return running && esp_ota_set_boot_partition(running) == ESP_OK;
+#else
+  return false;
+#endif
+}
+
+// --- Restarting into the ROM ----------------------------------------------
+
+#if ESP_USB_DEVICE_HAS_TINYUSB
+// A restart cannot be issued from the callback that decided to restart.
+//
+// Every class callback runs on the usbd task, and the host is mid-transfer when
+// it asks for one of these: DFU_DETACH still has a status stage to finish, and a
+// finished DFU download still owes the host one GETSTATUS. Restarting inline
+// cuts those off, and blocking the usbd task to wait for them is the same thing
+// - nothing answers the host while that task is asleep.
+//
+// So the decision is made on the usbd task and carried out on a throwaway one
+// at the lowest useful priority, which lets the usbd task finish the exchange
+// during the delay. The task never returns; the chip restarts underneath it.
+struct EspUsbDeviceDeferredRestart
+{
+  EspUsbDevice *device;
+  uint32_t delayMs;
+  bool toBootloader;
+};
+
+static void espUsbDeviceDeferredRestartTask(void *argument)
+{
+  EspUsbDeviceDeferredRestart *request =
+      static_cast<EspUsbDeviceDeferredRestart *>(argument);
+  const uint32_t delayMs = request->delayMs;
+  EspUsbDevice *device = request->device;
+  const bool toBootloader = request->toBootloader;
+  delete request;
+
+  vTaskDelay(pdMS_TO_TICKS(delayMs));
+  if (toBootloader && device)
+  {
+    device->rebootToBootloader();
+  }
+  tud_disconnect();
+  vTaskDelay(pdMS_TO_TICKS(20));
+  esp_restart();
+  vTaskDelete(nullptr);
+}
+
+static bool espUsbDeviceScheduleRestart(EspUsbDevice *device, uint32_t delayMs,
+                                        bool toBootloader)
+{
+  EspUsbDeviceDeferredRestart *request = new (std::nothrow)
+      EspUsbDeviceDeferredRestart{device, delayMs, toBootloader};
+  if (!request)
+  {
+    return false;
+  }
+  if (xTaskCreate(espUsbDeviceDeferredRestartTask, "espusb-restart", 4096,
+                  request, tskIDLE_PRIORITY + 1, nullptr) != pdPASS)
+  {
+    delete request;
+    return false;
+  }
+  return true;
+}
+#endif
+
+bool EspUsbDevice::rebootToBootloader()
+{
+#if ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  // Remove the pull-up so the host records a disconnect rather than a device
+  // that stopped answering. Safe from any task, unlike end(), which deletes the
+  // usbd task and would therefore never return when called from it.
+  if (tinyusbStarted_)
+  {
+    tud_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  // RTC_CNTL_OPTION1_REG holds this one bit and nothing else, so a whole
+  // register write is safe here.
+  REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+#else
+  // LP_SYSTEM_REG_SYS_CTRL_REG also carries LP_SYSTEM_REG_SYS_SW_RST,
+  // LP_SYSTEM_REG_DIG_FIB and LP_SYSTEM_REG_IO_MUX_RESET_DISABLE. Set the bit;
+  // never write the register.
+  REG_SET_BIT(LP_SYSTEM_REG_SYS_CTRL_REG, LP_SYSTEM_REG_FORCE_DOWNLOAD_BOOT);
+#endif
+  esp_restart();
+  return true;
+#else
+  setLastError(ESP_ERR_NOT_SUPPORTED);
+  return false;
+#endif
+}
+
+bool EspUsbDevice::rebootToRomDfu()
+{
+#if ESP_USB_DEVICE_HAS_ROM_DFU
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (tinyusbStarted_)
+  {
+    tud_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+#endif
+  // The persist flag is what makes the ROM come up as a DFU device on USB-OTG
+  // instead of as a serial loader, without burning the one-way USB_PHY_SEL
+  // eFuse that would cost this board USB Serial/JTAG for good.
+  chip_usb_set_persist_flags(USBDC_BOOT_DFU);
+  REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+  esp_restart();
+  return true;
+#else
+  setLastError(ESP_ERR_NOT_SUPPORTED);
+  return false;
+#endif
+}
+
+// --- DFU -------------------------------------------------------------------
+
+EspUsbDeviceDfu::EspUsbDeviceDfu(EspUsbDevice &device, EspUsbDeviceDfuMode mode,
+                                 const char *name)
+    : EspUsbDeviceClass(device), mode_(mode), name_(name)
+{
+}
+
+EspUsbDeviceDfu::~EspUsbDeviceDfu()
+{
+  end();
+}
+
+bool EspUsbDeviceDfu::begin()
+{
+  if (g_activeDfu && g_activeDfu != this)
+  {
+    // One DFU function per device. A second one would claim the same class
+    // driver, and the host would have two interfaces fighting over one state
+    // machine.
+    return false;
+  }
+  g_activeDfu = this;
+  return true;
+}
+
+void EspUsbDeviceDfu::end()
+{
+  if (downloadOpen_)
+  {
+    firmware_.abort();
+    downloadOpen_ = false;
+  }
+  if (g_activeDfu == this)
+  {
+    g_activeDfu = nullptr;
+  }
+}
+
+void EspUsbDeviceDfu::assignFunctionIds(uint8_t instance, uint8_t stringIndex)
+{
+  (void)instance;
+  stringIndex_ = stringIndex;
+}
+
+uint16_t EspUsbDeviceDfu::transferSize()
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  return static_cast<uint16_t>(CFG_TUD_DFU_XFER_BUFSIZE);
+#else
+  return 1024;
+#endif
+}
+
+uint16_t EspUsbDeviceDfu::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber,
+                                                  uint8_t endpointNumber, uint16_t endpointSize)
+{
+  (void)endpointNumber;
+  (void)endpointSize;
+  if (!dst)
+  {
+    return 0;
+  }
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (mode_ == EspUsbDeviceDfuMode::Runtime)
+  {
+    // bitWillDetach: this device restarts itself when it receives DETACH, so
+    // the host must not issue the USB reset the standard otherwise expects it
+    // to. The detach timeout is how long the host should wait for the device to
+    // go away before giving up.
+    const uint8_t descriptor[] = {
+        TUD_DFU_RT_DESCRIPTOR(interfaceNumber, stringIndex_,
+                              DFU_ATTR_CAN_DOWNLOAD | DFU_ATTR_WILL_DETACH,
+                              1000, transferSize()),
+    };
+    memcpy(dst, descriptor, sizeof(descriptor));
+    return sizeof(descriptor);
+  }
+
+  // Not manifestation tolerant: once the image is written this device restarts
+  // into it, so the host should expect the device to disappear rather than
+  // return to dfuIDLE. One alternate setting, which is the spare OTA partition.
+  const uint8_t descriptor[] = {
+      TUD_DFU_DESCRIPTOR(interfaceNumber, 1, stringIndex_,
+                         DFU_ATTR_CAN_DOWNLOAD, 1000, transferSize()),
+  };
+  memcpy(dst, descriptor, sizeof(descriptor));
+  return sizeof(descriptor);
+#else
+  (void)interfaceNumber;
+  return 0;
+#endif
+}
+
+void EspUsbDeviceDfu::onDetach(DetachCallback callback)
+{
+  detachCallback_ = callback;
+}
+
+void EspUsbDeviceDfu::onProgress(ProgressCallback callback)
+{
+  progressCallback_ = callback;
+}
+
+void EspUsbDeviceDfu::onComplete(CompleteCallback callback)
+{
+  completeCallback_ = callback;
+}
+
+void EspUsbDeviceDfu::onError(ErrorCallback callback)
+{
+  errorCallback_ = callback;
+}
+
+void EspUsbDeviceDfu::restartWhenComplete(bool enable)
+{
+  restartWhenComplete_ = enable;
+}
+
+size_t EspUsbDeviceDfu::written() const
+{
+  return firmware_.written();
+}
+
+EspUsbDeviceFirmwareUpdate &EspUsbDeviceDfu::firmware()
+{
+  return firmware_;
+}
+
+uint32_t EspUsbDeviceDfu::pollTimeout(uint8_t state) const
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  // bwPollTimeout: how long the host waits before asking for status again.
+  //
+  // Both operations are synchronous here and both run on the usbd task, so the
+  // host physically cannot be served until they finish - which means these
+  // numbers cost latency and buy nothing but politeness. Keep the per-block one
+  // at one millisecond: at a thousand blocks, ten would add ten seconds to
+  // every update. Manifestation reads and hashes the whole written image once,
+  // so it gets a real figure.
+  if (state == DFU_MANIFEST)
+  {
+    return 250;
+  }
+#else
+  (void)state;
+#endif
+  return 1;
+}
+
+void EspUsbDeviceDfu::handleDetach()
+{
+  if (detachCallback_)
+  {
+    detachCallback_();
+    return;
+  }
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  // No callback means the default, which is to do what the host just asked for:
+  // leave the application and come up somewhere an image can be downloaded.
+  espUsbDeviceScheduleRestart(&device_, 100, true);
+#endif
+}
+
+void EspUsbDeviceDfu::failDownload(uint8_t status)
+{
+  firmware_.abort();
+  downloadOpen_ = false;
+  if (errorCallback_)
+  {
+    errorCallback_(status);
+  }
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  tud_dfu_finish_flashing(status);
+#endif
+}
+
+void EspUsbDeviceDfu::handleDownload(uint16_t blockNumber, const uint8_t *data, uint16_t length)
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (mode_ != EspUsbDeviceDfuMode::Download)
+  {
+    tud_dfu_finish_flashing(DFU_STATUS_ERR_TARGET);
+    return;
+  }
+
+  if (!downloadOpen_)
+  {
+    // Block 0 opens the update. DFU 1.1 never tells the device how long the
+    // image is, so begin() is given no size and the partition is the only bound
+    // write() has.
+    if (blockNumber != 0)
+    {
+      // Resuming mid-image is not something this can do: the partition would
+      // hold whatever the previous attempt left.
+      failDownload(DFU_STATUS_ERR_NOTDONE);
+      return;
+    }
+    if (!firmware_.begin())
+    {
+      failDownload(DFU_STATUS_ERR_TARGET);
+      return;
+    }
+    downloadOpen_ = true;
+  }
+
+  if (!firmware_.write(data, length))
+  {
+    failDownload(DFU_STATUS_ERR_WRITE);
+    return;
+  }
+  if (progressCallback_)
+  {
+    progressCallback_(firmware_.written());
+  }
+  tud_dfu_finish_flashing(DFU_STATUS_OK);
+#else
+  (void)blockNumber;
+  (void)data;
+  (void)length;
+#endif
+}
+
+void EspUsbDeviceDfu::handleManifest()
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (!downloadOpen_)
+  {
+    failDownload(DFU_STATUS_ERR_NOTDONE);
+    return;
+  }
+  downloadOpen_ = false;
+
+  if (!firmware_.end())
+  {
+    if (errorCallback_)
+    {
+      errorCallback_(DFU_STATUS_ERR_VERIFY);
+    }
+    tud_dfu_finish_flashing(DFU_STATUS_ERR_VERIFY);
+    return;
+  }
+  if (completeCallback_ && !completeCallback_())
+  {
+    // The sketch refused the image after it verified. end() has already moved
+    // the boot partition, so put it back before telling the host no.
+    EspUsbDeviceFirmwareUpdate::cancelPendingBoot();
+    if (errorCallback_)
+    {
+      errorCallback_(DFU_STATUS_ERR_FIRMWARE);
+    }
+    tud_dfu_finish_flashing(DFU_STATUS_ERR_FIRMWARE);
+    return;
+  }
+
+  tud_dfu_finish_flashing(DFU_STATUS_OK);
+  if (restartWhenComplete_)
+  {
+    // Long enough for the host's last GETSTATUS to be answered - it is the one
+    // that tells dfu-util the image was accepted - and short enough that the
+    // new firmware is up before anyone wonders.
+    espUsbDeviceScheduleRestart(&device_, 500, false);
+  }
+#endif
+}
+
+void EspUsbDeviceDfu::handleAbort()
+{
+  if (downloadOpen_)
+  {
+    firmware_.abort();
+    downloadOpen_ = false;
+  }
+}
+
+void EspUsbDeviceDfu::onBusDetached()
+{
+  // A download that loses the bus is a download that will not finish. Drop the
+  // OTA handle rather than leaving it open across a re-enumeration, where the
+  // host would start again from block 0 and begin() would find the previous
+  // handle still held.
+  handleAbort();
+}
+
+#if ESP_USB_DEVICE_HAS_TINYUSB
+extern "C" void tud_dfu_runtime_reboot_to_dfu_cb(void)
+{
+  if (g_activeDfu)
+  {
+    g_activeDfu->handleDetach();
+  }
+}
+
+extern "C" uint32_t tud_dfu_get_timeout_cb(uint8_t alt, uint8_t state)
+{
+  (void)alt;
+  return g_activeDfu ? g_activeDfu->pollTimeout(state) : 1;
+}
+
+extern "C" void tud_dfu_download_cb(uint8_t alt, uint16_t blockNumber,
+                                    uint8_t const *data, uint16_t length)
+{
+  (void)alt;
+  if (g_activeDfu)
+  {
+    g_activeDfu->handleDownload(blockNumber, data, length);
+    return;
+  }
+  tud_dfu_finish_flashing(DFU_STATUS_ERR_TARGET);
+}
+
+extern "C" void tud_dfu_manifest_cb(uint8_t alt)
+{
+  (void)alt;
+  if (g_activeDfu)
+  {
+    g_activeDfu->handleManifest();
+    return;
+  }
+  tud_dfu_finish_flashing(DFU_STATUS_ERR_TARGET);
+}
+
+extern "C" void tud_dfu_abort_cb(uint8_t alt)
+{
+  (void)alt;
+  if (g_activeDfu)
+  {
+    g_activeDfu->handleAbort();
+  }
 }
 #endif
 
