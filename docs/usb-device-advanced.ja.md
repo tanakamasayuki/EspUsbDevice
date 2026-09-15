@@ -707,6 +707,8 @@ ESP32-P4 high speed、一方向bulk IN、送るデータは事前に用意済み
 
 完了callbackではなく別taskからarmすると、directビルドでは数%落ちます（読み1本で26.8対27.2 MB/s）。bufferedビルドでは「動くか止まるか」の差になり、それがこのflagの存在理由です。
 
+このリポジトリのテストとは別に、[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) がこの経路を 2.4.0 に対して 3 系列の実験——stream data path の移植、codec fast 部の書き換え、命令スケジューリングの掃引——で走らせ、**全 run で `arm_failures=0` / `last_direct_error=None`**、host 側の pattern 全照合も数十万 block 規模で一致、と報告しています。こちらの peer テストは経路を押さえるものですが、あちらは負荷をかけて、より長く、別のワークロードで押さえています。
+
 directビルドでは完了callbackからのarmは必須ではありませんが、スケジューリングの隙間でendpointを遊ばせないのはこの形です。[5.5](#55-endpointごとの送信fifo)のbulk IN送信FIFOの2 packet化は影響を受けず、両ビルドとも既定で有効のままです。
 
 **callbackには「すでに埋まったbuffer」を渡してください。** 素直な書き方——`onTxComplete()` の中でbufferを埋めてからarmする——は、データを作るコストをusbd taskの、しかも「転送が完了してから次をarmするまで」の区間に置くことになり、endpointはその間ちょうど遊びます。同じリンク・同じ27,136 byte stageで、バイトの出どころだけを変えた実測です。
