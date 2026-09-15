@@ -1055,6 +1055,15 @@ in a direct build (26.8 against 27.2 MB/s at one read in flight), and on a
 buffered build it is the difference between running and stopping, which is what
 the flag exists to prevent.
 
+Independently of this repository's own tests, the
+[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) project has run
+this path against 2.4.0 across three experiment series - a ported stream data
+path, a codec fast-path rewrite and an instruction-scheduling sweep - reporting
+`arm_failures=0` and `last_direct_error=None` in every run, with host-side
+pattern verification over hundreds of thousands of blocks. The peer test here
+covers the path; that covers it under load, for longer, on someone else's
+workload.
+
 Arming from inside the completion callback is not required in a direct build,
 but it is what keeps the endpoint from idling over a scheduling gap. The bulk IN
 transmit FIFO doubling from [5.5](#55-the-transmit-fifo-per-endpoint) is
