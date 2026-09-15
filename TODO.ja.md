@@ -15,7 +15,7 @@
     - [ ] F3 non-buffered 時の direct RX callback（現在の `onRx(size)` は buffered 専用）
     - いずれも buffered 既定の挙動は変えない方針。D1 と違って RAM と API 表面が増えるので、採否は自前の実測後に判断する
   - [ ] （任意）`EspUsbDeviceDfu` を dfu-util 本体でも確認。PC 相手の end-to-end は P4 実機で確認済みだが、host 側は自前の pyusb DFU host（このマシンに dfu-util が未インストールで、導入は sudo が要る system 変更のため）。プロトコルは同じなので優先度は低い。
-  - [ ] `rebootToRomDfu()` の end-to-end 実機確認。chip が loader に入るところまでは確認済みだが、host が ROM の DFU interface を bind するところは未確認。S2/S3 専用なので上記 P4 では確認できない。
+  - [ ] `rebootToRomDfu()` の ESP32-S2 での確認。S3 では「`USB_PHY_SEL` eFuse が要る／未焼成なら拒否」まで実測して決着した（下記「完了」）。S2 は ROM の唯一の USB が OTG なので eFuse 不要のはずだが、リグに S2 が無いため未検証。
 - [ ] CCID の拡張検討: 複数 slot、extended APDU / chaining、`ccidIdentifyCard()` が使う UID 経路のような ATR 以外の識別、PIN pad。いずれも現状は class descriptor で非対応と宣言しているので Host からは要求されない。
 - [ ] Keyboard macro / Serial-to-keyboard / Button mouse などの応用 example。
 - [ ] （ESP32KeyBridge 側の作業）`src/ESP32KeyBridgeEspUsbDevice.h` の出力 adapter を NKRO 対応にする。`EspUsbDeviceNkroKeyboardReport` を受ける `sendReport()` overload と `heldState()` が両ライブラリに揃ったので、6KRO へ落ちる理由はもう無い。`buildHidKeyboardRolloverReport()` の使い道（bitmap 版ビルダーを足すか、adapter 側で `KeySet` から直接 bitmap を組むか）を決め、重複送信の抑制は adapter 側に置く（ライブラリ側は抑制しない契約）。BLE 出力 adapter も同時に。
@@ -30,6 +30,8 @@
 - [x] example `FirmwareDFU` / `FirmwareHTTP` / `FirmwareBootMode` / `FirmwareMSC` / `FirmwareCDC` / `FirmwareVendor`。
 - [x] Windows が DFU / vendor interface に自分で WinUSB を当てるようにした（Zadig 不要）。ESP32-P4 + Windows 11 で 4 本の対照実測（DFU 単体: Error→WINUSB、DFU+vendor: DFU の子が problem=28→WINUSB）。DFU 側は compatible ID のみで GUID 不要であることも同じ実測で確認。`bcdUSB` は BOS がある構成でのみ 0x0201。
 - [x] wch-protocols 還元 D2〜D4。D2（usbd task の core 固定）は `config.taskCoreId` として公開したが**既定は変えず**（P4 HS 実測で固定なし 28.61 / core 0 固定 28.90 MB/s と差が出ない。効くのは producer が重い構成で、先方の E107 が 44→52 Msps の実例）。D3（buffered write の端数が flush まで出ない）は実在を確認し `waitWritable()` が待つ前に flush するよう修正、`flush()` の必要性を応用ガイドに明記。D4 は応用ガイド 2.3 に「全ターゲットで DMA、slave はサポート構成でない」と明記。あわせて「host が libusb 完了 callback 内で処理すると device の不具合に見える停止が起きる」も記載。
+- [x] `rebootToBootloader()` の S3 での PHY 返却。native USB を PC に直結した S3 で実測し、**修正前はコネクタが沈黙する**（チップは loader にいるのに host から USB が消える）ことを確認。`RTC_CNTL_USB_CONF_REG` が RTC ドメインで software reset を生き延びるのが原因。修正後は同じコネクタで `303a:1001` に戻り、Windows の `esptool --port COM12` が stub flasher まで通る。`tests/manual/s3_single_cable`。
+- [x] `rebootToRomDfu()` の S3 での挙動を実測し、`USB_PHY_SEL` eFuse 未焼成なら再起動せず拒否するようにした（実測: persist flag だけでは ROM の DFU が pin の無い controller に載り、何も列挙されない）。
 - [x] bulk IN の送信 FIFO 2 packet 化（wch-protocols CR-13 / D1）。自前実測で 22.98→28.93 MB/s（P4 HS、一方向、32 MiB×3 の最良）。DFIFO 収支を自動計算し収まるときだけ有効。`EspUsbBulkInBuffering::{Auto,Single,Double}`、`bulkInDoubleBuffered()`、`tests/single/bulk_in_fifo`。
 
 - [x] UAC2 の peer テスト。`tests/peer/usb_audio_uac2`（S3 2台・FS）を追加し、EspUsbHost 2.7.1 の UAC2 host に対して end-to-end でカバーした。2.1.0 リリース前検証の peer 一式実行（実機 2 台構成）で通過済み。device 側の control 状態（Feature Unit の master / logical channel）、Clock Source entity への sample rate request、双方向 streaming、explicit feedback endpoint による pacing を検証する。rate 切り替えは descriptor builder が方向ごとに alternate setting を 1 つしか出さないため対象外。

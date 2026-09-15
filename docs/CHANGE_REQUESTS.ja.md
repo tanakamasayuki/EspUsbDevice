@@ -499,7 +499,7 @@ D2 は API だけ公開して既定は据え置き**という別々の結論に�
 | [D2](#d2-usbd-task-の-core-固定) | usbd task の core 固定 | 44 → 52 Msps | **28.61 → 28.90 MB/s（差なし）** | **API のみ公開、既定は据え置き** |
 | [D3](#d3-buffered-write-の端数が-flush-まで出ない) | buffered write の端数が出ない | — | 再現・原因特定 | **修正** |
 | [D4](#d4-dma-mode-が既定であることの明記) | DMA mode 既定の明記 | — | — | **文書化** |
-| [F1〜F3](#f1f3-non-buffered-経路) | zero-copy TX / TX 完了 callback / direct RX callback | 209 → 247 Mbps | 未測 | **未着手**（設計から） |
+| [F1〜F3](#f1f3-non-buffered-経路) | zero-copy TX / TX 完了 callback / direct RX callback | 209 → 247 Mbps | 未測 | **F1・F3 見送り**（pin 版に zero-copy は無く、両者は 1 つの build 単位 switch）／**F2 は測定待ち** |
 | [F4](#f4-tud_configure-の露出) | `tud_configure()` の露出 | — | — | **D1 の実装で内部的にカバー**。生の構造体は非公開 |
 | [F5](#f5-転送長の-32-bit-化) | 転送長の 32-bit 化 | — | — | **見送り**（upstream 依存） |
 
@@ -617,9 +617,77 @@ if ((tu_fifo_count(&s->ff) >= s->mps) || (tu_fifo_depth(&s->ff) < s->mps)) {
   buffer を投入できる）
 - **F3** non-buffered 時の direct RX callback: 現在の `onRx(size)` は buffered 専用
 
-**未着手。** D1 と違い、これらは API 表面と所有権の規約が増える。buffered 既定の挙動を
-変えない方針は妥当だが、「どちらの経路にいるか」でコールバックの意味が変わる API は、
-設計を書いてから測るべきだと判断している。
+#### 依頼書の前提を、同梱している TinyUSB の source で確認した
+
+**F1 の「zero-copy」は、いま pin している TinyUSB（`53f8c53c`, v0.21.0）には無い。**
+`CFG_TUD_VENDOR_TXRX_BUFFERED=0` の write は、呼び出し側 buffer を
+`usbd_edpt_xfer()` へ渡すのではなく、class 自身の epbuf へ `memcpy` してから渡す
+（[`src/class/vendor/vendor_device.c`](../src/class/vendor/vendor_device.c),
+`vendord_ep_write()`）:
+
+```c
+const uint32_t xact_len = tu_min32(len, bufsize);
+memcpy(epbuf, buffer, xact_len);
+TU_ASSERT(usbd_edpt_xfer(p_itf->rhport, ep, epbuf, (uint16_t) xact_len, false), 0);
+```
+
+つまり non-buffered で減るのは **2 回の copy が 1 回になる分**であって、copy が消える
+わけではない。依頼元の 209 → 247 Mbps は、zero-copy ではなく「FIFO の write と
+FIFO→epbuf の copy と stream の簿記」が落ちた分と読むのが、この source に対しては正しい。
+
+**その copy には理由がある。** `epbuf` は `TUD_EPBUF_DEF` 置き、すなわち DMA 可能で
+アラインの取れた領域である。本当の zero-copy は「その条件を満たす buffer を用意する責任」を
+スケッチ側へ移すことになる。ESP32-P4 + PSRAM で PSRAM 上の buffer をそのまま DWC2 の
+DMA に渡す構成が書けてしまうのは、API の使い勝手ではなく正しさの問題である。
+
+**F1 と F3 は独立した 2 機能ではなく、build 全体に効く 1 つの compile-time switch。**
+`CFG_TUD_VENDOR_TXRX_BUFFERED` は vendor class 全体（その build の全 vendor interface）に
+かかる。0 にすると `tud_vendor_n_available()` / `_read()` / `_peek()` /
+`_read_flush()` / `_write_flush()` / `_write_clear()` が**宣言ごと消える**。
+`EspUsbDeviceVendor` は `Print` 派生で、`available()` / `read()` / `flush()` /
+`writeAvailable()` / `waitWritable()` がこれらの上に乗っているので、この switch は
+**`EspUsbDeviceVendor` の公開 API をまるごと別物にする**。1 つのスケッチで
+「片方の vendor interface は buffered、もう片方は direct」も作れない。
+
+**パイプラインの深さも変わる。** non-buffered の `tud_vendor_n_write()` は 1 回の呼び出しを
+`CFG_TUD_VENDOR_TX_EPSIZE`（P4 で 4096）に clamp し、`write_available()` は endpoint が
+busy の間 0 を返す（`vendord_ep_write_available()` は `usbd_edpt_busy()` そのもの）。
+FIFO 4096 + 転送中 1 本、から、転送中 1 本だけになる。D1 の 2 packet 化はコントローラの
+DFIFO の話なので残るが、class 段の余裕は無くなる。速いかどうかは
+「tx 完了 callback から即座に次を積めるか」にのみ依存する——つまり **F1 の値打ちは F2 の
+有無で決まる**。
+
+そして **S2/S3 では明確に悪化する。** このライブラリが `CFG_TUD_VENDOR_TX_EPSIZE` を
+明示しているのは P4 だけで、S2/S3 は TinyUSB 既定の `TUD_EPSIZE_BULK_MAX`（full speed
+なので **64**）に落ちる。non-buffered にすると 1 回の write が 64 byte に clamp され、
+かつ次を積めるのは完了後になる。いまの 512 byte FIFO が消える。依頼元の測定は
+high-speed の P4 であって、この構成ではない。
+
+#### F2 だけは、mode を切り替えずに今日出せる
+
+`tud_vendor_tx_cb(idx, sent_bytes)` は **buffered / non-buffered の両方で呼ばれる**
+（`vendord_xfer_cb()` の両分岐に入っている）。このライブラリは既にこれを
+`EspUsbDeviceVendor::handleTxComplete()` で受けて `waitWritable()` を起こしている。
+公開するのに mode の切り替えも所有権の規約も要らない。
+
+ただし「出せる」と「出すべき」は別である。`waitWritable()` は、この callback を
+**タスクを起こす**ために使う API として既にある。生の callback を公開すると、次の block を
+usbd task の context から積む書き方になり、応用ガイド 6.3 が警告している
+「host 側が完了 callback 内で処理をして device の不具合に見える停止を起こす」の
+device 版を作れてしまう。**`waitWritable()` 駆動と `onTxComplete()` 駆動の差を測ってから
+決める。**
+
+#### 結論（現時点）
+
+| | 判断 | 根拠 |
+|---|---|---|
+| F1 | **見送り**（依頼書の前提が pin 版に無い） | zero-copy ではなく copy 1 回削減。`EspUsbDeviceVendor` の公開 API を build 単位で別物にする |
+| F2 | **保留、実装は小さい** | 両 mode で呼ばれる callback。既に内部で使用中。採否は測定待ち |
+| F3 | **F1 と不可分** | 同じ 1 つの compile-time switch |
+
+**まだ測っていない。** bulk IN の throughput を測れるのは native USB が PC に出ている
+P4（`esp32-p4-80f1b2d0b261`）だけで、これは wch-protocols 側の板である。声をかけてから
+借りる。S3 直結の板（`esp32-s3-e4b063b4a81c`）は full-speed なので、この差は出ない。
 
 ### F4 `tud_configure()` の露出
 

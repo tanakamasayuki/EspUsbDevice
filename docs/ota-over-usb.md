@@ -110,17 +110,37 @@ Three consequences worth internalising:
 **On S3 the internal full-speed PHY is shared.** One PHY, one pin pair
 (GPIO19 = D-, GPIO20 = D+), two possible owners: the USB-Serial-JTAG peripheral
 or the USB-OTG controller. Your sketch switched it to OTG when
-`EspUsbDevice::begin()` created the PHY. **A reset switches it back**, because
-the selection defaults to USB-Serial-JTAG unless the `USB_PHY_SEL` eFuse is
-burned. So on a one-connector S3 board the same cable that was carrying your
-HID device comes back as the ROM's serial loader after a reset into boot mode.
-That is the single-cable flashing story, and it needs no eFuse and no DFU.
+`EspUsbDevice::begin()` created the PHY.
 
-**ROM DFU on S3 is the awkward one.** Because the PHY defaults to
-USB-Serial-JTAG, the ROM's *DFU* interface is not what you get after a plain
-reset. ESP-IDF's answer is to burn `USB_PHY_SEL` permanently, which then costs
-you USB-Serial-JTAG forever. The other answer is the ROM persist flag, which is
-not permanent - [2.6](#26-rom-dfu-instead-of-the-rom-serial-loader-s2s3).
+**A reset does not switch it back by itself.** The selection lives in
+`RTC_CNTL_USB_CONF_REG`, which is in the RTC domain and survives a software
+reset, so the pads stay routed to a controller the ROM is not driving and **the
+connector goes dark** - no device at all on the host, while the chip sits
+perfectly happily in the download loader. Measured, on an S3 whose only cable is
+its native USB: the USB port disappeared from the host and `esptool` over a
+separate UART still connected with `--before no-reset`.
+
+`EspUsbDevice::rebootToBootloader()` hands the PHY back before it restarts,
+which is what makes the single-cable story true. With that in place, measured on
+the same board, same cable:
+
+| | What the host sees on that connector |
+|---|---|
+| sketch running | `303a:4095`, the device the sketch describes |
+| after `rebootToBootloader()` | `303a:1001`, the ROM's USB Serial/JTAG |
+
+and `esptool --port COM12` then uploads and runs its stub flasher over it. One
+cable, no button, no eFuse, no second port - but only because the library puts
+the pads back.
+
+**ROM DFU on S3 needs the eFuse, and there is no way around it.** The ROM
+routes the pads from `USB_PHY_SEL` at boot whatever the application left behind,
+so a ROM DFU device on USB-OTG needs that eFuse burned - which then costs the
+board USB-Serial-JTAG forever. The ROM persist flag, which is not permanent,
+gets the ROM to *run* DFU but not to put it anywhere reachable
+([2.6](#26-rom-dfu-instead-of-the-rom-serial-loader-s2s3)). Measured. If you
+want DFU on an S3, [3.5](#35-the-dfu-function) is the answer: the application
+implements it, and no eFuse is involved.
 
 **On P4, prefer USB-Serial-JTAG.** Espressif's own guidance is that P4 v3.1 and
 later have a defect in ROM DFU download and that USB-Serial-JTAG should be used
@@ -156,7 +176,10 @@ has to be **set**, never written. Copying the S3 recipe onto a P4 clobbers three
 unrelated fields, and the library call exists to stop that.
 
 `device.rebootToRomDfu()` is the same thing for a host that drives `dfu-util`
-rather than `esptool` ([2.6](#26-rom-dfu-instead-of-the-rom-serial-loader-s2s3)).
+rather than `esptool`, but it only works on an ESP32-S2 or an ESP32-S3 with a
+burned eFuse, and refuses rather than restarting otherwise
+([2.6](#26-rom-dfu-instead-of-the-rom-serial-loader-s2s3)). For `dfu-util`
+against an unmodified board, [3.5](#35-the-dfu-function) is the answer.
 
 Verified on hardware while EspUsbDevice's own USB stack was running: an
 ESP32-S3 (rev v0.2) and an ESP32-P4 (rev v1.3) both landed in the download
@@ -233,23 +256,41 @@ that tells you to call it is wrong.
 ### 2.6 ROM DFU instead of the ROM serial loader (S2/S3)
 
 If you specifically want `dfu-util` rather than `esptool`, the S2/S3 ROM takes a
-persist flag in addition to the download-boot flag. Setting it asks the ROM to
-come up as a DFU device on USB-OTG rather than as a serial loader, without
-burning `USB_PHY_SEL`:
+persist flag in addition to the download-boot flag, which asks the ROM to come
+up as a DFU device on USB-OTG rather than as a serial loader:
 
 ```cpp
-device.rebootToRomDfu();   // ESP32-S2 / ESP32-S3; false without restarting on P4
+device.rebootToRomDfu();   // ESP32-S2 only in practice - see below
 ```
 
 Underneath it is `chip_usb_set_persist_flags(USBDC_BOOT_DFU)` followed by the
-same download-boot flag and restart. Those are ROM symbols exported by the S2/S3
-ESP-IDF builds. The call was **not** verified end-to-end on the test rig, whose
-S3 boards do not have their native USB port wired to the test PC - the chip
-reaching the loader is verified, the host binding a DFU interface is not. P4 has
-no equivalent: its ESP-IDF build exports no ROM USB headers at all, and ROM DFU
-there is the defective path from
+same download-boot flag and restart, both ROM symbols exported by the S2/S3
+ESP-IDF builds.
+
+**On ESP32-S3 the persist flag is not enough, and the call refuses.** Measured:
+with the flag set, the chip reaches the download loader - `esptool` over a UART
+connects with `--before no-reset` - and **nothing at all enumerates on the USB
+connector**. The ROM routes the shared PHY from the `USB_PHY_SEL` eFuse at boot,
+so its DFU stack ends up on a controller with no pads. So `rebootToRomDfu()`
+reads that eFuse and returns `false` with `ESP_ERR_NOT_SUPPORTED` **without
+restarting** when it is not burned. On a one-connector board, restarting anyway
+would be the difference between "this call did nothing" and "this board now
+needs someone to press BOOT".
+
+Burning `USB_PHY_SEL` would make it work and costs the board USB-Serial-JTAG
+permanently ([2.7](#27-what-disables-all-of-this)); the library will not do it
+for you.
+
+ESP32-S2 has no such mux - the ROM's only USB *is* USB-OTG - so the call
+proceeds there. That path is **not** verified end-to-end; there is no S2 on the
+test rig. P4 has no equivalent at all: its ESP-IDF build exports no ROM USB
+headers, and ROM DFU there is the defective path from
 [2.3](#23-which-usb-interface-the-rom-answers-on), so the call returns `false`
 and restarts nothing.
+
+**If what you want is `dfu-util`, use [3.5](#35-the-dfu-function) instead.** The
+application implements DFU, no eFuse is involved, and it behaves the same on
+every target.
 
 The host side is then `dfu-util` or `idf.py dfu-flash`, against a DFU image
 built by `idf.py dfu` - not a plain `.bin`.
@@ -589,7 +630,7 @@ one platform where a user would otherwise have to install something.
 | Route | Chips | Needs boot mode | Host tool | Can brick | Library support today |
 |---|---|---|---|---|---|
 | ROM serial loader over USB | S2 (OTG CDC), S3 / P4 (USB-Serial-JTAG) | yes | `esptool`, `esptool-js` in a browser | no | ✅ `rebootToBootloader()` - [2.4](#24-entering-boot-mode-from-the-sketch) |
-| ROM DFU over USB-OTG | S2, S3; P4 defective | yes | `dfu-util` | no | ✅ `rebootToRomDfu()` - [2.6](#26-rom-dfu-instead-of-the-rom-serial-loader-s2s3) |
+| ROM DFU over USB-OTG | S2; S3 only with the `USB_PHY_SEL` eFuse burned; P4 defective | yes | `dfu-util` | no | ⚠ `rebootToRomDfu()` refuses on an unburned S3 - [2.6](#26-rom-dfu-instead-of-the-rom-serial-loader-s2s3) |
 | **Device-implemented DFU** | all | no | `dfu-util` | yes, without rollback | ✅ `EspUsbDeviceDfu` - [3.5](#35-the-dfu-function) |
 | Self-OTA over CDC | all | no | any serial tool | yes, without rollback | ✅ classes + `EspUsbDeviceFirmwareUpdate` |
 | Self-OTA over Vendor / WebUSB | all | no | PyUSB / browser | yes, without rollback | ✅ classes + `EspUsbDeviceFirmwareUpdate` |

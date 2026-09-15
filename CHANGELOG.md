@@ -1,6 +1,55 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Fix `EspUsbDevice::rebootToBootloader()` leaving an ESP32-S3's USB
+  connector dark. The library takes the shared internal PHY for USB-OTG at
+  `begin()`, and that selection lives in `RTC_CNTL_USB_CONF_REG` - an RTC-domain
+  register that **survives a software reset**. The ROM's serial loader therefore
+  came up with the pads routed to a controller it was not driving: measured on
+  an ESP32-S3 whose only cable is its native USB, the port vanished from the
+  host entirely while `esptool` over a separate UART still connected with
+  `--before no-reset`. The call now hands the PHY back before restarting.
+  Measured after the fix, on one connector: the sketch's own VID:PID while it
+  runs, `303a:1001` (USB Serial/JTAG) after the reboot, and `esptool` then
+  uploads and runs its stub flasher over that same port. The single-cable
+  flashing story in `docs/ota-over-usb.md` was previously stated as something
+  the hardware did by itself; it is something the library does, and it is now
+  measured rather than derived. New manual test
+  `tests/manual/s3_single_cable`.
+- (EN) `EspUsbDevice::rebootToRomDfu()` now refuses on an ESP32-S3 whose
+  `USB_PHY_SEL` eFuse is not burned, returning `ESP_ERR_NOT_SUPPORTED` without
+  restarting. The ROM routes the shared PHY from that eFuse at boot whatever the
+  application left behind, so its DFU stack lands on a controller with no pads:
+  measured, the chip reaches the download loader and nothing at all enumerates.
+  On a one-connector board, restarting anyway is the difference between a call
+  that did nothing and a board that needs someone to press BOOT. The eFuse is
+  one-way and costs the board USB-Serial-JTAG permanently, so the library will
+  not burn it; `EspUsbDeviceDfu` implements DFU in the application instead, with
+  no eFuse and the same behaviour on every target. New test
+  `tests/single/rom_dfu_guard`.
+- (JA) `EspUsbDevice::rebootToBootloader()` が ESP32-S3 の USB コネクタを沈黙させる
+  不具合を修正しました。このライブラリは `begin()` で共有内蔵 PHY を USB-OTG 側へ
+  切り替えますが、その選択は `RTC_CNTL_USB_CONF_REG`——**software reset を生き延びる**
+  RTC ドメインのレジスタ——にあります。そのため ROM の serial loader は、自分が駆動して
+  いない controller に pin が繋がった状態で起動していました。native USB が唯一の
+  ケーブルである ESP32-S3 で実測したところ、ホストから USB ポートが完全に消え、
+  別系統の UART 経由では `esptool --before no-reset` が接続しました。再起動の前に PHY を
+  返すようにしています。修正後の実測は、同じコネクタで、動作中はスケッチ自身の
+  VID:PID、再起動後は `303a:1001`（USB Serial/JTAG）、そしてその同じポートで `esptool` が
+  stub flasher を転送・実行します。`docs/ota-over-usb.ja.md` の「ケーブル 1 本で焼ける」は
+  ハードウェアが勝手にやることのように書かれていましたが、実際はライブラリがやることで、
+  今回それを導出ではなく実測に置き換えました。manual test
+  `tests/manual/s3_single_cable` を追加しています。
+- (JA) `EspUsbDevice::rebootToRomDfu()` は、`USB_PHY_SEL` eFuse を焼いていない
+  ESP32-S3 では再起動せず `ESP_ERR_NOT_SUPPORTED` を返すようにしました。ROM は
+  起動時に共有 PHY をその eFuse から決めるため、application が何を残していようと
+  DFU stack が pin の無い controller に載ります。実測でも、チップは download loader に
+  入り、USB には何ひとつ現れませんでした。コネクタが 1 つのボードでは、それでも
+  再起動することは「何もしなかった呼び出し」と「誰かが BOOT を押さないと戻らない
+  ボード」の差になります。eFuse は一方向で USB-Serial-JTAG を恒久的に失うため、
+  ライブラリが焼くことはしません。`EspUsbDeviceDfu` なら application 側で DFU を
+  実装し、eFuse 不要で全ターゲット同じ挙動です。テストは
+  `tests/single/rom_dfu_guard` を追加しました。
 - (EN) Windows binds a driver to the DFU and vendor interfaces by itself, with
   no Zadig step. The Microsoft OS 2.0 descriptor set is now built for every
   interface no in-box driver claims, rather than only for a vendor interface of
