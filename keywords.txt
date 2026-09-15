@@ -17,6 +17,9 @@ EspUsbDeviceMscFatRamDisk	KEYWORD1
 EspUsbDeviceMscSdCard	KEYWORD1
 EspUsbDeviceNet	KEYWORD1
 EspUsbDeviceCcid	KEYWORD1
+EspUsbDeviceDfu	KEYWORD1
+EspUsbDeviceDfuMode	KEYWORD1
+EspUsbDeviceFirmwareUpdate	KEYWORD1
 EspUsbAudioFunction	KEYWORD1
 EspUsbAudioPlaybackStream	KEYWORD1
 EspUsbAudioCaptureStream	KEYWORD1
@@ -60,6 +63,8 @@ hidEndpointSize	KEYWORD2
 lastError	KEYWORD2
 lastErrorName	KEYWORD2
 addClass	KEYWORD2
+rebootToBootloader	KEYWORD2
+rebootToRomDfu	KEYWORD2
 sendHidReport	KEYWORD2
 sendReport	KEYWORD2
 sendState	KEYWORD2
@@ -186,6 +191,20 @@ defaultRoute	KEYWORD2
 networkUp	KEYWORD2
 localIP	KEYWORD2
 macAddress	KEYWORD2
+onProgress	KEYWORD2
+onComplete	KEYWORD2
+onError	KEYWORD2
+onDetach	KEYWORD2
+restartWhenComplete	KEYWORD2
+transferSize	KEYWORD2
+firmware	KEYWORD2
+targetLabel	KEYWORD2
+written	KEYWORD2
+expectedSize	KEYWORD2
+markValid	KEYWORD2
+rollback	KEYWORD2
+cancelPendingBoot	KEYWORD2
+abort	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)

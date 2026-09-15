@@ -876,6 +876,7 @@ TinyUSBのログを出したい場合は `CFG_TUSB_DEBUG` を 1〜3 に上げて
 ## 関連ドキュメント
 
 - [USB Device開発ガイド（入門編）](usb-device-guide.ja.md) — 基礎、コネクタ、実験手順、ホストOSからの観測
+- [USB経由のファームウェア更新](ota-over-usb.ja.md) — chip別のboot mode、スケッチからの入り方、OTA経路
 - [README.ja.md](../README.ja.md) — APIリファレンスとクラス対応状況
 - [third_party/tinyusb/PROVENANCE.ja.md](../third_party/tinyusb/PROVENANCE.ja.md) — 同梱TinyUSBの由来と検証方法
 - [docs/DESIGN_NOTES.ja.md](DESIGN_NOTES.ja.md) — 設計の背景

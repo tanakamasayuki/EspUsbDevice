@@ -28,7 +28,7 @@
 | `CustomHIDDevice` | `CustomHID` | 対応済み | sketch 定義 descriptor と fixed input report。 |
 | `HIDVendor` | `VendorHID` | 対応済み | vendor-defined HID input/output/feature report。 |
 | `USBMSC` | `MSC` / `MSCFatRamDisk` | 対応済み | raw block I/O と FAT RAM disk helper に分離。 |
-| `FirmwareMSC` | なし | 未対応 | MSC 経由 firmware update。優先度は低め。 |
+| `FirmwareMSC` | `FirmwareDFU` / `FirmwareHTTP` / `FirmwareBootMode` | 別形で対応 | MSC drag and drop 自体は未対応（設計と罠は [ota-over-usb.ja.md 6.1](ota-over-usb.ja.md#61-msc経由のdrag-and-drop)）。USB 経由の更新は DFU（endpoint 消費 0）、NCM+HTTP（host 側ブラウザのみ）、ROM loader への再起動でカバー済み。 |
 | `MIDI/MidiMusicBox` | `MIDI` | 一部対応 | note sequence の基本は対応。曲 example は未作成。 |
 | `MIDI/MidiController` | `MIDIController` | 対応済み | ADC -> CC、button -> Note。 |
 | `MIDI/MidiInterface` | `MIDIInterface` | 対応済み | UART MIDI 31250 baud と USB MIDI の bridge。 |
@@ -138,15 +138,30 @@ PCMFlow連携は有力な利用形ですが、汎用stream APIを維持して特
 PCM を `M5SpeakerBufferedPlayer::writePcm()` へ渡す連携例です。stereo 入力の mono downmix と
 `M5.Speaker` 用の短期 buffer は PCMFlowDevice 側で扱います。
 
-### FirmwareMSC
+### Firmware update 系
 
-MSC 経由 firmware update は、`EspUsbDeviceMscFatRamDisk` と組み合わせる方向が自然です。
+USB 経由のファームウェア更新は経路が複数あり、調査結果・実機で確認した事実・
+ライブラリ / example の切り分けは [docs/ota-over-usb.ja.md](ota-over-usb.ja.md) に
+まとめました。example として足す価値がある順に:
 
-- Host が `firmware.bin` を FAT RAM disk に置く。
-- eject 後に Device 側で file を読む。
-- OTA partition へ書き込む。
+追加済み:
 
-ただし firmware update は失敗時の復旧やサイズ制限が重要なため、まず example / docs 先行に留めます。
+- `FirmwareDFU`: `EspUsbDeviceDfu` の `Download` mode。`dfu-util -D` で更新します。
+  endpoint 消費 0 なので既存のどの example にも足せます。
+- `FirmwareHTTP`: `EspUsbDeviceNet` + `WebServer` + `HTTPUpdateServer`。host 側に
+  ブラウザ以外何も要らない唯一の経路で、`examples/UsbNetwork` がほぼそのまま土台に
+  なっています。S3 で既定 app partition の 41%。
+- `FirmwareBootMode`: ROM download loader への再起動。1200bps touch / `dfu-util -e`
+  / serial の 1 バイト、の 3 通り。
+
+未着手:
+
+- `FirmwareVendor`: `EspUsbDeviceVendor` の bulk + control request で独自 updater。
+  P4 HS では最速。host 側は PyUSB / WebUSB ページ。
+- `FirmwareCDC`: 最小構成。`EspUsbDeviceFirmwareUpdate` を CDC から駆動するだけ。
+- `FirmwareMSC`: `EspUsbDeviceMscFatRamDisk` と組み合わせる drag and drop。UX は
+  最良ですが、host が書き込む順序・OS のメタデータ・完了検知の罠があるため、
+  library 側の helper（`EspUsbDeviceMscFirmwareDisk`）を先に作る想定です。
 
 ### Keyboard / Mouse 応用
 
@@ -173,7 +188,10 @@ MSC 経由 firmware update は、`EspUsbDeviceMscFatRamDisk` と組み合わせ�
 | `EspUsbDeviceVendor` | bulk IN/OUT + control request + WebUSB URL は追加済み。custom vendor code / Microsoft OS 2.0 descriptor 差し替え API が残項目。 | 中 |
 | `EspUsbAudioFunction` | UAC1 default/UAC2明示選択、Playback/Captureのbounded FIFO、polling I/O、control event、stream statsを追加済み。UAC1はspeaker/microphone/duplexのPeer streamingを検証済み。UAC2 streamingは対応Hostの準備後に行う。 | 中 |
 | MIDI serial parser helper | `MIDIInterface` の SysEx / running status / realtime 対応。 | 低-中 |
-| Firmware handoff helper | FAT RAM disk 上の `firmware.bin` を安全に扱う。 | 低 |
+| ~~`EspUsbDeviceDfu`~~ | 実装済み。DFU runtime / full DFU、endpoint 消費 0。 | 完了 |
+| ~~`EspUsbDevice::rebootToBootloader()`~~ | 実装済み。S3 / P4 実機確認済み。 | 完了 |
+| ~~Firmware sink helper~~ | 実装済み（`EspUsbDeviceFirmwareUpdate`）。 | 完了 |
+| `EspUsbDeviceMscFirmwareDisk` | FAT RAM disk 上の `firmware.bin` / `.uf2` を安全に扱う。書き込み側は `EspUsbDeviceFirmwareUpdate` で完成済み。 | 低-中 |
 | Keyboard macro helper | shortcut / modifier sequence を読みやすくする。 | 低 |
 | Button/debounce helper | examples 用。library 本体より example-local が適切。 | 低 |
 

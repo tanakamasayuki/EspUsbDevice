@@ -33,6 +33,8 @@ SOURCE_FILES = {
     "device/usbd.c",
     "class/hid/hid_device.c",
     "class/cdc/cdc_device.c",
+    "class/dfu/dfu_device.c",
+    "class/dfu/dfu_rt_device.c",
     "class/midi/midi_device.c",
     "class/msc/msc_device.c",
     "class/vendor/vendor_device.c",

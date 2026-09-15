@@ -61,6 +61,29 @@ _KNOWN_SERIAL_FINDINGS = (
     # sketches' usb.begin() on the plugin's START command should close the
     # window at the source; when that lands, delete this entry and a run that
     # stays clean is the evidence. See the dut-lifecycle work.
+    # The DFU test refuses two images on purpose - one with a bad magic byte and
+    # one that fails verification - and those refusals are what it asserts. Both
+    # are logged by esp_ota_ops at error level on the peer, so they arrive here
+    # looking like failures. Remove these two entries and the test still passes;
+    # the audit is what would start complaining.
+    _KnownSerialFinding(
+        nodeid_pattern="*peer/usb_dfu/test_usb_dfu.py::test_usb_dfu",
+        log_name="peer-device.log",
+        line_pattern=re.compile(
+            r"esp_ota_ops: OTA image has invalid magic byte"
+        ),
+        max_count=2,
+        reason="the bad-magic block the test sends is supposed to be refused",
+    ),
+    _KnownSerialFinding(
+        nodeid_pattern="*peer/usb_dfu/test_usb_dfu.py::test_usb_dfu",
+        log_name="peer-device.log",
+        line_pattern=re.compile(
+            r"(?:boot_comm: mismatch chip ID|esp_ota_ops: New image failed verification)"
+        ),
+        max_count=4,
+        reason="the test image is nonsense on purpose; failing verification is the assertion",
+    ),
     _KnownSerialFinding(
         nodeid_pattern="*peer/*",
         log_name="dut.log",

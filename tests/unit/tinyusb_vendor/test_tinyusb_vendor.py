@@ -37,4 +37,4 @@ def test_tinyusb_update_dry_run_is_clean():
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "0 of 43 selected files differ" in result.stdout
+    assert "0 of 48 selected files differ" in result.stdout

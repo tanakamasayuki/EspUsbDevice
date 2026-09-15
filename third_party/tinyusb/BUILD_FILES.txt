@@ -4,6 +4,11 @@ class/audio/audio_device.h
 class/cdc/cdc.h
 class/cdc/cdc_device.c
 class/cdc/cdc_device.h
+class/dfu/dfu.h
+class/dfu/dfu_device.c
+class/dfu/dfu_device.h
+class/dfu/dfu_rt_device.c
+class/dfu/dfu_rt_device.h
 class/hid/hid.h
 class/hid/hid_device.c
 class/hid/hid_device.h

@@ -69,6 +69,7 @@ tests/
 | USB MSC | ✅ `fat_ramdisk` | ✅ `usb_msc` | ✅ `usb_msc` | |
 | USBVendor / WebUSB | ✅ `descriptor` / compile | ✅ `usb_vendor` bulk/control/WebUSB URL、開いた pipe と packet size、full-packet + ZLP 受信、queue 連続受信 | ✅ `usb_vendor` bulk/control/WebUSB URL | ✅ `examples/USBVendor` |
 | CCID スマートカードリーダー | ✅ `ccid_descriptor`（interface / class descriptor の byte 列） | ✅ `usb_ccid` class descriptor、ICC 3 状態、ATR、APDU / escape / parameters / abort、挿抜通知 | 未実装 | ✅ `examples/SmartCardReader` |
+| USB DFU | ✅ `dfu_descriptor`（Download / Runtime の descriptor byte、endpoint 0 本、複合時のコスト、function string、2 本目の拒否、OTA 書き込み先） | ✅ `usb_dfu`（keyboard の隣に endpoint 0 本で現れる DFU interface、wire 上の functional descriptor、bad magic → `errWRITE`、検証失敗 → `errVERIFY`、CLRSTATUS からの復帰、ABORT、boot partition が動かないこと） | 未実装 | ✅ `examples/FirmwareDFU` / `FirmwareHTTP` / `FirmwareBootMode` |
 | USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`、UAC2 `usb_audio_uac2` | 未実装 | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | |
 | Core依存境界 | ✅ `dependency_boundary` | | | |

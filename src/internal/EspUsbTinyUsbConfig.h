@@ -94,6 +94,17 @@
 #define CFG_TUD_AUDIO 1
 #define CFG_TUD_VENDOR 1
 #define CFG_TUD_NCM 1
+// DFU in both shapes. They are separate TinyUSB drivers with separate interface
+// protocols (DFU_PROTOCOL_RT vs DFU_PROTOCOL_DFU), so both can be compiled in
+// and the host's descriptor match decides which one opens; EspUsbDeviceDfu
+// emits one or the other from its constructor's mode.
+//
+// Neither costs an endpoint. DFU is an interface descriptor, a functional
+// descriptor and a set of control requests, all of which travel on EP0 - which
+// is why it is the one class that can be added to a device whose endpoint
+// budget is already full.
+#define CFG_TUD_DFU 1
+#define CFG_TUD_DFU_RUNTIME 1
 
 // Class buffer sizes. Every one of these is behind #ifndef so a sketch can
 // raise it from build_opt.h (-DCFG_TUD_VENDOR_TX_BUFSIZE=8192) without copying
@@ -117,6 +128,20 @@
 #endif
 #ifndef CFG_TUD_MSC_EP_BUFSIZE
 #define CFG_TUD_MSC_EP_BUFSIZE 4096
+#endif
+// One DFU download block, and therefore the wTransferSize EspUsbDeviceDfu puts
+// in its functional descriptor - dfu_device.h requires the two to agree, so the
+// class reads this macro rather than taking a size of its own.
+//
+// dfu_device.c holds a static buffer of this size whenever it exceeds
+// CFG_TUD_ENDPOINT0_BUFSIZE (64 here), and that buffer is linked into every
+// sketch, DFU or not. 1024 is the compromise: 16 full-speed control packets per
+// block, so the per-block GETSTATUS round trip is amortised, at 1 KB of RAM
+// rather than the 4 KB a sector-sized block would cost everyone. A sketch that
+// updates large images often raises it from build_opt.h
+// (-DCFG_TUD_DFU_XFER_BUFSIZE=4096); the descriptor follows automatically.
+#ifndef CFG_TUD_DFU_XFER_BUFSIZE
+#define CFG_TUD_DFU_XFER_BUFSIZE 1024
 #endif
 // HID interrupt endpoint buffer, which is also the ceiling on a single HID
 // report: tud_hid_n_report() writes the report ID into byte 0 and copies the

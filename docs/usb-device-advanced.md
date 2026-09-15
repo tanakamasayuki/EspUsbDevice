@@ -1222,6 +1222,7 @@ log (`dmesg -w`, USB Device Tree Viewer) almost always carries more information.
 ## Related documents
 
 - [USB Device Development Guide (introduction)](usb-device-guide.md) - fundamentals, connectors, bring-up, observing from the host
+- [Firmware update over USB](ota-over-usb.md) - boot mode per chip, entering it from a sketch, and the OTA routes
 - [README.md](../README.md) - API reference and per-class status
 - [third_party/tinyusb/PROVENANCE.md](../third_party/tinyusb/PROVENANCE.md) - where the vendored TinyUSB comes from and how it is verified
 - [docs/DESIGN_NOTES.ja.md](DESIGN_NOTES.ja.md) - design background (Japanese)
