@@ -39,6 +39,33 @@ enum class EspUsbController : uint8_t
   HighSpeed,
 };
 
+// How much of the controller's transmit FIFO each bulk IN endpoint gets.
+//
+// The DWC2 core gives an IN endpoint one packet's worth of FIFO by default, so
+// the next packet cannot be staged until the previous one has left. Two
+// packets' worth lets the controller send one while the stack fills the other,
+// which is what a sustained device-to-host stream is otherwise waiting for.
+//
+// The cost is not RAM. The FIFO is a fixed block inside the controller - 256
+// 32-bit words on ESP32-S2/S3 and on the ESP32-P4 full-speed controller, 1024
+// on the P4 high-speed controller - shared by the receive FIFO and every IN
+// endpoint. Ask for more than there is and the endpoint simply does not open,
+// which is a device that fails to enumerate rather than one that runs slowly.
+enum class EspUsbBulkInBuffering : uint8_t
+{
+  // Double every bulk IN endpoint if they all fit, and change nothing if they
+  // do not. All or nothing on purpose: a rule that doubles some endpoints and
+  // not others makes throughput depend on the order functions were registered.
+  Auto,
+  // One packet per bulk IN endpoint, which is what the controller does without
+  // being asked.
+  Single,
+  // Two packets for every bulk IN endpoint. begin() fails with
+  // ESP_ERR_INVALID_SIZE if the FIFO cannot hold that, rather than starting a
+  // device whose endpoints did not open.
+  Double,
+};
+
 enum EspUsbDeviceKeyboardLayout : uint16_t
 {
   ESP_USB_DEVICE_KEYBOARD_LAYOUT_ZH_TW = 0x0404,
@@ -98,6 +125,16 @@ struct EspUsbDeviceConfig
   EspUsbDeviceMsOs20Layout msOs20Layout = ESP_USB_DEVICE_MS_OS_20_AUTO;
   bool startTinyUsb = true;
   EspUsbController controller = EspUsbController::Auto;
+  EspUsbBulkInBuffering bulkInBuffering = EspUsbBulkInBuffering::Auto;
+  // Core to run the USB device task on, or -1 to leave the scheduler to place
+  // it (the default, and what every release before this did).
+  //
+  // Worth setting on a dual-core part when the sketch produces data as fast as
+  // USB can carry it: begin() is normally called from the Arduino loop task on
+  // core 1, an unpinned usbd task tends to end up beside it, and the two then
+  // interrupt each other. Pinning USB to core 0 and leaving the producer on
+  // core 1 separates them. On a single-core target this does nothing.
+  int8_t taskCoreId = -1;
 };
 
 static constexpr uint8_t ESP_USB_DEVICE_KEYBOARD_LED_NUM_LOCK = 0x01;
@@ -483,6 +520,12 @@ public:
 
   const EspUsbDeviceConfig &config() const;
   uint16_t hidEndpointSize() const;
+  // Bitmap of IN endpoint numbers that were given a two-packet transmit FIFO,
+  // as begin() decided it. 0 before begin(), and 0 whenever
+  // EspUsbBulkInBuffering::Auto found the controller's FIFO too full to double
+  // every bulk IN endpoint - which is the case worth checking when a stream is
+  // slower than expected.
+  uint16_t bulkInDoubleBuffered() const;
   esp_err_t lastError() const;
   const char *lastErrorName() const;
 
@@ -610,11 +653,15 @@ private:
   static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
   static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
   static constexpr size_t MAX_BOS_DESCRIPTOR = 57;
-  // Largest descriptor set this builds: 10 (set header) + 8 (configuration
-  // subset) + 8 (function subset) + 20 (compatible ID) + 132 (the
-  // DeviceInterfaceGUIDs registry property). A set without the two subsets is
-  // 162 and stops short in the same buffer.
-  static constexpr size_t MAX_MS_OS_20_DESCRIPTOR = 178;
+  // Largest descriptor set this builds. One WinUSB function costs 8 (function
+  // subset header) + 20 (compatible ID) + 132 (the DeviceInterfaceGUIDs
+  // registry property); two of them plus 10 (set header) and 8 (configuration
+  // subset) is 330. A single flat function - the non-composite case - is 162
+  // and stops short in the same buffer.
+  //
+  // Two is the ceiling because only two of this library's classes ask Windows
+  // for WinUSB: the vendor interface and DFU.
+  static constexpr size_t MAX_MS_OS_20_DESCRIPTOR = 330;
 
   bool buildDescriptors();
   // Allocates the three configuration descriptor buffers on first use. False (and
@@ -626,6 +673,11 @@ private:
   bool microsoftOs20SubsetLayout() const;
   bool validateControllerEndpoints(const uint8_t *descriptor,
                                    uint16_t length);
+  // Which bulk IN endpoints can have a two-packet transmit FIFO, given
+  // everything else this configuration asks the controller's FIFO for.
+  // `fits` reports whether doubling all of them was possible at all, which is
+  // what EspUsbBulkInBuffering::Double turns into a begin() failure.
+  uint16_t bulkInDoubleBufferMask(bool highSpeed, bool *fits) const;
   bool compositeHid() const;
   bool hasHidClass() const;
   bool hasCdcClass() const;
@@ -668,6 +720,8 @@ private:
   uint16_t bosDescriptorLength_ = 0;
   uint16_t microsoftOs20DescriptorLength_ = 0;
   uint8_t vendorInterfaceNumber_ = 0xff;
+  uint8_t dfuInterfaceNumber_ = 0xff;
+  uint16_t bulkInDoubleBuffered_ = 0;
   uint16_t hidInterfacesLength_ = 0;
   uint8_t hidInterfaceCount_ = 0;
   uint16_t hidReportDescriptorLength_ = 0;
@@ -873,7 +927,19 @@ public:
   // ever hold would only ever time out. timeoutMs == 0 polls once without
   // blocking. Returns false if the device is not mounted, since nothing will
   // drain the FIFO then.
+  //
+  // Flushes before it waits. TinyUSB only arms a transfer once the FIFO holds a
+  // whole packet, so a remainder shorter than wMaxPacketSize would otherwise
+  // sit there with nothing to push it out - and a caller waiting for room is by
+  // definition not about to add more.
   bool waitWritable(size_t bytes, uint32_t timeoutMs = 100);
+  // Send whatever is in the transmit FIFO now, whole packet or not.
+  //
+  // Needed after a write shorter than wMaxPacketSize: TinyUSB arms a transfer
+  // only once a whole packet has accumulated, so a short message - a reply, a
+  // status word, the tail of a stream - is not on the wire until this is
+  // called. A sketch that streams in large blocks never notices; one that
+  // answers requests has to call it after every answer.
   void flush();
   void onRx(RxCallback callback);
   void onControlRequest(ControlRequestCallback callback);

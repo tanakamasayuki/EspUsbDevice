@@ -1,6 +1,24 @@
 # 改修依頼への回答
 
-対象: `wch-protocols` の `references/espusbdevice-change-requests.ja.md`
+依頼元: [ch32-riscv-ug/wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols)。
+ESP32-P4 の USB 2.0 HS を実測しているプロジェクトで、そこで出た実測値をもとに
+このライブラリへの改修依頼が起票される。
+
+このドキュメントは回答を回ごとにまとめたものである。
+
+| 回 | 依頼元ドキュメント | 内容 | 状態 |
+|---|---|---|---|
+| 1 | [`references/espusbdevice-change-requests.ja.md`](https://github.com/ch32-riscv-ug/wch-protocols/blob/main/references/espusbdevice-change-requests.ja.md)（2026-09-12 版） | CR-1〜CR-9。E069〜E078 から起票 | **9 件すべて対応・実機確認済み** |
+| 2 | [`references/usb-library-feedback.ja.md`](https://github.com/ch32-riscv-ug/wch-protocols/blob/main/references/usb-library-feedback.ja.md)（2026-09-15 版） | 既定値 D1〜D4、機能 F1〜F5 | D1〜D4 は[こちらで実測して処理](#第-2-回-d1d4--f1f5)。F1〜F3 は未着手 |
+
+**他所の実測を根拠にしない**、というのがこの往復のやり方である。依頼元の数字は
+「測る価値がある」の根拠として扱い、採否は必ずこちら側で測り直してから決めている。
+
+---
+
+## 第 1 回 CR-1〜CR-9
+
+対象: [`references/espusbdevice-change-requests.ja.md`](https://github.com/ch32-riscv-ug/wch-protocols/blob/main/references/espusbdevice-change-requests.ja.md)
 （2026-09-12 版、ESP32-P4 の USB 2.0 HS 実測 E069〜E078 から起票された CR-1〜CR-9）。
 
 **9 件すべてこちらで実機確認まで済ませた。** 依頼側の実験台（`esp32-p4-30eda0e31478`）を
@@ -460,3 +478,156 @@ loopback は full speed で、1 転送 4096 byte が約 3.4 ms、待ちの刻み
 `tests/manual/windows_winusb` のファーム（VID/PID `303a:4043`、serial `espusb-winusb-flat-2`）が
 入っている。E069〜E078 の sketch は上書きされているので、必要なら `wch-protocols` 側から
 書き戻してほしい。usbip の共有状態は、OTG（`1209:0008` の instance）を共有したままにしてある。
+
+---
+
+## 第 2 回 D1〜D4 / F1〜F5
+
+対象: [`references/usb-library-feedback.ja.md`](https://github.com/ch32-riscv-ug/wch-protocols/blob/main/references/usb-library-feedback.ja.md)
+（2026-09-15 版、E107〜E114 から起票）。既定値を変えるべき 4 件（D1〜D4）と機能追加
+5 件（F1〜F5）。
+
+**依頼元の数字は一切そのまま採らず、全件こちらで測り直した。** その結果、**D1 は採用、
+D2 は API だけ公開して既定は据え置き**という別々の結論になっている。同じ依頼書の
+同じ根拠でも、負荷の形が違えば答えが変わるためである。
+
+### 一覧
+
+| | 内容 | 依頼元の実測 | こちらの実測 | 結果 |
+|---|---|---|---|---|
+| [D1](#d1-bulk-in-の送信-fifo-を-2-packet-に) | bulk IN の送信 FIFO を 2 packet に | 29.7 → 49.3 MB/s | **22.98 → 28.93 MB/s** | **採用**。既定で自動有効 |
+| [D2](#d2-usbd-task-の-core-固定) | usbd task の core 固定 | 44 → 52 Msps | **28.61 → 28.90 MB/s（差なし）** | **API のみ公開、既定は据え置き** |
+| [D3](#d3-buffered-write-の端数が-flush-まで出ない) | buffered write の端数が出ない | — | 再現・原因特定 | **修正** |
+| [D4](#d4-dma-mode-が既定であることの明記) | DMA mode 既定の明記 | — | — | **文書化** |
+| [F1〜F3](#f1f3-non-buffered-経路) | zero-copy TX / TX 完了 callback / direct RX callback | 209 → 247 Mbps | 未測 | **未着手**（設計から） |
+| [F4](#f4-tud_configure-の露出) | `tud_configure()` の露出 | — | — | **D1 の実装で内部的にカバー**。生の構造体は非公開 |
+| [F5](#f5-転送長の-32-bit-化) | 転送長の 32-bit 化 | — | — | **見送り**（upstream 依存） |
+
+測定条件（D1・D2 共通）: ESP32-P4 HS、usbip 経由、一方向 device→host bulk IN、
+1 run 32 MiB を 3 回の最良、`waitWritable(writeCapacity())` + `write()` の buffered 経路、
+vendor FIFO は既定の 4096/4096。host は pyusb の同期 read。
+
+### D1 bulk IN の送信 FIFO を 2 packet に
+
+DWC2 は IN endpoint に既定で 1 packet 分の FIFO しか割り当てないので、いま送っている
+packet がコントローラから出るまで次を用意できない。`tud_configure()` の
+`bm_double_buffered` に該当 endpoint の bit を立てると 2 倍になる。
+
+```
+1 packet:  22.98 / 22.61 / 21.63 MB/s
+2 packet:  28.74 / 28.86 / 28.93 MB/s
+```
+
+**+26%。** 依頼元の +66% より伸びが小さいのは、依頼元の firmware が zero-copy 側
+（F1）で copy 律速を外しているためと理解している。つまりこの数字が、**buffered 既定の
+ライブラリ構成で D1 単独が持つ効果**である。回ごとのばらつきも ±0.7 → ±0.1 MB/s に縮む。
+
+**採用したが、無条件には有効化していない。** 増えるのは RAM ではなく DFIFO という
+コントローラ内の固定資源で、足りないと `dcd_edpt_open()` が false を返して endpoint が
+開かない。遅いデバイスではなく**列挙に失敗するデバイス**になる。そのため configuration
+descriptor から DWC2 port と同じ式で収支を計算し、bulk IN が全部収まるときだけ立てる。
+
+```
+available = fifo_depth - 2 * endpoint_count
+receive   = 14 + 2 * (largest_out_packet / 4 + 1) + 2 * endpoint_count
+needed    = ceil(64/4) + IN endpoint ごとの ceil(packet/4) の総和
+          + bulk IN endpoint ごとの ceil(packet/4) の総和
+```
+
+依頼元の「P4 HS は RX 304 + EP0 16 + EPInfo 32 を除いて 672 words 空き」と一致する。
+結果として **S2/S3 は bulk IN 4 本でも必ず収まり、P4 HS は 2 本まで収まって 3 本は収まらない**。
+
+API は `config.bulkInBuffering`（`Auto` / `Single` / `Double`）と
+`EspUsbDevice::bulkInDoubleBuffered()`。`Auto` が既定で、全部か無しかにしてある——
+一部だけ 2 packet にする規則だと、スループットが function の登録順に依存してしまう。
+`Double` は要求で、収まらなければ `begin()` が `ESP_ERR_INVALID_SIZE` で失敗する。
+テストは [`tests/single/bulk_in_fifo`](../tests/single/bulk_in_fifo)。
+
+### D2 usbd task の core 固定
+
+依頼元は E107 で、取り込み pipeline が 44 → 52 Msps になったと実測している。
+
+こちらでも測った。**差が出なかった。**
+
+```
+pin なし（既定）:   28.61 / 28.51 / 28.59 MB/s
+core 0 固定:        28.71 / 28.82 / 28.90 MB/s
+```
+
+**負荷の形が違うからである。** こちらのハーネスは producer が「静的パターンを `loop()` から
+memcpy するだけ」で、usbd task と取り合う相手がいない。依頼元の E107 は PARLIO capture と
+codec という本物の producer が反対の core にいるので、分離する意味がある。
+
+つまり D2 は「**producer が重いときに効く**」という条件付きの話であり、ライブラリの
+既定にするものではない。既定を pin ありにすると、producer が軽い構成ではスケジューラの
+自由を奪うだけになる。
+
+`config.taskCoreId` として公開し、**既定は -1（固定しない＝従来どおり）**のままとした。
+どういうときに手を伸ばす価値があるかは
+[応用ガイド 5.6](usb-device-advanced.ja.md#56-usbd-taskをどのcoreで走らせるか) に、
+両方の実測値を添えて書いてある。
+
+なお 1 回目の測定で 1 run だけ 16.38 MB/s が出たが、2 回目では再現しなかった。
+usbip 経路にまれに出る穴と見て、pin の効果としては記録していない。
+
+### D3 buffered write の端数が flush まで出ない
+
+**実在した。** `tu_edpt_stream_write()` は FIFO が `wMaxPacketSize` 分たまってからでないと
+転送を arm しない。
+
+```c
+if ((tu_fifo_count(&s->ff) >= s->mps) || (tu_fifo_depth(&s->ff) < s->mps)) {
+  tu_edpt_stream_write_xfer(s);
+}
+```
+
+結果として 2 つのことが起きる。
+
+1. **mps 未満の書き込みは `flush()` まで送られない。** 16 byte の返信は FIFO に残る。
+2. **`waitWritable(writeCapacity())` が永久に返らない。** 端数が FIFO にあり、それを
+   押し出すものが無い。そして**空きを待って止まっている呼び出し側が、端数を切り上げる
+   バイトを追加してくれることはない**。これが依頼書の言う「永久待ち」の正体である。
+
+`waitWritable()` が**待つ前に flush する**ようにした。呼び出し側が既にブロックしている
+場面でだけ短い packet が 1 つ出る形なので、スループットへの影響は無い。
+
+**`write()` 側に自動 flush は入れていない。** 短い packet はホストの実行中 URB を早期完了
+させ、再投入の往復を生む（第 1 回 CR-5 で測ったとおり）。小さく何度も書くスケッチで
+これをやると、静かに遅くなる。代わりに「短い message には `flush()` が要る」ことを
+[応用ガイド 6.3](usb-device-advanced.ja.md#63-実測スループット) に明記した。
+
+### D4 DMA mode が既定であることの明記
+
+依頼元が slave mode 前提で 2 実験ぶん誤解した、という報告。応用ガイド 2.3 の冒頭が
+「2 つの転送モードがあり、このライブラリは DMA を使います」で、**選べるように読めた**のが
+原因だったと見ている。
+
+「**対応する全ターゲットで DMA モードをビルドし、slave はサポート構成でもビルドの
+選択肢でもない**」と明記した。あわせて、依頼元がその後に特定した
+「**host が libusb の完了 callback 内で処理をすると、device 側の不具合に見える停止が
+起きる**」も応用ガイド 6.3 に入れてある。こちらは device を疑う前に見る場所の話なので、
+測定ホストを書く人に効く。
+
+### F1〜F3 non-buffered 経路
+
+- **F1** zero-copy TX: `CFG_TUD_VENDOR_TXRX_BUFFERED=0` のとき、呼び出し側 buffer を
+  そのまま `usbd_edpt_xfer()` へ渡す。完了まで所有権は呼び出し側。依頼元実測 209 → 247 Mbps、
+  送出 core の task 負荷 57〜66% → 7%
+- **F2** TX 完了 callback: 完了 byte 数を渡す hook（usbd task context、callback 内から次の
+  buffer を投入できる）
+- **F3** non-buffered 時の direct RX callback: 現在の `onRx(size)` は buffered 専用
+
+**未着手。** D1 と違い、これらは API 表面と所有権の規約が増える。buffered 既定の挙動を
+変えない方針は妥当だが、「どちらの経路にいるか」でコールバックの意味が変わる API は、
+設計を書いてから測るべきだと判断している。
+
+### F4 `tud_configure()` の露出
+
+D1 の実装で内部的に呼んでいる（`tusb_init()` の前、計算した `bm_double_buffered` と、
+既定を保った `vbus_sensing`）。**生の構造体は公開していない。** 公開すると、収支を無視した
+bitmap を渡して列挙に失敗する構成が作れてしまう。`config.bulkInBuffering` が、その計算を
+挟んだ形の公開 API にあたる。
+
+### F5 転送長の 32-bit 化
+
+TinyUSB 側が `uint16_t` なので upstream 依存。**見送り。**

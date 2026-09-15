@@ -221,7 +221,10 @@ legal on the current connection.
 
 ### 2.3 DMA mode versus slave mode
 
-DWC2 has two transfer modes, and this library uses **DMA**:
+DWC2 has two transfer modes, and this library uses **DMA on every target it
+supports**. Slave mode is not a supported configuration and not a build option -
+one of the two does not work here, for the reason below. A reader who assumes
+slave mode will mis-explain everything downstream of the FIFO.
 
 ```c
 #define CFG_TUD_DWC2_DMA_ENABLE 1
@@ -446,16 +449,30 @@ characters in a product name will not come out correctly as-is.
 
 ### 3.7 BOS and Microsoft OS 2.0
 
-Generated only when `config.webusbEnabled = true`.
+Generated whenever the configuration contains an interface no in-box Windows
+driver claims - a vendor interface or a DFU interface - or when
+`config.webusbEnabled = true`.
 
 | Descriptor | Size | Contents |
 |------------|------|----------|
-| BOS | up to 57 bytes | WebUSB platform capability (landing URL) and Microsoft OS 2.0 platform capability |
-| MS OS 2.0 | 162 or 178 bytes | WinUSB compatible ID and device interface GUID for the vendor interface actually allocated |
+| BOS | 33 or 57 bytes | Microsoft OS 2.0 platform capability, plus the WebUSB one when `webusbEnabled` |
+| MS OS 2.0 | 30, 162 or 206 bytes | a WinUSB compatible ID per interface that needs one, and a device interface GUID for the vendor interface |
 
-**The MS OS 2.0 descriptor is what lets Windows open the vendor interface.**
-Without it a `0xff` interface sits there with no driver. APIs to replace the
+**The MS OS 2.0 descriptor is what lets Windows open these interfaces.**
+Without it a `0xff` or DFU interface sits there with no driver and the user is
+sent to Zadig, which is not something a product can ship. APIs to replace the
 vendor code, GUID or contents are not implemented.
+
+The three sizes are: 30 for a DFU interface alone (set header plus one
+compatible ID), 162 for a vendor interface alone (the same plus the registry
+property), and 206 for both (two function subsets inside a configuration
+subset). **DFU gets no `DeviceInterfaceGUIDs`** - libusb, and therefore
+`dfu-util`, finds a WinUSB device through the USB device interface class rather
+than a per-function GUID, and Windows was measured to bind it without one.
+
+`bcdUSB` reads 0x0201 whenever a BOS exists and 0x0200 when it does not. 0x0201
+is the threshold at which a host asks for the BOS at all; 0x0210 would claim a
+USB 2.1 compliance this device does not implement.
 
 **The two sizes are two shapes, and picking the wrong one costs you the
 driver.** A descriptor set may carry the compatible ID directly under its
@@ -467,8 +484,16 @@ Set header (10)                      Set header (10)
   Registry property (132)                Function subset (8, bFirstInterface)
 = 162, "flat"                                Compatible ID (20)
                                              Registry property (132)
-                                     = 178, "subsets"
+                                           Function subset (8, bFirstInterface)
+                                             Compatible ID (20)
+                                     = 206, "subsets"
 ```
+
+One function subset per interface that wants WinUSB, in ascending
+`bFirstInterface`. **A function subset naming only some of them leaves the
+others with no driver** - measured: a DFU + vendor device whose set named only
+the vendor interface bound WinUSB to the vendor child and left the DFU child on
+`problem=28`.
 
 The subsets exist to name **one function of a composite device**, and Windows
 resolves them only through **usbccgp.sys** - the parent driver it loads for a
@@ -831,6 +856,91 @@ indices over `[0, 2*depth)`. 65536 arrives as a depth of 0 - the device
 reports ready and never mounts, with nothing pointing at the flag that caused
 it. The header turns that into a build error instead.
 
+### 5.5 The transmit FIFO, per endpoint
+
+Section 5.4 is about the buffers the *classes* own, in RAM. This one is about
+the buffer the *controller* owns, and it is a different resource with a
+different failure mode.
+
+Every IN endpoint gets a slice of the DWC2 core's data FIFO, and by default that
+slice is **one packet**. One packet means the next packet cannot be staged until
+the current one has left the controller, so a sustained device-to-host stream
+spends part of every microframe waiting for the endpoint rather than the bus.
+Two packets lets the controller send one while the stack fills the other.
+
+Measured on ESP32-P4 high speed, one-way bulk IN, 32 MiB per run, best of three:
+
+| Transmit FIFO | Throughput |
+|---|---|
+| one packet (the controller's default) | 22.98 MB/s |
+| **two packets** | **28.93 MB/s** |
+
+The run-to-run spread narrows too, from ±0.7 MB/s to ±0.1.
+
+**The cost is not RAM.** The FIFO is a fixed block inside the controller - 256
+32-bit words on ESP32-S2/S3 and on the P4 full-speed controller, 1024 on the P4
+high-speed controller - shared by the receive FIFO and every IN endpoint. Ask
+for more than there is and `dcd_edpt_open()` fails, which is an endpoint that
+never opens and a device that fails to enumerate. Not a slower device: a broken
+one.
+
+So `config.bulkInBuffering` defaults to `EspUsbBulkInBuffering::Auto`, which
+computes the budget from the configuration descriptor before the PHY starts and
+doubles every bulk IN endpoint only if they all fit:
+
+```
+available = fifo_depth - 2 * endpoint_count        (buffer DMA's endpoint info)
+receive   = 14 + 2 * (largest_out_packet / 4 + 1) + 2 * endpoint_count
+needed    = ceil(64/4) + sum over IN endpoints of ceil(packet/4)
+          + sum over bulk IN endpoints of ceil(packet/4)
+```
+
+All or nothing, because a rule that doubled some endpoints and not others would
+make throughput depend on the order functions were registered. What that works
+out to:
+
+- **ESP32-S2 / ESP32-S3: always fits.** Four bulk IN endpoints at 64 bytes,
+  doubled, is 128 words; with EP0 and the receive FIFO that is 206 of 242.
+- **ESP32-P4 high speed: two bulk IN endpoints fit, three do not.** A 512-byte
+  packet is 128 words and the receive FIFO takes 304, leaving 672 for IN
+  endpoints - two doubled is 512, three is 768.
+
+`EspUsbBulkInBuffering::Single` keeps the controller's default.
+`Double` demands it, and `begin()` returns false with `ESP_ERR_INVALID_SIZE`
+rather than starting a device whose endpoints did not open.
+`EspUsbDevice::bulkInDoubleBuffered()` reports the bitmap that was applied,
+which is the thing to check when a stream is slower than expected.
+
+### 5.6 Which core the usbd task runs on
+
+`config.taskCoreId` pins the USB device task to a core, and **defaults to -1:
+not pinned at all**, which is what every release before it did.
+
+The default is not an oversight. Measured on ESP32-P4 high speed with the same
+one-way bulk IN harness as [5.5](#55-the-transmit-fifo-per-endpoint), where the
+sketch's producer is a `memcpy` from a static buffer:
+
+| usbd task | Throughput |
+|---|---|
+| not pinned | 28.61 MB/s |
+| pinned to core 0, loop on core 1 | 28.90 MB/s |
+
+No difference. There is nothing for the scheduler to separate, because the
+producer costs almost nothing - so pinning only takes away its freedom to place
+the task.
+
+**It matters when the producer is real.** A sketch capturing at tens of
+megasamples per second on core 1 and streaming from core 0 is two heavy tasks
+competing, and separating them is worth measuring:
+[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) measured
+44 -> 52 Msps on their capture pipeline from this change alone. That is the shape to reach for it in - and to measure it in,
+because which core helps depends on where the rest of your work already is.
+
+`begin()` is normally called from the Arduino loop task on core 1, and an
+unpinned usbd task tends to end up beside it. `taskCoreId = 0` is the usual
+answer when the answer is not "leave it alone". On a single-core target it does
+nothing.
+
 ---
 
 ## 6. Transfer timing and bandwidth
@@ -901,6 +1011,19 @@ driver binding is the problem you are trying to avoid.
 | | Conditions | Measured |
 |---|---|---|
 | ESP32-P4 HS bulk | `tests/manual/p4_hs_bulk`, 512-byte synchronous echo | the script prints MiB/s |
+| ESP32-P4 HS bulk IN, one way | 32 MiB per run, best of 3, over usbip | **22.98 MB/s with a one-packet transmit FIFO, 28.93 with two** ([5.5](#55-the-transmit-fifo-per-endpoint)) |
+
+**Before blaming the device, look at what the host program does when a transfer
+completes.** A host that runs its own work - parsing, verifying, searching -
+inside a libusb completion callback stops resubmitting while it does so, and
+past a few hundred milliseconds the stream falls into a repeating gap it does
+not recover from. From the device side that looks exactly like the controller
+losing transfers: an armed transfer whose completion simply does not arrive for
+hundreds of milliseconds. Measured by
+[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols), where moving
+the analysis out of the callback and into a pass over the captured buffer
+turned a stalling 187 Mbps stream into a soak with no gaps at all. A measurement host should do nothing in the callback but keep the buffer
+and resubmit.
 
 What `p4_hs_bulk` reports is **a health-check figure that includes a synchronous
 echo per packet, not a peak-bandwidth benchmark**. The bus idles between each
@@ -921,6 +1044,14 @@ spin count going from ~25,000 per 4 MiB to zero, one block per transfer. The
 gain there is not bandwidth but the CPU the spin was taking from whatever
 produces the data - a two-channel capture streaming out of a P4 lost 7-16% of
 its USB throughput to the spin loop and loses none to the blocking wait.
+
+**A write shorter than one packet does not go out by itself.** TinyUSB arms a
+transfer only once the FIFO holds a whole `wMaxPacketSize`, so a 16-byte reply
+sits in the FIFO until `flush()` - or until enough later writes push the total
+over a packet. A sketch that streams never notices; one that answers requests
+must `flush()` after each answer. `waitWritable()` flushes before it waits for
+exactly this reason: a caller blocked on room is not about to add the bytes
+that would round the remainder up.
 
 **Write in whole packets if you can.** `write()` accepts only what the FIFO has
 room for, so a caller that offers the rest of its buffer whenever a little room

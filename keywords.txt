@@ -21,6 +21,7 @@ EspUsbDeviceDfu	KEYWORD1
 EspUsbDeviceDfuMode	KEYWORD1
 EspUsbDeviceFirmwareUpdate	KEYWORD1
 EspUsbDeviceMscFirmwareDisk	KEYWORD1
+EspUsbBulkInBuffering	KEYWORD1
 EspUsbAudioFunction	KEYWORD1
 EspUsbAudioPlaybackStream	KEYWORD1
 EspUsbAudioCaptureStream	KEYWORD1
@@ -66,6 +67,8 @@ lastErrorName	KEYWORD2
 addClass	KEYWORD2
 rebootToBootloader	KEYWORD2
 rebootToRomDfu	KEYWORD2
+bulkInDoubleBuffered	KEYWORD2
+taskCoreId	KEYWORD2
 sendHidReport	KEYWORD2
 sendReport	KEYWORD2
 sendState	KEYWORD2

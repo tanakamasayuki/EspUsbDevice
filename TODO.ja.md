@@ -9,7 +9,11 @@
 - [ ] USBVendor の custom vendor code / GUID / Microsoft OS 2.0 descriptor 内容の差し替え API。構造の選択（`config.msOs20Layout`：interface 1 本なら flat 162 byte、2 本以上なら subsets 178 byte。Windows 実機で対照確認済み）は実装したが、vendor code・GUID・feature descriptor の中身は固定のまま。
 - [ ] WebUSB / libusb / WinUSB のサンプル Host 側コード（WebUSB ページ、libusb スクリプトなど）。手動確認手順自体は `tests/manual/README.ja.md` に整備済み（BOS / landing URL の確認、libusb / WinUSB / WebUSB での interface claim）。
 - [ ] OTA 経路の残り。設計・切り分け・実機で確認した事実は [docs/ota-over-usb.ja.md](docs/ota-over-usb.ja.md) に集約済み。DFU class / `rebootToBootloader()` / firmware sink は実装済み（下記「完了」参照）。残り:
-  - [ ] Windows で DFU interface に WinUSB を当てる（Microsoft OS 2.0 descriptor の function subset を DFU interface にも出す）。現状 Windows では Zadig が 1 回必要。vendor interface と同居したときの compatible ID の取り合いをどうするかが設計判断。→ [6.1](docs/ota-over-usb.ja.md#61-windows-で-dfu-interface-に-winusb-を当てる)
+  - [ ] [wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) からの還元項目のうち F1〜F3（[`references/usb-library-feedback.ja.md`](https://github.com/ch32-riscv-ug/wch-protocols/blob/main/references/usb-library-feedback.ja.md)）。回答は [docs/CHANGE_REQUESTS.ja.md](docs/CHANGE_REQUESTS.ja.md) の第 2 回。D1〜D4 は実測して処理済み（下記「完了」）。残りは API 追加を伴うので設計から:
+    - [ ] F1 zero-copy TX: `CFG_TUD_VENDOR_TXRX_BUFFERED=0` のとき呼び出し側 buffer を直接 `usbd_edpt_xfer()` へ。完了まで所有権は呼び出し側。先方実測 209→247 Mbps、送出 core の task 負荷 57〜66%→7%
+    - [ ] F2 TX 完了 callback（完了 byte 数、usbd task context、callback 内から次 buffer 投入可）
+    - [ ] F3 non-buffered 時の direct RX callback（現在の `onRx(size)` は buffered 専用）
+    - いずれも buffered 既定の挙動は変えない方針。D1 と違って RAM と API 表面が増えるので、採否は自前の実測後に判断する
   - [ ] （任意）`EspUsbDeviceDfu` を dfu-util 本体でも確認。PC 相手の end-to-end は P4 実機で確認済みだが、host 側は自前の pyusb DFU host（このマシンに dfu-util が未インストールで、導入は sudo が要る system 変更のため）。プロトコルは同じなので優先度は低い。
   - [ ] `rebootToRomDfu()` の end-to-end 実機確認。chip が loader に入るところまでは確認済みだが、host が ROM の DFU interface を bind するところは未確認。S2/S3 専用なので上記 P4 では確認できない。
 - [ ] CCID の拡張検討: 複数 slot、extended APDU / chaining、`ccidIdentifyCard()` が使う UID 経路のような ATR 以外の識別、PIN pad。いずれも現状は class descriptor で非対応と宣言しているので Host からは要求されない。
@@ -24,6 +28,9 @@
 - [x] `EspUsbDeviceMscFirmwareDisk`。データ領域が OTA partition そのものの FAT12 ボリューム。イメージは RAM に載らない（RAM 側は boot sector + FAT×2 + root dir + スクラッチのみ）。cluster size は FAT12 の 4084 cluster に収まる最小を 4KiB 以上から自動選択し、cluster 境界が flash の erase 境界に一致する。firmware 領域は昇順書き込みのみ受理し、逆戻り・穴あきは `ESP_ERR_INVALID_STATE` で中止。検証は `tests/single/msc_firmware_disk`（block callback を直接叩く 40 check）。
 - [x] UF2 block の受理（`EspUsbDeviceMscFirmwareDisk`）。順不同書き込み・重複 block・family ID 不一致を実機確認。内部は新 API `EspUsbDeviceFirmwareUpdate::beginRandomAccess()` / `writeAt()`（`esp_ota_write_with_offset`）。
 - [x] example `FirmwareDFU` / `FirmwareHTTP` / `FirmwareBootMode` / `FirmwareMSC` / `FirmwareCDC` / `FirmwareVendor`。
+- [x] Windows が DFU / vendor interface に自分で WinUSB を当てるようにした（Zadig 不要）。ESP32-P4 + Windows 11 で 4 本の対照実測（DFU 単体: Error→WINUSB、DFU+vendor: DFU の子が problem=28→WINUSB）。DFU 側は compatible ID のみで GUID 不要であることも同じ実測で確認。`bcdUSB` は BOS がある構成でのみ 0x0201。
+- [x] wch-protocols 還元 D2〜D4。D2（usbd task の core 固定）は `config.taskCoreId` として公開したが**既定は変えず**（P4 HS 実測で固定なし 28.61 / core 0 固定 28.90 MB/s と差が出ない。効くのは producer が重い構成で、先方の E107 が 44→52 Msps の実例）。D3（buffered write の端数が flush まで出ない）は実在を確認し `waitWritable()` が待つ前に flush するよう修正、`flush()` の必要性を応用ガイドに明記。D4 は応用ガイド 2.3 に「全ターゲットで DMA、slave はサポート構成でない」と明記。あわせて「host が libusb 完了 callback 内で処理すると device の不具合に見える停止が起きる」も記載。
+- [x] bulk IN の送信 FIFO 2 packet 化（wch-protocols CR-13 / D1）。自前実測で 22.98→28.93 MB/s（P4 HS、一方向、32 MiB×3 の最良）。DFIFO 収支を自動計算し収まるときだけ有効。`EspUsbBulkInBuffering::{Auto,Single,Double}`、`bulkInDoubleBuffered()`、`tests/single/bulk_in_fifo`。
 
 - [x] UAC2 の peer テスト。`tests/peer/usb_audio_uac2`（S3 2台・FS）を追加し、EspUsbHost 2.7.1 の UAC2 host に対して end-to-end でカバーした。2.1.0 リリース前検証の peer 一式実行（実機 2 台構成）で通過済み。device 側の control 状態（Feature Unit の master / logical channel）、Clock Source entity への sample rate request、双方向 streaming、explicit feedback endpoint による pacing を検証する。rate 切り替えは descriptor builder が方向ごとに alternate setting を 1 つしか出さないため対象外。
 - [x] endpoint の per-speed descriptor 化（FS=64 / HS bulk=512、device_qualifier / other_speed 対応）。v2 で実装済み——negotiated speed に応じた endpoint packet size、device qualifier、other-speed configuration を返す。`tests/unit/descriptor_model`（FS/HS MPS 選択・other-speed・device qualifier）と `tests/manual/p4_hs_bulk`（`PASS link: USB High-Speed`、MPS 512/64）で検証。`docs/DESIGN_NOTES.ja.md`「bulk エンドポイントサイズと HS 準拠」は当時の経緯。
