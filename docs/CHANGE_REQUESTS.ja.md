@@ -677,8 +677,8 @@ callback から次を arm して **49.3 MB/s（usbip）** を実測している�
 - `usbd_edpt_xfer()` の長さは `uint16_t` なので 65,535 まで。`TX_EPSIZE` の clamp は
   そもそも `vendord_ep_write()` の中の話なので、通らなければ関係ない。
 
-**source を読んだ限りでは、buffered のままだと direct transfer の完了後に class が ZLP を
-arm するはずだった。** `vendord_xfer_cb()` の IN 分岐は `tud_vendor_tx_cb()` のあとに必ず
+**buffered のままだと、direct transfer の完了後に class が ZLP を arm する。**
+`vendord_xfer_cb()` の IN 分岐は `tud_vendor_tx_cb()` のあとに
 `tu_edpt_stream_write_xfer()` → 0 なら `tu_edpt_stream_write_zlp_if_needed()` と続き、
 後者は [`src/tusb.c`](../src/tusb.c) 374 行で
 
@@ -688,37 +688,53 @@ TU_VERIFY(stream_claim(s));
 TU_ASSERT(stream_xfer(s, 0));
 ```
 
-を満たす（`s->mps` は endpoint の packet size、S3 full speed なら 64 で、4096 & 63 == 0）。
-`stream_claim()` は `usbd_edpt_claim()` を呼ぶだけで app 側と同じ mutex、しかも
-[`src/device/usbd.c`](../src/device/usbd.c) 747 行が busy と claimed を `xfer_cb` の
-**前**に落とすので、条件はすべて揃って見える。
+を満たす（27,136 & 511 == 0）。この分岐は `#if CFG_TUD_VENDOR_TXRX_BUFFERED` の中にあり、
+non-buffered の `#else` には無い。`stream_claim()` は `usbd_edpt_claim()` を呼ぶだけで
+app 側と同じ mutex、[`src/device/usbd.c`](../src/device/usbd.c) 747 行が busy と claimed を
+`xfer_cb` の**前**に落とすので、callback の中なら app が先に claim を取れる。
 
-#### 実測では ZLP は出なかった（予測は外れ）
+#### 実測（ESP32-P4 high speed、mps 512）
 
-ESP32-S3 の native USB を PC に直結し（full speed、mps 64）、libusb で読んで数えた。
-`shorts` はホストが受けた 1 ブロック未満の読み出し、`zerolen` はデバイス側で
-`onTxComplete()` が 0 byte を報告した回数である。
+ライブラリに試作（`writeDirect()` ＋ `onTxComplete()`、TinyUSB は無改変）を入れ、native USB を
+PC に出した P4 で測った。`shorts` はホスト側の 1 ブロック未満の読み出し、`zerolen` は
+デバイス側で `onTxComplete()` が 0 byte を報告した回数。corrupt と gap は全構成で 0。
 
-| build | 次を arm する場所 | 経路 | blocks | shorts | zerolen | corrupt / gap |
+| build | 次を arm する場所 | stage | blocks | shorts | zerolen | MB/s |
 |---|---|---|---|---|---|---|
-| non-buffered | 完了 callback | `writeDirect()` 4096 B | 976 | **0** | **0** | 0 / 0 |
-| buffered | 完了 callback | `writeDirect()` 4096 B | 1194 | **0** | — | 0 / 0 |
-| buffered | 別タスク | `writeDirect()` 4096 B | 1187 | **0** | **0** | 0 / 0 |
-| buffered | 単発（再 arm なし） | `writeDirect()` 4096 B | 1 | **0** | **0** | 0 / 0 |
-| buffered | 別タスク | **stock の `write()` 64 B** | 12530 | **0** | — | 0 / 0 |
+| buffered | 完了 callback | 27,136 | 5757 | 0 | 0 | 24.43 |
+| buffered | **別タスク** | 27,136 | **1** | **1** | **1** | **停止**（`armfail=1`） |
+| non-buffered | 完了 callback | 27,136 | 6161 | 0 | 0 | **27.86** |
+| non-buffered | 別タスク | 27,136 | 5921 | 0 | 0 | 26.78 |
+| buffered | 完了 callback | 8,192 | 12218 | 0 | 0 | 16.68 |
+| buffered、**stock の `write()` 512 B**（対照） | 別タスク | 512 | 20200 | **8183** | **8183** | 1.04 |
 
-最後の行が効く。**stock の buffered write でも ZLP は出ない。** つまりこれは
-`writeDirect()` 固有の話ではなく、この構成では ZLP 分岐がそもそも発火していない。
-単発（誰も endpoint を争わない）でも `zerolen=0` なので、「こちらの再 arm が claim を
-先取りしていたから出なかった」でもない。
+読み出しは pyusb の同期読み（URB 1 本ずつ）なので、**絶対値は host 律速**であり
+依頼元の 1 MiB URB × depth 8 の数字とは比較にならない。意味があるのは構成間の差である。
 
-**したがって、buffered ＋ direct write を落とす理由として ZLP は使えない。** 機構は
-未解明のまま残っている（`stream_claim()` が失敗しているなら claim が漏れて次の
-`writeDirect()` が失敗するはずだが、1187 ブロックで `armfail=0`）。
+三つ読み取れる。
 
-**この実測が覆っていない範囲**: ESP32-P4 の high speed（mps 512、27,136 byte の stage）は
-測っていない。依頼元が E106 で踏んだ short packet の問題は P4 + usbip での実話なので、
-「どこでも起きない」ことの証明にはならない。P4 で測る段で同じ数え方をする。
+1. **ZLP は実在し、buffered ビルド固有である。** 対照行が決定的で、stock の 512 B
+   write（ちょうど mps）ごとに ZLP が出て、host の `shorts=8183` と device の
+   `zerolen=8183` が一致する。non-buffered では arm 位置によらず 0 である。
+2. **buffered ＋ direct write は、完了 callback の中で arm しないと止まる。**
+   レイテンシが乗るのではなく停止する。ZLP が claim を握り、別タスクの
+   `writeDirect()` が `armfail` で弾かれ、こちらの試作には再試行が無いので
+   そこで終わる。
+3. **non-buffered のほうが速く、arm 位置に鈍い。** 同じ完了 callback arm で
+   27.86 対 24.43 MB/s（+14%）、別タスク arm でも 26.78 MB/s で完走する。
+
+#### 途中で 2 回間違えたので、経緯を残す
+
+最初に source からこの ZLP を予測し、次に ESP32-S3 full speed の実測で「出ない」として
+予測を撤回し、P4 で再び出た。S3 の測定は無効だった。`build_opt.h` を変えたのに
+`arduino-cli` に `--clean` を付けておらず、**ライブラリのオブジェクトが前回のビルドのまま**
+使われていたためである。build_opt.h は応答ファイル経由でスケッチには効くので、
+スケッチが `buffered=0` と出力しながらライブラリは buffered、という状態になる。
+見分け方はビルドサイズで、設定を変えたのに `Sketch uses` が動かなければ効いていない
+（P4 で 385,586 → 385,104 byte）。S3 の表は撤回した。
+
+S3 full speed では、buffered ビルドの stock write（64 B ＝ mps）でも ZLP が出なかった。
+P4 との差は未解明のまま残っている。ここで効くのは P4 のほうなので、追っていない。
 
 #### buffer 側の契約（依頼元の運用）
 
@@ -745,18 +761,34 @@ usbd task の context から積む書き方になり、応用ガイド 6.3 が�
 device 版を作れてしまう。ただし F1 を入れるなら、完了駆動で次を arm するのは
 **必須**であって選択肢ではない（E108/E110 がそうしている）。
 
+#### したがって設計は 2 択
+
+| | 形 | 得 | 損 |
+|---|---|---|---|
+| **A** | direct write は `CFG_TUD_VENDOR_TXRX_BUFFERED=0` を要求（build 時条件なので API で弾ける） | ZLP 論理が compile されないので arm 位置に鈍く、実測でも速い（27.86 対 24.43 MB/s）。F3（direct RX callback）も同時に手に入る | `EspUsbDeviceVendor` の `available()` / `read()` / `flush()` が build flag で消える。S2/S3 で有効にすると 64 byte clamp に落ちる。テストが 2 構成になる |
+| **B** | vendor interface を [`EspUsbDeviceAppDriver`](../src/internal/EspUsbDeviceAppDriver.h) 側に持ち、IN endpoint の `xfer_cb` を自前にする | `vendord_xfer_cb` の ZLP 論理からも `tud_vendor_tx_cb` の束縛からも自由。buffered の既存 API をそのまま残せる。S2/S3 も従来どおり | class driver を 1 つ自前で持つ（CCID の前例あり）。descriptor / MS OS 2.0 / WebUSB / control request / alt setting と既存 vendor 機能の同居が設計論点 |
+
+**実測を見たうえで A を推す。** buffered ＋ direct は「arm は完了 callback の中でだけ」を
+守れば動くが、守らないと**停止する**。公開 API がその契約に全体重を預ける形は、
+`waitWritable()` のような既存の使い方と混ぜたときに壊れる。A なら ZLP 論理自体が
+存在しないので、契約は「速いほうの buffer 条件」だけで済む。
+
+B は残す価値がある。A で消える `available()` / `read()` / `flush()` を取り戻せるのは B
+だけで、S2/S3 の 64 byte clamp も避けられる。ただし class driver を 1 つ背負うので、
+A で数字と使い勝手を確かめてからでよい。
+
 #### 結論（現時点）
 
 | | 判断 | 根拠 |
 |---|---|---|
-| F1 | **使い捨て試作 → 実測 → 公開 API の形を決める**（patch は不要） | 効果は依頼元実測（E108 で 209→247 Mbps、D1 併用 389〜395 Mbps、E110 で 49.3 MB/s）。`usbd_edpt_claim()` + `usbd_edpt_xfer()` をライブラリ内で使えば同梱 TinyUSB に手を入れずに同じ経路に乗れる見込み |
-| F2 | **F1 の前提条件**（付属品ではない） | 完了 callback の中で次を arm しないと class の ZLP に claim を取られる |
-| F3 | **stock の switch は採らない** | S2/S3 で 64 byte clamp に落ちて悪化する。RX 側は別途 |
+| F1 | **試作が動いた。公開 API は A で実装する** | patch 不要を実証（`usbd_edpt_claim()` + `usbd_edpt_xfer()` はすでに同梱・使用中で、`EspUsbDeviceAppDriver` が同じ不変条件のもとで先例になっている）。P4 HS 実測で non-buffered 27.86 / buffered 24.43 MB/s |
+| F2 | **F1 の前提条件**（付属品ではない） | buffered では完了 callback の中で arm しないと ZLP に claim を取られて停止する。non-buffered でも、完了駆動でなければ転送が繋がらない |
+| F3 | A を採れば同時に入る | non-buffered の `tud_vendor_rx_cb()` は buffer を直接渡す。S2/S3 で有効にすると 64 byte clamp に落ちる点は変わらないので、既定は buffered のまま |
 
-**こちらではまだ測っていない。** bulk IN の throughput を測れるのは native USB が PC に
-出ている high-speed の P4（`esp32-p4-80f1b2d0b261`）だけで、これは wch-protocols 側の
-板である。声をかけてから借りる。S3 直結の板（`esp32-s3-e4b063b4a81c`）は full-speed
-なので、この差は出ない。
+試作の位置: `EspUsbDeviceVendor::writeDirect()` と `onTxComplete()` を working tree に
+入れてある。同梱 TinyUSB は byte-for-byte のまま。自前リグの
+`tests/peer/usb_vendor_direct`（一時）で end-to-end も通している。**正規実装では
+これを A の形に整え、フル回帰を通してからリリースする。**
 
 ### F4 `tud_configure()` の露出
 

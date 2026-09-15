@@ -34,6 +34,12 @@
 #include "class/vendor/vendor_device.h"
 // usbd_edpt_claim() / usbd_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
 #include "device/usbd_pvt.h"
+#if __has_include("esp_memory_utils.h")
+#include "esp_memory_utils.h"
+#define ESP_USB_DEVICE_HAS_DMA_CAPABLE_CHECK 1
+#else
+#define ESP_USB_DEVICE_HAS_DMA_CAPABLE_CHECK 0
+#endif
 #include "class/net/net_device.h"
 #include "class/dfu/dfu_device.h"
 #include "class/dfu/dfu_rt_device.h"
@@ -731,11 +737,11 @@ bool tud_msc_is_writable_cb(uint8_t lun)
 void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize)
 {
   (void)idx;
-  (void)buffer;
-  (void)bufsize;
   if (g_activeVendor)
   {
-    g_activeVendor->handleRx();
+    // buffer/bufsize are NULL/0 in a buffered build and the real payload in a
+    // direct one; handleRx() is what knows the difference.
+    g_activeVendor->handleRx(buffer, static_cast<size_t>(bufsize));
   }
 }
 
@@ -2948,29 +2954,58 @@ void EspUsbDeviceVendor::flush()
 #endif
 }
 
+bool EspUsbDeviceVendor::directWriteSupported()
+{
+#if ESP_USB_DEVICE_HAS_TINYUSB && !CFG_TUD_VENDOR_TXRX_BUFFERED
+  return true;
+#else
+  return false;
+#endif
+}
+
 bool EspUsbDeviceVendor::writeDirect(const void *buffer, size_t length)
 {
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  // usbd_edpt_xfer() takes a uint16_t length; there is no partial-write
+#if ESP_USB_DEVICE_HAS_TINYUSB && !CFG_TUD_VENDOR_TXRX_BUFFERED
+  // usbd_edpt_xfer() takes a uint16_t length. There is no partial-write
   // contract here, so an oversized request is refused rather than truncated.
   if (!buffer || length == 0 || length > 0xffffu)
   {
+    lastDirectError_ = EspUsbDeviceVendorDirectError::BadArgument;
     return false;
   }
+  // The address has to be cache-line aligned. The *length* deliberately does
+  // not: a run's final stage and a status line are both short and odd, and a
+  // partial-line writeback is safe for a transfer the device only reads out of.
+  if ((reinterpret_cast<uintptr_t>(buffer) & 63u) != 0)
+  {
+    lastDirectError_ = EspUsbDeviceVendorDirectError::NotAligned;
+    return false;
+  }
+#if ESP_USB_DEVICE_HAS_DMA_CAPABLE_CHECK
+  if (!esp_ptr_dma_capable(buffer))
+  {
+    lastDirectError_ = EspUsbDeviceVendorDirectError::NotDmaCapable;
+    return false;
+  }
+#endif
   if (endpointNumber_ == 0 || !mounted())
   {
+    lastDirectError_ = EspUsbDeviceVendorDirectError::NotMounted;
     return false;
   }
   const uint8_t rhport = espusb::internal::tinyUsbRuntimeRhport();
   if (rhport == 0xff)
   {
+    lastDirectError_ = EspUsbDeviceVendorDirectError::NotMounted;
     return false;
   }
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber_);
   // The same claim the vendor class itself takes, so a transfer already in
-  // flight - the class's or ours - makes this fail rather than corrupt it.
+  // flight makes this fail rather than corrupt it. This is the one refusal a
+  // streaming caller should expect: it is backpressure, not a mistake.
   if (!usbd_edpt_claim(rhport, epIn))
   {
+    lastDirectError_ = EspUsbDeviceVendorDirectError::Busy;
     return false;
   }
   if (!usbd_edpt_xfer(rhport, epIn,
@@ -2978,19 +3013,56 @@ bool EspUsbDeviceVendor::writeDirect(const void *buffer, size_t length)
                       static_cast<uint16_t>(length), false))
   {
     usbd_edpt_release(rhport, epIn);
+    lastDirectError_ = EspUsbDeviceVendorDirectError::TransferFailed;
     return false;
   }
+  lastDirectError_ = EspUsbDeviceVendorDirectError::None;
   return true;
 #else
   (void)buffer;
   (void)length;
+  lastDirectError_ = EspUsbDeviceVendorDirectError::NotSupported;
   return false;
 #endif
+}
+
+EspUsbDeviceVendorDirectError EspUsbDeviceVendor::lastDirectError() const
+{
+  return lastDirectError_;
+}
+
+const char *EspUsbDeviceVendor::lastDirectErrorName() const
+{
+  switch (lastDirectError_)
+  {
+  case EspUsbDeviceVendorDirectError::None:
+    return "None";
+  case EspUsbDeviceVendorDirectError::NotSupported:
+    return "NotSupported";
+  case EspUsbDeviceVendorDirectError::NotMounted:
+    return "NotMounted";
+  case EspUsbDeviceVendorDirectError::BadArgument:
+    return "BadArgument";
+  case EspUsbDeviceVendorDirectError::NotAligned:
+    return "NotAligned";
+  case EspUsbDeviceVendorDirectError::NotDmaCapable:
+    return "NotDmaCapable";
+  case EspUsbDeviceVendorDirectError::Busy:
+    return "Busy";
+  case EspUsbDeviceVendorDirectError::TransferFailed:
+    return "TransferFailed";
+  }
+  return "Unknown";
 }
 
 void EspUsbDeviceVendor::onTxComplete(TxCompleteCallback callback)
 {
   txCompleteCallback_ = callback;
+}
+
+void EspUsbDeviceVendor::onRxData(RxDataCallback callback)
+{
+  rxDataCallback_ = callback;
 }
 
 void EspUsbDeviceVendor::onRx(RxCallback callback)
@@ -3029,8 +3101,14 @@ uint16_t EspUsbDeviceVendor::endpointSize() const
   return endpointSize_;
 }
 
-void EspUsbDeviceVendor::handleRx()
+void EspUsbDeviceVendor::handleRx(const uint8_t *data, size_t length)
 {
+  // Direct builds get the controller's buffer here and have no RX FIFO behind
+  // it, so this is the only chance to look at the payload.
+  if (data && length > 0 && rxDataCallback_)
+  {
+    rxDataCallback_(data, length);
+  }
   if (rxCallback_)
   {
     rxCallback_(available());
