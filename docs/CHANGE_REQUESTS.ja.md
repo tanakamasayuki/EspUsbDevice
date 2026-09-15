@@ -677,11 +677,10 @@ callback から次を arm して **49.3 MB/s（usbip）** を実測している�
 - `usbd_edpt_xfer()` の長さは `uint16_t` なので 65,535 まで。`TX_EPSIZE` の clamp は
   そもそも `vendord_ep_write()` の中の話なので、通らなければ関係ない。
 
-**ただし buffered のままだと、direct transfer の完了後に class が ZLP を勝手に arm する。**
-`vendord_xfer_cb()` の IN 分岐は `tud_vendor_tx_cb()` のあとに必ず
-`tu_edpt_stream_write_xfer()` → 0 なら `tu_edpt_stream_write_zlp_if_needed()` と続く。
-前者は FIFO が空なら claim せずに 0 を返すので無害だが、後者は
-[`src/tusb.c`](../src/tusb.c) 374 行で
+**source を読んだ限りでは、buffered のままだと direct transfer の完了後に class が ZLP を
+arm するはずだった。** `vendord_xfer_cb()` の IN 分岐は `tud_vendor_tx_cb()` のあとに必ず
+`tu_edpt_stream_write_xfer()` → 0 なら `tu_edpt_stream_write_zlp_if_needed()` と続き、
+後者は [`src/tusb.c`](../src/tusb.c) 374 行で
 
 ```c
 TU_VERIFY(tu_fifo_empty(&s->ff) && last_xferred_bytes > 0 && (0 == (last_xferred_bytes & (s->mps - 1))));
@@ -689,56 +688,37 @@ TU_VERIFY(stream_claim(s));
 TU_ASSERT(stream_xfer(s, 0));
 ```
 
-を満たしてしまう（27,136 @ mps 512 は `27136 & 511 == 0`）。direct write のたびに ZLP が
-1 本増え、その完了で `tud_vendor_tx_cb(idx, 0)` がもう一度来る。
+を満たす（`s->mps` は endpoint の packet size、S3 full speed なら 64 で、4096 & 63 == 0）。
+`stream_claim()` は `usbd_edpt_claim()` を呼ぶだけで app 側と同じ mutex、しかも
+[`src/device/usbd.c`](../src/device/usbd.c) 747 行が busy と claimed を `xfer_cb` の
+**前**に落とすので、条件はすべて揃って見える。
 
-**これが設計を決める。** `stream_claim()` は同 3 行目で `usbd_edpt_claim()` を呼ぶだけ、
-つまり **app 側の claim と同じ mutex** である。したがって:
+#### 実測では ZLP は出なかった（予測は外れ）
 
-- 次の transfer を**完了 callback の中で** arm すれば、こちらの claim が先に通り、
-  そのあとの `stream_claim` が失敗して ZLP は出ない。E108 の arm ring と同じ形が
-  そのまま正解になる。
-- 完了 callback では signal を give するだけで**別タスクから arm する**と、ZLP 側が
-  先に claim を取り、block ごとに ZLP 1 往復ぶんのレイテンシが乗る。
+ESP32-S3 の native USB を PC に直結し（full speed、mps 64）、libusb で読んで数えた。
+`shorts` はホストが受けた 1 ブロック未満の読み出し、`zerolen` はデバイス側で
+`onTxComplete()` が 0 byte を報告した回数である。
 
-つまり F2（完了 callback）は F1 の付属品ではなく、**この経路の前提条件**である。
+| build | 次を arm する場所 | 経路 | blocks | shorts | zerolen | corrupt / gap |
+|---|---|---|---|---|---|---|
+| non-buffered | 完了 callback | `writeDirect()` 4096 B | 976 | **0** | **0** | 0 / 0 |
+| buffered | 完了 callback | `writeDirect()` 4096 B | 1194 | **0** | — | 0 / 0 |
+| buffered | 別タスク | `writeDirect()` 4096 B | 1187 | **0** | **0** | 0 / 0 |
+| buffered | 単発（再 arm なし） | `writeDirect()` 4096 B | 1 | **0** | **0** | 0 / 0 |
+| buffered | 別タスク | **stock の `write()` 64 B** | 12530 | **0** | — | 0 / 0 |
 
-なお ZLP 論理は `#if CFG_TUD_VENDOR_TXRX_BUFFERED` の中にあり、non-buffered 側の
-`#else` は `tud_vendor_tx_cb()` を呼ぶだけである。依頼元の E108〜E115 は non-buffered
-なので ZLP は一度も出ていない（host 側の `short=0` が全 run で一致）。上の話は
-**「buffered 既定のまま direct write を足したとき」に限って**成立する。
+最後の行が効く。**stock の buffered write でも ZLP は出ない。** つまりこれは
+`writeDirect()` 固有の話ではなく、この構成では ZLP 分岐がそもそも発火していない。
+単発（誰も endpoint を争わない）でも `zerolen=0` なので、「こちらの再 arm が claim を
+先取りしていたから出なかった」でもない。
 
-そしてその場合、害は速度ではない。pipeline が dry のとき（codec が USB より遅い通常運用
-では普通に起きる。依頼元 E114 では stage ごとに arm 遅延 6 ms）完了 callback で次を
-arm できず ZLP が出る。**host 側では ZLP は short packet なので、1 MiB の URB が
-そこで途中完了する。** 依頼元は E106 で「短い block を transfer 終端にすると short
-packet が連発して usbipd が error になる」を踏んでおり、stage 長を 512 の倍数に
-しているのはその回避である。buffered ＋ direct はその回避を壊す。
+**したがって、buffered ＋ direct write を落とす理由として ZLP は使えない。** 機構は
+未解明のまま残っている（`stream_claim()` が失敗しているなら claim が漏れて次の
+`writeDirect()` が失敗するはずだが、1187 ブロックで `armfail=0`）。
 
-#### したがって設計は 2 択
-
-| | 形 | 得 | 損 |
-|---|---|---|---|
-| A | direct write は `CFG_TUD_VENDOR_TXRX_BUFFERED=0` を要求（build 時条件なので API で弾ける） | E108 と同一経路。ZLP 論理はそもそも compile されない。F3（direct RX callback）も同時に手に入る | `EspUsbDeviceVendor` の `available()` / `read()` / `flush()` / `writeAvailable()` / `waitWritable()` が build flag で消える。S2/S3 で有効にすると 64 byte clamp に落ちる。テストが 2 構成になる |
-| B | vendor interface を [`EspUsbDeviceAppDriver`](../src/internal/EspUsbDeviceAppDriver.h) 側に持ち、IN endpoint の `xfer_cb` を自前にする | `vendord_xfer_cb` の ZLP 論理からも `tud_vendor_tx_cb` の束縛からも自由。buffered の既存 API をそのまま残せる。S2/S3 も従来どおり | class driver を 1 つ自前で持つことになる（CCID の前例あり）。descriptor / MS OS 2.0 / WebUSB / control request / alt setting と既存 vendor 機能の同居が設計論点 |
-
-長期的には B のほうが筋が良い。descriptor 生成はもともとライブラリ側
-（`EspUsbDeviceVendor::configurationDescriptor()`）が持っているので、必要なのは
-`open` / `reset` / `control_xfer_cb` / `xfer_cb` である。
-
-#### 測ってから決める、が今回は成立しない
-
-sketch 側からは `tud_vendor_tx_cb()` を受けられない（ライブラリが実装している）。
-つまり **hook が入った working tree が無い限り、E108 と同じ経路は測れない**。
-patch なしで今測れるのは ZLP 経路のほうだけで、それは採らないと決めた形である。
-
-順序としては「使い捨ての試作を working tree に入れて測り、数字が出てから公開 API の
-形（A か B か）を決める」になる。試作は公開 API ではないので、A の簡易形で足りる。
-
-この段取りは依頼元側の台帳
-[`references/espusbdevice-change-requests.ja.md`](https://github.com/ch32-riscv-ug/wch-protocols/blob/main/references/espusbdevice-change-requests.ja.md)
-の CR-10 にも同じ形で記録されている。測定は依頼元の板（`esp32-p4-80f1b2d0b261`）で
-E102 の形（8 KiB と 27,136 byte、P4 host と PC host）を同じ日に取る手筈になっている。
+**この実測が覆っていない範囲**: ESP32-P4 の high speed（mps 512、27,136 byte の stage）は
+測っていない。依頼元が E106 で踏んだ short packet の問題は P4 + usbip での実話なので、
+「どこでも起きない」ことの証明にはならない。P4 で測る段で同じ数え方をする。
 
 #### buffer 側の契約（依頼元の運用）
 
