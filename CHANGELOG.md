@@ -1,6 +1,26 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Correct the `writeDirect()` contract: cache maintenance is **not** the
+  caller's job, and 2.4.0's documentation was wrong to ask for it. TinyUSB
+  cleans the buffer when it arms the transfer, and on ESP32-P4 the L1 data cache
+  is shared between the two cores - one `CACHE_L1_DCACHE_*` control register,
+  against one per core for the instruction caches - so that clean covers a
+  producer running on either core. The wording cost a real user real
+  throughput: a per-run `esp_cache_msync(..., C2M)` added to satisfy it was one
+  of the two things the wch-protocols session had to remove to get a 16-channel
+  stream back to full rate. No code change; the behaviour was always this.
+- (JA) `writeDirect()` の契約を訂正しました。**キャッシュ操作は呼び出し側の仕事では
+  ありません。** 2.4.0 のドキュメントがそれを求めていたのが誤りでした。TinyUSB は
+  転送を arm するときに buffer を clean しており、ESP32-P4 の L1 データキャッシュは
+  2 つの core で共有です（命令キャッシュは core ごとに 1 つずつあるのに対し、
+  `CACHE_L1_DCACHE_*` の制御レジスタは 1 つだけ）。したがってその clean は、どちらの
+  core で作ったデータでも対象になります。この記述は実際に損害を出していて、契約を
+  満たすために入れた run ごとの `esp_cache_msync(..., C2M)` は、wch-protocols 側が
+  16 ch stream を本来の速度に戻すために取り除いた 2 つのうちの 1 つでした。
+  コード変更はありません。挙動は最初からこうでした。
+
+## Unreleased
 
 ## 2.4.0
 - (EN) New opt-in direct transfer path on `EspUsbDeviceVendor`, for sketches
