@@ -84,27 +84,46 @@
 #include "soc/soc.h"
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
 #include "soc/rtc_cntl_reg.h"
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && __has_include("soc/usb_serial_jtag_reg.h")
+#include "soc/usb_serial_jtag_reg.h"
+#define ESP_USB_DEVICE_HAS_SHARED_PHY 1
+#else
+#define ESP_USB_DEVICE_HAS_SHARED_PHY 0
+#endif
 #define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 1
 #elif defined(CONFIG_IDF_TARGET_ESP32P4)
 #include "soc/lp_system_reg.h"
 #define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 1
+#define ESP_USB_DEVICE_HAS_SHARED_PHY 0
 #else
 #define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 0
+#define ESP_USB_DEVICE_HAS_SHARED_PHY 0
 #endif
 #if defined(CONFIG_IDF_TARGET_ESP32S3) && __has_include("esp32s3/rom/usb/usb_persist.h")
 #include "esp32s3/rom/usb/usb_persist.h"
 #include "esp32s3/rom/usb/chip_usb_dw_wrapper.h"
+#if __has_include("esp_efuse.h") && __has_include("esp_efuse_table.h")
+#include "esp_efuse.h"
+#include "esp_efuse_table.h"
+#define ESP_USB_DEVICE_HAS_PHY_SEL_EFUSE 1
+#else
+#define ESP_USB_DEVICE_HAS_PHY_SEL_EFUSE 0
+#endif
 #define ESP_USB_DEVICE_HAS_ROM_DFU 1
 #elif defined(CONFIG_IDF_TARGET_ESP32S2) && __has_include("esp32s2/rom/usb/usb_persist.h")
 #include "esp32s2/rom/usb/usb_persist.h"
 #include "esp32s2/rom/usb/chip_usb_dw_wrapper.h"
+#define ESP_USB_DEVICE_HAS_PHY_SEL_EFUSE 0
 #define ESP_USB_DEVICE_HAS_ROM_DFU 1
 #else
 #define ESP_USB_DEVICE_HAS_ROM_DFU 0
+#define ESP_USB_DEVICE_HAS_PHY_SEL_EFUSE 0
 #endif
 #else
 #define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 0
 #define ESP_USB_DEVICE_HAS_ROM_DFU 0
+#define ESP_USB_DEVICE_HAS_SHARED_PHY 0
+#define ESP_USB_DEVICE_HAS_PHY_SEL_EFUSE 0
 #endif
 
 // The HID interrupt endpoint buffer this build compiled, which is what bounds a
@@ -5072,6 +5091,26 @@ bool EspUsbDevice::rebootToBootloader()
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 #endif
+#if ESP_USB_DEVICE_HAS_SHARED_PHY
+  // Hand the shared PHY back to USB-Serial-JTAG before restarting.
+  //
+  // On ESP32-S3 one internal PHY and one pin pair carry either USB-Serial-JTAG
+  // or USB-OTG, and begin() took them for OTG. The selection lives in
+  // RTC_CNTL_USB_CONF_REG, which is in the RTC domain and **survives a software
+  // reset** - so without this the ROM's serial loader comes up with the pads
+  // still routed to a controller nobody is driving, and the connector goes
+  // dark. Measured: an ESP32-S3 whose only cable is its native USB reached the
+  // download loader (esptool over UART connected with --before no-reset) while
+  // the USB port disappeared from the host entirely.
+  //
+  // Deliberately not done by rebootToRomDfu(): that one wants the ROM on
+  // USB-OTG, which is where the pads already are.
+  CLEAR_PERI_REG_MASK(RTC_CNTL_USB_CONF_REG,
+                      RTC_CNTL_SW_HW_USB_PHY_SEL | RTC_CNTL_SW_USB_PHY_SEL |
+                          RTC_CNTL_USB_PAD_ENABLE);
+  // And not through an external PHY either.
+  CLEAR_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_PHY_SEL);
+#endif
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
   // RTC_CNTL_OPTION1_REG holds this one bit and nothing else, so a whole
   // register write is safe here.
@@ -5093,6 +5132,28 @@ bool EspUsbDevice::rebootToBootloader()
 bool EspUsbDevice::rebootToRomDfu()
 {
 #if ESP_USB_DEVICE_HAS_ROM_DFU
+#if ESP_USB_DEVICE_HAS_PHY_SEL_EFUSE
+  // The ROM's DFU device is on USB-OTG, and on ESP32-S3 the internal PHY
+  // reaches USB-OTG only when the USB_PHY_SEL eFuse is burned: the ROM routes
+  // the pads from that eFuse at boot, whatever the application left behind.
+  //
+  // Without it the chip does reach the download loader - esptool over a UART
+  // connects with --before no-reset - and the USB connector goes completely
+  // dark. Measured on an ESP32-S3 whose only cable is its native USB. On a
+  // board like that, restarting anyway is the difference between "this call
+  // did nothing" and "this board now needs someone to press BOOT", so it
+  // refuses instead.
+  //
+  // Burning USB_PHY_SEL is one-way and costs the board USB-Serial-JTAG for
+  // good, so the library will not do it for you. EspUsbDeviceDfu implements
+  // DFU in the application instead, which needs no eFuse and works the same on
+  // every target.
+  if (!esp_efuse_read_field_bit(ESP_EFUSE_USB_PHY_SEL))
+  {
+    setLastError(ESP_ERR_NOT_SUPPORTED);
+    return false;
+  }
+#endif
 #if ESP_USB_DEVICE_HAS_TINYUSB
   if (tinyusbStarted_)
   {

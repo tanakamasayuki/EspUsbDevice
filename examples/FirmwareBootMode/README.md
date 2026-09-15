@@ -55,7 +55,10 @@ has the detail, including what Secure Boot and the `USB_PHY_SEL` eFuse change.
   lines in every sketch.
 - `device.rebootToRomDfu()` asks the S2/S3 ROM to come up as a DFU device on
   USB-OTG instead, for a host that drives `dfu-util`. Returns `false` without
-  restarting on ESP32-P4.
+  restarting on ESP32-P4, and on an ESP32-S3 whose `USB_PHY_SEL` eFuse is not
+  burned - measured, the ROM puts its DFU stack on a controller with no pads and
+  the connector goes dark, so refusing is the safe answer. For `dfu-util`
+  against an unmodified board use [`FirmwareDFU`](../FirmwareDFU/).
 - `port.onLineCoding(cb)` delivers the host's requested baud rate, which is how
   the 1200-baud touch is detected.
 - `EspUsbDeviceDfu dfu(device, EspUsbDeviceDfuMode::Runtime)` adds the interface

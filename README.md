@@ -462,7 +462,9 @@ was deleted rather than carried forward. See
     rollback; `rollback()` and `cancelPendingBoot()` are the ways back.
 - `EspUsbDevice::rebootToBootloader()` restarts into the chip's ROM download
   loader so `esptool` can rewrite the whole flash, and
-  `rebootToRomDfu()` asks the S2/S3 ROM for DFU instead. The download-boot flag
+  `rebootToRomDfu()` asks the S2/S3 ROM for DFU instead - though on an ESP32-S3
+  that needs the one-way `USB_PHY_SEL` eFuse, and the call refuses rather than
+  restarting into a dark connector when it is not burned. The download-boot flag
   lives in a different register per target - and on ESP32-P4 shares one with the
   software-reset bit - which is why this is a library call. Arduino-ESP32's
   `usb_persist_restart()` cannot be linked from a sketch that uses this library.

@@ -79,3 +79,44 @@ interface と association の数、各ポートが取る IN / OUT endpoint ア�
 通るもの・拒否されるもの・`MAX_CLASSES` ガードが発火する位置を固定します。
 composite の上限を決めるのはクラス数ではなくコントローラの非 control IN endpoint 数なので、
 この計算の回帰を止めるのがここです。
+
+## `p4_hs_packet_sizes`
+
+ESP32-P4 の high-speed build が配る endpoint のパケットサイズを確認します。上限は
+endpoint の種類ごとに full speed と異なるため、endpoint 割り当ての速度依存部分の
+回帰を止めるのがここです。full speed しか出せないボードでは確認できません。
+
+## `dfu_descriptor`
+
+DFU function の descriptor を Download / Runtime 両モードで実機上から確認します。
+functional descriptor の各フィールド、interface が endpoint を **1 本も** 消費しない
+こと（endpoint 予算を使い切ったデバイスにも DFU を足せる理由）、composite に足した
+ときのコスト、function string、2 本目の DFU function が拒否されること、そして
+書き込み先の OTA partition を実際のパーティションテーブルと突き合わせます。
+
+## `msc_firmware_disk`
+
+`EspUsbDeviceMscFirmwareDisk` が公開するファームウェアドライブを
+`startTinyUsb = false` で構築して検査します。幾何と FAT の内容、host に見える README
+ファイル、イメージでない書き込みを無視すること、昇順規則、directory entry による
+commit、不正イメージを検証で拒否すること、boot partition が動かないこと。UF2
+コンテナもここで扱います（逆順に書かれた block、重複 block を二重に数えないこと、
+family ID 不一致の拒否）。
+
+## `bulk_in_fifo`
+
+どの bulk IN endpoint に 2 パケット分のコントローラ送信 FIFO を与えるか。bulk IN が
+無ければビットも立たない、bulk IN 1 本なら必ず 2 パケット、composite では宣言された
+bulk IN の部分集合かつ全部か無し、`EspUsbBulkInBuffering::Single` で強制無効、
+`Double` は適用されるか拒否される。予算は RAM ではなく DWC2 の DFIFO なので、
+欲張った既定値が「列挙できないデバイス」を生むのを止めるのがここです。
+
+## `rom_dfu_guard`
+
+`USB_PHY_SEL` eFuse を焼いていない ESP32-S3 で、`rebootToRomDfu()` が**再起動せずに**
+`ESP_ERR_NOT_SUPPORTED` で `false` を返すこと。焼いていなければ ROM は DFU stack を
+パッドの無いコントローラに載せ、コネクタが沈黙します。呼び出しの次の行に到達すること
+自体が assertion の半分です。テスト側も同じ eFuse を先に読み、本当に再起動して
+しまうボードでは assert せず skip します（USB Serial/JTAG でログを読めている時点で
+焼かれていない——焼くと USB Serial/JTAG が失われるため）。host 側から見る残り半分は
+[`tests/manual/s3_single_cable`](../manual/s3_single_cable/) にあります。

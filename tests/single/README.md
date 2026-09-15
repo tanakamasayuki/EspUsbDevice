@@ -88,3 +88,50 @@ Builds every Audio + HID / CDC / Vendor combination with
 rejected, and where the `MAX_CLASSES` guard fires. What bounds a composite is
 the controller's non-control IN endpoint budget rather than a class count, so
 this is the regression fence for that arithmetic.
+
+## `p4_hs_packet_sizes`
+
+Checks the endpoint packet sizes an ESP32-P4 build hands out at high speed,
+where the legal maxima differ from full speed per endpoint type. It is the fence
+around the speed-dependent half of endpoint allocation, which a full-speed-only
+board cannot exercise.
+
+## `dfu_descriptor`
+
+The DFU function's descriptor bytes in both Download and Runtime mode, on the
+chip: the functional descriptor fields, that the interface costs **zero**
+endpoints (which is what lets DFU attach to a device whose endpoint budget is
+spent), the cost of adding it to a composite, its function string, that a second
+DFU function is rejected, and the OTA partition it would write into - checked
+against the real partition table.
+
+## `msc_firmware_disk`
+
+The firmware drive that `EspUsbDeviceMscFirmwareDisk` publishes, built and
+inspected with `startTinyUsb = false`: geometry and FAT contents, the README
+file a host sees, that non-image writes are ignored, the ascending-order rule,
+the directory-entry commit, that verification refuses a bad image, and that the
+boot partition does not move. The UF2 container is covered here too - blocks
+written in reverse order, a duplicated block not counted twice, and a wrong
+family ID refused.
+
+## `bulk_in_fifo`
+
+Which bulk IN endpoints get a two-packet controller transmit FIFO. No bits
+without a bulk IN endpoint; one bulk IN always doubled; in a composite the bits
+are a subset of the declared bulk IN endpoints and are all-or-nothing;
+`EspUsbBulkInBuffering::Single` forces it off and `Double` either applies or is
+refused. The budget is the DWC2 DFIFO, not RAM, so this is the fence that keeps
+an over-ambitious default from producing a device that will not enumerate.
+
+## `rom_dfu_guard`
+
+`rebootToRomDfu()` must return `false` with `ESP_ERR_NOT_SUPPORTED` **without
+restarting** on an ESP32-S3 whose `USB_PHY_SEL` eFuse is not burned - the ROM
+would otherwise put its DFU stack on a controller with no pads and the connector
+would go dark. Reaching the line after the call is half the assertion. The test
+reads the same eFuse first and skips rather than asserting on a board where the
+call would really restart; a board logging over USB Serial/JTAG cannot have it
+burned, because burning it takes USB Serial/JTAG away. See
+[`tests/manual/s3_single_cable`](../manual/s3_single_cable/) for the
+host-observable half.

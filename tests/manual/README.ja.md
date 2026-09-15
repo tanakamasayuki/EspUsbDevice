@@ -312,6 +312,52 @@ HID はどのホスト OS でも driver が要らない唯一のクラスで、h
 1,100 report/s になります。ホストが 8 本以上投げると、デバイスは約 7,900/s——
 1 microframe に 1 report という天井の 98%——に到達します。
 
+## `s3_single_cable`（スケッチ自身のコネクタが loader として戻るか）
+
+目的:
+
+- コネクタが 1 つの ESP32-S3——native USB だけがホストに繋がり、USB-Serial-JTAG の
+  別ケーブルは無い——で、`rebootToBootloader()` がその同じコネクタを ROM の serial
+  loader に渡すこと、つまり USB device が使っていたケーブルでそのまま書き込めることを
+  確認する。
+- `USB_PHY_SEL` eFuse を焼いていないボードで `rebootToRomDfu()` が、誰も届かない
+  コネクタへ再起動するのではなく**拒否する**ことを確認する。
+
+このライブラリは `begin()` で共有内蔵 PHY を USB-OTG 側へ取ります。その選択は
+`RTC_CNTL_USB_CONF_REG`——RTC ドメインなので **software reset を生き延びます**。
+返すのはライブラリの仕事であって、reset がやってくれることではありません。
+1 つのコネクタでの実測:
+
+| 呼び出し | スケッチ動作中 | 再起動後 |
+|---|---|---|
+| `rebootToBootloader()` | スケッチの VID:PID（`303a:4095`） | `303a:1001`、USB Serial/JTAG。そこで `esptool` が stub flasher を実行する |
+| `rebootToRomDfu()`、eFuse 未焼成 | スケッチの VID:PID | 変化なし。`ESP_ERR_NOT_SUPPORTED` を返してスケッチは動き続ける |
+| 修正前の `rebootToBootloader()` | スケッチの VID:PID | **何も出ない**。チップは loader にいるのにホストからポートが消える |
+
+必要なもの:
+
+- native USB（GPIO19/20）が PC に繋がった ESP32-S3。
+- 書き込みとログ用の**別系統の** UART。native USB は試験対象そのものなので、返却が
+  壊れていれば復旧には使えず、残る手段は BOOT ボタンだけです。
+
+手順:
+
+1. 書き込みは必ず UART 経由で行い、native USB では行わない:
+   ```
+   cd tests/manual/s3_single_cable
+   arduino-cli compile --profile esp32s3 .
+   arduino-cli upload --profile esp32s3 --port /dev/ttyACM3 .
+   ```
+   `rebootToRomDfu()` を選ぶ場合は `-DS3_CABLE_ACTION=1` を付けます。
+2. 再起動前の 20 秒とその後で、ホスト側（Windows なら `usbipd list`、Linux なら
+   `lsusb` / `dmesg`）を見る。**その 20 秒の間に UART を開かないこと**。auto-reset が
+   DTR/RTS に繋がっているボードでは、開いた時点でチップがリセットされ、何も測れません。
+3. 続けて、試験対象のコネクタ経由で書き込む。
+   `esptool --port <そのポート> --before default-reset chip-id` が stub flasher を
+   転送して実行するはずです。
+
+詳細と、このテストが生まれた原因の不具合は `s3_single_cable/README.ja.md` にあります。
+
 ## `windows_winusb`（Windows が .inf なしで WinUSB を bind するか）
 
 目的:

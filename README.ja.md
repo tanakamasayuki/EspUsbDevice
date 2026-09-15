@@ -421,7 +421,9 @@ Espressif USBAudioCard由来sourceを継続改変せず削除しています。�
     解除します。戻る手段は `rollback()` と `cancelPendingBoot()` です。
 - `EspUsbDevice::rebootToBootloader()` はチップの ROM download loader へ再起動し、
   `esptool` で flash 全体を書き換えられるようにします。`rebootToRomDfu()` は
-  S2/S3 の ROM に DFU で立ち上がるよう頼みます。download-boot フラグのレジスタは
+  S2/S3 の ROM に DFU で立ち上がるよう頼みます。ただし ESP32-S3 では一方向の
+  `USB_PHY_SEL` eFuse が要るため、焼かれていなければコネクタが沈黙する再起動をせず
+  拒否します。download-boot フラグのレジスタは
   ターゲットごとに違い、ESP32-P4 ではソフトウェアリセットのビットと同居して
   いるため、ライブラリの API にしています。Arduino-ESP32 の
   `usb_persist_restart()` はこのライブラリを使うスケッチからは link できません。

@@ -340,6 +340,54 @@ several URBs in flight.** One synchronous read at a time over usbip gives about
 1,100 reports/s whatever the device does. The device reaches ~7,900/s - 98% of
 the one-report-per-microframe ceiling - once the host submits 8 or more.
 
+## `s3_single_cable` (does the sketch's own connector come back as the loader)
+
+Purpose:
+
+- Confirm that on a one-connector ESP32-S3 - native USB wired to the host, no
+  separate USB-Serial-JTAG cable - `rebootToBootloader()` gives that same
+  connector back to the ROM's serial loader, so the board can be reflashed over
+  the cable the USB device was using.
+- Confirm that `rebootToRomDfu()` **refuses** on a board whose `USB_PHY_SEL`
+  eFuse is not burned, instead of restarting into a connector nobody can reach.
+
+The library takes the shared internal PHY for USB-OTG at `begin()`, and that
+selection lives in `RTC_CNTL_USB_CONF_REG` - RTC domain, so it **survives a
+software reset**. Handing it back is something the library does, not something
+the reset does. Measured on one connector:
+
+| Call | While the sketch runs | After the reboot |
+|---|---|---|
+| `rebootToBootloader()` | the sketch's VID:PID (`303a:4095`) | `303a:1001`, USB Serial/JTAG, and `esptool` runs its stub flasher there |
+| `rebootToRomDfu()`, eFuse unburned | the sketch's VID:PID | unchanged - the call returns `ESP_ERR_NOT_SUPPORTED` and the sketch keeps running |
+| `rebootToBootloader()`, before the fix | the sketch's VID:PID | **nothing** - the port vanished from the host while the chip sat in the loader |
+
+Requirements:
+
+- An ESP32-S3 whose native USB (GPIO19/20) goes to the PC.
+- A **separate** UART for flashing and logs. The native USB is the thing under
+  test; if the give-back is broken it is not available to recover with, and the
+  only other way in is the BOOT button.
+
+Steps:
+
+1. Flash over the UART, never over the native USB:
+   ```
+   cd tests/manual/s3_single_cable
+   arduino-cli compile --profile esp32s3 .
+   arduino-cli upload --profile esp32s3 --port /dev/ttyACM3 .
+   ```
+   Add `-DS3_CABLE_ACTION=1` to select `rebootToRomDfu()`.
+2. Watch the host - `usbipd list` on Windows, `lsusb` / `dmesg` on Linux - for
+   the 20 seconds before the reboot and after it. **Do not open the UART during
+   those 20 seconds**: where auto-reset is wired to DTR/RTS, opening it resets
+   the chip and you measure nothing.
+3. Then flash over the connector under test:
+   `esptool --port <that port> --before default-reset chip-id` must upload and
+   run its stub flasher.
+
+Details and the failure this was written for: `s3_single_cable/README.md`.
+
 ## `windows_winusb` (does Windows bind WinUSB without an .inf)
 
 Purpose:

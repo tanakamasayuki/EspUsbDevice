@@ -106,17 +106,32 @@ ESP-IDF自身のudev ruleも固定PIDではなく `303a:00??` で照合してお
 **S3では内蔵full-speed PHYが共有されています。** PHYは1つ、pinも1組
 (GPIO19=D-、GPIO20=D+)、所有者になり得るのはUSB-Serial-JTAG peripheralか
 USB-OTG controllerの2つ。`EspUsbDevice::begin()` がPHYを作った時点で、スケッチは
-これをOTG側へ切り替えています。**resetすると戻ります。** `USB_PHY_SEL` eFuseを
-焼いていない限り、既定はUSB-Serial-JTAGだからです。つまりconnectorが1つしかない
-S3 boardでは、HID deviceを運んでいたのと同じケーブルが、boot modeへのreset後には
-ROMのserial loaderとして現れます。これが「1本のケーブルで焼ける」話の実体で、
-eFuseもDFUも要りません。
+これをOTG側へ切り替えています。
 
-**S3のROM DFUは厄介な方です。** PHYの既定がUSB-Serial-JTAGなので、素のresetで
-出てくるのはROMの*DFU* interfaceではありません。ESP-IDFの回答は `USB_PHY_SEL` を
-恒久的に焼くことですが、それはUSB-Serial-JTAGを永久に失うことを意味します。
-もう1つの回答がROMのpersist flagで、これは恒久的ではありません
-([2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3))。
+**resetしただけでは戻りません。** 選択は `RTC_CNTL_USB_CONF_REG` にあり、これは
+RTCドメインなのでsoftware resetを生き延びます。pinはROMが駆動していないcontrollerに
+繋がったままになり、**connectorは沈黙します**——hostには何も現れず、その間chipは
+download loaderで平然と待っています。native USBが唯一のケーブルであるS3で実測:
+hostからUSB portが消え、別系統のUARTからは `esptool --before no-reset` が接続しました。
+
+`EspUsbDevice::rebootToBootloader()` は再起動の前にPHYを返します。「1本のケーブルで
+焼ける」話が成立するのはこれがあるからです。同じboard・同じケーブルでの実測:
+
+| | そのconnectorにhostが見るもの |
+|---|---|
+| スケッチ動作中 | `303a:4095`、スケッチが名乗ったdevice |
+| `rebootToBootloader()` 後 | `303a:1001`、ROMのUSB Serial/JTAG |
+
+そして `esptool --port COM12` がその上でstub flasherを転送して実行します。ケーブル1本、
+buttonもeFuseも2本目のportも不要——ただし、ライブラリがpinを返しているからです。
+
+**S3のROM DFUにはeFuseが要り、回避策はありません。** ROMは起動時にpinを
+`USB_PHY_SEL` から決めるので、applicationが何を残していようと関係ありません。
+USB-OTG上のROM DFU deviceを出すにはそのeFuseを焼くしかなく、焼けばUSB-Serial-JTAGを
+永久に失います。恒久的でない方のROM persist flagは、ROMにDFUを*実行*させはしますが、
+届く場所には置いてくれません
+([2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3))。実測済みです。S3でDFUが
+欲しいなら答えは [3.5](#35-dfu-function) です。applicationが実装し、eFuseは関係ありません。
 
 **P4ではUSB-Serial-JTAGを使ってください。** P4 v3.1以降はROM DFUのdownload機能に
 不具合があり、書き込みにはUSB-Serial/JTAGを使うこと、というのがEspressif自身の
@@ -148,8 +163,10 @@ P4ではRTC controllerが無くなり、flagは `LP_SYSTEM_REG_SYS_CTRL_REG` の
 抱えているので、**書き込むのではなくsetしなければなりません**。S3向けの手順をP4に
 コピーすると無関係な3つのfieldを潰します。この呼び出しはそれを防ぐためにあります。
 
-`esptool` ではなく `dfu-util` を使うhost向けには `device.rebootToRomDfu()` が同じ
-役割です（[2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3)）。
+`esptool` ではなく `dfu-util` を使うhost向けには `device.rebootToRomDfu()` が同等品ですが、
+ESP32-S2か、eFuseを焼いたESP32-S3でしか動かず、それ以外では再起動せず拒否します
+（[2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3)）。改造していないboardに
+`dfu-util` を使うなら [3.5](#35-dfu-function) が答えです。
 
 EspUsbDevice自身のUSB stackが動いている状態で実機確認済みです。ESP32-S3 (rev v0.2)
 とESP32-P4 (rev v1.3) の両方がdownload loaderに入り、buttonにもDTR/RTS resetにも
@@ -227,17 +244,32 @@ persist flagを受け付けます。これを立てると、`USB_PHY_SEL` を焼
 loaderではなくUSB-OTG上のDFU deviceとして立ち上がります。
 
 ```cpp
-device.rebootToRomDfu();   // ESP32-S2 / ESP32-S3。P4では再起動せず false
+device.rebootToRomDfu();   // 実質ESP32-S2のみ。下記参照
 ```
 
 中身は `chip_usb_set_persist_flags(USBDC_BOOT_DFU)` と、同じdownload-bootフラグ＋
-再起動です。これらはS2/S3のESP-IDF buildが公開しているROM symbolです。ただし
-**end-to-endでは未検証**です。テスト環境のS3 boardはnative USB portがテスト用PCへ
-配線されていないため、chipがloaderに入ることは確認済み、hostがDFU interfaceを
-bindすることは未確認です。P4に相当するものはありません。P4のESP-IDF buildはROM USB
-headerを一切公開しておらず、そこでのROM DFUは
+再起動です。どちらもS2/S3のESP-IDF buildが公開しているROM symbolです。
+
+**ESP32-S3ではpersist flagだけでは足りず、この呼び出しは拒否します。** 実測: flagを
+立てるとchipはdownload loaderに入り（UART経由で `esptool --before no-reset` が接続）、
+**USB connectorには何ひとつ現れません**。ROMは共有PHYを起動時に `USB_PHY_SEL` eFuseから
+決めるため、DFU stackがpinの無いcontrollerに載るからです。そこで `rebootToRomDfu()` は
+そのeFuseを読み、焼かれていなければ**再起動せず** `ESP_ERR_NOT_SUPPORTED` で `false` を
+返します。connectorが1つしかないboardでは、それでも再起動することは「この呼び出しは
+何もしなかった」と「このboardは誰かがBOOTを押さないと戻らない」の差になります。
+
+`USB_PHY_SEL` を焼けば動きますが、USB-Serial-JTAGを恒久的に失います
+（[2.7](#27-これらを無効化するもの)）。ライブラリが代わりに焼くことはしません。
+
+ESP32-S2にはこのmuxがありません（ROMの唯一のUSBが*USB-OTG*です）ので、そちらでは
+呼び出しは進みます。ただしこの経路は**end-to-endでは未検証**です。テスト環境にS2が
+ありません。P4に相当するものはそもそもありません。P4のESP-IDF buildはROM USB headerを
+一切公開しておらず、そこでのROM DFUは
 [2.3](#23-romがどのusb-interfaceで応答するか)の不具合のある経路なので、この呼び出しは
 `false` を返して何もしません。
+
+**`dfu-util` を使いたいだけなら [3.5](#35-dfu-function) を使ってください。**
+applicationがDFUを実装し、eFuseは関係なく、どのtargetでも同じように動きます。
 
 host側は `dfu-util` か `idf.py dfu-flash` で、対象は `idf.py dfu` が作るDFU imageです。
 素の `.bin` ではありません。
@@ -560,7 +592,7 @@ LinuxとmacOSにはこれは要りません（classで当てるか、libusbが�
 | 経路 | chip | boot mode必要 | host tool | brickしうるか | 現在のライブラリ対応 |
 |---|---|---|---|---|---|
 | USB経由のROM serial loader | S2 (OTG CDC)、S3 / P4 (USB-Serial-JTAG) | 要 | `esptool`、ブラウザの `esptool-js` | しない | ✅ `rebootToBootloader()` — [2.4](#24-スケッチからboot-modeへ入る) |
-| USB-OTG経由のROM DFU | S2、S3。P4は不具合 | 要 | `dfu-util` | しない | ✅ `rebootToRomDfu()` — [2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3) |
+| USB-OTG経由のROM DFU | S2。S3は `USB_PHY_SEL` eFuseを焼いた場合のみ。P4は不具合 | 要 | `dfu-util` | しない | ⚠ 未焼成のS3では `rebootToRomDfu()` が拒否 — [2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3) |
 | **device自身が実装するDFU** | 全部 | 不要 | `dfu-util` | rollback無しならしうる | ✅ `EspUsbDeviceDfu` — [3.5](#35-dfu-function) |
 | CDC経由の自力OTA | 全部 | 不要 | 任意のserial tool | rollback無しならしうる | ✅ class + `EspUsbDeviceFirmwareUpdate` |
 | Vendor / WebUSB経由の自力OTA | 全部 | 不要 | PyUSB / ブラウザ | rollback無しならしうる | ✅ class + `EspUsbDeviceFirmwareUpdate` |

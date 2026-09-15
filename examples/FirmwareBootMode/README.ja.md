@@ -55,7 +55,10 @@ esptool --port <port> write_flash 0x0 firmware.bin
   同居しています。これがライブラリの API になっている理由です。
 - `device.rebootToRomDfu()` — S2/S3 の ROM を、serial loader ではなく USB-OTG 上の
   DFU デバイスとして立ち上げます。`dfu-util` を使う host 向け。ESP32-P4 では
-  再起動せず `false` を返します。
+  再起動せず `false` を返します。ESP32-S3 でも `USB_PHY_SEL` eFuse が焼かれて
+  いなければ同様に拒否します（実測: ROM が DFU をパッドの無いコントローラに載せる
+  ため、コネクタが沈黙します）。改造していないボードで `dfu-util` を使いたい場合は
+  [`FirmwareDFU`](../FirmwareDFU/) を使ってください。
 - `port.onLineCoding(cb)` — host が要求した baud rate が渡ります。1200bps touch の
   検出はこれです。
 - `EspUsbDeviceDfu dfu(device, EspUsbDeviceDfuMode::Runtime)` — `dfu-util -e` が
