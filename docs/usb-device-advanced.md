@@ -1006,8 +1006,15 @@ The caller's side of the bargain, all of it checked except the first:
 | The buffer stays alive and untouched until `onTxComplete()` reports it | not checkable |
 | Address 64-byte aligned | `NotAligned` |
 | DMA-capable memory (PSRAM is not; stage it yourself) | `NotDmaCapable` |
-| `esp_cache_msync(..., C2M)` if it was written from another core | not checkable |
 | 1..65535 bytes | `BadArgument` |
+
+**Cache maintenance is not on that list, deliberately.** TinyUSB cleans the
+buffer when it arms the transfer, and on ESP32-P4 the L1 data cache is shared
+between the two cores - there is a single `CACHE_L1_DCACHE_*` control register,
+unlike the per-core instruction caches - so that clean covers a producer running
+on either core. An `esp_cache_msync(..., C2M)` of your own is redundant, and
+doing one per transfer costs throughput that a stream notices. ESP32-S2 and S3
+reach internal SRAM without a data cache at all.
 
 The **length** deliberately has no alignment rule: a run's last block and a
 status line are short and odd, and that is a normal thing to send - it just ends

@@ -686,8 +686,9 @@ Vendor.onTxComplete([](size_t sent) {   // usbd task。短く保つこと
 | `onTxComplete()` が報告するまでbufferを生かし、触らない | 検査不能 |
 | 先頭アドレスが64 byte整列 | `NotAligned` |
 | DMA可能なメモリ（PSRAMは不可。自分で退避すること） | `NotDmaCapable` |
-| 別coreで書いたなら `esp_cache_msync(..., C2M)` 済み | 検査不能 |
 | 1〜65535 byte | `BadArgument` |
+
+**キャッシュ操作が入っていないのは意図的です。** TinyUSBが転送をarmするときにbufferをcleanしており、ESP32-P4のL1データキャッシュは2つのcoreで共有です（命令キャッシュはcoreごとに2つあるのに対し、`CACHE_L1_DCACHE_*` の制御レジスタは1つしかありません）。したがってそのcleanは、どちらのcoreで作ったデータでも対象になります。呼び出し側で `esp_cache_msync(..., C2M)` を掛けるのは冗長で、転送ごとにやるとstreamに見える分だけ遅くなります。ESP32-S2 / S3 はそもそもデータキャッシュを介さずに internal SRAM へ届きます。
 
 **長さには整列の規則を意図的に置いていません。** runの最後のblockやstatus行は短くて半端で、それは普通に送ってよいものです。単にhost側のtransferがshort packetで終わるだけです。`lastDirectError()` が理由を返し、`Busy`（転送がまだin flight）は間違いではなく**通常のbackpressure**です。
 

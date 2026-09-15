@@ -1014,8 +1014,13 @@ public:
   //    copied - an API that exists to avoid the copy should say so when it
   //    cannot. PSRAM has to be staged through an internal bounce buffer by the
   //    caller.
-  //  - A buffer written from another core needs esp_cache_msync(..., C2M)
-  //    before it is handed over.
+  //  - Cache maintenance is **not** your job. TinyUSB cleans the buffer when it
+  //    arms the transfer (dcd_dwc2.c, DMA builds), and on ESP32-P4 the L1 data
+  //    cache is shared between the two cores - there is one
+  //    CACHE_L1_DCACHE_* control register, unlike the per-core instruction
+  //    caches - so that clean covers data produced on either core. An
+  //    esp_cache_msync(..., C2M) of your own is redundant, and a per-transfer
+  //    one is not free. S2/S3 reach internal SRAM without a data cache at all.
   //
   // `length` is capped at 65535 by usbd_edpt_xfer() and **need not be aligned
   // or a multiple of wMaxPacketSize**: a short final stage or a status line is
