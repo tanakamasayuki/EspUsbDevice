@@ -687,16 +687,29 @@ Vendor.onTxComplete([](size_t sent) {   // usbd task。短く保つこと
 
 **なぜruntimeの選択ではなくbuild flagなのか。** bufferedビルドでは、長さが `wMaxPacketSize` の倍数だった転送の完了後にvendor classが自前のZLPをarmし、そのZLPがendpointのclaimを取ります。ESP32-P4 high speed・27,136 byte stageでの実測では、`onTxComplete()` の中でarmすればapplication側がclaimを取れてstreamは流れ、**別のtaskからarmすると**ZLPが勝って次の `writeDirect()` が拒否され、**1本で止まります**。どのtaskから呼んだかに正しさが乗るAPIを出すより、directビルドではその経路自体をcompileしない、という形にしました。そうすればarmするtaskは問題でなくなります。
 
-ESP32-P4 high speed、一方向bulk IN、pyusbがURBを1本ずつ読む構成での実測です（絶対値はhost律速なので、意味があるのは構成間の差です）。
+ESP32-P4 high speed、一方向bulk IN、送るデータは事前に用意済み、hostは同じもので測りました。「in flightの読み」はhostが同時に投げている bulk read の本数です。1本ずつだとURBの間でendpointが遊ぶ——これはdeviceではなくhost側の限界なので、両方を載せます。
 
-| ビルド | 次のarm元 | stage | 結果 |
+| 経路 | stage | 読み 1本 | 読み 8本 |
 |---|---|---|---|
-| direct | `onTxComplete()` | 27,136 | **27.2 MB/s** |
-| direct | 別task | 27,136 | 26.8 MB/s |
-| direct | `onTxComplete()` | 27,000（非整列） | 27.6 MB/s |
-| buffered | どちらでも | 27,136 | `writeDirect()` が `NotSupported` で拒否 |
+| buffered `write()` ＋ `waitWritable()` | - | 21.8 MB/s | 33.9 MB/s |
+| direct `writeDirect()` | 8,192 | - | 39.7 MB/s |
+| direct `writeDirect()` | 27,136 | 27.4 MB/s | 41.1 MB/s |
+| direct `writeDirect()` | 65,024 | 30.4 MB/s | **42.6 MB/s** |
+
+条件を揃えると（読み8本、同じhost、同じデータ）、directはbufferedに対して65,024で**+26%**、27,136で+24%です。依頼元が同じfirmwareをより良いhostハーネス（1 MiB URB、深さ8）で測った値は46.6〜48.3 MB/sで、**独自にTinyUSBへpatchを当てた版の数字と数%差**でした。このライブラリは同梱ツリーを無改変のままそこへ届いています。
+
+完了callbackではなく別taskからarmすると、directビルドでは数%落ちます（読み1本で26.8対27.2 MB/s）。bufferedビルドでは「動くか止まるか」の差になり、それがこのflagの存在理由です。
 
 directビルドでは完了callbackからのarmは必須ではありませんが、スケジューリングの隙間でendpointを遊ばせないのはこの形です。[5.5](#55-endpointごとの送信fifo)のbulk IN送信FIFOの2 packet化は影響を受けず、両ビルドとも既定で有効のままです。
+
+**callbackには「すでに埋まったbuffer」を渡してください。** 素直な書き方——`onTxComplete()` の中でbufferを埋めてからarmする——は、データを作るコストをusbd taskの、しかも「転送が完了してから次をarmするまで」の区間に置くことになり、endpointはその間ちょうど遊びます。同じリンク・同じ27,136 byte stageで、バイトの出どころだけを変えた実測です。
+
+| stage | callback内で埋める | 事前に埋めてcallbackはarmだけ |
+|---|---|---|
+| 27,136 | 22.8 MB/s | **27.4 MB/s** |
+| 65,024 | 23.6 MB/s | **30.4 MB/s** |
+
+片方がin flightの間にもう片方を作り、callbackはarmだけにしてください。stageを長くすると効くのも同じ理屈で、この2点に `t = a + b×bytes` を当てるとper-transferのoverheadは約170 µsになります。stageが倍なら、その分が倍のデータに薄まります。
 
 ---
 
