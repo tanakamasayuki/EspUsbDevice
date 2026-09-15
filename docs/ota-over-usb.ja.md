@@ -39,8 +39,10 @@ flashは持ちません。
 
 - **`EspUsbDeviceDfu`** — DFU function（2形態）。標準のhost toolでdeviceを更新できます。
   [3.5](#35-dfu-function)。
-- **`EspUsbDeviceFirmwareUpdate`** — どの経路にも必要なOTA partition writer。
-  [3.2](#32-書き込み側はどの経路でも同じ)。
+- **`EspUsbDeviceMscFirmwareDisk`** — hostがファームウェアのファイルを放り込むドライブ。
+  [3.6](#36-ファームウェアドライブ)。
+- **`EspUsbDeviceFirmwareUpdate`** — 上の2つと、手書きのどの経路も乗るOTA partition
+  writer。[3.2](#32-書き込み側はどの経路でも同じ)。
 
 経路Bの残りは、ライブラリが既に提供しているclass
 (`EspUsbDeviceCdcSerial`、`EspUsbDeviceVendor`、`EspUsbDeviceNet`、
@@ -322,12 +324,13 @@ if (update.end()) {                   // 検証してから boot partition を�
 | **CDC-ACM** (`EspUsbDeviceCdcSerial`) | 任意のserial tool、Pythonスクリプト | 2 (notif IN + bulk duplex) | 最も単純。長さを送り、バイトを流し、chunkごとに `Update.write()`。full-speed bulkの上限は理論値1.216MB/sで、CDCのframingとchunkごとのflash書き込みでそれを大きく下回ります。300KBのimageなら十分、1MBなら遅い。 |
 | **Vendor / WebUSB** (`EspUsbDeviceVendor`) | PyUSB、WinUSB、WebUSB経由のブラウザ | 1 (bulk duplex) | 専用updaterに最も合います。control requestがbulk dataと並行した綺麗なcommand channel (`START`、size、`COMMIT`) になります。P4 HSでは断然最速で、ライブラリ既定の4096/4096 FIFOで片方向21.5MB/sの実測があります ([応用ガイド 6.3節](usb-device-advanced.ja.md#63-実測スループット))。 |
 | **CDC-NCM + HTTP** (`EspUsbDeviceNet`) | ブラウザ | 2 (notif IN + bulk duplex) | deviceがDHCP server付きのUSB network adapterになり、`HTTPUpdateServer` が `http://192.168.7.1/update` に標準のuploadフォームを出します。driverもhost toolもライブラリのコードも不要。S3で既定app partitionの40%にbuildできることを確認済み。 |
-| **MSC** (`EspUsbDeviceMsc` + `EspUsbDeviceMscFatRamDisk`) | drag and drop | 1 (bulk duplex) | UXは最良、正しく作るのは最難。[6.1](#61-msc経由のdrag-and-drop)参照。 |
+| **MSC** (`EspUsbDeviceMscFirmwareDisk`) | drag and drop | 1 (bulk duplex) | UXは最良で、host依存の挙動が最も多い経路。[3.6](#36-ファームウェアドライブ)。 |
 | **DFU** (`EspUsbDeviceDfu`) | `dfu-util` | **0** | 標準のhost toolと標準のprotocolがEP0上で動きます。経路全体をライブラリが実装し、スケッチはcallbackを渡すだけ。[3.5](#35-dfu-function)。 |
 
-このうち2つはexampleとして同梱しています。
-[`FirmwareDFU`](../examples/FirmwareDFU/) と
-[`FirmwareHTTP`](../examples/FirmwareHTTP/) です。
+このうち3つはexampleとして同梱しています。
+[`FirmwareDFU`](../examples/FirmwareDFU/)、
+[`FirmwareHTTP`](../examples/FirmwareHTTP/)、
+[`FirmwareMSC`](../examples/FirmwareMSC/) です。
 
 NCM経路には補足が要ります。**hostにブラウザ以外のソフトが一切要らない唯一の経路**です。
 利用者が開発者でないならこれを、開発者ならDFU（1コマンド、endpoint消費ゼロ）を
@@ -388,6 +391,13 @@ endpoint 2本のkeyboardとendpoint 0本のDFU interfaceで、peerテストが�
 EspUsbDevice deviceにboot modeへ入るよう頼む標準手段」にでき、独自protocolが
 要りません（[2.4](#24-スケッチからboot-modeへ入る)）。
 
+PC 相手に end-to-end で確認済みです。このclassを載せたESP32-P4がhigh speedでDFU
+deviceとして列挙され、host toolが `wTransferSize=1024`、`bcdDFU=0x0110`、
+`canDnload`、`manifestationTolerant=0` をwireから読み取り、385KBのimageが376 blockで
+2.7秒（139 KiB/s）通りました。すべてEP0上で、deviceは自分のendpointを1本も持って
+いません。その後deviceは `dfuMANIFEST-WAIT-RESET` を返し、boot partitionを移し、
+受け取ったばかりのimageで再起動しました。
+
 `Download` modeで知っておくべきこと:
 
 - **送ったimageが動作中のスケッチを置き換えます。** DFU interfaceを持つビルドを
@@ -410,6 +420,58 @@ EspUsbDevice deviceにboot modeへ入るよう頼む標準手段」にでき、�
   あり、hostは推測ではなく「待て」と伝えられます
   （[3.4](#34-バイトを書いてはいけない場所)はそのfieldを持たない転送路の話です）。
 
+### 3.6 ファームウェアドライブ
+
+`EspUsbDeviceMscFirmwareDisk` は、**データ領域が OTA partition そのもの**である小さな
+FAT ボリュームを提供します。host がドライブへ `.bin` をコピーすると、device は届いた
+sector から順に flash へ書き、検証し、そのイメージで再起動します。
+
+```cpp
+EspUsbDevice device;
+EspUsbDeviceMsc msc(device);
+static uint8_t diskStorage[16 * 1024];
+EspUsbDeviceMscFirmwareDisk disk(diskStorage, sizeof(diskStorage));
+
+disk.begin("ESPUSB");
+disk.addTextFile("README.TXT", "Copy a firmware .bin here.\r\n");
+disk.attach(msc);
+```
+
+**イメージはRAMに載りません。** `diskStorage` が抱えるのは boot sector、FAT 2部、
+root directory、スクラッチ領域だけで、数KBです。それより後ろの sector はすべて
+partition そのもので、read は `esp_partition_read()`、write は
+`EspUsbDeviceFirmwareUpdate` を通ります。RAM 320KB のボードが 1.25MB のイメージを
+受け取れるのはこれが理由で、この経路が成立する唯一の条件でもあります。
+
+classが決めていること。どれも見落としではなく判断です。
+
+- **cluster size。** FAT12 が扱えるのは 4084 cluster なので、`begin()` は partition
+  全体がその上限に収まる最小の cluster（4KB 以上）を選びます。4KB は flash の sector
+  size でもあるため、cluster 境界が erase 境界になります。（Arduino-ESP32 の
+  `FirmwareMSC` は 0xFF4 sector を超えると FAT16 へ切り替えます。cluster を大きくする
+  のはその取引の簡単な側です。）
+- **何をファームウェアと見なすか。** firmware 領域への書き込みで先頭バイトが ESP image
+  magic の `0xE9` なら更新を開始します。それ以外はそこにあっても捨てます。ユーザーが
+  間違って置いたファイルか、スクラッチ領域から溢れた host のメタデータであり、
+  どちらも flash に届くべきではありません。
+- **いつ終わりか。** 2つあり、早い方を採ります。ファイルの directory entry が示す長さに
+  バイト数が達したとき、または host がドライブを eject したとき。通常は directory entry
+  が先に来ます。eject は、このコードが読める directory entry を書かない host のための
+  保険です。
+- **やらないこと。** firmware 領域への書き込みは昇順でなければなりません。逆戻りや
+  穴あきは `ESP_ERR_INVALID_STATE` で拒否し、`onError()` を呼んで更新を中止します。
+  中途半端に書かれた状態が「完成」に見えることはありません。
+
+意識してサイズを決めるべきはスクラッチ領域です。`System Volume Information`、
+`.fseventsd`、`.Spotlight-V100` を吸収するのがここで、埋まると host は firmware 領域の
+cluster を割り当て始めます。`storage` が 16KB あればスクラッチに余裕があり、8KB が下限です。
+
+[3.5](#35-dfu-function) との比較: UX はこちらが上、保証は DFU が上です。DFU は block
+番号があるので順序は host が守るべきもの・device が正確に検査できるものになり、しかも
+endpoint を消費しません。ドライブは bulk 1 対を使い、host のファイルマネージャの挙動を
+そのまま引き受けます。更新する人が端末を使えるなら DFU、使えないならドライブ。
+ドライブに DFU 並みの順序保証を与えるコンテナ形式が [6.1](#61-uf2) です。
+
 ---
 
 ## 4. 経路の比較
@@ -422,8 +484,8 @@ EspUsbDevice deviceにboot modeへ入るよう頼む標準手段」にでき、�
 | CDC経由の自力OTA | 全部 | 不要 | 任意のserial tool | rollback無しならしうる | ✅ class + `EspUsbDeviceFirmwareUpdate` |
 | Vendor / WebUSB経由の自力OTA | 全部 | 不要 | PyUSB / ブラウザ | rollback無しならしうる | ✅ class + `EspUsbDeviceFirmwareUpdate` |
 | CDC-NCM + HTTP経由の自力OTA | 全部 | 不要 | ブラウザ | rollback無しならしうる | ✅ [`FirmwareHTTP`](../examples/FirmwareHTTP/) |
-| MSC経由の自力OTA (drag and drop) | 全部 | 不要 | ファイルマネージャ | rollback無しならしうる | ⚠ classはあるがOTAの繋ぎが無い — [6.1](#61-msc経由のdrag-and-drop) |
-| UF2 | S2 / S3 (TinyUF2) | 場合による | drag and drop | bootloader版はしない | ❌ — 外部プロジェクト、[6.2](#62-uf2) |
+| MSC経由の自力OTA (drag and drop) | 全部 | 不要 | ファイルマネージャ | rollback無しならしうる | ✅ `EspUsbDeviceMscFirmwareDisk` — [3.6](#36-ファームウェアドライブ) |
+| UF2 | S2 / S3 (TinyUF2) | 場合による | drag and drop | bootloader版はしない | ❌ — 外部プロジェクト、[6.1](#61-uf2) |
 
 ---
 
@@ -446,9 +508,9 @@ EspUsbDevice deviceにboot modeへ入るよう頼む標準手段」にでき、�
   切り替えて」。`EspUsbDeviceFirmwareUpdate` として
   [3.3](#33-今日そのまま使える転送路)の全経路で共有され、size clamp、sequential erase、
   「commitの前に検証」のルールが住む場所です。
-- ❌ RAM disk上にファイルが現れたことを検知するFAT層。filesystemの解析であり、繊細で、
-  formatは既に `EspUsbDeviceMscFatRamDisk` が持っています。
-  [6.1](#61-msc経由のdrag-and-drop)。
+- ✅ ドライブ上にファイルが現れたことを検知するFAT層。filesystemの解析であり、繊細で、
+  幾何を間違えても特定のhostがマウントするまで気づけません。
+  `EspUsbDeviceMscFirmwareDisk`、[3.6](#36-ファームウェアドライブ)。
 
 **サンプルスケッチに入るもの**
 
@@ -471,56 +533,14 @@ EspUsbDevice deviceにboot modeへ入るよう頼む標準手段」にでき、�
 
 ## 6. 未実装のもの
 
-`EspUsbDeviceDfu`、`EspUsbDeviceFirmwareUpdate`、
-`EspUsbDevice::rebootToBootloader()` はこのリストの最初の3項目で、ライブラリに
-入りました。以下は残りです。残る2つは「deviceが見せるドライブにファームウェアの
-ファイルが現れる」という同じ話で、実装の大半を共有します。
+`EspUsbDeviceDfu`、`EspUsbDeviceMscFirmwareDisk`、
+`EspUsbDeviceFirmwareUpdate`、`EspUsbDevice::rebootToBootloader()` はこのリストの
+最初の4項目で、ライブラリに入りました。残りは1つ。[3.6](#36-ファームウェアドライブ)の
+ドライブが、順不同で書く host にも耐えられるようになるコンテナ形式です。
 
-ここに書くものはすべて設計スケッチとコスト見積もりであって、約束ではありません。
+設計スケッチとコスト見積もりであって、約束ではありません。
 
-### 6.1 MSC経由のdrag and drop
-
-**見え方:** deviceが小さなFAT driveとして現れる。ユーザーが `firmware.bin` を
-そこへ落とす。deviceが空いているOTA partitionへ書き、再起動する。
-
-**やり方:** Arduino-ESP32自身の `FirmwareMSC` (`cores/esp32/`) が参照実装で、罠を
-理解する最短経路はこれを読むことです。imageをRAMに溜めません。データ領域へ最初に
-書かれたsectorの先頭にESP imageのmagic byte `0xE9` を見つけ、以降のsectorをOTA
-partitionへ直接流し込み、offsetがsector境界に来るたびにflash sectorをeraseします。
-それとは別にroot directory sectorへの書き込みを監視して、ファイルの実際の長さを
-知ります。最後に `esp_image_verify()` を走らせ、長さを比較し、
-`esp_ota_set_boot_partition()` を呼びます。
-
-**ここでまだやっていない理由:** hostは好きなものを好きな順に書くからです。
-
-- macOSは `.fseventsd` と `.Spotlight-V100` を、Windowsは
-  `System Volume Information` を作ります。これらはデータ領域への書き込みですが
-  firmwareではありません。
-- directory entryはデータの前に書かれるかもしれないし、後かもしれないし、途中かも
-  しれません。`FirmwareMSC` は2系統のコードと状態機械でこれを捌いており、それが
-  最低ラインです。
-- MSCには「ファイルが閉じられた」イベントがありません。完了はバイト数がdirectory
-  entryのsizeに達したことか、ejectから推定します。ライブラリは既に
-  `EspUsbDeviceMscFatRamDisk::onEject()` でejectを公開しており、こちらの方が綺麗な
-  commit点です。
-- RAM diskは、実際には保持しないimageのFAT metadataを置けるだけの大きさが必要です。
-  `FirmwareMSC` はOTA partition sizeから幾何を計算し、0xFF4 clusterでFAT12とFAT16を
-  切り替えます。
-
-**提案する切り分け:** ライブラリ側に `EspUsbDeviceMscFirmwareDisk` (幾何、検出、
-`EspUsbDeviceFirmwareUpdate` への streaming、eject時commit)、それをLEDとserial logに
-繋ぐexample。書き込み側は完成済み（DFUが使うのと同じ `EspUsbDeviceFirmwareUpdate`
-です）なので、残るのはFATの幾何と検出だけで、複雑度は既存の
-`EspUsbDeviceMscFatRamDisk` と同程度です。そちらが自然な基底になります。
-
-**検討に値する代案: 素の `.bin` ではなくUF2。** UF2ファイルは自己記述的な512 byte
-blockの列で、各blockが自分のtarget address、block index、総数を持ちます。上の罠は
-すべて消えます。各blockが行き先を持つので順不同でよく、hostのmetadataはUF2 magicを
-持たないので弾かれ、完了は「N個中n個目」がデータに入っているので正確です。代償は、
-ユーザーにArduinoが吐いた `.bin` ではなく `.uf2` を渡さなければならないこと。
-[6.2](#62-uf2)参照。
-
-### 6.2 UF2
+### 6.1 UF2
 
 [TinyUF2](https://github.com/adafruit/tinyuf2) はsecond-stage bootloaderを置き換える
 S2/S3向けUF2 bootloaderで、Espressifの
@@ -529,10 +549,16 @@ S2/S3向けUF2 bootloaderで、Espressifの
 (`usb_uf2_ota`)、さらにNVSを `.ini` に落とす機能をまとめています。
 
 bootloader版は対象外です。bootloaderを置き換えるものであり、ESP-IDF componentであり、
-ArduinoのUSB *device library* の関心事ではありません。application側の版はまさに
-[6.1](#61-msc経由のdrag-and-drop)をより良いコンテナ形式でやるものです。MSC firmware
-diskを作るなら、同じclassで素の `.bin` と並べてUF2 blockも受け付けるのは小さな追加で、
-しかも堅牢さの本体です。
+ArduinoのUSB *device library* の関心事ではありません。application側の版は
+[3.6](#36-ファームウェアドライブ)をより良いコンテナ形式でやるものです。
+
+**何が手に入るか。** UF2ファイルは自己記述的な512 byte blockの列で、各blockが自分の
+target address、block index、総数を持ちます。ファームウェアドライブが明記している制約は
+すべて消えます。各blockが行き先を持つので順不同でよく、hostのmetadataはUF2 magicを
+持たないので弾かれ、完了は directory entry からの推測ではなく「N個中n個目」がデータに
+入っているので正確です。素の `.bin` と並べてUF2 blockも受け付けるのは
+`EspUsbDeviceMscFirmwareDisk` への追加であって新しいclassではありません。検出もoffsetも、
+`0xE9` magic と書き込み位置ではなく block header から取るようになるだけです。
 
 摩擦はhost側にあります。Arduinoのbuildから `.uf2` を作るには変換の一手間
 (`uf2conv.py`、targetのfamily ID、base address 0x00) が要り、Arduinoはやってくれません。
@@ -548,10 +574,11 @@ UF2はファイルマネージャしか無いhost向けです。DFUはendpoint�
 - [トラブルシューティング](troubleshooting.ja.md) — 症状から引ける対処
 - [examples/FirmwareDFU](../examples/FirmwareDFU/) — 動作中のスケッチを `dfu-util` で更新する
 - [examples/FirmwareHTTP](../examples/FirmwareHTTP/) — USBネットワーク越しにブラウザからアップロード
+- [examples/FirmwareMSC](../examples/FirmwareMSC/) — ボードが見せるドライブにファームウェアを放り込む
 - [examples/FirmwareBootMode](../examples/FirmwareBootMode/) — ROM loaderを要求する3通りの方法
 - [examples/UsbNetwork](../examples/UsbNetwork/) — HTTP経路の土台になるCDC-NCM + web server
-- [examples/MSCFatRamDisk](../examples/MSCFatRamDisk/) — MSC経路が土台にするFAT RAM disk
 - [tests/peer/usb_dfu](../tests/peer/usb_dfu/) — ここでのDFUの主張を支える2台構成テスト
+- [tests/single/msc_firmware_disk](../tests/single/msc_firmware_disk/) — ファームウェアドライブの主張を支えるテスト
 - [ESP-IDF: Device Firmware Upgrade via USB](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/dfu.html)
 - [esptool: Boot Mode Selection (ESP32-S3)](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/boot-mode-selection.html) / [(ESP32-P4)](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/advanced-topics/boot-mode-selection.html)
 - [ESP-IoT-Solution: USB-OTG peripheral introduction](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_overview/usb_otg.html) — P4 v3.1のDFU不具合

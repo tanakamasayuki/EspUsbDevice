@@ -447,7 +447,7 @@ device.onAnyControlRequest([](const EspUsbDeviceControlRequestInfo &r) {
 
 vendor requestを `ACK` ではなく `SETUP` で報告するのには理由があります。**STALLした要求はstatus stageに到達しない**ためで、「来たが断った」と「そもそも来ていない」は別の診断です。したがって *「WindowsはMS OS 2.0の要求を投げているのか」* は、ログに `type=0xC0 req=<bMS_VendorCode> idx=0x0007` が出るかどうかで決まります。
 
-このcallbackはusbdタスク上で動くので、カウンタかキューに留めてください（[1.3](#13-tinyusb-の-api-は-usbd-タスクから呼ぶ)）。
+このcallbackはusbdタスク上で動くので、カウンタかキューに留めてください（[1.3](#13-tinyusb-apiは-usbd-タスクから呼ぶ)）。
 
 ### 4.3 3つのステージとSTALL
 

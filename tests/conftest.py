@@ -66,6 +66,17 @@ _KNOWN_SERIAL_FINDINGS = (
     # are logged by esp_ota_ops at error level on the peer, so they arrive here
     # looking like failures. Remove these two entries and the test still passes;
     # the audit is what would start complaining.
+    # Same two refusals from the MSC firmware disk, which drives the same writer
+    # through its block callbacks. Here they land on the DUT rather than a peer.
+    _KnownSerialFinding(
+        nodeid_pattern="*single/msc_firmware_disk/test_msc_firmware_disk.py::test_msc_firmware_disk",
+        log_name="dut.log",
+        line_pattern=re.compile(
+            r"(?:boot_comm: mismatch chip ID|esp_ota_ops: New image failed verification)"
+        ),
+        max_count=4,
+        reason="the test image is nonsense on purpose; failing verification is the assertion",
+    ),
     _KnownSerialFinding(
         nodeid_pattern="*peer/usb_dfu/test_usb_dfu.py::test_usb_dfu",
         log_name="peer-device.log",

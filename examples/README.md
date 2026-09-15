@@ -368,6 +368,19 @@ See [FirmwareDFU/README.md](FirmwareDFU/README.md) for details.
 - The ROM is not involved, so it behaves the same on S2, S3 and P4.
 - Needs a partition scheme with two application partitions.
 
+## FirmwareMSC
+
+Firmware update by dragging a file onto a drive the board presents.
+See [FirmwareMSC/README.md](FirmwareMSC/README.md) for details.
+
+- `EspUsbDeviceMscFirmwareDisk` presents a FAT volume whose data region **is**
+  the OTA partition, so the image is never held in RAM.
+- Detects an ESP image by its `0xE9` magic, commits when the directory entry's
+  length is reached or the drive is ejected, and verifies before switching.
+- Writes must ascend; one that jumps backwards is refused rather than
+  half-applied.
+- Needs a partition scheme with two application partitions.
+
 ## FirmwareHTTP
 
 Firmware update over USB with nothing on the host but a browser.

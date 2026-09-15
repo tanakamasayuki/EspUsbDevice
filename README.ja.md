@@ -399,6 +399,12 @@ Espressif USBAudioCard由来sourceを継続改変せず削除しています。�
     既定ではチップの ROM download loader へ再起動します。
   - hook は `onProgress()` / `onComplete()` / `onError()` / `onDetach()` と
     `restartWhenComplete(false)`。いずれも usbd task 上で動きます。
+- `EspUsbDeviceMscFirmwareDisk` は、データ領域が OTA partition **そのもの**である
+  小さな FAT ボリュームを提供します。host がドライブへ `.bin` を放り込むと、device が
+  flash へ流し込み、検証し、そのイメージで再起動します。イメージは RAM に載りません。
+  載るのはボリュームのメタデータと、host のファイルマネージャが残すものを吸収する
+  スクラッチ領域だけです。firmware 領域への書き込みは昇順が前提で、そうでないものは
+  中途半端に適用せず拒否します。
 - `EspUsbDeviceFirmwareUpdate` は動作していない側の OTA partition へイメージを
   書き、検証し、boot partition を切り替えます。転送路に依存しません。DFU class が
   使うほか、CDC / vendor bulk / MSC / NCM 越しの HTTP アップロードでバイトを

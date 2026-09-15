@@ -28,7 +28,46 @@
   uploads over the USB network interface, no host tool at all) and
   `FirmwareBootMode`; new tests `tests/single/dfu_descriptor` and
   `tests/peer/usb_dfu`; new guide `docs/ota-over-usb.md`, which covers boot mode
-  per chip, entering it from a sketch, and the full route comparison.
+  per chip, entering it from a sketch, and the full route comparison. Verified
+  end to end from a PC as well: an ESP32-P4 enumerated as a DFU device at high
+  speed and took a 385 KB image in 376 blocks in 2.7 s (139 KiB/s) over EP0,
+  then verified it, moved the boot partition and restarted into it.
+- (EN) Firmware update by dragging a file onto a drive. New
+  `EspUsbDeviceMscFirmwareDisk` presents a FAT12 volume whose data region **is**
+  the OTA partition: the host copies a `.bin` onto it, the device recognises the
+  ESP image magic and streams the sectors into flash as they arrive, then
+  commits when the file's directory entry says the whole image landed or when
+  the drive is ejected. The image is never held in RAM - the buffer the sketch
+  supplies holds the boot sector, both FAT copies, the root directory and a
+  scratch area for what a host's file manager leaves behind, which is what lets
+  a board with 320 KB of RAM accept a 1.25 MB image. `begin()` picks the
+  smallest cluster size from 4 KiB up that keeps the partition inside FAT12's
+  4084 clusters, so a cluster boundary is also a flash erase boundary. Writes
+  into the firmware region must ascend: one that jumps backwards or leaves a
+  hole is refused with `ESP_ERR_INVALID_STATE` and the update abandoned, rather
+  than producing an image that looks complete and is not. Reads come back from
+  the partition itself, so a host that verifies what it copied sees what was
+  written. New example `FirmwareMSC`; new test
+  `tests/single/msc_firmware_disk`, which drives the block callbacks directly
+  and covers the geometry, the published FAT, image detection, the ordering
+  rule, the directory-entry commit and the verification that refuses a bad
+  image.
+- (JA) ドライブにファイルを放り込むファームウェア更新に対応しました。
+  `EspUsbDeviceMscFirmwareDisk` は、データ領域が OTA partition **そのもの**である
+  FAT12 ボリュームを提供します。host が `.bin` をコピーすると、device が ESP image の
+  magic を認識して到着した sector から flash へ流し込み、ファイルの directory entry が
+  示す長さに達した時点、または drive が eject された時点で commit します。イメージは
+  RAM に載りません。スケッチが渡す buffer に載るのは boot sector、FAT 2 部、root
+  directory、そして host のファイルマネージャが残すものを吸収するスクラッチ領域だけで、
+  RAM 320KB のボードが 1.25MB のイメージを受け取れるのはこれが理由です。`begin()` は
+  partition が FAT12 の 4084 cluster に収まる最小の cluster size を 4KiB 以上から選ぶので、
+  cluster 境界が flash の erase 境界にもなります。firmware 領域への書き込みは昇順が
+  前提で、逆戻りや穴あきは `ESP_ERR_INVALID_STATE` で拒否して更新を中止します。
+  完成に見えて実は違うイメージを作らないためです。read は partition の実内容を返すので、
+  コピーしたものを host が読み返しても一致します。example `FirmwareMSC`、テスト
+  `tests/single/msc_firmware_disk`（block callback を直接叩いて、幾何・公開する FAT・
+  イメージ検出・順序規則・directory entry による commit・不正イメージの検証拒否を
+  カバー）を追加しました。
 - (JA) USB 経由のファームウェア更新に対応しました。`EspUsbDeviceDfu` は DFU class を
   2 形態で実装します。`Download` は `dfu-util -D firmware.bin` が空いている OTA
   partition へイメージを書き、device が検証してそのイメージで再起動するもの、
@@ -53,7 +92,10 @@
   （48 file、source 14）。example `FirmwareDFU` / `FirmwareHTTP`（host 側は
   ブラウザだけ）/ `FirmwareBootMode`、テスト `tests/single/dfu_descriptor` と
   `tests/peer/usb_dfu`、ガイド `docs/ota-over-usb.ja.md`（chip 別の boot mode、
-  スケッチからの入り方、経路の比較）を追加しました。
+  スケッチからの入り方、経路の比較）を追加しました。PC 相手の end-to-end も確認済みで、
+  ESP32-P4 が high speed で DFU device として列挙され、385KB のイメージを 376 block・
+  2.7 秒（139 KiB/s）で EP0 経由で受け取り、検証して boot partition を移し、
+  そのイメージで再起動しました。
 
 ## 2.3.0
 - (EN) Fix a composite HID device merging its classes' report descriptors at the wrong byte. The merge gives each class its own Report ID and has to put it immediately after that class's Collection (Application) item; it found that point by copying six bytes, which holds only for a descriptor opening with a one-byte Usage Page and a one-byte Usage. `EspUsbDeviceHidVendor` opens with a vendor-defined Usage Page - a three-byte item - so the cut landed *inside* the Collection item and every item after it shifted by one: the host read `A1 85` as "Collection (vendor-defined)" and the rest of the descriptor was nonsense. The device still enumerated, which is why nothing noticed. The merge now walks HID items, and a class that already declares a Report ID (gamepad, consumer control, system control, vendor HID) has it replaced rather than duplicated - those were emitting the same item twice, harmlessly but pointlessly. New `EspUsbDevice::hidReportDescriptorLength(instance)` reports the length of whatever `hidReportDescriptor(instance)` returns, which for a composite HID is the merged descriptor and not any one class's own.

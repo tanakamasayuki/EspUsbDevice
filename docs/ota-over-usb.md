@@ -41,7 +41,10 @@ to be right rather than the parts that are a matter of taste:
 
 - **`EspUsbDeviceDfu`** - a DFU function, in either shape, so a standard host
   tool can update the device. [3.5](#35-the-dfu-function).
-- **`EspUsbDeviceFirmwareUpdate`** - the OTA partition writer every route needs.
+- **`EspUsbDeviceMscFirmwareDisk`** - a drive the host drops a firmware file
+  onto. [3.6](#36-the-firmware-drive).
+- **`EspUsbDeviceFirmwareUpdate`** - the OTA partition writer both of those, and
+  every hand-written route, sit on.
   [3.2](#32-the-write-side-is-always-the-same).
 
 Everything else in route B is written with the classes this library already
@@ -335,12 +338,13 @@ None of them needs a library change.
 | **CDC-ACM** (`EspUsbDeviceCdcSerial`) | any serial tool, a Python script | 2 (notif IN + bulk duplex) | Simplest. Send a length, stream the bytes, hand each chunk to `Update.write()`. Full-speed bulk caps at 1.216 MB/s on paper and a CDC framing plus a flash write per chunk keeps you well under it - fine for a 300 KB image, slow for a 1 MB one. |
 | **Vendor / WebUSB** (`EspUsbDeviceVendor`) | PyUSB, WinUSB, or a browser page over WebUSB | 1 (bulk duplex) | The best fit for a purpose-built updater. Control requests give you a clean command channel (`START`, `size`, `COMMIT`) alongside the bulk data. On P4 HS this is by far the fastest route - the library's own 4096/4096 FIFO settings measured 21.5 MB/s one-way ([advanced guide, 6.3](usb-device-advanced.md#63-measured-throughput)). |
 | **CDC-NCM + HTTP** (`EspUsbDeviceNet`) | a browser | 2 (notif IN + bulk duplex) | The device is a USB network adapter with its own DHCP server; `HTTPUpdateServer` gives you the stock `/update` upload form at `http://192.168.7.1/update`. No drivers, no host tool, no library code. Verified to build at 40% of the default app partition on S3. |
-| **MSC** (`EspUsbDeviceMsc` + `EspUsbDeviceMscFatRamDisk`) | drag and drop | 1 (bulk duplex) | The nicest UX and the hardest to get right - see [6.1](#61-drag-and-drop-over-msc). |
+| **MSC** (`EspUsbDeviceMscFirmwareDisk`) | drag and drop | 1 (bulk duplex) | The nicest UX, and the one with the most host-dependent behaviour. [3.6](#36-the-firmware-drive). |
 | **DFU** (`EspUsbDeviceDfu`) | `dfu-util` | **0** | A standard host tool and a standard protocol, on EP0. The library implements the whole path; the sketch supplies callbacks. [3.5](#35-the-dfu-function). |
 
-Two of these ship as examples:
-[`FirmwareDFU`](../examples/FirmwareDFU/) and
-[`FirmwareHTTP`](../examples/FirmwareHTTP/).
+Three of these ship as examples:
+[`FirmwareDFU`](../examples/FirmwareDFU/),
+[`FirmwareHTTP`](../examples/FirmwareHTTP/) and
+[`FirmwareMSC`](../examples/FirmwareMSC/).
 
 The NCM route deserves a note: it is the only one where the host needs **no**
 software at all beyond a browser. If your users are not developers, that is the
@@ -403,6 +407,14 @@ Two modes:
 boot mode, with no protocol of your own
 ([2.4](#24-entering-boot-mode-from-the-sketch)).
 
+Verified end to end against a PC: an ESP32-P4 running this class enumerated as a
+DFU device at high speed, a host tool read `wTransferSize=1024`,
+`bcdDFU=0x0110`, `canDnload`, `manifestationTolerant=0` off the wire, and a
+385 KB image went across in 376 blocks in 2.7 s (139 KiB/s) - on EP0, with the
+device holding no endpoints of its own. The device then reported
+`dfuMANIFEST-WAIT-RESET`, moved the boot partition and restarted into the image
+it had just been given.
+
 Things worth knowing about the `Download` mode:
 
 - **The image replaces the running sketch.** Send a build that also has a DFU
@@ -427,6 +439,64 @@ Things worth knowing about the `Download` mode:
   guess ([3.4](#34-where-the-bytes-must-not-be-written) is about the transports
   that have no such field).
 
+### 3.6 The firmware drive
+
+`EspUsbDeviceMscFirmwareDisk` presents a small FAT volume **whose data region is
+the OTA partition**. The host copies a `.bin` onto the drive; the device writes
+it to flash as the sectors arrive, verifies it, and restarts into it.
+
+```cpp
+EspUsbDevice device;
+EspUsbDeviceMsc msc(device);
+static uint8_t diskStorage[16 * 1024];
+EspUsbDeviceMscFirmwareDisk disk(diskStorage, sizeof(diskStorage));
+
+disk.begin("ESPUSB");
+disk.addTextFile("README.TXT", "Copy a firmware .bin here.\r\n");
+disk.attach(msc);
+```
+
+**The image is never in RAM.** `diskStorage` holds the boot sector, both FAT
+copies, the root directory and a scratch area - a few kilobytes. Every sector
+past that is the partition, read back through `esp_partition_read()` and written
+through `EspUsbDeviceFirmwareUpdate`. That is what lets a board with 320 KB of
+RAM accept a 1.25 MB image, and it is the single thing that makes this route
+possible at all.
+
+What the class decides for you, and why each one is a decision rather than an
+oversight:
+
+- **Cluster size.** FAT12 addresses 4084 clusters, so `begin()` picks the
+  smallest cluster from 4 KB upwards that keeps the whole partition inside that
+  limit. 4 KB is also the flash sector size, so a cluster boundary is an erase
+  boundary. (Arduino-ESP32's `FirmwareMSC` instead switches to FAT16 above 0xFF4
+  sectors; raising the cluster size is the simpler half of that trade.)
+- **What counts as firmware.** A write into the firmware region whose first byte
+  is the ESP image magic `0xE9` starts an update. Anything else there is
+  dropped - it is a file the user copied by mistake, or host metadata that
+  spilled out of the scratch area, and neither should reach flash.
+- **When it is done.** Two answers, whichever comes first: the file's directory
+  entry says how long it is and the byte count reaches that, or the host ejects
+  the drive. The directory entry usually lands first; the eject is the backstop
+  for a host that never writes one this code can read.
+- **What it will not do.** Writes into the firmware region must ascend. A write
+  that jumps backwards or leaves a hole is refused with
+  `ESP_ERR_INVALID_STATE`, `onError()` fires and the update is abandoned. It is
+  never left half-applied and looking finished.
+
+The scratch area is the part to size deliberately. It is what absorbs
+`System Volume Information`, `.fseventsd` and `.Spotlight-V100`, and a host that
+fills it starts allocating clusters inside the firmware region. 16 KB of
+`storage` leaves a comfortable scratch; 8 KB is the floor.
+
+Compared with [3.5](#35-the-dfu-function): this has the better UX and DFU has
+the better guarantees. DFU's block numbers make ordering the host's problem to
+get right and the device's to check exactly, and it costs no endpoints. A drive
+costs one bulk pair and inherits whatever the host's file manager does. Ship DFU
+when the person doing the update has a terminal; ship the drive when they do
+not. [6.1](#61-uf2) is the container format that would give the drive DFU's
+ordering guarantees.
+
 ---
 
 ## 4. Route comparison
@@ -439,8 +509,8 @@ Things worth knowing about the `Download` mode:
 | Self-OTA over CDC | all | no | any serial tool | yes, without rollback | ✅ classes + `EspUsbDeviceFirmwareUpdate` |
 | Self-OTA over Vendor / WebUSB | all | no | PyUSB / browser | yes, without rollback | ✅ classes + `EspUsbDeviceFirmwareUpdate` |
 | Self-OTA over CDC-NCM + HTTP | all | no | a browser | yes, without rollback | ✅ [`FirmwareHTTP`](../examples/FirmwareHTTP/) |
-| Self-OTA over MSC (drag and drop) | all | no | the file manager | yes, without rollback | ⚠ classes ship, the OTA glue does not - [6.1](#61-drag-and-drop-over-msc) |
-| UF2 | S2 / S3 (TinyUF2) | depends | drag and drop | no (bootloader variant) | ❌ - external project, [6.2](#62-uf2) |
+| Self-OTA over MSC (drag and drop) | all | no | the file manager | yes, without rollback | ✅ `EspUsbDeviceMscFirmwareDisk` - [3.6](#36-the-firmware-drive) |
+| UF2 | S2 / S3 (TinyUF2) | depends | drag and drop | no (bootloader variant) | ❌ - external project, [6.1](#61-uf2) |
 
 ---
 
@@ -463,9 +533,10 @@ sketch owns policy.** Applied to firmware update:
   verify, switch". `EspUsbDeviceFirmwareUpdate`, shared by every route in
   [3.3](#33-transports-that-work-today); it is where the size clamp, the
   sequential erase and the verify-before-commit rule live.
-- ❌ The FAT layer that notices a file appearing on a RAM disk. That is
-  filesystem parsing, it is subtle, and `EspUsbDeviceMscFatRamDisk` already owns
-  the format. [6.1](#61-drag-and-drop-over-msc).
+- ✅ The FAT layer that notices a file appearing on a drive. That is filesystem
+  parsing, it is subtle, and getting the geometry wrong is invisible until a
+  particular host mounts it. `EspUsbDeviceMscFirmwareDisk`,
+  [3.6](#36-the-firmware-drive).
 
 **In a sample sketch**
 
@@ -488,63 +559,15 @@ sketch owns policy.** Applied to firmware update:
 
 ## 6. Not implemented yet
 
-`EspUsbDeviceDfu`, `EspUsbDeviceFirmwareUpdate` and
-`EspUsbDevice::rebootToBootloader()` were the first three items on this list and
-are now in the library; what follows is what is left. Both remaining entries are
-the same idea - a firmware file appearing on a drive the device presents - and
-they share most of their implementation.
+`EspUsbDeviceDfu`, `EspUsbDeviceMscFirmwareDisk`,
+`EspUsbDeviceFirmwareUpdate` and `EspUsbDevice::rebootToBootloader()` were the
+first four items on this list and are now in the library. One entry is left, and
+it is the container format that would make the drive in
+[3.6](#36-the-firmware-drive) tolerate a host that writes out of order.
 
-Everything here is a design sketch and a cost estimate, not a promise.
+A design sketch and a cost estimate, not a promise.
 
-### 6.1 Drag and drop over MSC
-
-**What it looks like:** the device appears as a small FAT drive. The user drops
-`firmware.bin` on it. The device writes it into the spare OTA partition and
-reboots.
-
-**How it is done:** Arduino-ESP32's own `FirmwareMSC` (in `cores/esp32/`) is the
-reference implementation, and reading it is the fastest way to understand the
-traps. It does not buffer the image in RAM - it recognises the ESP image magic
-byte `0xE9` in the first sector written to the data area, streams every
-following sector straight into the OTA partition, erasing a flash sector
-whenever the offset is sector-aligned, and separately watches writes to the root
-directory sector to learn the file's real length. At the end it runs
-`esp_image_verify()`, compares the length, and calls
-`esp_ota_set_boot_partition()`.
-
-**Why it has not been done here:** the host writes what it likes, in the order
-it likes.
-
-- macOS adds `.fseventsd` and `.Spotlight-V100`; Windows adds
-  `System Volume Information`. Those are writes to your data area that are not
-  firmware.
-- The directory entry may be written before the data, after it, or in the middle.
-  `FirmwareMSC` handles this with two code paths and a state machine, and that
-  is the minimum.
-- There is no "file closed" event in MSC. You infer completion from the byte
-  count reaching the directory entry's size, or from the eject. The library
-  already surfaces the eject via `EspUsbDeviceMscFatRamDisk::onEject()`, which
-  is the cleaner commit point.
-- The RAM disk must be large enough to hold the FAT metadata for an image it
-  never actually stores. `FirmwareMSC` computes the geometry from the OTA
-  partition size and switches between FAT12 and FAT16 at 0xFF4 clusters.
-
-**Proposed split:** a library-side `EspUsbDeviceMscFirmwareDisk` (geometry,
-detection, streaming into `EspUsbDeviceFirmwareUpdate`, commit on eject) plus an
-example that wires it to an LED and a serial log. The write side is done - it is
-the same `EspUsbDeviceFirmwareUpdate` DFU uses - so what is left is the FAT
-geometry and the detection, at roughly the complexity of
-`EspUsbDeviceMscFatRamDisk`, which already exists and is the natural base class.
-
-**The alternative worth considering: UF2 instead of a raw `.bin`.** A UF2 file
-is a sequence of self-describing 512-byte blocks, each carrying its own target
-address, block index and total count. Every trap above disappears: out-of-order
-writes are fine because each block says where it goes, host metadata is rejected
-because it has no UF2 magic, and completion is exact because block *n of N* is
-in the data. The cost is that the user must be given a `.uf2`, not the `.bin`
-Arduino produced. See [6.2](#62-uf2).
-
-### 6.2 UF2
+### 6.1 UF2
 
 [TinyUF2](https://github.com/adafruit/tinyuf2) is a UF2 bootloader for S2/S3
 that replaces the second-stage bootloader, and Espressif's
@@ -555,10 +578,18 @@ feature.
 
 The bootloader variant is out of scope: it replaces the bootloader, it is an
 ESP-IDF component, and nothing about it is an Arduino USB *device library*
-concern. The application-side variant is exactly [6.1](#61-drag-and-drop-over-msc)
-with a better container format, and if the MSC firmware disk is built, accepting
-UF2 blocks alongside raw `.bin` is a small addition to the same class - and the
-part that makes it robust.
+concern. The application-side variant is [3.6](#36-the-firmware-drive) with a
+better container format.
+
+**What it would buy.** A UF2 file is a sequence of self-describing 512-byte
+blocks, each carrying its own target address, block index and total count. Every
+restriction the firmware drive documents disappears: out-of-order writes are
+fine because each block says where it goes, host metadata is rejected because it
+has no UF2 magic, and completion is exact because block *n of N* is in the data
+rather than inferred from a directory entry. Accepting UF2 blocks alongside raw
+`.bin` is an addition to `EspUsbDeviceMscFirmwareDisk`, not a new class: the
+detection and the offset both come from the block header instead of from the
+`0xE9` magic and the write position.
 
 Note that UF2 does not replace DFU. They answer different questions: DFU is for
 a host with a tool, UF2 is for a host with a file manager. A device can have
@@ -575,10 +606,11 @@ Arduino does not do for you.
 - [Troubleshooting](troubleshooting.md) - symptom-first fixes
 - [examples/FirmwareDFU](../examples/FirmwareDFU/) - `dfu-util` updates a running sketch
 - [examples/FirmwareHTTP](../examples/FirmwareHTTP/) - a browser uploads over the USB network interface
+- [examples/FirmwareMSC](../examples/FirmwareMSC/) - drag a firmware file onto a drive the board presents
 - [examples/FirmwareBootMode](../examples/FirmwareBootMode/) - three ways to ask for the ROM loader
 - [examples/UsbNetwork](../examples/UsbNetwork/) - the CDC-NCM + web server base the HTTP route builds on
-- [examples/MSCFatRamDisk](../examples/MSCFatRamDisk/) - the FAT RAM disk the MSC route would build on
 - [tests/peer/usb_dfu](../tests/peer/usb_dfu/) - the two-board test behind the DFU claims here
+- [tests/single/msc_firmware_disk](../tests/single/msc_firmware_disk/) - the test behind the firmware-drive claims here
 - [ESP-IDF: Device Firmware Upgrade via USB](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/dfu.html)
 - [esptool: Boot Mode Selection (ESP32-S3)](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/boot-mode-selection.html) / [(ESP32-P4)](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/advanced-topics/boot-mode-selection.html)
 - [ESP-IoT-Solution: USB-OTG peripheral introduction](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_overview/usb_otg.html) - the P4 v3.1 DFU defect

@@ -1591,6 +1591,127 @@ private:
   esp_err_t lastError_ = ESP_OK;
 };
 
+// A small FAT volume whose data region *is* the OTA partition: the host drops a
+// firmware `.bin` onto the drive and the device writes it straight to flash.
+//
+// The image is never held in RAM. Only the volume's metadata - boot sector, FAT,
+// root directory - and a scratch area for whatever the host's file manager
+// leaves behind live in the buffer the sketch supplies. Everything past that is
+// streamed into EspUsbDeviceFirmwareUpdate as it arrives, which is what lets a
+// board with 320 KB of RAM accept a 1.25 MB image.
+//
+// The contract with the host is the one every file manager already keeps when
+// it copies a file onto an empty volume: the firmware region is written in
+// ascending order. A write that jumps backwards or leaves a gap is refused and
+// the update is abandoned with ESP_ERR_INVALID_STATE rather than half-written -
+// see docs/ota-over-usb.md section 6.1 for why a container format (UF2) is the
+// way out of that restriction rather than more code here.
+class EspUsbDeviceMscFirmwareDisk
+{
+public:
+  using EjectCallback = std::function<void()>;
+  // Bytes of the image written so far.
+  using ProgressCallback = std::function<void(size_t written)>;
+  // The image was written and verified and the boot partition has moved.
+  // Return false to refuse it, which puts the boot partition back.
+  using CompleteCallback = std::function<bool()>;
+  using ErrorCallback = std::function<void(esp_err_t error)>;
+
+  // storage holds the volume metadata and the scratch area. 8 KB is the
+  // minimum; 16 KB is comfortable. The scratch area is what absorbs
+  // `System Volume Information`, `.fseventsd`, `.Spotlight-V100` and the rest,
+  // and a host that fills it starts allocating clusters inside the firmware
+  // region - where a write that is not the start of an ESP image is ignored.
+  EspUsbDeviceMscFirmwareDisk(uint8_t *storage, size_t size);
+  ~EspUsbDeviceMscFirmwareDisk();
+
+  EspUsbDeviceMscFirmwareDisk(const EspUsbDeviceMscFirmwareDisk &) = delete;
+  EspUsbDeviceMscFirmwareDisk &operator=(const EspUsbDeviceMscFirmwareDisk &) = delete;
+
+  // Lay out the volume for the OTA partition this firmware would update.
+  // False when there is no such partition (a single-app partition scheme), when
+  // the buffer is too small for the metadata plus one scratch cluster, or when
+  // the partition needs more clusters than FAT12 can address at the largest
+  // cluster size.
+  bool begin(const char *volumeLabel = "ESPUSB");
+  bool attach(EspUsbDeviceMsc &msc);
+
+  // A file the volume shows before anything is copied to it. Call between
+  // begin() and attach(); the text lives in the scratch area. Mostly useful for
+  // saying what to drop on the drive and what happens next.
+  bool addTextFile(const char *name, const char *text);
+
+  void onProgress(ProgressCallback callback);
+  void onComplete(CompleteCallback callback);
+  void onError(ErrorCallback callback);
+  // Ejecting the drive commits whatever arrived, which is the second way an
+  // update finishes: the first is the file's own directory entry saying how
+  // long it is, and that usually lands first.
+  void onEject(EjectCallback callback);
+
+  // Restart into the newly written firmware once it verifies. On by default:
+  // the drive exists to install an image, and the host has already been told
+  // the medium is going away. Turn it off to restart at a moment the sketch
+  // chooses.
+  void restartWhenComplete(bool enable);
+
+  uint32_t blockCount() const;
+  uint16_t blockSize() const;
+  // Sectors of the volume that live in `storage`. Everything at or past this
+  // one is the OTA partition.
+  uint32_t ramSectorCount() const;
+  size_t written() const;
+  bool updating() const;
+  EspUsbDeviceFirmwareUpdate &firmware();
+
+  // Internal (called from the MSC callbacks on the usbd task).
+  int32_t read(uint32_t lba, uint32_t offset, void *buffer, uint32_t size);
+  int32_t write(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size);
+  bool handleStartStop(uint8_t powerCondition, bool start, bool loadEject);
+
+private:
+  bool writeFirmwareRegion(size_t partitionOffset, const uint8_t *data, uint32_t size);
+  void failUpdate(esp_err_t error);
+  bool commit();
+  // Length of the file the host is copying, taken from the root directory entry
+  // whose first cluster falls in the firmware region. 0 until the host writes
+  // that entry, which it may do before, during or after the data.
+  size_t announcedImageSize() const;
+  void checkForCompletion();
+  uint8_t *rootEntry(uint16_t index);
+  const uint8_t *rootEntry(uint16_t index) const;
+  void setFatEntry(uint16_t cluster, uint16_t value);
+  bool allocateScratchFile(const char name[11], size_t size, uint16_t *firstCluster);
+
+  uint8_t *storage_ = nullptr;
+  size_t size_ = 0;
+
+  uint16_t sectorsPerCluster_ = 8;
+  uint16_t sectorsPerFat_ = 0;
+  uint16_t rootDirSectors_ = 1;
+  uint16_t rootEntryCount_ = 16;
+  uint32_t dataStartSector_ = 0;   // LBA of cluster 2
+  uint32_t scratchSectors_ = 0;    // RAM-backed sectors inside the data region
+  uint32_t ramSectors_ = 0;        // dataStartSector_ + scratchSectors_
+  uint32_t firmwareSectors_ = 0;   // sectors mapped onto the OTA partition
+  uint32_t blockCount_ = 0;
+  uint16_t nextScratchCluster_ = 2;
+  uint16_t nextRootEntry_ = 0;
+  bool formatted_ = false;
+
+  // LBA at which the current image started, so a later write can be turned back
+  // into an offset inside the partition. 0 while no update is open.
+  uint32_t imageStartSector_ = 0;
+  bool updating_ = false;
+  bool restartWhenComplete_ = true;
+
+  EspUsbDeviceFirmwareUpdate firmware_;
+  ProgressCallback progressCallback_;
+  CompleteCallback completeCallback_;
+  ErrorCallback errorCallback_;
+  EjectCallback ejectCallback_;
+};
+
 // --- DFU (USB Device Firmware Upgrade, bInterfaceClass 0xfe / subclass 1) ---
 
 enum class EspUsbDeviceDfuMode : uint8_t

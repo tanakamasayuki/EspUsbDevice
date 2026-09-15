@@ -20,6 +20,7 @@ EspUsbDeviceCcid	KEYWORD1
 EspUsbDeviceDfu	KEYWORD1
 EspUsbDeviceDfuMode	KEYWORD1
 EspUsbDeviceFirmwareUpdate	KEYWORD1
+EspUsbDeviceMscFirmwareDisk	KEYWORD1
 EspUsbAudioFunction	KEYWORD1
 EspUsbAudioPlaybackStream	KEYWORD1
 EspUsbAudioCaptureStream	KEYWORD1
@@ -204,6 +205,8 @@ expectedSize	KEYWORD2
 markValid	KEYWORD2
 rollback	KEYWORD2
 cancelPendingBoot	KEYWORD2
+ramSectorCount	KEYWORD2
+updating	KEYWORD2
 abort	KEYWORD2
 
 #######################################

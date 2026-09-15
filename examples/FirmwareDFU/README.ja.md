@@ -60,6 +60,15 @@ interface に WinUSB driver が必要で、[Zadig](https://zadig.akeo.ie/) で�
 - `EspUsbDeviceFirmwareUpdate::markValid()` — 動作中のイメージを確定し、
   bootloader の rollback 待ちを解除します。
 
+## 実測
+
+このスケッチを載せた ESP32-P4 を PC から駆動した結果: DFU interface が high speed で
+列挙され、host が functional descriptor から `wTransferSize=1024` / `bcdDFU=0x0110` /
+`canDnload` / `manifestationTolerant=0` を読み取り、385KB のイメージが 376 block・
+2.7 秒（139 KiB/s）で EP0 だけを通って転送されました。device は
+`dfuMANIFEST-WAIT-RESET` を返し、boot partition を切り替え、新しいイメージで
+再起動しました。
+
 ## 注意
 
 - **送ったイメージがこのスケッチを置き換えます。** DFU interface を持つビルドを

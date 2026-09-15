@@ -9,9 +9,10 @@
 - [ ] USBVendor の custom vendor code / GUID / Microsoft OS 2.0 descriptor 内容の差し替え API。構造の選択（`config.msOs20Layout`：interface 1 本なら flat 162 byte、2 本以上なら subsets 178 byte。Windows 実機で対照確認済み）は実装したが、vendor code・GUID・feature descriptor の中身は固定のまま。
 - [ ] WebUSB / libusb / WinUSB のサンプル Host 側コード（WebUSB ページ、libusb スクリプトなど）。手動確認手順自体は `tests/manual/README.ja.md` に整備済み（BOS / landing URL の確認、libusb / WinUSB / WebUSB での interface claim）。
 - [ ] OTA 経路の残り。設計・切り分け・実機で確認した事実は [docs/ota-over-usb.ja.md](docs/ota-over-usb.ja.md) に集約済み。DFU class / `rebootToBootloader()` / firmware sink は実装済み（下記「完了」参照）。残り:
-  - [ ] `EspUsbDeviceMscFirmwareDisk` と example。FAT RAM disk 上の `firmware.bin` を安全に扱う。書き込み側は `EspUsbDeviceFirmwareUpdate` で完成しているので、残るのは FAT の幾何と検出。UF2 block の受理も同じ class で。→ [6.1](docs/ota-over-usb.ja.md#61-msc経由のdrag-and-drop)
+  - [ ] UF2 block の受理。`EspUsbDeviceMscFirmwareDisk` への追加で、順不同の書き込みに耐えられるようになる。→ [6.1](docs/ota-over-usb.ja.md#61-uf2)
   - [ ] example: `FirmwareCDC` / `FirmwareVendor`（host 側スクリプト付き）。どちらも現行 API だけで書ける。
-  - [ ] `rebootToRomDfu()` の end-to-end 実機確認。chip が loader に入るところまでは確認済みだが、host が ROM の DFU interface を bind するところは、テスト環境の S3 board の native USB が PC に繋がっていないため未確認。
+  - [ ] （任意）`EspUsbDeviceDfu` を dfu-util 本体でも確認。PC 相手の end-to-end は P4 実機で確認済みだが、host 側は自前の pyusb DFU host（このマシンに dfu-util が未インストールで、導入は sudo が要る system 変更のため）。プロトコルは同じなので優先度は低い。
+  - [ ] `rebootToRomDfu()` の end-to-end 実機確認。chip が loader に入るところまでは確認済みだが、host が ROM の DFU interface を bind するところは未確認。S2/S3 専用なので上記 P4 では確認できない。
 - [ ] CCID の拡張検討: 複数 slot、extended APDU / chaining、`ccidIdentifyCard()` が使う UID 経路のような ATR 以外の識別、PIN pad。いずれも現状は class descriptor で非対応と宣言しているので Host からは要求されない。
 - [ ] Keyboard macro / Serial-to-keyboard / Button mouse などの応用 example。
 - [ ] （ESP32KeyBridge 側の作業）`src/ESP32KeyBridgeEspUsbDevice.h` の出力 adapter を NKRO 対応にする。`EspUsbDeviceNkroKeyboardReport` を受ける `sendReport()` overload と `heldState()` が両ライブラリに揃ったので、6KRO へ落ちる理由はもう無い。`buildHidKeyboardRolloverReport()` の使い道（bitmap 版ビルダーを足すか、adapter 側で `KeySet` から直接 bitmap を組むか）を決め、重複送信の抑制は adapter 側に置く（ライブラリ側は抑制しない契約）。BLE 出力 adapter も同時に。
@@ -21,7 +22,8 @@
 - [x] USB DFU class（`EspUsbDeviceDfu`）。`Download` と `Runtime` の 2 形態。endpoint 消費 0（全転送が EP0）で、endpoint 予算を使い切った device にも足せる。TinyUSB の `class/dfu/dfu_device.c` / `dfu_rt_device.c` を vendoring 対象に追加（48 file / source 14）。実機検証は `tests/peer/usb_dfu`（S3 2 台）: DFU interface が endpoint 0 本で keyboard の隣に現れること、functional descriptor の wire 上の中身、bad magic → `errWRITE`、検証失敗 → `errVERIFY`、CLRSTATUS からの復帰、boot partition が動かないこと。descriptor 側は `tests/single/dfu_descriptor`（55 check）。
 - [x] `EspUsbDeviceFirmwareUpdate`。転送路非依存の OTA partition writer。`esp_ota_begin(OTA_WITH_SEQUENTIAL_WRITES)` なので erase は書き込みの進行に合わせて起きる（先頭で partition 全体を erase すると数秒かかり、USB callback の中では致命的）。
 - [x] `EspUsbDevice::rebootToBootloader()` / `rebootToRomDfu()`。S3 rev v0.2 と P4 rev v1.3 で、USB stack を動かした状態から download loader への到達を実機確認（`esptool --before no-reset` が button も DTR/RTS reset も無しで接続）。フラグは次回起動に残らないことも確認済み。Arduino-ESP32 の `usb_persist_restart()` はこのライブラリでは link できない（`tud_descriptor_bos_cb` / `tud_vendor_control_xfer_cb` の二重定義）ことを実際の build で確認し、`docs/ota-over-usb.ja.md` 2.5 に記録。
-- [x] example `FirmwareDFU` / `FirmwareHTTP` / `FirmwareBootMode`。
+- [x] `EspUsbDeviceMscFirmwareDisk`。データ領域が OTA partition そのものの FAT12 ボリューム。イメージは RAM に載らない（RAM 側は boot sector + FAT×2 + root dir + スクラッチのみ）。cluster size は FAT12 の 4084 cluster に収まる最小を 4KiB 以上から自動選択し、cluster 境界が flash の erase 境界に一致する。firmware 領域は昇順書き込みのみ受理し、逆戻り・穴あきは `ESP_ERR_INVALID_STATE` で中止。検証は `tests/single/msc_firmware_disk`（block callback を直接叩く 40 check）。
+- [x] example `FirmwareDFU` / `FirmwareHTTP` / `FirmwareBootMode` / `FirmwareMSC`。
 
 - [x] UAC2 の peer テスト。`tests/peer/usb_audio_uac2`（S3 2台・FS）を追加し、EspUsbHost 2.7.1 の UAC2 host に対して end-to-end でカバーした。2.1.0 リリース前検証の peer 一式実行（実機 2 台構成）で通過済み。device 側の control 状態（Feature Unit の master / logical channel）、Clock Source entity への sample rate request、双方向 streaming、explicit feedback endpoint による pacing を検証する。rate 切り替えは descriptor builder が方向ごとに alternate setting を 1 つしか出さないため対象外。
 - [x] endpoint の per-speed descriptor 化（FS=64 / HS bulk=512、device_qualifier / other_speed 対応）。v2 で実装済み——negotiated speed に応じた endpoint packet size、device qualifier、other-speed configuration を返す。`tests/unit/descriptor_model`（FS/HS MPS 選択・other-speed・device qualifier）と `tests/manual/p4_hs_bulk`（`PASS link: USB High-Speed`、MPS 512/64）で検証。`docs/DESIGN_NOTES.ja.md`「bulk エンドポイントサイズと HS 準拠」は当時の経緯。
