@@ -35,9 +35,14 @@ cache.
 
 ```sh
 python3 tools/verify_tinyusb_vendor.py
+python3 tools/check_doc_links.py
 cd tests
 uv run --env-file .env pytest --clean
 ```
+
+`check_doc_links.py` resolves every relative link and `#anchor` in the Markdown.
+Nothing else verifies heading slugs, so renaming a heading breaks links silently
+until a reader hits one.
 
 Building the examples is the CI Build Check workflow's job, not pytest's.
 **Before releasing, confirm Build Check is green for the commit being released.**

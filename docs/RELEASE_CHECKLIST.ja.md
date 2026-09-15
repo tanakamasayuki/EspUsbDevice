@@ -26,9 +26,14 @@
 
 ```sh
 python3 tools/verify_tinyusb_vendor.py
+python3 tools/check_doc_links.py
 cd tests
 uv run --env-file .env pytest --clean
 ```
+
+`check_doc_links.py` は Markdown 内の相対リンクと `#anchor` を全部解決します。
+見出しの slug を検証しているものが他に無いので、見出しを改名するとリンクは黙って
+壊れ、読者が踏むまで分かりません。
 
 example のビルドは pytest ではなく CI の Build Check ワークフローが担当します。
 **リリース前に、対象コミットで Build Check が緑になっていることを確認してください。**
