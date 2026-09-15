@@ -747,6 +747,20 @@ API にするなら、これを契約として書き、**満たせない呼び�
 落とす**のが妥当、というのが依頼元の提案。既定安全でオプトインの速い道になるので、
 この形なら公開 API として筋が通る。
 
+**後日の訂正: 3 項目めは契約に入れてはいけなかった。** これは依頼元の「自分たちの構成で
+こうしている」という運用ノウハウであって、必要条件ではない。TinyUSB は転送を arm する
+ときに buffer を clean しており（`dcd_dwc2.c`、DMA ビルド）、ESP32-P4 の L1 データ
+キャッシュは 2 つの core で共有である——命令キャッシュが core ごとに 2 つ
+（`CACHE_L1_ICACHE0/1_AUTOLOAD_CTRL_REG`）あるのに対し、データ側は
+`CACHE_L1_DCACHE_AUTOLOAD_CTRL_REG` の 1 つだけで、`cache_ll_l1_writeback_dcache_addr()`
+にも core 選択が無い。したがってその clean は、どちらの core で作ったデータでも対象に
+なる。
+
+検証せずに運用ノウハウを契約へ格上げしたのはこちらの判断で、実害も出た。依頼元は契約を
+満たすために run ごとの `esp_cache_msync(C2M)` を入れ、それが 16 ch stream を本来の速度に
+戻すために取り除いた 2 つのうちの 1 つになっていた。2.4.0 のヘッダとガイドには誤った
+記述のまま出荷されており、訂正は working tree にある（未リリース）。
+
 #### F2 は mode の切り替えなしに今日出せる
 
 `tud_vendor_tx_cb(idx, sent_bytes)` は **buffered / non-buffered の両方で呼ばれる**
