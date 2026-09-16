@@ -136,6 +136,7 @@ Host側では「この機器はどう見えるか」は相手が決めること�
 | USB MIDI | `0x01`/MIDI | DAW、シンセ、コントローラ | OS標準。**ドライバ不要** |
 | Mass Storage | `0x08` | ドライブとして見せる。ファイル受け渡し、設定ファイル | OS標準 |
 | USB Audio | `0x01` | スピーカー、マイク | OS標準 |
+| USB Video | `0x0e` | カメラ。帯域が効く（下記） | OS標準。**ドライバ不要** |
 | CDC-NCM | `0x02`/NCM | ネットワークアダプタとして見せる。Web UIをUSB越しに | 最近のOSは標準対応 |
 | CCID | `0x0b` | スマートカードリーダー | OS標準（PC/SC） |
 | Vendor Specific | `0xff` | 独自プロトコル、最高速のバルク転送 | **Windowsではドライバ指定が必要**（WinUSB / WebUSB） |
@@ -253,10 +254,13 @@ P4のFS PHYはUSB Serial/JTAGとピンを共有しており、`usb_wrap_ll_phy_s
 | MSC | IN/OUT 各1本 |
 | USBVendor | IN/OUT 各1本 |
 | USB Audio | 方向ごとに isochronous 1本 |
+| USB Video | isochronous IN 1本 |
 | CDC-NCM | 通知用 IN 1本 + データ IN/OUT 各1本 |
 | CCID | IN/OUT 各1本 + 通知用 IN 1本 |
 
 ESP32-S3で**IN方向が4本まで**というのが実際の効き方です。HID + CDC + MSC で IN は 1+2+1 = 4本になり、ここが上限です。もう1つクラスを足すと入りません。
+
+**isochronous を使う function には、もう1つの上限——送信 FIFO——が効きます。** S2 と S3 は受信 FIFO、全 IN エンドポイントの送信 FIFO、DMA の管理領域で 1 KB を共有していて、isochronous IN 1本に残るのは約 650 バイトです。したがってカメラの payload は既定で 512 バイトになり、カメラと audio capture の同時使用は入りません。`begin()` は「送信できない function として列挙する」のではなく `ESP_ERR_NO_MEM` を返します（[応用ガイド 5.2](usb-device-advanced.ja.md#52-controller上限の実際)）。high speed の P4 は FIFO が4倍あり、ここには当たりません。
 
 確認する方法は簡単で、[`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/) の `DUMP_ENABLE_*` を目的の構成にしてビルドし、末尾の endpoint budget を読むだけです。実機にホストをつなぐ必要すらありません。
 
@@ -335,6 +339,7 @@ ESP32-S3で**IN方向が4本まで**というのが実際の効き方です。HI
 | MSC | [`MSC`](../examples/MSC/) / [`MSCFatRamDisk`](../examples/MSCFatRamDisk/) / [`MSCSdCard`](../examples/MSCSdCard/) |
 | USB Audio | [`AudioSpeaker`](../examples/AudioSpeaker/) / [`AudioMicrophone`](../examples/AudioMicrophone/) / [`AudioHeadset`](../examples/AudioHeadset/) |
 | CDC-NCM | [`UsbNetwork`](../examples/UsbNetwork/) |
+| USB Video | [`VideoCamera`](../examples/VideoCamera/) |
 | CCID | [`SmartCardReader`](../examples/SmartCardReader/) |
 | Vendor bulk | [`USBVendor`](../examples/USBVendor/) |
 

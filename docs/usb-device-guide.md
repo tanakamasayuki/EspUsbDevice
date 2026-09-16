@@ -193,6 +193,7 @@ decision in the project.
 | USB MIDI | `0x01`/MIDI | DAWs, synths, controllers | Built in. **No driver** |
 | Mass Storage | `0x08` | Look like a drive; file handoff, config files | Built in |
 | USB Audio | `0x01` | Speaker, microphone | Built in |
+| USB Video | `0x0e` | Camera. Bandwidth-bound: see below | Built in. **No driver** |
 | CDC-NCM | `0x02`/NCM | Look like a network adapter; a web UI over USB | Recent OSes support it |
 | CCID | `0x0b` | Smart card reader | Built in (PC/SC) |
 | Vendor Specific | `0xff` | Custom protocols, fastest bulk transfer | **Windows needs a driver binding** (WinUSB / WebUSB) |
@@ -411,11 +412,21 @@ Roughly what each class costs:
 | MSC | 1 IN + 1 OUT |
 | USBVendor | 1 IN + 1 OUT |
 | USB Audio | 1 isochronous endpoint per direction |
+| USB Video | 1 isochronous IN |
 | CDC-NCM | 1 notification IN + 1 data IN + 1 data OUT |
 | CCID | 1 IN + 1 OUT + 1 notification IN |
 
 In practice, the binding limit on ESP32-S3 is **four IN endpoints**. HID + CDC +
 MSC already uses 1+2+1 = 4. One more class does not fit.
+
+**Isochronous functions hit a second limit: the transmit FIFO.** The S2 and S3
+share one 1 KB FIFO between the receive FIFO, every IN endpoint's transmit FIFO
+and the DMA bookkeeping, which leaves about 650 bytes for one isochronous IN
+endpoint - so a camera gets 512-byte payloads by default, and a camera plus an
+audio capture stream does not fit at all. `begin()` returns `ESP_ERR_NO_MEM`
+rather than enumerate a function that cannot transmit; see
+[advanced 5.2](usb-device-advanced.md#52-the-controller-limits-in-practice).
+A high-speed P4 has four times the FIFO and does not run into this.
 
 Checking is easy: set the `DUMP_ENABLE_*` defines in
 [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/) to
@@ -523,6 +534,7 @@ Flash the matching example as-is.
 | USB MIDI | [`MIDI`](../examples/MIDI/) |
 | MSC | [`MSC`](../examples/MSC/) / [`MSCFatRamDisk`](../examples/MSCFatRamDisk/) / [`MSCSdCard`](../examples/MSCSdCard/) |
 | USB Audio | [`AudioSpeaker`](../examples/AudioSpeaker/) / [`AudioMicrophone`](../examples/AudioMicrophone/) / [`AudioHeadset`](../examples/AudioHeadset/) |
+| USB Video | [`VideoCamera`](../examples/VideoCamera/) |
 | CDC-NCM | [`UsbNetwork`](../examples/UsbNetwork/) |
 | CCID | [`SmartCardReader`](../examples/SmartCardReader/) |
 | Vendor bulk | [`USBVendor`](../examples/USBVendor/) |
