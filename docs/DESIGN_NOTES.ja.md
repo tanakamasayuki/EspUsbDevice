@@ -235,6 +235,51 @@ keyboard の tapKey → host `KEY a`、bulk Vendor は `onRx` 駆動で echo 往
 HID 無し / HID+CDC / HID+MSC / HID+CDC+MSC は Vendor を含まないので `hidInterfacesLength_ == 総長-9` となり挙動不変
 （回帰なし。`unit/descriptor`・既存 composite 実機で確認）。
 
+### 複合時の HID クラスの登録順依存（原因確定・修正済・実機確認・2026-09）
+
+非HIDクラスの後に登録した単独のHIDクラスが、descriptor は正しいまま一切動かなかった。
+
+**症状**: `EspUsbDeviceVendor` を先、`EspUsbDeviceHidKeyboard` を後に登録すると、列挙は正常
+（`HOST_ENUM … claimok=1`）だが keyboard が死ぬ。`tapKey()` は false、host にキーは届かない。
+Windows 11 では `HidUsb` が到着から約 6 秒後に Code 10 で開始失敗し、複合デバイスでは
+`usbccgp` が子を順番に開始するため、隣の WinUSB function がその失敗の後まで開始を待たされ、
+device interface を有効化しなかった。**発見経路はこちら**で、`tests/manual/windows_device_guid`
+の「vendor が MI_01 だと GUID で列挙できない」行として現れた。interface 番号でも HID 兄弟でも
+なく、登録順だけが失敗行と成功行の差だった（descriptor はバイト単位で同一）。
+
+**原因**: TinyUSB は `tud_hid_descriptor_report_cb(instance)` / `tud_hid_set_report_cb` /
+`tud_hid_set_protocol_cb` を **TinyUSB の HID インスタンス番号**で呼ぶ。このビルドの HID
+interface は単独でも複合（merge）でも 1 本なので、その番号は常に 0。ところが
+`hidReportDescriptor(instance)` 等の非複合経路は `classes_[instance]` を直接引いていた。
+`classes_[]` は登録順なので、slot 0 が Vendor なら `isHid()` 偽 → `nullptr`。逆方向の
+`classRuntimeInstance(classInstance)` も非複合時に `classInstance`（= slot 番号）をそのまま返し、
+`tud_hid_n_report(1, …)` という **存在しないインスタンス**へ report を送っていた（`CFG_TUD_HID == 1`）。
+
+wire 上の影響は STALL より悪い。`hid_device.c` は `tud_control_xfer(rhport, request, desc_report, len)`
+の戻り値を見ず、`tu_memcpy_s` は src が NULL なら -1 を返すため、`GET_DESCRIPTOR(Report)` は
+**応答も STALL もされない**。host は control のタイムアウト（Windows で約 5 秒）まで NAK を待つ。
+これが「約 6 秒後に Code 10」の数字。
+
+**修正**（`src/EspUsbDevice.cpp`）:
+- `hidClassForInstance(instance)` を追加。TinyUSB のインスタンス（0 のみ）を、登録順に関係なく
+  唯一の HID クラスへ解決する。複合（merge）時は従来どおり merged descriptor 経路。
+- `hidReportDescriptor()` / `hidReportDescriptorLength()` / `handleHidSetReport()` /
+  `handleHidSetProtocol()` の非複合経路をそれ経由に。
+- `classRuntimeInstance()` は常に 0 を返す（TinyUSB が開いた slot がそれ）。
+- `hidInstance_` は名前に反して「`classes_` の slot 番号」であることをヘッダに明記。
+
+**検証**: 新規 `single/hid_registration_order`（host 不要。HID 先 / Vendor 先 / CDC 先 /
+Vendor+CDC の後 / Vendor 先の複合 HID / HID 無し、の各順で lookup が config descriptor の
+`wDescriptorLength` と一致すること。修正前は `vendor_then_hid` と `cdc_then_hid` が FAIL）、
+新規 `peer/composite_vendor_hid`（Vendor 先登録、host が `KEY a` を受け取るまで要求。修正前は
+`DEVICE_KEY 0` で FAILED、列挙は通っていた）。Windows 11 では修正版で Vendor 先登録のまま
+HID 子が 23 ms で開始し `kbdhid` まで立ち、WinUSB の interface は有効・GUID 列挙可。
+
+**教訓**: `Get-PnpDevice` の `STATUS OK` は「開始済み」を意味しない。開始保留中も、
+イベントログが Code 10 を記録した 1 分後も OK と出た。Windows 側の「ドライバは当たるのに動かない」
+は `Microsoft-Windows-Kernel-PnP/Configuration`（id 400/410/411）と `pnputil /enum-interfaces`
+を先に読むこと。
+
 ### 複合時の endpoint 予算の上限（S3 実機確定・2026-07）
 
 採番衝突を解消しても、**同時に載せられる endpoint には S3 の物理上限**がある。
