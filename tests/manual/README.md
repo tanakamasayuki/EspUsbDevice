@@ -459,6 +459,20 @@ GUID under an unchanged revision and Windows keeps the old one.
 
 Steps and the full rationale: `windows_device_guid/README.md`.
 
+## `windows_identity` (what each identity field does to Windows)
+
+Every host-visible field of `EspUsbDeviceConfig` - VID, PID, serial,
+`deviceVersion`, the strings, the GUID and its revision, the MS OS 2.0 layout,
+WebUSB, power - on a `build_opt.h` switch, plus the registration order of up
+to three functions, so one thing can be changed per flash. `windows_identity.py`
+reads back what Windows did: driver, names, hardware IDs, COM port, recorded
+GUID, registered interfaces and their state, what an application's enumeration
+returns, and the Kernel-PnP configuration events. The user guide's 1.8 and 5.2
+are built from it; it is also the procedure for repeating them on another
+Windows build.
+
+Steps and the measured tables: `windows_identity/README.md`.
+
 ## `usb_ncm` (USB CDC-NCM network device)
 
 Purpose:

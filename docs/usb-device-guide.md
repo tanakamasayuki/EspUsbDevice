@@ -205,14 +205,98 @@ The decision rules are simple:
    reports.** This is a common commercial pattern. It is not fast, but it is
    bidirectional with no driver and no privileges.
 3. **If you need bandwidth, use Vendor Specific bulk.** On Windows that needs a
-   Microsoft OS 2.0 descriptor to bind WinUSB; this library emits one when
-   WebUSB is enabled.
+   Microsoft OS 2.0 descriptor to bind WinUSB; this library emits one for every
+   vendor interface, whether or not WebUSB is enabled.
 4. **If an existing application must consume it, use the class that application
    expects.** MIDI for a DAW, CDC for a terminal program.
 
 You can combine several into a composite device, but endpoint budget and host-OS
 behaviour both come into play, so get one function working first
 ([Step 7](#step-7-grow-into-a-composite-device)).
+
+### 1.8 VID, PID and the other identity fields
+
+Two 16-bit numbers in the device descriptor tell the host what it is talking
+to: the **vendor ID** (who made it) and the **product ID** (which of their
+products). Together with the **serial number string** they are how a host tells
+*this* device from every other one it has seen. Everything in this section is
+about those three values and their neighbours in `EspUsbDeviceConfig`, because
+they behave differently from every other descriptor field: the host remembers
+them.
+
+**What you get without setting anything.** The library's defaults are
+`vid = 0x303A`, `pid = 0x4000`. `0x303A` is Espressif's vendor ID; `0x4000` is
+the first of the PIDs (`0x4000`-`0x4007`) that ESP-IDF's TinyUSB component hands
+out by default, and Espressif's own configuration help describes using its VID
+as "helpful at product develop stage". That is exactly what the default is for:
+the bench, the examples, the tests in this repository. It is also **not
+yours**. A device you hand to anyone else must not carry it - two different
+products with the same VID:PID are the same device to Windows, which will
+happily bind one's driver and cached settings to the other.
+
+**Where real numbers come from.** Vendor IDs are assigned by the USB
+Implementers Forum: US$6,000 for a VID on its own, or included in the US$5,000
+per year membership, with the USB logo licence a separate fee on top. Under
+today's terms a VID may not be transferred or shared, and its owner assigns
+the PIDs beneath it. For most small projects that price is out of reach, and
+there are three kinds of place that will let you use a number instead:
+
+- **The chip vendor's registry.** Espressif runs
+  [espressif/usb-pids](https://github.com/espressif/usb-pids) for devices that
+  contain one of its USB-capable chips: you open a pull request against
+  `allocated-pids.txt` describing the device, and get a PID under `0x303A`.
+  Free, but Espressif "reserves the right to deny a pull request ... for any
+  reason", says approval "should not be used ... in marketing material", and
+  describes the whole thing as "a cooperative way for people not to choose the
+  same number for different products". Other silicon vendors run similar
+  schemes for their own parts.
+- **Open-source registries.** [pid.codes](https://pid.codes/howto/) assigns
+  PIDs under VID `0x1209` to projects whose hardware or firmware is published
+  under a recognised open-source licence; the
+  [Openmoko registry](https://github.com/openmoko/openmoko-usb-oui) does the
+  same under `0x1D50`. pid.codes is open about where its VID came from: it was
+  "gifted ... by a company that ... has since ceased trading", obtained
+  "before the USB-IF changed their licensing terms to prohibit transfers or
+  subassignments". Both are run by volunteers through pull requests; a
+  neighbouring project measured about three months from request to merge.
+- **Test numbers.** pid.codes sets aside `0x1209:0x0001`-`0x0010` for
+  development. Anyone may use them on a bench; nothing may ship with them.
+
+None of these is a USB-IF assignment. Each is someone with a VID letting you
+use one number under it so that you do not collide with the people who came
+before. That is worth knowing for what it is, and it is also entirely
+sufficient for a product that will never seek USB-IF certification.
+
+**How many PIDs a product needs: one.** A PID identifies a product as the host
+should see it, not a firmware configuration. On Windows the device instance is
+keyed on VID, PID and serial, and driver binding follows the descriptors on
+every enumeration - so the same PID can carry a vendor interface today, add a
+serial port in the next firmware, move a function to another interface number
+after that, and go back, and Windows follows every step. That was measured,
+one change at a time, and the results are in
+[5.2](#52-windows). Only two things justify spending another number, and PIDs
+are a scarce thing to spend when each registry grants one per project after a
+review:
+
+- The device should look like a *different product* to a person or to a host
+  application's device list - a second model, a bootloader mode that must never
+  be confused with the application (the ESP32's own ROM bootloader has its
+  own PID for that reason).
+- You want the host to treat it as a device it has never met, so that every
+  cached setting starts over. Changing the serial does the same, per unit.
+
+**The serial number is the third key.** With `serialNumber` set, one physical
+device is one instance whichever port it is plugged into; the string should be
+unique per unit and stable across firmware updates. Without it Windows keys the
+instance on the port path, so the same board in another socket is a new
+device with its own settings (measured; see 5.2). If several of your devices
+may be attached at once, a serial is also how the host tells them apart.
+
+Everything else in `EspUsbDeviceConfig` that the host can see -
+`deviceVersion`, the `product` and `manufacturer` strings, the device
+interface GUID and its revision, the power attributes - is covered field by
+field in [5.2](#52-windows), with what Windows does when each one changes and
+how to measure it yourself.
 
 ---
 
@@ -595,23 +679,37 @@ shows which driver bound.
 #### What Windows re-reads, and what it keeps
 
 "Windows caches descriptors" is the usual shorthand and it is too broad to act
-on. Measured on Windows 11 against one device instance, changing one thing at a
-time ([`tests/manual/windows_device_guid`](../tests/manual/windows_device_guid/)):
+on. Everything below was measured on one PC - Windows 11 25H2, build
+26200.9457, on 2026-09-16 - against one device instance, changing one thing at
+a time, with [`tests/manual/windows_device_guid`](../tests/manual/windows_device_guid/)
+and [`tests/manual/windows_identity`](../tests/manual/windows_identity/). Windows
+changes between builds; the last part of this section is how to repeat the
+measurements on the build you actually target.
 
 | You change | Windows picks it up? |
 |---|---|
-| Interfaces, endpoints, packet sizes | **Yes, every time** |
+| Interfaces, endpoints, packet sizes, which functions exist and in what order | **Yes, every time** |
 | Which driver should bind | **Yes, every time** |
-| `deviceInterfaceGuid`, with the vendor revision moving | **Yes** |
+| `deviceInterfaceGuid`, with the vendor revision moving (the default) | **Yes** |
 | `deviceInterfaceGuid`, with the vendor revision pinned | **No** - it keeps the old GUID |
-| `pid` or `serialNumber` | **Yes** - it is a different device to Windows |
+| `deviceVersion`, `product` | **Yes** - the hardware ID and the bus-reported description update; the Device Manager name does not |
+| `vid`, `pid` or `serialNumber` | **Yes** - it is a different device to Windows, everything starts fresh |
 
 **The standard descriptors are read on every enumeration.** A device that was a
 single vendor interface and becomes a composite gets split into children; one
-that goes back becomes a single node again. Measured: an instance whose parent
-had `usbccgp` bound came back as a single-interface device and Windows re-bound
-that same instance to `WINUSB`, with the vendor revision deliberately held
-unchanged. **Driver binding follows your descriptors and needs no help.**
+that goes back becomes a single node again. Measured on one PID and serial with
+the vendor class registered first throughout, each step following the last:
+
+| Step, same PID and serial | Parent | `MI_00` | `MI_01` | GUID enumerates |
+|---|---|---|---|---|
+| vendor only | `WINUSB` | - | - | device node |
+| + HID | `usbccgp` | `HidUsb` started 38 ms after arrival, `kbdhid` child | `WINUSB` 50 ms, interface enabled | `&mi_01` |
+| swap to vendor + MSC | `usbccgp` | `WINUSB` 34 ms | `USBSTOR` 32 ms | `&mi_00` |
+| back to vendor only | `WINUSB` | - | - | device node |
+
+Adding, moving and removing functions all took effect on the next plug-in, with
+the vendor revision left to derive itself and nothing else changed. **Driver
+binding follows your descriptors and needs no help.**
 
 **The Microsoft OS 2.0 registry properties are the exception.** Windows reads
 `DeviceInterfaceGUIDs` once per device instance and keeps it, re-reading only
@@ -620,77 +718,132 @@ different GUID under a pinned revision left the old one in the registry, on a
 parent instance and on an `&MI_01` child alike. This library derives the
 revision from the descriptor set by default, so it moves whenever the set moves
 and you get the re-read for free; see
-[advanced guide 3.7](usb-device-advanced.md#37-bos-and-microsoft-os-20).
+[advanced guide 3.7](usb-device-advanced.md#37-bos-and-microsoft-os-20). Pinning
+`msOs20VendorRevision` by hand is the only way to hit this.
 
 **A new identity is a clean slate.** Windows keys an instance on VID, PID and
-serial - `USB\VID_303A&PID_4080\GUID-TEST-1`. Change the PID or the serial and
-you get a new instance that reads everything fresh; measured, that holds even
-with the vendor revision pinned to a value the old instance never saw. The old
-instance stays in the registry, unused.
+serial - `USB\VID_303A&PID_4080\GUID-TEST-1`. Change any of the three and you
+get a new instance that reads everything fresh; measured for the PID, the VID
+and the serial, and it holds even with the vendor revision pinned to a value
+the old instance never saw. The old instance stays in the registry, unused.
 
 **With no `serialNumber`, the instance is keyed on the port.** Measured, the
 instance ID became `USB\VID_303A&PID_4080\8&2EBC545B&0&4` - a path, not a
 serial. The same board in another port is then a different device to Windows,
 with its own cached properties. Ship a serial unless you want that.
 
-**Interface numbers are the one place to be careful.** Swapping which function
-sits at which interface number, without changing how many there are, keeps both
-child instances and changes only what is inside them. Measured: `MI_00` went
-HID -> vendor and `MI_01` went vendor -> mass storage, with the revision held
-unchanged, and Windows re-bound both children correctly - `HidUsb` -> `WINUSB`
-and `WINUSB` -> `USBSTOR`. The drivers follow.
+**Interface numbers are what child instances hang off.** In a composite, each
+function becomes a child named by its interface number
+(`USB\VID_303A&PID_4090&MI_01\...`), and that child is what keeps settings.
+Swapping which function sits at which number keeps both children and changes
+only what is inside them; Windows re-binds each one (`HidUsb` -> `WINUSB`,
+`WINUSB` -> `USBSTOR`, measured). Two consequences follow:
 
-The registry property does not follow, but that turns out to matter less than it
-looks. `MI_01` kept `DeviceInterfaceGUIDs` from when it was the vendor
-interface, even though it is now mass storage and the device sends no GUID for
-it. The same happens one level up: a device that ships as a single vendor
-interface registers its GUID on its own node, and if it later becomes a
-composite, that value stays on the parent while the live one goes to the child.
-**Windows writes such a property when the instance has none and updates it when
-the revision moves, but it never removes one.**
+- The device interface path an application gets back from a GUID enumeration
+  moves with the function (`...#guid-test-1#`, `...&mi_01#...`, `...&mi_00#...`).
+  Enumerate by GUID every time; do not save the path.
+- **COM ports follow the interface number.** Measured with one CDC function on
+  one PID and serial:
 
-**A stale value is not a stale device, though.** Enumerating the interface class
-the way an application does - `SetupDiGetClassDevs` with `DIGCF_PRESENT |
-DIGCF_DEVICEINTERFACE` - returns nothing for the stale GUID and exactly one
-interface for the live one. Measured both ways round: on a device whose parent
-held a leftover GUID while a child held the live one, and on a device where the
-*same* GUID sat on two children at once - one that had become mass storage, one
-that was the live vendor interface. Only the vendor interface came back. The registry value alone does not create a device
-interface; the driver bound to that node does, and a `usbccgp` parent or a
-`USBSTOR` child does not create a WinUSB one. So the leftovers do not produce a
-phantom device for your application to trip over.
+  | Step | CDC child | COM port |
+  |---|---|---|
+  | CDC only | `MI_00` | COM16 |
+  | CDC + vendor, CDC registered first | `MI_00`, same instance | **COM16 kept** |
+  | vendor + CDC, vendor registered first | `MI_01`, **new instance** | **COM34** |
+  | HID + CDC | `MI_01`, same instance as the row above | COM34 kept |
+  | CDC only again | `MI_00` | COM16 again |
 
-What does bite is the live interface. If you change `deviceInterfaceGuid` and
-the revision does not move, the interface that *is* enumerable keeps answering
-to the old GUID, and an application updated to look for the new one finds
-nothing. That is the failure this library's derived revision exists to prevent,
-and it is why pinning `msOs20VendorRevision` by hand is the only way to hit it.
+  Adding functions *after* a serial port leaves its COM number alone; moving
+  the serial port to another interface number gives it a new one, and moving
+  it back brings the old number back. If a user's terminal program has COM16
+  saved, the registration order of your classes decides whether it still works
+  after the update.
 
-If you want the topology stable from the start - so that adding a second
-function later does not move where the GUID is registered - set
-`config.msOs20CcgpDevice`. It asks Windows to treat the device as composite
-whatever its interface count, so the functions get child nodes immediately.
-Measured on a single vendor interface: the parent binds `usbccgp`, the child
-`&MI_00` binds `WINUSB`, and the GUID is registered on the child with **nothing
-on the parent**.
+**Leftover registry values are not leftover devices.** Windows writes
+`DeviceInterfaceGUIDs` (and a COM port's `PortName`) when an instance has none,
+updates it when the revision moves, and never removes it. So after the swaps
+above the parent still carried a GUID from its single-interface days and the
+mass-storage child still carried one from when it was the vendor interface, and
+the old `MI_00` kept `PortName COM16` while it was a WinUSB interface. None of
+that is reachable: enumerating the interface class the way an application does
+(`SetupDiGetClassDevs` with `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE`) returned
+exactly one interface, the live one, in every configuration measured. A
+registry value does not create a device interface; the driver bound to that
+node does.
 
-So, during development:
+**`msOs20CcgpDevice`** asks Windows to treat a single-interface device as a
+composite. Measured: the parent binds `usbccgp`, the child `&MI_00` binds
+`WINUSB`, and the GUID is registered on the child with nothing on the parent.
+Its original justification - keeping a later-added function from leaving a
+GUID behind on the parent - is answered above: the leftover is inert. No case
+was found where it changes what a host application sees, which is why it
+defaults to off.
 
-- Changing descriptors, layout or driver expectations: **just reflash.** It
-  works.
-- Changing the device interface GUID: **let the revision derive itself**, which
-  is the default. Only a hand-pinned `msOs20VendorRevision` can trap you here.
-- Still seeing something stale, or a device stuck with a driver error:
-  changing the PID or `config.serialNumber` gives you a fresh instance. That is
-  also why the Info sketches here use separate PIDs.
+#### Every identity field, measured
 
-Two things this does **not** cover, because they were not measured here: the
-friendly name shown in Device Manager appears to have its own caching, and a
-device instance that has already **failed** to install can stay failed. The
+The same PC, the same VID, PID and serial throughout; one field changed per
+flash, then read back with `windows_identity.py`.
+
+| Field | Default | What changing it did |
+|---|---|---|
+| `vid`, `pid` | `0x303A`, `0x4000` | New instance, driver installed fresh, GUID recorded fresh |
+| `serialNumber` | none | New instance likewise; with none at all, the instance is the port path |
+| `deviceVersion` (bcdDevice) | `0x0100` | Hardware ID `USB\VID_303A&PID_4090&REV_0200` on the next plug-in; same instance, same driver, no reconfiguration event |
+| `product` | `"EspUsbDevice"` | Bus-reported description (`DEVPKEY_Device_BusReportedDeviceDesc`) shows the new string on the next plug-in. The Device Manager name kept the old one: names are set when Windows installs the driver and refreshed only when it reconfigures the device (a driver change did rename it) |
+| `manufacturer` | `"EspUsbDevice"` | Nothing visible. Windows' Manufacturer column comes from the driver's INF (`WinUsb Device`, `Microsoft`, ...); the string appears in no PnP property and is only visible in the raw descriptors |
+| `deviceInterfaceGuid` | library default | Taken on the next plug-in with the derived revision; kept with a pinned one |
+| `msOs20VendorRevision` | 0 = derived | The one knob that can make a GUID change not take |
+| `msOs20Layout` | Auto | **Forcing `Subsets` on a single interface: no `MS_COMP_WINUSB` compatible ID, no driver, `CM_PROB_FAILED_INSTALL` (Code 28).** Windows applies function subsets only to composite devices; Auto picks the right one. The instance recovered on the next plug-in with a valid set |
+| `msOs20CcgpDevice` | off | Parent `usbccgp`, child `MI_00` `WINUSB`, GUID on the child only |
+| `webusbEnabled`, `webusbUrl` | off | Nothing on the Windows side; browsers read it, PnP does not |
+| `maxPowerMilliamps`, `selfPowered` | 100, false | Nothing in any PnP property; visible only in the configuration descriptor |
+| Function name (CDC constructor's `name`) | none | The composite child's bus-reported description is the name (`Console`); without one it falls back to `product`. A COM port's Device Manager name is `USB Serial Device (COMn)` from usbser.inf either way |
+
+#### How to measure this yourself
+
+Windows behaviour differs between builds, and the table above is one build on
+one day. Before relying on any row for a product, repeat it on the Windows you
+target, and write the build down (`winver`, or `DisplayVersion` +
+`CurrentBuild`.`UBR` under `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`).
+The procedure that produced these tables:
+
+1. **Change one thing per flash** and note the time of the flash. Use a PID the
+   PC has never seen when you want a clean log, and the *same* PID when the
+   question is what happens to a PC that has already met the device - that is
+   the question that matters for a shipped product.
+2. **Keep the device off WSL.** A device attached through usbipd is a USBIP
+   device to Windows and nothing binds. Detach it first.
+3. **Read Windows first, the board second.** Some UART adapters reset the board
+   when the port is opened, and a reset is a re-plug: it starts a new
+   enumeration and erases the state you were about to read.
+4. **Do not trust `STATUS OK`.** `Get-PnpDevice` reported OK for a child whose
+   start was still pending, and for one whose start had already failed. Read
+   `Microsoft-Windows-Kernel-PnP/Configuration` in Event Viewer instead: 400
+   configured, 410 started, 411 start failed, 430 requires further
+   installation. It also tells you whether a driver was re-selected
+   (`Device Updated`).
+5. **Check the device interface, not just the driver.** `pnputil
+   /enum-interfaces /class {GUID}` lists every registration with its state,
+   and the only test that matters is enumerating as an application does
+   (`SetupDiGetClassDevs` with `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE`).
+6. **Read what Windows kept** under the instance's `Device Parameters`
+   (`DeviceInterfaceGUIDs`, `PortName`) and compare with what the device sent
+   (`DEVPKEY_Device_BusReportedDeviceDesc`, hardware IDs, USB Device Tree
+   Viewer for the raw bytes).
+
+[`tests/manual/windows_identity/windows_identity.py`](../tests/manual/windows_identity/)
+does steps 4 to 6 in one command from a WSL shell, for every node matching a
+VID/PID, and its sketch puts every field above on a `build_opt.h` switch so one
+can be changed at a time. Its README holds the raw readings behind this section.
+
+Two notes on things this section used to hedge about. Device Manager's friendly
+name does have its own life, as measured above: it is set at driver install
+and survives descriptor changes until Windows reconfigures the device. And a
+`CM_PROB_FAILED_INSTALL` instance recovered here on the next plug-in once the
+descriptors were valid again - but the
 [wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) project reports
-that a `CM_PROB_FAILED_INSTALL` instance did not re-evaluate even after the
-hardware IDs changed, so for a device stuck that way, a new PID or serial is the
-way out.
+one that did not, after a hardware ID change, and that case was not reproduced
+here. If you meet it, the event log is where to look first.
 
 ### 5.3 macOS
 
@@ -776,6 +929,8 @@ for how to run them.
 | [`enumeration_soak`](../tests/manual/enumeration_soak/) | Repeated re-enumeration and configuration changes, checking the descriptors never drift |
 | [`p4_hs_bulk`](../tests/manual/p4_hs_bulk/) | ESP32-P4 High-Speed operation and effective bulk throughput |
 | [`usb_ncm`](../tests/manual/usb_ncm/) | Whether the host OS binds its NCM driver to the network device |
+| [`windows_device_guid`](../tests/manual/windows_device_guid/) | What Windows recorded for the device interface GUID, and whether a change took effect on a PC that had seen the device |
+| [`windows_identity`](../tests/manual/windows_identity/) | Every identity field on a switch, and one command that reads back the driver, names, hardware IDs, COM port, GUID, interface state and the PnP event log |
 
 The automated tests live in [`tests/peer`](../tests/peer/) (two boards) and
 [`tests/unit`](../tests/unit/) (host-side descriptor checks). See

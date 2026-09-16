@@ -427,6 +427,17 @@ GUID と revision だけを動かします。Windows 11 での実測、instance 
 
 手順と背景: `windows_device_guid/README.ja.md`。
 
+## `windows_identity`（identity の各項目が Windows に何をするか）
+
+`EspUsbDeviceConfig` でホストから見える全項目——VID、PID、serial、`deviceVersion`、文字列、GUID と
+その revision、MS OS 2.0 のレイアウト、WebUSB、電源——を `build_opt.h` のスイッチにし、最大 3 つの
+function の登録順も選べるので、1 回の焼き込みで 1 つだけ変えられます。`windows_identity.py` は
+Windows が何をしたかを読み戻します: ドライバ、表示名、hardware ID、COM ポート、記録済み GUID、登録済み
+interface とその状態、アプリの列挙が返すもの、Kernel-PnP の構成イベント。ユーザーガイドの 1.8 と 5.2
+はこれから作りました。別の Windows build で同じ計測を繰り返す手順でもあります。
+
+手順と計測表: `windows_identity/README.ja.md`。
+
 ## `usb_ncm`（USB CDC-NCM ネットワークデバイス）
 
 目的:
