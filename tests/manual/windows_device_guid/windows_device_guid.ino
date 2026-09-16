@@ -15,22 +15,43 @@
 #include "EspUsbDevice.h"
 
 EspUsbDevice device;
-EspUsbDeviceVendor Vendor(device);
-// Added only for the composite variant: a second interface is what makes
+// Added only for the composite variants: a second interface is what makes
 // Windows load usbccgp and split the device into children, which is the layout
 // change the guide needs an answer for.
 #ifndef VAR_COMPOSITE
 #define VAR_COMPOSITE 0
 #endif
-#if VAR_COMPOSITE == 1
+#if VAR_COMPOSITE == 2 || VAR_COMPOSITE == 3
+static uint8_t mscStorage[64 * 1024];
+#endif
+#if VAR_COMPOSITE == 3
+// Registered before the vendor function on purpose. HID is always emitted
+// first but everything else keeps registration order, so this is the one way
+// to put the vendor interface at MI_01 without a HID sibling - which separates
+// "vendor is not the first interface" from "a HID function is present", the
+// two things variant 1 changes at once.
+EspUsbDeviceMsc Msc(device);
+EspUsbDeviceMscFatRamDisk MscDisk(mscStorage, sizeof(mscStorage));
+#endif
+// Registration order is the axis the HID lookup turned out to depend on:
+// HID is always emitted at MI_00 either way, so the descriptors are identical
+// and only the library's class table changes.
+#ifndef VAR_HID_FIRST
+#define VAR_HID_FIRST 0
+#endif
+#if VAR_COMPOSITE == 1 && VAR_HID_FIRST
+EspUsbDeviceHidKeyboard Keyboard(device);
+#endif
+EspUsbDeviceVendor Vendor(device);
+#if VAR_COMPOSITE == 1 && !VAR_HID_FIRST
 EspUsbDeviceHidKeyboard Keyboard(device);
 #elif VAR_COMPOSITE == 2
-// The same interface count as variant 1, but MI_00 becomes mass storage
-// instead of HID. HID functions are always emitted first, so this is the only
-// way to change what sits at a given interface number without changing how
-// many there are - which is the case that keeps both child instance IDs and
-// changes only their compatible IDs.
-static uint8_t mscStorage[64 * 1024];
+// The same interface count as variant 1, but with the vendor function at MI_00
+// and mass storage at MI_01: HID is emitted first, the rest in registration
+// order, so swapping the HID for an MSC registered after the vendor moves the
+// vendor function from MI_01 to MI_00 without changing how many interfaces
+// there are - the case that keeps both child instance IDs and changes only
+// their compatible IDs.
 EspUsbDeviceMsc Msc(device);
 EspUsbDeviceMscFatRamDisk MscDisk(mscStorage, sizeof(mscStorage));
 #endif
@@ -87,7 +108,7 @@ void setup()
 #endif
   config.msOs20CcgpDevice = VAR_CCGP != 0;
 
-#if VAR_COMPOSITE == 2
+#if VAR_COMPOSITE == 2 || VAR_COMPOSITE == 3
   MscDisk.format("WINGUID");
   MscDisk.attach(Msc);
 #endif
@@ -99,7 +120,7 @@ void setup()
   Serial.printf("GUIDTEST variant=%d pid=0x%04x serial=%s composite=%d\n",
                 (int)GUID_VARIANT, (unsigned)VAR_PID,
                 VAR_NO_SERIAL ? "(none)" : VAR_SERIAL, (int)VAR_COMPOSITE);
-  Serial.printf("GUIDTEST ccgp=%d\n", (int)VAR_CCGP);
+  Serial.printf("GUIDTEST ccgp=%d hidfirst=%d\n", (int)VAR_CCGP, (int)VAR_HID_FIRST);
   {
     // The set as sent, so a Windows-side surprise can be checked against the
     // bytes rather than against what the code was meant to emit.
