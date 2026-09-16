@@ -110,6 +110,18 @@ void loop()
                     (unsigned long)g_blocks, (unsigned long)g_bytes,
                     (unsigned long)g_armFail, (unsigned long)g_zeroLen);
       break;
+    case '?':
+      // Answered on demand, because the START line above is printed once at
+      // mount and the test harness may not be listening yet: pytest-embedded
+      // brings the host and this device up in an order that depends on flash
+      // times, and when the host is already running, this device mounts and
+      // announces before its serial log is open. The composite peer tests
+      // answer readiness the same way for the same reason.
+      Serial.printf("DEVICE_DIRECT_STATE mounted=%d direct=%d started=%d\n",
+                    Vendor.mounted() ? 1 : 0,
+                    EspUsbDeviceVendor::directWriteSupported() ? 1 : 0,
+                    started ? 1 : 0);
+      break;
     default:
       break;
     }

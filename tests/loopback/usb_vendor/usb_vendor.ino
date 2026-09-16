@@ -201,36 +201,61 @@ static bool webUsbUrl()
 }
 
 // This device has a single vendor interface, so Windows never loads usbccgp
-// for it and the compatible ID has to sit directly under the set header - no
-// configuration subset, no function subset. 162 bytes rather than 178, with
-// "WINUSB" at offset 14 rather than 30.
+// for it and the feature descriptors sit directly under the set header - no
+// configuration subset, no function subset. Walked rather than read at fixed
+// offsets, because the set has grown once already (the 6-byte vendor revision
+// descriptor, type 8, arrived in the 2.4.0 follow-up and moved everything
+// after it): 10-byte header, then revision (6), compatible ID (20) and the
+// DeviceInterfaceGUIDs registry property (132) = 168 bytes.
 static bool microsoftOs20()
 {
-  uint8_t buffer[178] = {};
+  uint8_t buffer[190] = {};
   size_t actualLength = 0;
   const bool ok = usb.vendorControlIn(
       0x02, 0, 0x0007, buffer, sizeof(buffer), &actualLength, deviceAddress);
   const bool headerOk =
-      actualLength == 162 &&
+      actualLength == 168 &&
       buffer[0] == 10 && buffer[1] == 0 &&
-      buffer[8] == 162 && buffer[9] == 0;
-  // Compatible ID feature descriptor, directly under the set header.
-  const bool flatOk =
-      headerOk && buffer[10] == 20 && buffer[11] == 0 &&
-      buffer[12] == 3 && buffer[13] == 0;
-  const bool winUsbOk =
-      flatOk && memcmp(&buffer[14], "WINUSB", 6) == 0;
-  // Registry property (DeviceInterfaceGUIDs) follows the compatible ID.
-  const bool propertyOk =
-      winUsbOk && buffer[30] == 132 && buffer[31] == 0 &&
-      buffer[32] == 4 && buffer[33] == 0;
-  Serial.printf("MS_OS_20 ok=%u len=%u flat=%u winusb=%u property=%u\n",
+      buffer[8] == 168 && buffer[9] == 0;
+  bool subsetSeen = false, revisionOk = false, compatOk = false, winUsbOk = false, propertyOk = false;
+  for (size_t o = 10; headerOk && o + 4 <= actualLength;)
+  {
+    const uint16_t len = static_cast<uint16_t>(buffer[o] | (buffer[o + 1] << 8));
+    const uint16_t type = static_cast<uint16_t>(buffer[o + 2] | (buffer[o + 3] << 8));
+    if (len < 4 || o + len > actualLength)
+    {
+      break;
+    }
+    switch (type)
+    {
+    case 1: // configuration subset header
+    case 2: // function subset header
+      subsetSeen = true;
+      break;
+    case 8: // vendor revision
+      revisionOk = len == 6;
+      break;
+    case 3: // compatible ID
+      compatOk = len == 20;
+      winUsbOk = compatOk && memcmp(&buffer[o + 4], "WINUSB", 6) == 0;
+      break;
+    case 4: // registry property (DeviceInterfaceGUIDs)
+      propertyOk = len == 132;
+      break;
+    default:
+      break;
+    }
+    o += len;
+  }
+  const bool flatOk = headerOk && compatOk && !subsetSeen;
+  Serial.printf("MS_OS_20 ok=%u len=%u flat=%u winusb=%u property=%u revision=%u\n",
                 ok ? 1 : 0,
                 static_cast<unsigned>(actualLength),
                 flatOk ? 1 : 0,
                 winUsbOk ? 1 : 0,
-                propertyOk ? 1 : 0);
-  return ok && headerOk && flatOk && winUsbOk && propertyOk;
+                propertyOk ? 1 : 0,
+                revisionOk ? 1 : 0);
+  return ok && headerOk && flatOk && winUsbOk && propertyOk && revisionOk;
 }
 
 void setup()
@@ -392,7 +417,7 @@ void setup()
   Serial.printf("CONTROL_OBSERVER_MS_OS_20 seen=%u len=%u\n",
                 observedMsOs20 > 0 ? 1 : 0,
                 static_cast<unsigned>(observedMsOs20Length));
-  ok = ok && observedMsOs20 > 0 && observedMsOs20Length == 162;
+  ok = ok && observedMsOs20 > 0 && observedMsOs20Length == 168;
 
   Serial.printf("DEVICE_STATUS rx=%lu control=%lu\n",
                 static_cast<unsigned long>(rxCount),
