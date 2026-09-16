@@ -32,11 +32,11 @@ The automatic matrix observes releases from 3.3.0 onward, but results below
 
 ## Supported chips and classes
 
-| Chip | Max speed | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Vendor / WebUSB](examples/USBVendor/) | [NCM network](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) | [DFU](examples/FirmwareDFU/) |
-|------|-----------|-----|------------|-----|------|-------|-----------------|-------------|------|-----|
-| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ |
+| Chip | Max speed | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Video](examples/VideoCamera/) | [Vendor / WebUSB](examples/USBVendor/) | [NCM network](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) | [DFU](examples/FirmwareDFU/) |
+|------|-----------|-----|------------|-----|------|-------|-------|-----------------|-------------|------|-----|
+| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ○ | ✅ | ○ | ○ | ○ |
 
 ✅ = verified by the automated hardware tests (two-board peer rig for the S3,
 loopback/manual rigs for the P4; see [tests/TEST_PLAN.md](tests/TEST_PLAN.md)).
@@ -81,8 +81,8 @@ Owning this boundary makes the following possible:
 
 This release covers HID keyboard / mouse / gamepad / consumer / system / custom /
 vendor HID, CDC ACM, USB MIDI, MSC, USBVendor, USB Audio (speaker / microphone),
-a CDC-NCM network device, a CCID smart card reader, USB DFU firmware update,
-and multi-function composite devices.
+a USB Video camera, a CDC-NCM network device, a CCID smart card reader, USB DFU
+firmware update, and multi-function composite devices.
 
 Typical use cases:
 
@@ -93,6 +93,9 @@ Typical use cases:
 - Read and write validated UAC1 Playback/Capture PCM through bounded FIFOs.
   UAC2 is selectable and is covered end to end by the `peer/usb_audio_uac2`
   two-board test against an EspUsbHost 2.7.1 UAC2 host.
+- Present the board as a UVC camera the host needs no driver for, streaming
+  MJPEG or uncompressed frames the sketch supplies. Isochronous bandwidth is
+  the constraint, not the API: a full-speed part carries about 1 MB/s.
 - Present the board as a USB network adapter (CDC-NCM), with optional lwIP/DHCP
   so a PC can reach a page or API on the device over USB.
 - Present the board as a USB smart card reader (CCID) whose card is implemented

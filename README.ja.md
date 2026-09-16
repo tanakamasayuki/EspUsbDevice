@@ -29,11 +29,11 @@ report をスケッチから明示的に制御できる、よりよい小さな 
 
 ## 対応チップとクラス
 
-| チップ | 最大速度 | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Vendor / WebUSB](examples/USBVendor/) | [NCMネットワーク](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) | [DFU](examples/FirmwareDFU/) |
-|--------|----------|-----|------------|-----|------|-------|-----------------|--------------|------|-----|
-| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ |
+| チップ | 最大速度 | [HID](examples/Keyboard/) | [CDC serial](examples/Serial/) | [MSC](examples/MSC/) | [MIDI](examples/MIDI/) | [Audio](examples/AudioSpeaker/) | [Video](examples/VideoCamera/) | [Vendor / WebUSB](examples/USBVendor/) | [NCMネットワーク](examples/UsbNetwork/) | [CCID](examples/SmartCardReader/) | [DFU](examples/FirmwareDFU/) |
+|--------|----------|-----|------------|-----|------|-------|-------|-----------------|--------------|------|-----|
+| ESP32-S2 | FS (12 Mbps) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| ESP32-S3 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-P4 | FS + HS (480 Mbps) | ✅ | ✅ | ✅ | ✅ | ○ | ○ | ✅ | ○ | ○ | ○ |
 
 ✅ = 自動実機テストで検証済み（S3は2台peer構成、P4はloopback/手動構成。
 [tests/TEST_PLAN.ja.md](tests/TEST_PLAN.ja.md)参照）。
@@ -70,9 +70,9 @@ forkしたわけではありません。選択したfile、pin、license、更�
 ## リリース範囲
 
 このリリースでは、HID keyboard / mouse / gamepad / consumer / system / custom / vendor HID、
-CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC-NCM
-ネットワークデバイス、CCID スマートカードリーダー、USB DFU ファームウェア更新、
-多機能な複合デバイスを扱えます。
+CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、USB Video
+カメラ、CDC-NCM ネットワークデバイス、CCID スマートカードリーダー、USB DFU
+ファームウェア更新、多機能な複合デバイスを扱えます。
 
 代表的な用途:
 
@@ -84,6 +84,9 @@ CDC ACM、USB MIDI、MSC、USBVendor、USB Audio（speaker / microphone）、CDC
   インターフェース越しのブラウザ、またはチップを ROM loader へ渡す方法）。
 - 実転送を検証済みのUAC1 Audio Playback/Capture PCMをbounded FIFO経由で読み書きする。
   UAC2は明示選択でき、EspUsbHost 2.7.1のUAC2 hostに対する2台テスト `peer/usb_audio_uac2` でend-to-endにカバー。
+- ホストにドライバを入れさせずに UVC カメラとして見せ、スケッチが用意した MJPEG
+  または非圧縮フレームを流します。制約は API ではなく isochronous の帯域で、
+  full speed なら約 1 MB/s です。
 - ボードを USB ネットワークアダプタ（CDC-NCM）として見せ、任意で lwIP/DHCP を有効にして
   PC が USB 経由でデバイス上のページや API にアクセスできるようにする。
 - ボードを USB スマートカードリーダー（CCID）として見せ、カードの中身をスケッチで実装して

@@ -27,6 +27,9 @@ EspUsbAudioFunction	KEYWORD1
 EspUsbAudioPlaybackStream	KEYWORD1
 EspUsbAudioCaptureStream	KEYWORD1
 EspUsbAudioFormat	KEYWORD1
+EspUsbDeviceVideo	KEYWORD1
+EspUsbDeviceVideoFormat	KEYWORD1
+EspUsbDeviceVideoCommit	KEYWORD1
 EspUsbDeviceHidKeyboard	KEYWORD1
 EspUsbDeviceHidMouse	KEYWORD1
 EspUsbDeviceHidCustom	KEYWORD1
@@ -182,6 +185,17 @@ readOnly	KEYWORD2
 beginNetwork	KEYWORD2
 onFrame	KEYWORD2
 sendFrame	KEYWORD2
+setFormat	KEYWORD2
+setFrameSize	KEYWORD2
+setFrameRate	KEYWORD2
+setMaxFrameSize	KEYWORD2
+maxFrameSize	KEYWORD2
+frameInFlight	KEYWORD2
+onFrameComplete	KEYWORD2
+onCommit	KEYWORD2
+payloadBufferSize	KEYWORD2
+isochronousPacketSize	KEYWORD2
+bulkStreaming	KEYWORD2
 insertCard	KEYWORD2
 removeCard	KEYWORD2
 cardPresent	KEYWORD2
