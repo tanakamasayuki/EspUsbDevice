@@ -930,6 +930,13 @@ bool EspUsbDevice::allocateDescriptorBuffers()
   return true;
 }
 
+namespace
+{
+// Defined with the rest of the Microsoft OS 2.0 helpers, below; begin() needs it
+// before that.
+bool isDeviceInterfaceGuid(const char *guid);
+} // namespace
+
 bool EspUsbDevice::begin()
 {
   return begin(EspUsbDeviceConfig());
@@ -942,6 +949,14 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     return true;
   }
   config_ = config;
+  // Checked before the descriptors are built: the registry property writes a
+  // constant length, so a GUID of the wrong shape would produce a set Windows
+  // rejects with nothing here to say why.
+  if (config_.deviceInterfaceGuid && !isDeviceInterfaceGuid(config_.deviceInterfaceGuid))
+  {
+    lastError_ = ESP_ERR_INVALID_ARG;
+    return false;
+  }
   if (!buildDescriptors())
   {
     return false;
@@ -1286,6 +1301,11 @@ const uint8_t *EspUsbDevice::microsoftOs20Descriptor() const
 uint16_t EspUsbDevice::microsoftOs20DescriptorLength() const
 {
   return microsoftOs20DescriptorLength_;
+}
+
+uint16_t EspUsbDevice::microsoftOs20VendorRevision() const
+{
+  return microsoftOs20VendorRevision_;
 }
 
 uint16_t EspUsbDevice::hidInterfacesLength() const
@@ -1965,6 +1985,67 @@ bool EspUsbDevice::microsoftOs20UsesSubsets() const
   return microsoftOs20DescriptorLength_ > 0 && microsoftOs20SubsetLayout();
 }
 
+namespace
+{
+// The GUID every EspUsbDevice vendor interface answered to before
+// EspUsbDeviceConfig::deviceInterfaceGuid existed. Kept as the default so an
+// existing sketch's host-side lookup does not stop finding it.
+constexpr char kDefaultDeviceInterfaceGuid[] = "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9D}";
+
+// `{8-4-4-4-12}`, braces included. The registry property's length is written
+// into the descriptor as a constant, so a GUID of any other length would
+// silently produce a malformed set - which is why this is checked at begin()
+// rather than clamped here.
+bool isDeviceInterfaceGuid(const char *guid)
+{
+  if (!guid)
+  {
+    return false;
+  }
+  static const uint8_t groups[] = {8, 4, 4, 4, 12};
+  size_t index = 0;
+  if (guid[index++] != '{')
+  {
+    return false;
+  }
+  for (size_t group = 0; group < sizeof(groups); group++)
+  {
+    for (uint8_t i = 0; i < groups[group]; i++)
+    {
+      const char c = guid[index++];
+      if (!isxdigit(static_cast<unsigned char>(c)))
+      {
+        return false;
+      }
+    }
+    const char expected = (group + 1 < sizeof(groups)) ? '-' : '}';
+    if (guid[index++] != expected)
+    {
+      return false;
+    }
+  }
+  return guid[index] == '\0';
+}
+
+// CRC-16/CCITT over the finished descriptor set, so wVendorRevision moves
+// whenever any byte of the set moves. Folded to 15 bits and offset by one: the
+// value has to be non-zero to be a revision, and never colliding with "unset"
+// matters more here than using the top bit.
+uint16_t descriptorSetRevision(const uint8_t *data, size_t length)
+{
+  uint16_t crc = 0xffff;
+  for (size_t i = 0; i < length; i++)
+  {
+    crc = static_cast<uint16_t>(crc ^ (static_cast<uint16_t>(data[i]) << 8));
+    for (int bit = 0; bit < 8; bit++)
+    {
+      crc = static_cast<uint16_t>((crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1));
+    }
+  }
+  return static_cast<uint16_t>((crc & 0x7fff) + 1);
+}
+} // namespace
+
 void EspUsbDevice::buildWebUsbDescriptors()
 {
   memset(bosDescriptor_, 0, sizeof(bosDescriptor_));
@@ -2046,6 +2127,26 @@ void EspUsbDevice::buildWebUsbDescriptors()
     const size_t setLengthOffset = offset;
     offset += 2;
 
+    // Where each wVendorRevision goes, filled in once the set is complete: the
+    // value is a checksum of the finished bytes, so it cannot be written while
+    // they are still being produced.
+    size_t revisionOffsets[3];
+    uint8_t revisionCount = 0;
+
+    // Flat sets carry it once, directly under the set header. Subsets carry one
+    // in every function subset, which is where Windows looks for it when
+    // usbccgp has split the device up.
+    if (!useSubsets)
+    {
+      put16(&set[offset], 6);
+      offset += 2;
+      put16(&set[offset], 8); // MS_OS_20_FEATURE_VENDOR_REVISION
+      offset += 2;
+      revisionOffsets[revisionCount++] = offset;
+      put16(&set[offset], 0);
+      offset += 2;
+    }
+
     size_t configurationLengthOffset = 0;
     if (useSubsets)
     {
@@ -2074,6 +2175,17 @@ void EspUsbDevice::buildWebUsbDescriptors()
         set[offset++] = 0; // bReserved
         functionLengthOffset = offset;
         offset += 2;
+
+        put16(&set[offset], 6);
+        offset += 2;
+        put16(&set[offset], 8); // MS_OS_20_FEATURE_VENDOR_REVISION
+        offset += 2;
+        if (revisionCount < (sizeof(revisionOffsets) / sizeof(revisionOffsets[0])))
+        {
+          revisionOffsets[revisionCount++] = offset;
+        }
+        put16(&set[offset], 0);
+        offset += 2;
       }
 
       put16(&set[offset], 20);
@@ -2101,7 +2213,9 @@ void EspUsbDevice::buildWebUsbDescriptors()
         offset += putUtf16Le(&set[offset], "DeviceInterfaceGUIDs", false);
         put16(&set[offset], 80);
         offset += 2;
-        offset += putUtf16Le(&set[offset], "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9D}",
+        offset += putUtf16Le(&set[offset],
+                             config_.deviceInterfaceGuid ? config_.deviceInterfaceGuid
+                                                         : kDefaultDeviceInterfaceGuid,
                              true);
         if (offset != propertyOffset + 132)
         {
@@ -2128,6 +2242,20 @@ void EspUsbDevice::buildWebUsbDescriptors()
       {
         put16(&set[configurationLengthOffset], static_cast<uint16_t>(offset - 10));
       }
+      // Derived from the completed set, with the revision fields still zero, so
+      // the same descriptors always produce the same number and any change to
+      // them - a different GUID, another function, a different layout - produces
+      // a different one. That is what makes Windows re-read the registry
+      // properties it cached the first time it saw this VID/PID/serial.
+      const uint16_t revision =
+          config_.msOs20VendorRevision != 0
+              ? config_.msOs20VendorRevision
+              : descriptorSetRevision(set, offset);
+      for (uint8_t i = 0; i < revisionCount; i++)
+      {
+        put16(&set[revisionOffsets[i]], revision);
+      }
+      microsoftOs20VendorRevision_ = revision;
       microsoftOs20DescriptorLength_ = static_cast<uint16_t>(offset);
     }
     else
@@ -2136,6 +2264,7 @@ void EspUsbDevice::buildWebUsbDescriptors()
       // malformed Microsoft capability.
       memset(microsoftOs20Descriptor_, 0, sizeof(microsoftOs20Descriptor_));
       microsoftOs20DescriptorLength_ = 0;
+      microsoftOs20VendorRevision_ = 0;
     }
   }
 
