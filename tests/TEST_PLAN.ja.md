@@ -53,7 +53,7 @@ tests/
 | device descriptor config | ✅ `descriptor` | | | |
 | runtime lifecycle | ✅ `descriptor`（100回begin/end + 途中失敗からの復帰） | | | |
 | FS/HS endpoint MPS | ✅ `descriptor` | 予定 | 予定 | |
-| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` 通常port。**逆port は EspUsbHost 2.9.0 で abort**（`usb.end()` → `usb.begin(HS)` の区間で `abort()`、決定的。同じデバイスライブラリで 2.8.0 なら合格。どの assert かは未確定——シンボル解決した ELF はその時点で 2.8.0 用に再ビルドされていた。2026-09-16 に EspUsbHost へ報告し、先方は P4 の `end()` が root port の電源を落とし `experimentalForceFullSpeed` の経路しか戻さない欠陥を確認） | |
+| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` 通常port。**逆port は EspUsbHost 2.9.0 で abort**（`usb.end()` → `usb.begin(HS)` の区間で `abort()`、決定的。同じデバイスライブラリで 2.8.0 なら合格、実リンク版は両 ELF の `strings` で確認。原因は 2026-09-16 に EspUsbHost セッションが一致する ELF で確定: IDF `hub.c:493 root_port_recycle()` の `default: abort()`。2.9.0 の `end()` がデバイスを閉じる前に root port の電源を落とすため、recycle 時にポートが ENABLED でも RECOVERY でもない。先方で修正中） | |
 | HID keyboard LED output report | ✅ callback変換 | ✅ `hid_keyboard`（callback + `ledState()`、callback 未設定時も追従） | ✅ `hid_keyboard` 通常port。逆port は上の行を参照 | 任意 |
 | HID keyboard NKRO | ✅ `nkro_report`（struct の bitmap/modifier/境界） | ✅ `hid_keyboard_nkro`（8キー chord のキーコード一致、JIS 高 usage、状態全体を1レポート、`heldState()`、`enableNkro()` 未実行時の失敗） | 未実装 | ✅ `examples/KeyboardNKRO` |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | build済み `hid_mouse` | |
