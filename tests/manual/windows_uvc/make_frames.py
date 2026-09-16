@@ -24,9 +24,12 @@ WIDTH = 320
 HEIGHT = 240
 FRAMES = 16
 QUALITY = 70
+# Full-scale bars rather than the broadcast 75% ones, so the same expected
+# colours check both this MJPEG pattern and the YUY2 one the sketch generates:
+# BT.601 studio-range luma decodes to about full-scale RGB on the host.
 BARS = [
-    (192, 192, 192), (192, 192, 0), (0, 192, 192), (0, 192, 0),
-    (192, 0, 192), (192, 0, 0), (0, 0, 192), (16, 16, 16),
+    (255, 255, 255), (255, 255, 0), (0, 255, 255), (0, 255, 0),
+    (255, 0, 255), (255, 0, 0), (0, 0, 255), (0, 0, 0),
 ]
 
 

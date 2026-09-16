@@ -67,9 +67,13 @@ static bool wasStreaming = false;
 // so a viewer can tell a live stream from a stuck one.
 static void fillFrame(uint32_t index)
 {
-  static const uint8_t bars[8][2] = {
-      {235, 128}, {210, 16}, {170, 166}, {145, 54},
-      {106, 202}, {81, 90},  {41, 240},  {16, 128}};
+  // BT.601 colour bars as {Y, U, V}. All three are needed: YUY2 carries one U
+  // and one V per pair of pixels, and holding V at 128 - as an earlier version
+  // of this did - leaves the luma ramp correct and every colour wrong, which
+  // is exactly what a luma-only check fails to notice.
+  static const uint8_t bars[8][3] = {
+      {235, 128, 128}, {210, 16, 146}, {170, 166, 16}, {145, 54, 34},
+      {106, 202, 222}, {81, 90, 240},  {41, 240, 110}, {16, 128, 128}};
   const uint16_t barWidth = VAR_WIDTH / 8;
   const uint16_t blockRow = (VAR_HEIGHT * 3) / 4;
   const uint16_t blockWidth = VAR_WIDTH / 16;
@@ -80,17 +84,24 @@ static void fillFrame(uint32_t index)
     // YUY2 packs two pixels into four bytes: Y0 U Y1 V.
     for (uint16_t x = 0; x < VAR_WIDTH; x += 2)
     {
-      uint8_t luma = bars[(x / barWidth) & 7][0];
-      uint8_t chroma = bars[(x / barWidth) & 7][1];
-      if (y >= blockRow && x >= blockX && x < blockX + blockWidth)
+      const uint8_t *bar = bars[(x / barWidth) & 7];
+      uint8_t luma = bar[0];
+      uint8_t u = bar[1];
+      uint8_t v = bar[2];
+      // Below the bars, a white block steps one cell per frame. The rest of
+      // that band is black, so the block is the only bright thing there and a
+      // stalled stream is obvious.
+      const bool inBlock = x >= blockX && x < blockX + blockWidth;
+      if (y >= blockRow)
       {
-        luma = 235;
-        chroma = 128;
+        luma = inBlock ? 235 : 16;
+        u = 128;
+        v = 128;
       }
       row[x * 2 + 0] = luma;
-      row[x * 2 + 1] = chroma;
+      row[x * 2 + 1] = u;
       row[x * 2 + 2] = luma;
-      row[x * 2 + 3] = 128;
+      row[x * 2 + 3] = v;
     }
   }
 }

@@ -32,10 +32,12 @@ static bool wasStreaming = false;
 // a stuck one.
 static void drawFrame(uint32_t index)
 {
-  // Luma/chroma pairs for the eight standard bars.
-  static const uint8_t bars[8][2] = {
-      {235, 128}, {210, 16}, {170, 166}, {145, 54},
-      {106, 202}, {81, 90},  {41, 240},  {16, 128}};
+  // BT.601 colour bars as {Y, U, V}. YUY2 carries one U and one V per pair of
+  // pixels and both matter: hold V at 128 and the picture still looks like a
+  // plausible test pattern with every colour wrong.
+  static const uint8_t bars[8][3] = {
+      {235, 128, 128}, {210, 16, 146}, {170, 166, 16}, {145, 54, 34},
+      {106, 202, 222}, {81, 90, 240},  {41, 240, 110}, {16, 128, 128}};
   const uint16_t barWidth = kWidth / 8;
   const uint16_t blockRow = (kHeight * 3) / 4;
   const uint16_t blockWidth = kWidth / 16;
@@ -46,17 +48,22 @@ static void drawFrame(uint32_t index)
     // YUY2 packs two pixels into four bytes: Y0 U Y1 V.
     for (uint16_t x = 0; x < kWidth; x += 2)
     {
-      uint8_t luma = bars[(x / barWidth) & 7][0];
-      uint8_t chroma = bars[(x / barWidth) & 7][1];
-      if (y >= blockRow && x >= blockX && x < blockX + blockWidth)
+      const uint8_t *bar = bars[(x / barWidth) & 7];
+      uint8_t luma = bar[0];
+      uint8_t u = bar[1];
+      uint8_t v = bar[2];
+      // Below the bars, a white block steps one cell per frame against black.
+      const bool inBlock = x >= blockX && x < blockX + blockWidth;
+      if (y >= blockRow)
       {
-        luma = 235;
-        chroma = 128;
+        luma = inBlock ? 235 : 16;
+        u = 128;
+        v = 128;
       }
       row[x * 2 + 0] = luma;
-      row[x * 2 + 1] = chroma;
+      row[x * 2 + 1] = u;
       row[x * 2 + 2] = luma;
-      row[x * 2 + 3] = 128;
+      row[x * 2 + 3] = v;
     }
   }
 }
