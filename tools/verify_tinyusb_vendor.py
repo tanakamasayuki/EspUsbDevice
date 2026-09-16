@@ -40,6 +40,7 @@ SOURCE_FILES = {
     "class/vendor/vendor_device.c",
     "class/net/ncm_device.c",
     "class/audio/audio_device.c",
+    "class/video/video_device.c",
     "portable/synopsys/dwc2/dcd_dwc2.c",
     "portable/synopsys/dwc2/dwc2_common.c",
 }
