@@ -37,7 +37,27 @@ def _expected(seq):
 
 
 def _complete_blocks(window):
-    """Every whole block inside one read, verified byte for byte."""
+    """Every whole block inside one read, verified byte for byte.
+
+    A mismatch here has been seen once, on 2026-09-16, in about one run in
+    fifteen: block 2232 arrived as ``D2232:ijklmnojklmnopq`` where the body
+    should have been ``cdefghijklmnopq``. The seven bytes after the stamp were
+    right for a different block, and the eight after those for a third - a
+    splice seven bytes into a block, with the next block in the same window
+    correct again.
+
+    That shape cannot come from the device. Each block is 21 bytes and goes out
+    as one ``writeDirect()`` call, which is one ``usbd_edpt_xfer()`` and one USB
+    packet, because 21 is below the 64-byte full-speed maximum. A packet
+    arrives whole or not at all, so a lost or reordered transfer moves whole
+    21-byte units; it cannot splice inside one. The discontinuity therefore
+    appeared at or after reception, in the host's buffering between the USB
+    task filling its pipe and ``vendorRead()`` copying 63 bytes out of it.
+
+    Keep the assertion. It is doing its job - this is exactly the corruption it
+    exists to catch - but read a failure as "the host's read was not
+    contiguous" before suspecting the direct path.
+    """
     if isinstance(window, bytes):
         window = window.decode("ascii", "replace")
     found = []
