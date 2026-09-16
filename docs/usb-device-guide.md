@@ -642,8 +642,10 @@ the revision moves, but it never removes one.**
 **A stale value is not a stale device, though.** Enumerating the interface class
 the way an application does - `SetupDiGetClassDevs` with `DIGCF_PRESENT |
 DIGCF_DEVICEINTERFACE` - returns nothing for the stale GUID and exactly one
-interface for the live one, measured on a device where both values were sitting
-in the registry at once. The registry value alone does not create a device
+interface for the live one. Measured both ways round: on a device whose parent
+held a leftover GUID while a child held the live one, and on a device where the
+*same* GUID sat on two children at once - one that had become mass storage, one
+that was the live vendor interface. Only the vendor interface came back. The registry value alone does not create a device
 interface; the driver bound to that node does, and a `usbccgp` parent or a
 `USBSTOR` child does not create a WinUSB one. So the leftovers do not produce a
 phantom device for your application to trip over.
