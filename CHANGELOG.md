@@ -1,6 +1,33 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) **New class `EspUsbDeviceVideo`: a USB Video Class camera.** One control
+  and one streaming interface advertising one format (MJPEG or uncompressed
+  YUY2) at one frame size and rate; `sendFrame()` hands over a whole frame and
+  a completion callback says when it has gone. Windows, macOS and Linux bind
+  their own UVC driver with nothing to install. TinyUSB's video class is now
+  vendored (`class/video/`, byte-for-byte against the pinned upstream commit,
+  as `tools/verify_tinyusb_vendor.py` checks). Verified on Windows 11: 181
+  frames captured, every one byte-for-byte identical to what the device sent,
+  in order, at 15.16 fps against 15 advertised
+  (`tests/manual/windows_uvc`). New example
+  [`VideoCamera`](examples/VideoCamera/); new test
+  `tests/single/video_descriptor`.
+  **Bandwidth is the thing to design around**: a full-speed part has about
+  1 MB/s of isochronous bandwidth, so 320x240 uncompressed runs at about 6 fps
+  and MJPEG is what makes larger frames practical.
+- (EN) **`begin()` now refuses a configuration whose isochronous IN endpoint
+  the controller's transmit FIFO cannot back**, returning `ESP_ERR_NO_MEM`.
+  Bulk and interrupt endpoints already failed visibly at enumeration when the
+  FIFO ran out; isochronous ones did not. An ESP32-S3 asked for a 1023-byte
+  isochronous endpoint programmed its transmit FIFO 256 words at offset 512,
+  past the end of the 242-word usable area, without refusing - and then
+  enumerated, bound a host driver, reported frames going out with zero
+  failures, and delivered nothing, crashing tens of seconds later in an
+  unrelated EP0 path. The S2 and S3 share one 1 KB FIFO between every
+  endpoint, which leaves about 650 bytes for one isochronous endpoint, so
+  `CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE` defaults to 512 there and 1023 on the
+  P4. Audio configurations are checked by the same arithmetic.
 - (EN) New `EspUsbDeviceConfig::deviceVersion`: `bcdDevice`, the device release
   number, which was fixed at 0x0100. Windows folds it into a hardware ID
   (`USB\VID_xxxx&PID_xxxx&REV_0100`) that an INF can match on. Measured on
@@ -44,6 +71,29 @@
   A flat set carries it once under the set header, a subset set once per
   function subset. Descriptor sets grow by 6 bytes per function: 30/162/206
   become 36/168/218.
+- (JA) **新クラス `EspUsbDeviceVideo`（USB Video Class カメラ）を追加しました。**
+  control 1 本と streaming 1 本の interface で、1 つの形式（MJPEG または非圧縮
+  YUY2）を 1 つのフレームサイズ・レートで宣言します。`sendFrame()` に 1 フレームを
+  渡し、完了コールバックが送り終えたことを知らせます。Windows・macOS・Linux は
+  いずれも標準の UVC ドライバを何もインストールせずに当てます。TinyUSB の video
+  クラスを vendoring しました（`class/video/`、pin した上流コミットとバイト単位で
+  一致、`tools/verify_tinyusb_vendor.py` が検証）。Windows 11 で検証済み: 181
+  フレームを取得し、その全部がデバイスの送ったものとバイト単位で一致、順序も連続、
+  宣言 15 fps に対し実測 15.16 fps（`tests/manual/windows_uvc`）。example
+  [`VideoCamera`](examples/VideoCamera/)、テスト `tests/single/video_descriptor`
+  を追加。**設計の基準になるのは帯域です。** full speed の isochronous 帯域は
+  約 1 MB/s なので、320x240 の非圧縮は約 6 fps にとどまり、大きなフレームを実用に
+  するのは MJPEG です。
+- (JA) **コントローラの送信 FIFO で賄えない isochronous IN エンドポイントを持つ構成を
+  `begin()` が拒否するようになりました**（`ESP_ERR_NO_MEM`）。bulk と interrupt は
+  FIFO が尽きれば列挙の失敗として表に出ていましたが、isochronous は出ませんでした。
+  ESP32-S3 に 1023 バイトの isochronous エンドポイントを要求すると、送信 FIFO は
+  256 ワード＠オフセット 512（使用可能な 242 ワードの外）に、拒否されずに設定され、
+  そのうえで列挙が成功し、ホストがドライバを当て、デバイスは失敗ゼロで送信したと
+  報告し、何も届かず、数十秒後に無関係な EP0 の経路でクラッシュしました。S2 と S3 は
+  全エンドポイントで 1 KB の FIFO を共有し、isochronous 1 本に残るのは約 650 バイト
+  なので、`CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE` の既定は S2/S3 で 512、P4 で 1023 に
+  しました。audio の構成も同じ計算で検査されます。
 - (JA) `EspUsbDeviceConfig::deviceVersion` を追加しました。device descriptor の
   `bcdDevice`（デバイスのリリース番号）で、従来は 0x0100 固定でした。Windows は
   これを hardware ID（`USB\VID_xxxx&PID_xxxx&REV_0100`）に畳み込み、INF の照合に

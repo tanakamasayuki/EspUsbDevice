@@ -745,6 +745,40 @@ those minus EP0.
 Exceeding them makes `begin()` return `ESP_ERR_INVALID_SIZE`. It fails **before
 the PHY starts**, so nothing at all happens on the host.
 
+#### The transmit FIFO, which runs out before the endpoint count does
+
+Endpoint numbers are not the only budget. The DWC2 has one small FIFO SPRAM
+shared between the receive FIFO, one transmit FIFO per IN endpoint, and two
+words per endpoint of DMA bookkeeping - 256 words (1 KB) on the S2 and S3, and
+on the P4's full-speed controller; 1024 words on its high-speed one.
+`dcd_edpt_open()` allocates downward from the top and refuses when the space is
+gone, which for a bulk or interrupt endpoint surfaces as a failed enumeration.
+
+What remains for one large endpoint on an S3, measured from the controller's
+own registers after the host configured the device:
+
+| | words |
+|---|---|
+| SPRAM | 256 |
+| less DMA endpoint info (2 per endpoint) | 242 |
+| less EP0 IN transmit FIFO | 226 |
+| less receive FIFO | 164 |
+
+164 words is 656 bytes - so a full-speed isochronous endpoint at its 1023-byte
+maximum does not fit, and neither does a second isochronous function beside a
+camera.
+
+**Isochronous endpoints do not fail loudly.** They are allocated up front
+through `usbd_edpt_iso_alloc()`, and an S3 asked for 1023 bytes programmed
+`DIEPTXF1` with 256 words at offset 512 - past the end of the 242-word usable
+area - without refusing. The device enumerated, the host bound its camera
+driver, the device reported frames going out at the advertised rate with zero
+failures, and the host received nothing; tens of seconds later it crashed in an
+unrelated EP0 path. So `begin()` checks the whole configuration against this
+arithmetic itself whenever it declares an isochronous IN endpoint, and returns
+`ESP_ERR_NO_MEM` rather than start. `tests/manual/windows_uvc` has the
+measurements.
+
 ### 5.3 Why the IN direction runs out first
 
 On DWC2, **each IN endpoint needs its own dedicated TxFIFO**, while OUT endpoints

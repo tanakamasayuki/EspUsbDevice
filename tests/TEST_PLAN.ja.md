@@ -75,6 +75,7 @@ tests/
 | device interface GUID / vendor revision | ✅ `descriptor`（GUID が wire に載ること、GUID 変更で導出 revision が動くこと、明示指定が優先されること、不正な GUID 6 種を `begin()` が拒否すること） | 未実装 | 未実装 | ✅ `tests/manual/windows_device_guid`（Windows が送った GUID を保持し、revision を固定すると**古い方**を保持する。この対照があって初めてテストになる） |
 | vendor の direct 転送 | ✅ `vendor_direct`（ライブラリ自身の `directWriteSupported()` と、拒否の全種類: null / 長さ 0 / 超過 / 未整列 / PSRAM / 未 mount、および buffered 専用 API が黙ること）＋ `vendor_direct_off`（既定ビルドは全部 `NotSupported`） | ✅ `usb_vendor_direct`（呼び出し側 buffer から流した block が byte 単位で順序どおり届く、arm は完了 callback 内） | 未実装 | P4 HS・読み 8 本で 42.6 MB/s（buffered 経路は 33.9）の実測 |
 | bulk IN 送信 FIFO | ✅ `bulk_in_fifo`（bulk IN が無ければビットも立たない、bulk IN 1 本は必ず 2 パケット、composite では宣言された bulk IN の部分集合かつ全部か無し、Single で強制無効、Double は適用か拒否） | 未実装 | 未実装 | P4 HS で 22.98 → 28.93 MB/s の実測 |
+| USB Video（UVC） | ✅ `video_descriptor`（MJPEG/YUY2 の descriptor 走査、複合時の採番、FIFO 予算、不正値の拒否） | 未実装 | ✅ `manual/windows_uvc`（Windows 11: usbvideo がバインド、181/181 フレームがバイト一致） | ✅ `examples/VideoCamera` |
 | USB Audio | ✅ UAC1/UAC2 descriptor | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`、UAC2 `usb_audio_uac2` | 未実装 | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
 | composite（複合デバイス） | ✅ `composite_constraints`（Audio複合 / MAX_CLASSES）、`hid_registration_order`（どの登録順でも HID クラスが見つかること） | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_vendor_hid` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | 予定（S3 天井内の構成） | |
 | Core依存境界 | ✅ `dependency_boundary` | | | |
@@ -417,7 +418,8 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 44. ✅ `unit/midi_descriptor`（対称・非対称すべての cable 数の組み合わせの descriptor byte、および 1 cable が `TUD_MIDI_DESCRIPTOR()` と一致すること。host g++）
 45. ✅ `loopback/usb_midi_cables`（4 cable MIDI、cable 番号が双方向で保たれること）
 46. ✅ `peer/usb_midi_cables`（非対称 4-in / 5-out MIDI＝方向を確定できる構成: 通信前後の Host 側 cable 数、全 cable の双方向、1 transfer 内の cable 混在、0 以外の cable での SysEx、受信専用 cable への送信が失敗すること。EspUsbHost の未リリース `getMidiPortInfo()` が必要なため `--profile s3_peer_local`）
-47. ✅ `single/hid_registration_order` + `peer/composite_vendor_hid`（発見 → 修正: 非HIDクラスの後に登録した単独HIDクラスを TinyUSB のインスタンス番号でテーブル位置として引いていたため、report descriptor を返さず、report を存在しないインスタンスへ送っていた。peer テストは Vendor をキーボードより先に登録し、ホストがキーを受け取ることまで要求する。列挙だけでは捕まらなかった）
+47. ✅ `single/video_descriptor` + `manual/windows_uvc`（UVC カメラ: ホスト無しで descriptor を走査し、そのうえで Windows 11 が usbvideo をバインドし 181/181 フレームがバイト一致。途中で判明: 1023 バイトの isochronous エンドポイントは S3 の送信 FIFO に入らず、しかも無言で失敗する。そのため `begin()` が FIFO 予算を検査するようにした）
+48. ✅ `single/hid_registration_order` + `peer/composite_vendor_hid`（発見 → 修正: 非HIDクラスの後に登録した単独HIDクラスを TinyUSB のインスタンス番号でテーブル位置として引いていたため、report descriptor を返さず、report を存在しないインスタンスへ送っていた。peer テストは Vendor をキーボードより先に登録し、ホストがキーを受け取ることまで要求する。列挙だけでは捕まらなかった）
 
 ## 合格条件
 
