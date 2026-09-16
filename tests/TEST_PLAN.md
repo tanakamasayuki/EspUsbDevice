@@ -61,8 +61,8 @@ tests/
 | Device descriptor config | ✅ `descriptor` | | | |
 | Runtime lifecycle | ✅ `descriptor` (100 begin/end + partial failure recovery) | | | |
 | FS/HS endpoint MPS | ✅ `descriptor` | planned | planned | |
-| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal port; **reverse port aborts with EspUsbHost 2.9.0** (`abort()` in the `usb.end()` → `usb.begin(HS)` span; deterministic; passes with 2.8.0 and the same device library, linkage confirmed with `strings` on both ELFs. Root cause confirmed by the EspUsbHost session 2026-09-16 with a matching ELF: IDF `hub.c:493 root_port_recycle()` hits its `default: abort()` because 2.9.0's `end()` powers the root port off before closing the device, so the port is neither ENABLED nor RECOVERY when recycled; fix in progress on their side) | |
-| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` (callback + `ledState()`, tracked with no callback installed) | ✅ `hid_keyboard` normal port; reverse port: see the row above | optional |
+| HID keyboard raw report | ✅ `descriptor` | ✅ `hid_keyboard` | ✅ `hid_keyboard` normal and reverse ports (the reverse port aborted on EspUsbHost 2.9.0 - IDF `hub.c:493 root_port_recycle()` reaching its `default: abort()`, because that release's `end()` powered the root port off before closing the device; fixed in 2.9.1, which is what the profiles pin) | |
+| HID keyboard LED output report | ✅ callback mapping | ✅ `hid_keyboard` (callback + `ledState()`, tracked with no callback installed) | ✅ `hid_keyboard` normal and reverse ports | optional |
 | HID keyboard NKRO | ✅ `nkro_report` (struct bitmap/modifier/boundaries) | ✅ `hid_keyboard_nkro` (exact 8-key chord, JIS high usages, whole state in one report, `heldState()`, refusal without `enableNkro()`) | pending | ✅ `examples/KeyboardNKRO` |
 | HID mouse raw report | ✅ descriptor | ✅ `hid_mouse` | builds `hid_mouse` | |
 | Keyboard + mouse composite | ✅ descriptor | ✅ `hid_keyboard_mouse` | builds `hid_keyboard_mouse` | |
