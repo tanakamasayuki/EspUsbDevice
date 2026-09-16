@@ -72,6 +72,7 @@ Measured, all `STATUS OK` with a driver bound:
 | `pid` 0x4080 -> 0x4083 | **new** | everything read fresh, revision pinned to an unused value |
 | `serialNumber` changed | **new** | everything read fresh |
 | no `serialNumber` at all | `…\8&2EBC545B&0&4` | keyed on the port, not a serial |
+| single interface (GUID A) -> composite (GUID B), fresh PID | parent kept, children new | **parent keeps A at device scope while the child carries B** - one device, two GUIDs, the stale one on a node that cannot serve WinUSB |
 | swap the functions at `MI_00` / `MI_01`, count unchanged | **both children unchanged** | both re-bound: `HidUsb`->`WINUSB` and `WINUSB`->`USBSTOR`. The GUID was **added** to the child that gained the vendor function, and **left behind** on the one that lost it |
 
 Two conclusions the user guide leans on: **driver binding follows the

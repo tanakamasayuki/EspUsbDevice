@@ -453,6 +453,15 @@ sudo wireshark   # usbmonX を選ぶ
 
 **registry propertyは追随しません。** `MI_01` には vendor インターフェースだった頃の `DeviceInterfaceGUIDs` が残りました。いまはマスストレージで、デバイスはその番号向けのGUIDを一切送っていないのにです。**Windowsは「無いところには書き、revisionが動けば更新するが、消しはしない」**ということです。そのGUIDを列挙するhostアプリは、応答できないマスストレージのインターフェースを見つけることになります。一度出荷したら**インターフェース番号と機能の対応は変えない**でください。変えるならPIDも一緒に変えます。
 
+**単一インターフェースをcompositeに育てるときも、同じ問題が1階層上で起きます。** 非compositeのデバイスはGUIDが自分のノードに登録され、compositeでは子に登録されます。未使用PIDで実測しました。単一vendorインターフェース（GUID A）→ 同じPID・同じserialのまま vendor + HID composite（GUID B）とすると、親にAが残ったまま子にBが載ります。
+
+```
+USB\VID_303A&PID_4084\GUID-TEST-1        usbccgp   {A1A1…}   ← 残骸、device scope
+USB\VID_303A&PID_4084&MI_01\9&…&0001     WINUSB    {B2B2…}   ← 有効、function scope
+```
+
+1台のデバイスが2つのGUIDに応答し、しかも古い方はWinUSBの要求に一切応えられないノードを指します。**すでに出荷したものに2つ目のfunctionを足すときは、PIDを変えてください。** vendor単独の製品にDFUを足すのが、まさにこの移行にあたります。
+
 開発中の指針としては、
 
 - ディスクリプタ・構成・ドライバの想定を変えた: **焼き直すだけでよい。** それで反映されます
