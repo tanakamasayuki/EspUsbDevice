@@ -144,10 +144,33 @@ Host側では「この機器はどう見えるか」は相手が決めること�
 
 1. **ホスト側にドライバを入れさせたくないなら、標準クラスにする。** HID、CDC、MIDI、MSCはどのOSでもそのまま動きます。
 2. **独自データを流したいが、ドライバも入れたくないなら、HIDのベンダー独自レポートにする。** これは実際によく使われる手で、市販の機器も多くがこの形です。速度は出ませんが、権限もドライバもなしで双方向に通信できます。
-3. **帯域が必要なら Vendor Specific（bulk）。** ただしWindowsでは、WinUSBにバインドさせるためにMicrosoft OS 2.0ディスクリプタが必要になります。このライブラリはWebUSBを有効にすると自動で返します。
+3. **帯域が必要なら Vendor Specific（bulk）。** ただしWindowsでは、WinUSBにバインドさせるためにMicrosoft OS 2.0ディスクリプタが必要になります。このライブラリはvendorインターフェースがあれば、WebUSBの有無に関係なく自動で返します。
 4. **既存のアプリに食わせたいなら、そのアプリが期待するクラスにする。** DAWならMIDI、ターミナルソフトならCDC。
 
 複数を組み合わせた複合デバイスも作れますが、エンドポイント予算とホストOSの都合が絡むので、まず単機能で動かしてから広げてください（[Step 7](#step-7-複合デバイスへ広げる)）。
+
+### 1.8 VID・PID とその周りの identity
+
+device descriptor にある 16 bit の数値 2 つで、ホストは相手が何者かを知ります。**vendor ID**（誰が作ったか）と **product ID**（その会社のどの製品か）です。これに **serial number 文字列**を合わせた 3 つが、ホストが「見たことのあるあのデバイス」と「別のデバイス」を区別する鍵になります。この節はこの 3 つと、`EspUsbDeviceConfig` でその隣にいる項目の話です。ほかのディスクリプタ項目と違い、**ホストがこれらを記憶する**からです。
+
+**何も設定しないと何が出るか。** ライブラリの既定は `vid = 0x303A`、`pid = 0x4000` です。`0x303A` は Espressif の vendor ID、`0x4000` は ESP-IDF の TinyUSB コンポーネントが既定で配る PID（`0x4000`〜`0x4007`）の先頭です。Espressif 自身の設定ヘルプは、自社 VID の利用を「製品の開発段階で役に立つ」と説明しています。既定値はまさにそのためのものです。ベンチ、このリポジトリの例とテスト用です。そして**あなたのものではありません**。他人に渡すデバイスにこの値を載せてはいけません。同じ VID:PID の別製品は Windows には同一デバイスで、片方のドライバとキャッシュ済みの設定がもう片方に当たります。
+
+**本物の番号はどこから来るか。** vendor ID は USB Implementers Forum が割り当てます。VID 単体で US$6,000、年会費 US$5,000 の会員なら込み、USB ロゴのライセンスは別料金です。現行の規約では VID の譲渡・共有はできず、その下の PID は VID の持ち主が割り当てます。小さなプロジェクトにはこの金額は現実的でなく、代わりに番号を使わせてくれる場所が 3 種類あります。
+
+- **チップベンダーのレジストリ。** Espressif は自社の USB 対応チップを載せたデバイス向けに [espressif/usb-pids](https://github.com/espressif/usb-pids) を運営しています。`allocated-pids.txt` にデバイスの説明を書いた pull request を出すと、`0x303A` 配下の PID がもらえます。無償ですが、Espressif は「いかなる理由でも pull request を拒否する権利を留保する」とし、承認は「マーケティング資料に使うべきではない」とし、この仕組み全体を「別々の製品が同じ番号を選ばないための協力的な方法」と説明しています。他のシリコンベンダーも自社チップ向けに同様の仕組みを持っています。
+- **オープンソース向けレジストリ。** [pid.codes](https://pid.codes/howto/) は、ハードウェアかファームウェアを認知されたオープンソースライセンスで公開しているプロジェクトに VID `0x1209` 配下の PID を割り当てます。[Openmoko のレジストリ](https://github.com/openmoko/openmoko-usb-oui)は `0x1D50` で同じことをしています。pid.codes は VID の出どころを隠していません。「USB-IF から VID を発行され、その後廃業した会社から譲られた」もので、「USB-IF が譲渡・再割り当てを禁じる規約に変える前に」取得されたものだと書いています。どちらも有志が pull request で手作業運営しており、隣のプロジェクトの実測では申請から merge まで約 3 か月でした。
+- **試験用の番号。** pid.codes は `0x1209:0x0001`〜`0x0010` を開発用に確保しています。誰でもベンチで使えますが、製品に載せて出すことはできません。
+
+どれも USB-IF の割り当てではありません。VID を持つ誰かが、先に来た人と被らないよう、その下の番号を 1 つ使わせてくれているだけです。それが何であるかは知っておく価値がありますし、USB-IF 認証を求めない製品にはそれで十分です。
+
+**製品に必要な PID の数は 1 つです。** PID は「ホストにどう見せたい製品か」を識別する番号で、ファームウェアの構成を識別する番号ではありません。Windows のデバイスインスタンスは VID・PID・serial でキーされ、ドライバのバインドは列挙のたびにディスクリプタに従います。だから同じ PID のまま、今日は vendor インターフェースだけ、次のファームウェアでシリアルポートを追加、その次で function を別のインターフェース番号に移動、さらに戻す——Windows はその全ステップに追従します。一度に 1 つずつ変えて実測した結果が [5.2](#52-windows) にあります。番号をもう 1 つ使う理由は 2 つだけで、しかもレジストリは審査のうえプロジェクトに 1 つ渡すのが基本なので、PID は使い減りする資源です。
+
+- 人にとって、あるいはホストアプリのデバイス一覧にとって、**別の製品**に見えるべきとき。別モデル、アプリケーションと絶対に混同されてはならないブートローダーモードなど（ESP32 自身の ROM ブートローダーが別 PID なのはそのためです）。
+- ホストに「初めて会ったデバイス」として扱わせ、キャッシュ済みの設定をすべて白紙にしたいとき。serial を変えれば個体単位で同じことができます。
+
+**serial number が 3 つめの鍵です。** `serialNumber` を出せば、1 台の物理デバイスはどのポートに挿しても 1 つのインスタンスです。文字列は個体ごとに一意で、ファームウェア更新を越えて変わらないものにしてください。出さないと Windows はインスタンスをポートの経路でキーするので、同じ基板でも別の差し口では別デバイスになり、設定も別になります（実測。5.2 参照）。複数台を同時に挿す可能性があるなら、ホストが個体を見分ける手段も serial です。
+
+`EspUsbDeviceConfig` でホストから見える残りの項目——`deviceVersion`、`product` と `manufacturer` 文字列、device interface GUID とその revision、電源属性——は [5.2](#52-windows) で項目ごとに、変えたとき Windows がどう動くか、自分でどう測るかを書いています。
 
 ---
 
@@ -433,41 +456,86 @@ sudo wireshark   # usbmonX を選ぶ
 
 #### Windowsが読み直すもの、保持したままのもの
 
-「Windowsはディスクリプタをキャッシュする」という言い方が広まっていますが、大雑把すぎて対策に使えません。Windows 11の同一デバイスインスタンスに対し、一度に1つだけ変えて実測しました（[`tests/manual/windows_device_guid`](../tests/manual/windows_device_guid/)）。
+「Windowsはディスクリプタをキャッシュする」という言い方が広まっていますが、大雑把すぎて対策に使えません。以下はすべて 1 台の PC——Windows 11 25H2、build 26200.9457、2026-09-16——で、同一デバイスインスタンスに対し一度に 1 つだけ変えて実測したものです（[`tests/manual/windows_device_guid`](../tests/manual/windows_device_guid/) と [`tests/manual/windows_identity`](../tests/manual/windows_identity/)）。Windows の挙動は build で変わります。この節の最後に、対象とする build で同じ計測をやり直す手順を書いています。
 
 | 変えたもの | Windowsは追随するか |
 |---|---|
-| インターフェース、エンドポイント、パケットサイズ | **する。毎回** |
+| インターフェース、エンドポイント、パケットサイズ、function の有無と並び | **する。毎回** |
 | どのドライバが当たるべきか | **する。毎回** |
-| `deviceInterfaceGuid`（vendor revisionも動く場合） | **する** |
-| `deviceInterfaceGuid`（vendor revisionを固定した場合） | **しない**。古いGUIDのまま |
-| `pid` / `serialNumber` | **する**。Windowsにとって別デバイスなので |
+| `deviceInterfaceGuid`（vendor revision も動く場合＝既定） | **する** |
+| `deviceInterfaceGuid`（vendor revision を固定した場合） | **しない**。古いGUIDのまま |
+| `deviceVersion`、`product` | **する**。hardware ID と bus-reported description は更新、デバイスマネージャーの表示名は据え置き |
+| `vid`、`pid`、`serialNumber` | **する**。Windowsにとって別デバイスなので、すべて白紙から |
 
-**標準ディスクリプタは列挙のたびに読まれます。** vendorインターフェース1本だったものがcompositeになれば子デバイスに分割され、戻せば単一ノードに戻ります。実測では、親に `usbccgp` が当たっていたインスタンスを単一インターフェースに戻したところ、**同じインスタンスのまま `WINUSB` に再バインド**されました。vendor revisionは意図的に据え置いたままです。**ドライバの選択はディスクリプタに追随するので、こちらから何かする必要はありません。**
+**標準ディスクリプタは列挙のたびに読まれます。** vendorインターフェース1本だったものがcompositeになれば子デバイスに分割され、戻せば単一ノードに戻ります。1 つの PID・serial に対し、vendor クラスを先に登録したまま、前のステップに続けて実測:
 
-**例外がMicrosoft OS 2.0のregistry propertyです。** Windowsは `DeviceInterfaceGUIDs` をデバイスインスタンスごとに一度読んで保持し、descriptor set内の `wVendorRevision` が変わったときだけ読み直します。実測では、revisionを固定したまま別のGUIDを送っても古いGUIDがレジストリに残りました。親インスタンスでも `&MI_01` の子でも同じです。このライブラリは既定でrevisionをdescriptor setから導出するので、setが変われば自動的に読み直されます。詳細は[応用ガイド 3.7](usb-device-advanced.ja.md#37-bosとmicrosoft-os-20)。
+| ステップ（PID・serial 同一） | 親 | `MI_00` | `MI_01` | GUID で列挙 |
+|---|---|---|---|---|
+| vendor 単独 | `WINUSB` | - | - | device ノード |
+| + HID | `usbccgp` | `HidUsb` 到着から 38 ms で開始、`kbdhid` 子 | `WINUSB` 50 ms、interface 有効 | `&mi_01` |
+| vendor + MSC に入れ替え | `usbccgp` | `WINUSB` 34 ms | `USBSTOR` 32 ms | `&mi_00` |
+| vendor 単独に戻す | `WINUSB` | - | - | device ノード |
 
-**identityを変えれば白紙からです。** Windowsはインスタンスを VID・PID・serial で識別します（`USB\VID_303A&PID_4080\GUID-TEST-1`）。PIDかserialを変えれば新しいインスタンスになり、すべてを読み直します。実測では、古いインスタンスが一度も見ていない値にvendor revisionを固定していても、そうなりました。古いインスタンスはレジストリに残りますが使われません。
+追加・移動・削除のすべてが次の接続で反映されました。vendor revision は自動導出のまま、ほかは何も触っていません。**ドライバの選択はディスクリプタに追随するので、こちらから何かする必要はありません。**
+
+**例外がMicrosoft OS 2.0のregistry propertyです。** Windowsは `DeviceInterfaceGUIDs` をデバイスインスタンスごとに一度読んで保持し、descriptor set内の `wVendorRevision` が変わったときだけ読み直します。実測では、revisionを固定したまま別のGUIDを送っても古いGUIDがレジストリに残りました。親インスタンスでも `&MI_01` の子でも同じです。このライブラリは既定でrevisionをdescriptor setから導出するので、setが変われば自動的に読み直されます。詳細は[応用ガイド 3.7](usb-device-advanced.ja.md#37-bosとmicrosoft-os-20)。ここに落ちる唯一の方法が、`msOs20VendorRevision` を手で固定することです。
+
+**identityを変えれば白紙からです。** Windowsはインスタンスを VID・PID・serial で識別します（`USB\VID_303A&PID_4080\GUID-TEST-1`）。3 つのどれかを変えれば新しいインスタンスになり、すべてを読み直します。PID・VID・serial のそれぞれで実測し、古いインスタンスが一度も見ていない値に vendor revision を固定していてもそうなりました。古いインスタンスはレジストリに残りますが使われません。
 
 **`serialNumber` を出さないと、インスタンスはポートで識別されます。** 実測したインスタンスIDは `USB\VID_303A&PID_4080\8&2EBC545B&0&4` で、serialではなくパスです。同じ基板でも挿し口が変わればWindowsには別デバイスになり、キャッシュも別々になります。それを望まないならserialを出してください。
 
-**インターフェース番号だけは注意が必要です。** 本数を変えずに「どの番号にどの機能が載るか」を入れ替えると、子インスタンスは両方そのまま残り、中身だけが変わります。実測では `MI_00` が HID → vendor、`MI_01` が vendor → マスストレージになり、revisionは据え置いたまま、Windowsは両方の子を正しく再バインドしました（`HidUsb` → `WINUSB`、`WINUSB` → `USBSTOR`）。ドライバは追随します。
+**子インスタンスはインターフェース番号にぶら下がります。** composite では function ごとに、インターフェース番号で名付けられた子（`USB\VID_303A&PID_4090&MI_01\...`）ができ、設定を保持するのはその子です。本数を変えずに「どの番号にどの機能が載るか」を入れ替えると、子は両方そのまま残り、中身だけが変わって、Windows はそれぞれを再バインドします（`HidUsb` → `WINUSB`、`WINUSB` → `USBSTOR`、実測）。ここから 2 つのことが従います。
 
-**registry propertyは追随しません。**ただし、見た目ほど困りません。`MI_01` には vendor インターフェースだった頃の `DeviceInterfaceGUIDs` が残りました。いまはマスストレージで、デバイスはその番号向けのGUIDを送っていないのにです。1階層上でも同じことが起きます。単一vendorインターフェースとして出荷したデバイスはGUIDが自分のノードに登録され、あとでcompositeになると、その値は親に残ったまま、有効な方は子に載ります。**Windowsは「無いところには書き、revisionが動けば更新するが、消しはしない」**ということです。
+- アプリが GUID 列挙で受け取る device interface のパスは function とともに動きます（`...#guid-test-1#`、`...&mi_01#...`、`...&mi_00#...`）。毎回 GUID で列挙し、パスを保存しないでください。
+- **COM ポートはインターフェース番号に付きます。** CDC function 1 つを、1 つの PID・serial で実測:
 
-**ただし、値の残骸は「幽霊デバイス」ではありません。** アプリケーションと同じ方法——`SetupDiGetClassDevs` に `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE` ——で列挙すると、残骸のGUIDは**何も返さず**、有効な方だけがインターフェース1本を返しました。両方向で実測しています——親に残骸・子に有効なGUIDが載った状態と、**同じGUIDが2つの子に載った状態**（片方はマスストレージになった残骸、もう片方が生きているvendorインターフェース）です。返ってきたのはvendorインターフェースだけでした。レジストリの値だけではdevice interfaceは作られず、作るのはそのノードにバインドされたドライバです。`usbccgp` の親も `USBSTOR` の子も、WinUSBのインターフェースは作りません。**残骸がアプリの邪魔をすることはありません。**
+  | ステップ | CDC の子 | COM |
+  |---|---|---|
+  | CDC 単独 | `MI_00` | COM16 |
+  | CDC + vendor、CDC を先に登録 | `MI_00`、同じインスタンス | **COM16 のまま** |
+  | vendor + CDC、vendor を先に登録 | `MI_01`、**新しいインスタンス** | **COM34** |
+  | HID + CDC | `MI_01`、上の行と同じインスタンス | COM34 のまま |
+  | CDC 単独に戻す | `MI_00` | COM16 に戻る |
 
-**効くのは生きている方です。** `deviceInterfaceGuid` を変えてrevisionが動かないと、列挙される側のインターフェースが古いGUIDに応答し続け、新しいGUIDを探すよう更新したアプリは何も見つけられません。このライブラリがrevisionを自動導出しているのは、この失敗を防ぐためです。`msOs20VendorRevision` を手で固定したときだけ、ここに落ちます。
+  シリアルポートの*後ろ*に function を足しても COM 番号は動きません。シリアルポートを別のインターフェース番号へ動かすと新しい番号になり、戻せば元の番号に戻ります。利用者のターミナルソフトに COM16 が保存されているなら、更新後もそれが使えるかどうかを決めるのは、あなたのクラスの登録順です。
 
-**最初からトポロジを固定しておきたい**——あとでfunctionを足してもGUIDの登録先が動かないようにしたい——なら `config.msOs20CcgpDevice` を立ててください。インターフェース本数によらずWindowsにcompositeとして扱わせるので、functionは最初から子ノードを持ちます。単一vendorインターフェースでの実測では、親が `usbccgp`、子 `&MI_00` が `WINUSB` にバインドされ、GUIDは**子だけ**に登録されて**親には付きませんでした**。
+**レジストリに残った値は、残ったデバイスではありません。** Windows は `DeviceInterfaceGUIDs`（と COM ポートの `PortName`）を、インスタンスに無ければ書き、revision が動けば更新し、決して消しません。だから上の入れ替えの後、親には単一インターフェースだった頃の GUID が、マスストレージの子には vendor インターフェースだった頃の GUID が残り、元 `MI_00` は WinUSB インターフェースになっている間も `PortName COM16` を抱えていました。どれにも到達できません。アプリと同じ方法（`SetupDiGetClassDevs` に `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE`）で列挙すると、測ったすべての構成で、返ってきたのは生きている interface ちょうど 1 つでした。レジストリの値は device interface を作りません。作るのはそのノードにバインドされたドライバです。
 
-開発中の指針としては、
+**`msOs20CcgpDevice`** は、単一インターフェースのデバイスを composite として扱うよう Windows に頼みます。実測: 親が `usbccgp`、子 `&MI_00` が `WINUSB` にバインドされ、GUID は子に登録されて親には付きません。当初の動機——後で function を足したとき親に GUID を残さない——は上で答えが出ています。残骸は不活性です。ホストアプリの見え方が変わるケースは見つからず、それが既定オフの理由です。
 
-- ディスクリプタ・構成・ドライバの想定を変えた: **焼き直すだけでよい。** それで反映されます
-- device interface GUIDを変えた: **revisionは自動導出に任せる**（既定です）。ここで詰まるのは `msOs20VendorRevision` を手で固定したときだけです
-- それでも古いまま、あるいはドライバエラーで固まっている: PIDか `config.serialNumber` を変えれば新しいインスタンスになります。このライブラリのInfoスケッチが別々のPIDを使っているのもこのためです
+#### identity の全項目、実測
 
-ここで**測っていないこと**が2つあります。デバイスマネージャーに出る表示名は別のキャッシュを持っているようだ、という点と、**一度インストールに失敗した**インスタンスは失敗したまま残りうる、という点です。後者について[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols)は、`CM_PROB_FAILED_INSTALL` が付いたインスタンスはhardware IDが変わっても再評価されなかったと報告しています。その状態に陥ったデバイスから抜け出すには、PIDかserialを変えるのが確実です。
+同じ PC、同じ VID・PID・serial のまま、1 回の焼き込みで 1 項目だけ変え、`windows_identity.py` で読み戻したものです。
+
+| 項目 | 既定 | 変えると何が起きたか |
+|---|---|---|
+| `vid`、`pid` | `0x303A`、`0x4000` | 新しいインスタンス。ドライバは新規インストール、GUID も新規記録 |
+| `serialNumber` | なし | 同じく新しいインスタンス。まったく出さない場合、インスタンスはポートの経路 |
+| `deviceVersion`（bcdDevice） | `0x0100` | 次の接続で hardware ID が `USB\VID_303A&PID_4090&REV_0200` に。インスタンスもドライバも同じ、再構成イベントなし |
+| `product` | `"EspUsbDevice"` | 次の接続で bus-reported description（`DEVPKEY_Device_BusReportedDeviceDesc`）は新しい文字列。デバイスマネージャーの表示名は古いまま。表示名はドライバのインストール時に決まり、Windows がデバイスを再構成したときだけ更新される（ドライバが変わったときは変わった） |
+| `manufacturer` | `"EspUsbDevice"` | 見えるものなし。Windows の製造元列はドライバの INF 由来（`WinUsb Device`、`Microsoft`…）で、この文字列はどの PnP プロパティにも現れず、生のディスクリプタでしか見えない |
+| `deviceInterfaceGuid` | ライブラリ既定 | 自動導出の revision なら次の接続で反映、固定なら据え置き |
+| `msOs20VendorRevision` | 0＝自動導出 | GUID の変更を「効かなく」できる唯一のつまみ |
+| `msOs20Layout` | Auto | **単一インターフェースに `Subsets` を強制: compatible ID `MS_COMP_WINUSB` が消え、ドライバなし、`CM_PROB_FAILED_INSTALL`（Code 28）。** Windows は function subset を composite にしか適用しない。Auto が正しい方を選ぶ。有効な set に戻すと次の接続で回復した |
+| `msOs20CcgpDevice` | オフ | 親 `usbccgp`、子 `MI_00` が `WINUSB`、GUID は子だけ |
+| `webusbEnabled`、`webusbUrl` | オフ | Windows 側には何も起きない。読むのはブラウザで、PnP ではない |
+| `maxPowerMilliamps`、`selfPowered` | 100、false | どの PnP プロパティにも現れない。configuration descriptor でしか見えない |
+| function 名（CDC コンストラクタの `name`） | なし | composite の子の bus-reported description がその名前（`Console`）。無ければ `product` にフォールバック。COM ポートのデバイスマネージャー表示名はどちらでも usbser.inf の `USB シリアル デバイス (COMn)` |
+
+#### 自分で計測する方法
+
+Windows の挙動は build で変わり、上の表は 1 つの build の 1 日の記録です。製品でどの行かに依存する前に、対象の Windows で同じ計測を繰り返し、build を書き留めてください（`winver`、または `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` の `DisplayVersion` + `CurrentBuild`.`UBR`）。この表を作った手順:
+
+1. **1 回の焼き込みで 1 つだけ変え**、焼いた時刻を控える。ログを汚したくないなら PC が見たことのない PID を、「すでにこのデバイスに会った PC で何が起きるか」が問いなら*同じ* PID を使う。出荷済み製品にとって重要なのは後者です。
+2. **デバイスを WSL に attach しない。** usbipd 経由で attach したデバイスは Windows には USBIP デバイスで、何もバインドされません。先に detach する。
+3. **Windows を先に読み、ボードは後。** UART アダプタによってはポートを開くとボードがリセットされ、リセットは再接続です。新しい列挙が始まり、読もうとしていた状態が消えます。
+4. **`STATUS OK` を信じない。** `Get-PnpDevice` は、開始がまだ保留中の子にも、開始がすでに失敗した子にも OK を返しました。代わりにイベントビューアーの `Microsoft-Windows-Kernel-PnP/Configuration` を読む。400＝構成済み、410＝開始、411＝開始失敗、430＝追加インストール要。ドライバが再選択されたか（`Device Updated`）も分かります。
+5. **ドライバだけでなく device interface を確認する。** `pnputil /enum-interfaces /class {GUID}` が登録済みの全 interface とその状態を出し、最終的に意味を持つ唯一のテストはアプリと同じ列挙（`SetupDiGetClassDevs` に `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE`）です。
+6. **Windows が保持した値を読む。** インスタンスの `Device Parameters`（`DeviceInterfaceGUIDs`、`PortName`）を、デバイスが送ったもの（`DEVPKEY_Device_BusReportedDeviceDesc`、hardware ID、生バイトは USB Device Tree Viewer）と比べる。
+
+[`tests/manual/windows_identity/windows_identity.py`](../tests/manual/windows_identity/) は、VID/PID に一致する全ノードについて手順 4〜6 を WSL のシェルから 1 コマンドで行い、そのスケッチは上の全項目を `build_opt.h` のスイッチにして 1 つずつ変えられるようにしています。この節の裏にある生データは同ディレクトリの README にあります。
+
+以前この節が曖昧にしていた 2 点について。デバイスマネージャーの表示名は確かに独自の寿命を持ちます。上で測ったとおり、ドライバのインストール時に決まり、Windows がデバイスを再構成するまでディスクリプタの変更を生き延びます。また `CM_PROB_FAILED_INSTALL` のインスタンスは、ここではディスクリプタが有効に戻った次の接続で回復しました——ただし [wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) は hardware ID 変更後に回復しなかった例を報告しており、その事例はここでは再現していません。出会ったら、まずイベントログを見てください。
 
 ### 5.3 macOS
 
@@ -545,6 +613,8 @@ PC側で実行するPyUSBスクリプトです。実行方法は [tests/manual/R
 | [`enumeration_soak`](../tests/manual/enumeration_soak/) | 再列挙とコンフィグレーション切り替えを繰り返し、ディスクリプタが変化しないか確認する |
 | [`p4_hs_bulk`](../tests/manual/p4_hs_bulk/) | ESP32-P4のHigh Speed動作と、bulkの実効スループット測定 |
 | [`usb_ncm`](../tests/manual/usb_ncm/) | CDC-NCMネットワークデバイスがホストOSにバインドされるか |
+| [`windows_device_guid`](../tests/manual/windows_device_guid/) | device interface GUID を Windows が何と記録したか、すでにこのデバイスに会った PC で変更が効いたか |
+| [`windows_identity`](../tests/manual/windows_identity/) | identity の全項目をスイッチにしたスケッチと、ドライバ・表示名・hardware ID・COM・GUID・interface 状態・PnP イベントログを 1 コマンドで読み戻すツール |
 
 自動テストは [`tests/peer`](../tests/peer/)（ESP32 2台構成）と [`tests/unit`](../tests/unit/)（ホスト上のディスクリプタ検証）にあります。構造は [tests/TEST_PLAN.ja.md](../tests/TEST_PLAN.ja.md) を参照してください。
 

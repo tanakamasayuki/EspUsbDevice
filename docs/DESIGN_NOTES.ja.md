@@ -344,8 +344,13 @@ endpoint 上限の検証と同じ方針で、IAD を出すのは CDC / NCM / Aud
 どれであっても自動的に拾える。
 
 副作用として、既に IAD を出していたデバイス（CDC・NCM・Audio を含むもの）は device descriptor が
-変わる。ホストがその VID/PID でドライバのバインドをキャッシュしていると古い結果が残ることがあり、
-開発中は PID を変えるのが簡単な回避策になる。
+変わる。当時は「ホストが VID/PID でドライバのバインドをキャッシュしていると古い結果が残ることがあり、
+開発中は PID を変えるのが簡単な回避策」と書いていたが、2026-09-16 に Windows 11 で実測した結果は
+逆だった。**ドライバのバインドは列挙のたびにディスクリプタに従い**、同じ VID/PID/serial のまま
+function を追加・入れ替え・削除しても毎回追従する（`docs/usb-device-guide.ja.md` 5.2、
+`tests/manual/windows_identity`）。キャッシュされるのは Microsoft OS 2.0 の registry property だけで、
+それも vendor revision（既定で自動導出）が動けば読み直される。PID を変える必要はなく、変えられない
+製品でも構成は自由に変えられる。
 
 ### 複合時の vendor RX callback が発火しない（原因確定・修正済・実機確認・2026-07）
 
