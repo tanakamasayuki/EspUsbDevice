@@ -75,11 +75,15 @@ Measured, all `STATUS OK` with a driver bound:
 | single interface (GUID A) -> composite (GUID B), fresh PID | parent kept, children new | parent keeps A at device scope while the child carries B |
 | swap the functions at `MI_00` / `MI_01`, count unchanged | **both children unchanged** | both re-bound: `HidUsb`->`WINUSB` and `WINUSB`->`USBSTOR`. The GUID was **added** to the child that gained the vendor function, and **left behind** on the one that lost it |
 | `msOs20CcgpDevice` on a single vendor interface | parent + one child | parent binds `usbccgp`, child `&MI_00` binds `WINUSB`, and the GUID lands **only on the child** - the device-scope value is never written |
-| enumerate both GUIDs with `SetupDiGetClassDevs(DIGCF_PRESENT \| DIGCF_DEVICEINTERFACE)` | - | **the stale GUID returns nothing; the live one returns exactly one interface.** A leftover registry value does not create a device interface - the driver bound to that node does |
+| enumerate with `SetupDiGetClassDevs(DIGCF_PRESENT \| DIGCF_DEVICEINTERFACE)`, stale value on the **parent** | - | **the stale GUID returns nothing; the live one returns exactly one interface** |
+| same, stale value on a **child** (`MI_01` now `USBSTOR`, same GUID as the live `MI_00`) | - | **one interface, `MI_00` only** - the leftover on the mass-storage child is not enumerated either |
 
-That last row is the one that decides how much the leftovers matter, and it was
-measured only after the earlier rows had been written up as if a stale value
-were an enumerable device. It is not.
+Those last two rows decide how much the leftovers matter, and both were measured
+only after the earlier rows had been written up as if a stale value were an
+enumerable device. It is not: a registry value does not create a device
+interface, the driver bound to that node does. The parent case was measured
+first, and the child case only after the requester pointed out that the same
+unverified inference was still standing for it.
 
 Two conclusions the user guide leans on: **driver binding follows the
 descriptors on every enumeration and needs no revision**, and **only the
