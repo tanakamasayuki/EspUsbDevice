@@ -187,7 +187,13 @@ static void testControlRequestObserverInstalls()
 void setup()
 {
   Serial.begin(115200);
-  delay(1000);
+  // Long enough that the harness has the port open before the banner goes out.
+  // This whole test is printed in one burst from setup() and never repeated, so
+  // a port opened late loses the beginning: one run in five here captured only
+  // "...pass=29 fail=0 / OK" and failed waiting for TEST_BEGIN, with the device
+  // itself having passed all 29 checks. The other device-only tests wait 2 to 5
+  // seconds for the same reason.
+  delay(5000);
   Serial.println("TEST_BEGIN p4_hs_packet_sizes");
   testHidVendorReachesHighSpeedPacketSize();
   testSmallReportsKeepTheirPacketSize();
