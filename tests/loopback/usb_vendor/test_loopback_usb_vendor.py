@@ -12,8 +12,8 @@ def test_loopback_usb_vendor(dut):
     dut.expect_exact("CONTROL_OBSERVER setup=1 ack=1 descriptors=1 config_len=32")
     dut.expect_exact("VENDOR_CONTROL_OUT 1")
     dut.expect("WEBUSB_URL ok=1 len=[1-9][0-9]* found=1")
-    dut.expect_exact("MS_OS_20 ok=1 len=162 flat=1 winusb=1 property=1")
-    dut.expect_exact("CONTROL_OBSERVER_MS_OS_20 seen=1 len=162")
+    dut.expect_exact("MS_OS_20 ok=1 len=168 flat=1 winusb=1 property=1 revision=1")
+    dut.expect_exact("CONTROL_OBSERVER_MS_OS_20 seen=1 len=168")
     dut.expect("DEVICE_STATUS rx=4 control=[1-9][0-9]*")
     dut.expect_exact("TEST_END ok")
     assert dut.expect_exact(["OK", "NG"]) == b"OK"

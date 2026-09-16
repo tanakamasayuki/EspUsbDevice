@@ -54,9 +54,20 @@ def _complete_blocks(window):
 def test_usb_vendor_direct(dut, peers):
     device = peers["device"]
 
-    # The device only starts streaming once the host has enumerated it, so this
-    # line is also the proof that enumeration happened.
-    device.expect("DEVICE_DIRECT_START ok=1 direct=1", timeout=30)
+    # The device starts streaming once the host has enumerated it and announces
+    # that once, at mount - which can happen before this log is open, since the
+    # host may already be running when the device boots. So ask instead, and
+    # keep asking: mounted=1 is the proof that enumeration happened, direct=1
+    # that the library (not just the sketch) was built non-buffered, started=1
+    # that the first block was armed.
+    for attempt in range(20):
+        device.write("?")
+        m = device.expect(r"DEVICE_DIRECT_STATE mounted=(\d) direct=(\d) started=(\d)", timeout=5)
+        if m.group(1) == b"1" and m.group(3) == b"1":
+            break
+    assert m.group(1) == b"1", "the device never mounted"
+    assert m.group(2) == b"1", "the library was built buffered (stale build: needs --clean)"
+    assert m.group(3) == b"1", "the device mounted but never armed its first block"
 
     dut.write("o")
     dut.expect_exact("VENDOR_OPEN 1")
