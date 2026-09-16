@@ -23,6 +23,9 @@ class/net/ncm_device.c
 class/net/net_device.h
 class/vendor/vendor_device.c
 class/vendor/vendor_device.h
+class/video/video.h
+class/video/video_device.c
+class/video/video_device.h
 common/tusb_common.h
 common/tusb_compiler.h
 common/tusb_debug.h
