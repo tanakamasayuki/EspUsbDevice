@@ -60,8 +60,10 @@ every variant `STATUS OK problem=CM_PROB_NONE` and `SERVICE WINUSB`:
 
 The same sketch covers the identity and layout axes, which is what the user
 guide's "what Windows re-reads" table is built from. `-DVAR_PID=`,
-`-DVAR_SERIAL=`, `-DVAR_NO_SERIAL=1` and `-DVAR_COMPOSITE=1` select them.
-Measured, all `STATUS OK` with a driver bound:
+`-DVAR_SERIAL=`, `-DVAR_NO_SERIAL=1` and `-DVAR_COMPOSITE=1` (HID + vendor),
+`=2` (vendor + MSC), `=3` (MSC registered first, then vendor) select them;
+`-DVAR_HID_FIRST=1` registers the HID class before the vendor class in variant
+1. Measured, all `STATUS OK` with a driver bound:
 
 | Change, revision pinned unless noted | Instance | Result |
 |---|---|---|
@@ -88,6 +90,44 @@ unverified inference was still standing for it.
 Two conclusions the user guide leans on: **driver binding follows the
 descriptors on every enumeration and needs no revision**, and **only the
 Microsoft OS 2.0 registry properties are cached behind one**.
+
+### The row that was a library bug
+
+Every HID + vendor build above had the vendor function at `MI_01` bound to
+`WINUSB`, `STATUS OK`, GUID recorded - and **not enumerable**:
+`pnputil /enum-interfaces` listed the interface as disabled and
+`SetupDiGetClassDevs(DIGCF_PRESENT)` returned nothing. Vendor at `MI_00` next
+to MSC enumerated fine, so it looked like an interface-number or HID-sibling
+effect on Windows' side. It was neither:
+
+| Build, fresh PID each | HID child | Vendor child | Interface |
+|---|---|---|---|
+| HID + vendor, vendor registered first | `HidUsb` **Code 10, ~6 s after arrival** | started 2 ms after that failure | registered, **disabled** |
+| MSC + vendor, vendor at `MI_01` (variant 3) | - | started 27 ms after arrival | **enabled** |
+| HID + vendor, `-DVAR_HID_FIRST=1` | started 21 ms after arrival | started 33 ms after arrival | **enabled** |
+| HID + vendor, vendor registered first, **fixed library** | started 23 ms | started 36 ms | **enabled** |
+
+Those times are from the `Microsoft-Windows-Kernel-PnP/Configuration` event
+log (ids 400/410/411). It disagrees with `Get-PnpDevice`, which reported
+`STATUS OK problem=CM_PROB_NONE` for both children at every check - including
+one taken while the HID start was still pending and one taken a minute after
+the log had recorded its Code 10. Read the event log, not the status column,
+when a child looks healthy and does not work. Why the WinUSB child, once
+started after the failure, still never enabled its interface was not
+determined; the interface was disabled at every check from 20 s to several
+minutes after arrival, and once, about nine minutes in, the port showed
+"Unknown USB Device (Device Descriptor Request Failed)" instead. The fix
+removes the failure those states follow from, and with it every one of them.
+
+The cause was in the library: the HID class was looked up by TinyUSB's
+instance number as if it were a position in the registration table, so a
+HID class registered after the vendor class returned no report descriptor
+and the host's `GET_DESCRIPTOR(Report)` was neither answered nor stalled.
+The descriptors were correct throughout - which is exactly why the
+descriptor dump this sketch prints did not point at it. Registration order
+was the only difference between the failing and working HID rows, and it is
+not visible on the wire. `tests/single/hid_registration_order` and
+`tests/peer/composite_vendor_hid` guard it now.
 
 **The control is the test.** Without it, B updating only shows that Windows
 re-read something; it cannot distinguish "the revision made it re-read" from
