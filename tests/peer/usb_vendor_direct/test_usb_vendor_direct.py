@@ -50,13 +50,19 @@ def _complete_blocks(window):
     as one ``writeDirect()`` call, which is one ``usbd_edpt_xfer()`` and one USB
     packet, because 21 is below the 64-byte full-speed maximum. A packet
     arrives whole or not at all, so a lost or reordered transfer moves whole
-    21-byte units; it cannot splice inside one. The discontinuity therefore
-    appeared at or after reception, in the host's buffering between the USB
-    task filling its pipe and ``vendorRead()`` copying 63 bytes out of it.
+    21-byte units; it cannot splice inside one.
 
-    Keep the assertion. It is doing its job - this is exactly the corruption it
-    exists to catch - but read a failure as "the host's read was not
-    contiguous" before suspecting the direct path.
+    The cause was found in EspUsbHost and fixed for 2.9.2: its per-device
+    receive ring was written by the USB task and read by ``vendorRead()``
+    without any lock, and on overflow the *producer* advanced the consumer's
+    tail by however many bytes it needed - not by whole packets. A read
+    overlapping that moment copied across the jump. Its own CDC ring had always
+    taken a critical section for this; the vendor one had not. Reproduced there
+    at 42 torn windows in 3,286, and none after the fix.
+
+    So a failure here means the host's read was not contiguous. Keep the
+    assertion - this is exactly the corruption it exists to catch - and check
+    the pinned EspUsbHost version before suspecting the direct path.
     """
     if isinstance(window, bytes):
         window = window.decode("ascii", "replace")
