@@ -100,6 +100,28 @@ void setup()
                 (int)GUID_VARIANT, (unsigned)VAR_PID,
                 VAR_NO_SERIAL ? "(none)" : VAR_SERIAL, (int)VAR_COMPOSITE);
   Serial.printf("GUIDTEST ccgp=%d\n", (int)VAR_CCGP);
+  {
+    // The set as sent, so a Windows-side surprise can be checked against the
+    // bytes rather than against what the code was meant to emit.
+    const uint8_t *ms = device.microsoftOs20Descriptor();
+    const uint16_t n = device.microsoftOs20DescriptorLength();
+    Serial.print("GUIDTEST msos20=");
+    for (uint16_t i = 0; i < n && i < 64; i++)
+    {
+      Serial.printf("%02x", ms[i]);
+    }
+    Serial.println();
+    // And the interface descriptors' numbers and classes.
+    const uint8_t *cfg = device.configurationDescriptor(0);
+    const uint16_t total = static_cast<uint16_t>(cfg[2] | (cfg[3] << 8));
+    for (uint16_t o = 0; o + 2 <= total && cfg[o]; o += cfg[o])
+    {
+      if (cfg[o + 1] == 0x04)
+      {
+        Serial.printf("GUIDTEST itf num=%u class=0x%02x\n", cfg[o + 2], cfg[o + 5]);
+      }
+    }
+  }
   Serial.printf("GUIDTEST guid=%s revision=%u len=%u subsets=%d interfaces=%u\n",
                 kGuid, (unsigned)device.microsoftOs20VendorRevision(),
                 (unsigned)device.microsoftOs20DescriptorLength(),
