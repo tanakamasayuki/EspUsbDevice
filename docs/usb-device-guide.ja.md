@@ -529,7 +529,7 @@ Windows の挙動は build で変わり、上の表は 1 つの build の 1 日�
 1. **1 回の焼き込みで 1 つだけ変え**、焼いた時刻を控える。ログを汚したくないなら PC が見たことのない PID を、「すでにこのデバイスに会った PC で何が起きるか」が問いなら*同じ* PID を使う。出荷済み製品にとって重要なのは後者です。
 2. **デバイスを WSL に attach しない。** usbipd 経由で attach したデバイスは Windows には USBIP デバイスで、何もバインドされません。先に detach する。
 3. **Windows を先に読み、ボードは後。** UART アダプタによってはポートを開くとボードがリセットされ、リセットは再接続です。新しい列挙が始まり、読もうとしていた状態が消えます。
-4. **`STATUS OK` を信じない。** `Get-PnpDevice` は、開始がまだ保留中の子にも、開始がすでに失敗した子にも OK を返しました。代わりにイベントビューアーの `Microsoft-Windows-Kernel-PnP/Configuration` を読む。400＝構成済み、410＝開始、411＝開始失敗、430＝追加インストール要。ドライバが再選択されたか（`Device Updated`）も分かります。
+4. **`STATUS OK` を信じない。** `Get-PnpDevice` は、開始がまだ保留中の子にも、開始がすでに失敗した子にも OK を返しました。代わりにイベントビューアーの `Microsoft-Windows-Kernel-PnP/Configuration` を読む。400＝構成済み、410＝開始、411＝開始失敗、430＝追加インストール要。ドライバが再選択されたか（`Device Updated`）も分かります。WinUSB デバイスで `setupapi.dev.log` を頼りにしないこと。ここで測った build では、`usbser` のようなクラスドライバの install が走ったときだけ節が記録され、Microsoft OS 2.0 の compatible ID 経由の WinUSB バインドは成功も意図的な失敗も含めて数十回すべて節なしでした。無言はどちらの意味でもありません。
 5. **ドライバだけでなく device interface を確認する。** `pnputil /enum-interfaces /class {GUID}` が登録済みの全 interface とその状態を出し、最終的に意味を持つ唯一のテストはアプリと同じ列挙（`SetupDiGetClassDevs` に `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE`）です。
 6. **Windows が保持した値を読む。** インスタンスの `Device Parameters`（`DeviceInterfaceGUIDs`、`PortName`）を、デバイスが送ったもの（`DEVPKEY_Device_BusReportedDeviceDesc`、hardware ID、生バイトは USB Device Tree Viewer）と比べる。
 
