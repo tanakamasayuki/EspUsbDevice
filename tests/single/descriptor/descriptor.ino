@@ -98,6 +98,24 @@ static HidWalk walkHidReportDescriptor(const uint8_t *descriptor, uint16_t lengt
 }
 
 
+// deviceVersion lands in bcdDevice as given, little-endian, and touches
+// nothing else in the device descriptor.
+static void testDeviceVersion()
+{
+  EspUsbDevice device;
+  EspUsbDeviceVendor vendor(device);
+  EspUsbDeviceConfig config;
+  config.vid = 0x303a;
+  config.pid = 0x4001;
+  config.deviceVersion = 0x0203;
+  config.startTinyUsb = false;
+  check(device.begin(config), "device_version_begin");
+  const uint8_t *dev = device.deviceDescriptor();
+  check(dev[12] == 0x03 && dev[13] == 0x02, "device_release_configured");
+  check(le16(&dev[8]) == 0x303a && le16(&dev[10]) == 0x4001, "device_release_leaves_ids");
+  device.end();
+}
+
 static void testKeyboardDescriptor()
 {
   EspUsbDevice device;
@@ -119,6 +137,9 @@ static void testKeyboardDescriptor()
   check(le16(&dev[2]) == 0x0200, "device_usb_version");
   check(dev[7] == 64, "device_ep0_mps");
   check(le16(&dev[8]) == 0x303a && le16(&dev[10]) == 0x4001, "device_vid_pid");
+  // bcdDevice defaults to 1.00, which is what every release before deviceVersion
+  // existed sent; Windows folds it into the REV_ hardware ID.
+  check(le16(&dev[12]) == 0x0100, "device_release_default");
   check(dev[14] == 1 && dev[15] == 2 && dev[16] == 3, "device_string_indexes");
 
   const uint8_t *cfg = device.configurationDescriptor(0);
@@ -822,6 +843,7 @@ void setup()
 
   Serial.println("TEST_BEGIN descriptor");
   testKeyboardDescriptor();
+  testDeviceVersion();
   testMouseDescriptor();
   testCompositeDescriptor();
   testVendorDescriptor();

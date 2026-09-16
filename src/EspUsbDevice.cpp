@@ -1619,7 +1619,7 @@ bool EspUsbDevice::buildDescriptors()
   deviceDescriptor_[7] = 64;
   put16(&deviceDescriptor_[8], config_.vid);
   put16(&deviceDescriptor_[10], config_.pid);
-  put16(&deviceDescriptor_[12], 0x0100);
+  put16(&deviceDescriptor_[12], config_.deviceVersion);
   deviceDescriptor_[14] = config_.manufacturer ? 1 : 0;
   deviceDescriptor_[15] = config_.product ? 2 : 0;
   deviceDescriptor_[16] = config_.serialNumber ? 3 : 0;
