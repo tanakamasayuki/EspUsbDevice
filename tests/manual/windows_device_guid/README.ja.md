@@ -115,6 +115,22 @@ interface は無効のままで、一度だけ、約 9 分後にそのポート�
 失敗した HID 行と動いた HID 行の違いは登録順だけで、それは線上には見えません。いまは
 `tests/single/hid_registration_order` と `tests/peer/composite_vendor_hid` が守っています。
 
+上の行列の HID を含む行はすべてこのバグが生きたまま測ったものなので、修正版ライブラリで
+遷移を測り直しました。`303a:4080`（この PC で最も履歴の長い PID）、全ステップ vendor 先登録、
+revision は自動導出。時間はイベントログから、親の到着を基準に:
+
+| ステップ（PID・serial 同一） | 親 | `MI_00` | `MI_01` | GUID で列挙 |
+|---|---|---|---|---|
+| vendor 単独 | `WINUSB`、10 ms | - | - | device ノード |
+| + HID（vendor -> HID + vendor） | `usbccgp`、12 ms | `HidUsb` 38 ms、`kbdhid` 子 52 ms | `WINUSB` 50 ms、**有効** | `&mi_01` |
+| 入れ替え（HID + vendor -> vendor + MSC） | `usbccgp` | `WINUSB` 34 ms、**有効** | `USBSTOR` 32 ms | `&mi_00` |
+| - MSC（vendor + MSC -> vendor 単独） | `WINUSB`、10 ms | - | - | device ノード |
+
+どのステップでも有効で列挙できる interface はちょうど 1 つで、前のステップが親や子に残した
+値はすべて無効のままでした。device interface のパスは function とともに動きます
+（`…#guid-test-1#`、`…&mi_01#…`、`…&mi_00#…`）。GUID で列挙する host アプリはそれに追従し、
+パスを保存していたアプリは追従しません。
+
 **対照こそがテストです。** これが無いと、B が更新されたことは「Windows が何かを読み直した」
 としか言えず、「revision が読み直させた」のか「毎回読み直している」のかを区別できません。
 C は revision を据え置いたまま別の GUID を送り、Windows は古い方を保持しました。仕様どおりに

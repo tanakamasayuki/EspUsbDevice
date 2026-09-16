@@ -129,6 +129,25 @@ was the only difference between the failing and working HID rows, and it is
 not visible on the wire. `tests/single/hid_registration_order` and
 `tests/peer/composite_vendor_hid` guard it now.
 
+Every HID row in the matrix above was measured while this bug was live, so
+the transitions were re-run with the fixed library on `303a:4080` (the PID
+with the longest history on this PC), vendor registered first throughout,
+revision derived. Times are from the event log, relative to the parent's
+arrival:
+
+| Step, same PID and serial | Parent | `MI_00` | `MI_01` | GUID enumerates |
+|---|---|---|---|---|
+| vendor only | `WINUSB`, 10 ms | - | - | device node |
+| + HID (vendor -> HID + vendor) | `usbccgp`, 12 ms | `HidUsb` 38 ms, `kbdhid` child 52 ms | `WINUSB` 50 ms, **enabled** | `&mi_01` |
+| swap (HID + vendor -> vendor + MSC) | `usbccgp` | `WINUSB` 34 ms, **enabled** | `USBSTOR` 32 ms | `&mi_00` |
+| - MSC (vendor + MSC -> vendor only) | `WINUSB`, 10 ms | - | - | device node |
+
+At every step exactly one interface was enabled and enumerable, and every
+stale value left on the parent or on a child by an earlier step stayed
+disabled. The device interface path moves with the function (`…#guid-test-1#`,
+`…&mi_01#…`, `…&mi_00#…`): a host application that enumerates by GUID follows
+it, one that saved the path does not.
+
 **The control is the test.** Without it, B updating only shows that Windows
 re-read something; it cannot distinguish "the revision made it re-read" from
 "it re-reads every time". C sends a different GUID under an unchanged revision
