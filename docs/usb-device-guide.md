@@ -638,6 +638,22 @@ host application enumerating that GUID will find a mass-storage interface that
 cannot answer it. Keep the mapping between interface number and function stable
 once you have shipped it; if you must change it, change the PID too.
 
+**Growing a single-interface device into a composite has the same problem, one
+level up.** A non-composite device gets its GUID on its own node; a composite
+gets it on the child. Measured on a fresh PID: single vendor interface with GUID
+A, then the same PID and serial as a vendor + HID composite with GUID B, and the
+result is the parent still carrying A while the child carries B -
+
+```
+USB\VID_303A&PID_4084\GUID-TEST-1        usbccgp   {A1A1…}   <- stale, device scope
+USB\VID_303A&PID_4084&MI_01\9&…&0001     WINUSB    {B2B2…}   <- live, function scope
+```
+
+One device answering two GUIDs, and the stale one points at a node that cannot
+serve a WinUSB request at all. **Change the PID when you add a second function
+to something you have already shipped.** Adding DFU to a vendor-only product is
+exactly this migration.
+
 So, during development:
 
 - Changing descriptors, layout or driver expectations: **just reflash.** It
