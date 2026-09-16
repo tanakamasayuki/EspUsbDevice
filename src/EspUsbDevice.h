@@ -123,6 +123,32 @@ struct EspUsbDeviceConfig
   bool webusbEnabled = false;
   const char *webusbUrl = nullptr;
   EspUsbDeviceMsOs20Layout msOs20Layout = ESP_USB_DEVICE_MS_OS_20_AUTO;
+  // The GUID Windows records as this interface's DeviceInterfaceGUIDs, which is
+  // what a host application passes to SetupDiGetClassDevs to find the device.
+  //
+  // It does not affect which driver binds - that is the compatible ID alone -
+  // but it does decide who finds you. Leaving it at the library's default means
+  // every EspUsbDevice vendor interface in the world answers the same
+  // enumeration, so an application looking for its own product also picks up
+  // unrelated ones. Give your product its own.
+  //
+  // `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`, braces included, 38 characters.
+  // begin() returns false with ESP_ERR_INVALID_ARG on anything else rather than
+  // shipping a descriptor Windows will reject. nullptr keeps the default.
+  const char *deviceInterfaceGuid = nullptr;
+  // wVendorRevision in the Microsoft OS 2.0 descriptor set.
+  //
+  // Windows caches the registry properties it read from a device the first time
+  // it enumerated, keyed on VID/PID/serial, and only re-reads them when this
+  // number changes. Ship a new firmware with a different deviceInterfaceGuid
+  // under the same identity and, without a change here, a PC that has already
+  // seen the device keeps the old GUID forever.
+  //
+  // 0 (the default) derives it from the descriptor set's own bytes, so it moves
+  // whenever anything in the set moves and there is nothing to remember to
+  // bump. Set it yourself only if you need the number to follow your own
+  // release scheme; microsoftOs20VendorRevision() reports whichever applied.
+  uint16_t msOs20VendorRevision = 0;
   bool startTinyUsb = true;
   EspUsbController controller = EspUsbController::Auto;
   EspUsbBulkInBuffering bulkInBuffering = EspUsbBulkInBuffering::Auto;
@@ -573,6 +599,8 @@ public:
   uint16_t bosDescriptorLength() const;
   const uint8_t *microsoftOs20Descriptor() const;
   uint16_t microsoftOs20DescriptorLength() const;
+  // The wVendorRevision the descriptor set was built with, derived or given.
+  uint16_t microsoftOs20VendorRevision() const;
   // Whether the built descriptor set wraps its compatible ID in configuration
   // and function subsets. Resolves EspUsbDeviceMsOs20Layout::AUTO against the
   // configuration that was actually built.
@@ -661,7 +689,9 @@ private:
   //
   // Two is the ceiling because only two of this library's classes ask Windows
   // for WinUSB: the vendor interface and DFU.
-  static constexpr size_t MAX_MS_OS_20_DESCRIPTOR = 330;
+  // Plus 6 bytes per function for the vendor revision descriptor, which sits in
+  // every function subset (or once under the set header when flat).
+  static constexpr size_t MAX_MS_OS_20_DESCRIPTOR = 342;
 
   bool buildDescriptors();
   // Allocates the three configuration descriptor buffers on first use. False (and
@@ -719,6 +749,7 @@ private:
   uint16_t configDescriptorLength_ = 0;
   uint16_t bosDescriptorLength_ = 0;
   uint16_t microsoftOs20DescriptorLength_ = 0;
+  uint16_t microsoftOs20VendorRevision_ = 0;
   uint8_t vendorInterfaceNumber_ = 0xff;
   uint8_t dfuInterfaceNumber_ = 0xff;
   uint16_t bulkInDoubleBuffered_ = 0;

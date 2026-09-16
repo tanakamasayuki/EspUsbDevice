@@ -517,28 +517,35 @@ static void testWebUsbAndMicrosoftOs20Descriptors()
             bos[7] == 0x05 && bos[27] == 0x01 && bos[28] == 0x01,
         "webusb_platform_capability");
   check(bos && bos[29] == 28 && bos[30] == 0x10 &&
-            bos[31] == 0x05 && le16(&bos[53]) == 178 &&
+            bos[31] == 0x05 && le16(&bos[53]) == 184 &&
             bos[55] == 0x02,
         "ms_os_20_platform_capability");
 
   const uint8_t *ms = device.microsoftOs20Descriptor();
-  check(ms != nullptr && device.microsoftOs20DescriptorLength() == 178,
+  check(ms != nullptr && device.microsoftOs20DescriptorLength() == 184,
         "ms_os_20_length");
   check(ms && le16(&ms[0]) == 10 && le16(&ms[2]) == 0 &&
-            le16(&ms[8]) == 178,
+            le16(&ms[8]) == 184,
         "ms_os_20_set_header");
   check(ms && le16(&ms[10]) == 8 && le16(&ms[12]) == 1 &&
-            le16(&ms[16]) == 168,
+            le16(&ms[16]) == 174,
         "ms_os_20_configuration_subset");
   check(ms && le16(&ms[18]) == 8 && le16(&ms[20]) == 2 &&
-            ms[22] == 1 && le16(&ms[24]) == 160,
+            ms[22] == 1 && le16(&ms[24]) == 166,
         "ms_os_20_vendor_interface");
-  check(ms && le16(&ms[26]) == 20 && le16(&ms[28]) == 3 &&
-            memcmp(&ms[30], "WINUSB", 6) == 0,
+  // The vendor revision sits inside the function subset, ahead of the
+  // compatible ID: this is what Windows compares against what it cached, so a
+  // set without it can never refresh a registry property it already read.
+  check(ms && le16(&ms[26]) == 6 && le16(&ms[28]) == 8 &&
+            le16(&ms[30]) != 0 &&
+            le16(&ms[30]) == device.microsoftOs20VendorRevision(),
+        "ms_os_20_vendor_revision");
+  check(ms && le16(&ms[32]) == 20 && le16(&ms[34]) == 3 &&
+            memcmp(&ms[36], "WINUSB", 6) == 0,
         "ms_os_20_winusb_id");
-  check(ms && le16(&ms[46]) == 132 && le16(&ms[48]) == 4 &&
-            le16(&ms[50]) == 7 && le16(&ms[52]) == 42 &&
-            le16(&ms[96]) == 80,
+  check(ms && le16(&ms[52]) == 132 && le16(&ms[54]) == 4 &&
+            le16(&ms[56]) == 7 && le16(&ms[58]) == 42 &&
+            le16(&ms[102]) == 80,
         "ms_os_20_registry_property");
 
   EspUsbDevice webUsbOnly;
@@ -569,6 +576,83 @@ static EspUsbDeviceConfig webUsbConfig(uint16_t pid,
   return config;
 }
 
+// The GUID a host application looks the device up by, and the revision that
+// decides whether Windows ever re-reads it.
+static void testDeviceInterfaceGuidAndVendorRevision()
+{
+  const char *const custom = "{01234567-89AB-CDEF-0123-456789ABCDEF}";
+
+  uint16_t defaultRevision = 0;
+  {
+    EspUsbDevice device;
+    EspUsbDeviceVendor vendor(device);
+    check(device.begin(webUsbConfig(0x4078, ESP_USB_DEVICE_MS_OS_20_AUTO)),
+          "guid_default_begin");
+    defaultRevision = device.microsoftOs20VendorRevision();
+    check(defaultRevision != 0, "guid_default_revision_nonzero");
+  }
+
+  {
+    EspUsbDevice device;
+    EspUsbDeviceVendor vendor(device);
+    EspUsbDeviceConfig config = webUsbConfig(0x4078, ESP_USB_DEVICE_MS_OS_20_AUTO);
+    config.deviceInterfaceGuid = custom;
+    check(device.begin(config), "guid_custom_begin");
+
+    // The GUID really reaches the wire, as UTF-16LE inside the registry
+    // property. Same PID and layout as above, so only the GUID differs.
+    const uint8_t *ms = device.microsoftOs20Descriptor();
+    bool matches = ms != nullptr;
+    // The property is wLength(2) wType(2) wDataType(2) wNameLength(2) +
+    // "DeviceInterfaceGUIDs" as 42 bytes of UTF-16LE + wDataLength(2), so the
+    // string starts 52 bytes into it. The property itself starts after the set
+    // header (+ subsets and the vendor revision) and the compatible ID.
+    const size_t guidOffset = (device.microsoftOs20UsesSubsets() ? 52 : 36) + 52;
+    for (size_t i = 0; matches && custom[i] != '\0'; i++)
+    {
+      matches = ms[guidOffset + i * 2] == static_cast<uint8_t>(custom[i]) &&
+                ms[guidOffset + i * 2 + 1] == 0;
+    }
+    check(matches, "guid_custom_on_the_wire");
+
+    // And it moves the revision. Without this a PC that already enumerated
+    // this VID/PID/serial keeps serving the old GUID out of its own registry,
+    // which is the entire reason the revision descriptor exists.
+    check(device.microsoftOs20VendorRevision() != defaultRevision,
+          "guid_custom_moves_revision");
+  }
+
+  {
+    EspUsbDevice device;
+    EspUsbDeviceVendor vendor(device);
+    EspUsbDeviceConfig config = webUsbConfig(0x4078, ESP_USB_DEVICE_MS_OS_20_AUTO);
+    config.msOs20VendorRevision = 0x1234;
+    check(device.begin(config), "revision_explicit_begin");
+    check(device.microsoftOs20VendorRevision() == 0x1234, "revision_explicit_wins");
+  }
+
+  // The registry property writes a fixed length, so a GUID of the wrong shape
+  // would produce a set Windows rejects. Refused at begin() instead.
+  const char *const malformed[] = {
+      "975F44D9-0D08-43FD-8B3E-127CA8AFFF9D",     // no braces
+      "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9}",    // one digit short
+      "{975F44D9-0D08-43FD-8B3E-127CA8AFFF9DD}",  // one digit long
+      "{975F44D9+0D08-43FD-8B3E-127CA8AFFF9D}",   // wrong separator
+      "{975F44D9-0D08-43FD-8B3E-127CA8AFFZ9D}",   // not hex
+      "",
+  };
+  for (size_t i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++)
+  {
+    EspUsbDevice device;
+    EspUsbDeviceVendor vendor(device);
+    EspUsbDeviceConfig config = webUsbConfig(0x4079, ESP_USB_DEVICE_MS_OS_20_AUTO);
+    config.deviceInterfaceGuid = malformed[i];
+    char name[48];
+    snprintf(name, sizeof(name), "guid_malformed_%u_refused", (unsigned)i);
+    check(!device.begin(config) && device.lastError() == ESP_ERR_INVALID_ARG, name);
+  }
+}
+
 static void testMicrosoftOs20LayoutFollowsInterfaceCount()
 {
   // One interface: no usbccgp, so the compatible ID sits directly under the set
@@ -581,19 +665,25 @@ static void testMicrosoftOs20LayoutFollowsInterfaceCount()
     check(single.configurationDescriptor(0)[4] == 1, "ms_os_20_single_interface");
     check(!single.microsoftOs20UsesSubsets(), "ms_os_20_single_is_flat");
     const uint8_t *flat = single.microsoftOs20Descriptor();
-    check(flat && single.microsoftOs20DescriptorLength() == 162,
+    check(flat && single.microsoftOs20DescriptorLength() == 168,
           "ms_os_20_flat_length");
     check(flat && le16(&flat[0]) == 10 && le16(&flat[2]) == 0 &&
-              le16(&flat[8]) == 162,
+              le16(&flat[8]) == 168,
           "ms_os_20_flat_set_header");
-    check(flat && le16(&flat[10]) == 20 && le16(&flat[12]) == 3 &&
-              memcmp(&flat[14], "WINUSB", 6) == 0,
+    // Flat sets carry the vendor revision once, under the set header - there is
+    // no function subset to put it in.
+    check(flat && le16(&flat[10]) == 6 && le16(&flat[12]) == 8 &&
+              le16(&flat[14]) != 0 &&
+              le16(&flat[14]) == single.microsoftOs20VendorRevision(),
+          "ms_os_20_flat_vendor_revision");
+    check(flat && le16(&flat[16]) == 20 && le16(&flat[18]) == 3 &&
+              memcmp(&flat[20], "WINUSB", 6) == 0,
           "ms_os_20_flat_compatible_id");
-    check(flat && le16(&flat[30]) == 132 && le16(&flat[32]) == 4,
+    check(flat && le16(&flat[36]) == 132 && le16(&flat[38]) == 4,
           "ms_os_20_flat_registry_property");
     // The BOS capability must publish the same total length.
     const uint8_t *flatBos = single.bosDescriptor();
-    check(flatBos && le16(&flatBos[53]) == 162, "ms_os_20_flat_bos_total_length");
+    check(flatBos && le16(&flatBos[53]) == 168, "ms_os_20_flat_bos_total_length");
   }
 
   // Two interfaces means usbccgp, which is where the subsets belong.
@@ -605,7 +695,7 @@ static void testMicrosoftOs20LayoutFollowsInterfaceCount()
           "ms_os_20_composite_begin");
     check(composite.microsoftOs20UsesSubsets(),
           "ms_os_20_composite_uses_subsets");
-    check(composite.microsoftOs20DescriptorLength() == 178,
+    check(composite.microsoftOs20DescriptorLength() == 184,
           "ms_os_20_composite_length");
   }
 
@@ -617,14 +707,14 @@ static void testMicrosoftOs20LayoutFollowsInterfaceCount()
               webUsbConfig(0x4026, ESP_USB_DEVICE_MS_OS_20_SUBSETS)),
           "ms_os_20_forced_subsets_begin");
     check(forcedSubsets.microsoftOs20UsesSubsets(), "ms_os_20_forced_subsets");
-    check(forcedSubsets.microsoftOs20DescriptorLength() == 178,
+    check(forcedSubsets.microsoftOs20DescriptorLength() == 184,
           "ms_os_20_forced_subsets_length");
     const uint8_t *forced = forcedSubsets.microsoftOs20Descriptor();
     check(forced && le16(&forced[10]) == 8 && le16(&forced[12]) == 1 &&
-              le16(&forced[16]) == 168,
+              le16(&forced[16]) == 174,
           "ms_os_20_forced_configuration_subset");
     check(forced && le16(&forced[18]) == 8 && le16(&forced[20]) == 2 &&
-              forced[22] == 0 && le16(&forced[24]) == 160,
+              forced[22] == 0 && le16(&forced[24]) == 166,
           "ms_os_20_forced_function_subset");
   }
 
@@ -635,7 +725,7 @@ static void testMicrosoftOs20LayoutFollowsInterfaceCount()
     check(forcedFlat.begin(webUsbConfig(0x4027, ESP_USB_DEVICE_MS_OS_20_FLAT)),
           "ms_os_20_forced_flat_begin");
     check(!forcedFlat.microsoftOs20UsesSubsets(), "ms_os_20_forced_flat");
-    check(forcedFlat.microsoftOs20DescriptorLength() == 162,
+    check(forcedFlat.microsoftOs20DescriptorLength() == 168,
           "ms_os_20_forced_flat_length");
   }
 }
@@ -742,6 +832,7 @@ void setup()
   testCompositeOutReportRouting();
   testCompositeWithVendorDescriptor();
   testWebUsbAndMicrosoftOs20Descriptors();
+  testDeviceInterfaceGuidAndVendorRevision();
   testMicrosoftOs20LayoutFollowsInterfaceCount();
   testStringDescriptors();
   testClassLifecycle();

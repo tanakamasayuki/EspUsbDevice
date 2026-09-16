@@ -332,11 +332,15 @@ Windows標準ドライバが当たらないインターフェース——vendor�
 | ディスクリプタ | サイズ | 内容 |
 |---------------|--------|------|
 | BOS | 33または57バイト | Microsoft OS 2.0 platform capability、`webusbEnabled` のときは WebUSB のものも |
-| MS OS 2.0 | 30／162／206バイト | WinUSBが要るインターフェースごとの compatible ID と、vendorインターフェースに対する device interface GUID |
+| MS OS 2.0 | 36／168／218バイト | WinUSBが要るインターフェースごとの compatible ID、vendor revision、vendorインターフェースに対する device interface GUID |
 
-**Windowsでこれらのインターフェースを開けるようにするのがMS OS 2.0の役割**です。これがないと `0xff` やDFUのインターフェースはドライバなしのまま残り、ユーザーはZadigへ案内されます。製品として配れるものではありません。vendor code、GUID、内容を差し替えるAPIは未実装です。
+**Windowsでこれらのインターフェースを開けるようにするのがMS OS 2.0の役割**です。これがないと `0xff` やDFUのインターフェースはドライバなしのまま残り、ユーザーはZadigへ案内されます。製品として配れるものではありません。
 
-3つのサイズは、DFUインターフェース単体が30（set header + compatible ID 1つ）、vendorインターフェース単体が162（それに registry property）、両方で206（configuration subsetの中にfunction subsetが2つ）です。**DFU側には `DeviceInterfaceGUIDs` を付けていません。** libusb（つまり `dfu-util`）はWinUSB deviceをper-function GUIDではなくUSB device interface classで見つけますし、GUIDなしでWindowsがbindすることを実測しています。
+3つのサイズは、DFUインターフェース単体が36（set header + vendor revision + compatible ID 1つ）、vendorインターフェース単体が168（それに registry property）、両方で218（configuration subsetの中にfunction subsetが2つ、それぞれが自分のrevisionを持つ）です。**DFU側には `DeviceInterfaceGUIDs` を付けていません。** libusb（つまり `dfu-util`）はWinUSB deviceをper-function GUIDではなくUSB device interface classで見つけますし、GUIDなしでWindowsがbindすることを実測しています。
+
+**`config.deviceInterfaceGuid` は、host アプリがデバイスを探すときの GUID** です（`SetupDiGetClassDevs` に渡すもの）。どのドライバが当たるかを決めるのは compatible ID だけで、こちらは関係ありません（実測済み）。ただし**誰が見つけるか**は決めます。既定値は世界中の EspUsbDevice 製 vendor インターフェースで共通なので、自分の製品を探すアプリが無関係なデバイスまで拾います。自分の製品には自分の GUID を与えてください。形式は `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`（波括弧込み）で、それ以外は `begin()` が `ESP_ERR_INVALID_ARG` で false を返します。registry property は長さを固定値で書くので、形式が違うと Windows が拒否する set ができあがり、しかも理由がどこにも出ないためです。
+
+**変えた GUID を実際に効かせるのが `wVendorRevision`** です。Windows は VID/PID/serial ごとに、最初に列挙したときの registry property をキャッシュしていて、この値が変わったときだけ読み直します。つまりこれが無いと、一度そのデバイスを見た PC は古い GUID を永久に使い続けます。既定では完成した descriptor set のチェックサムから導出するので、set の中身が変われば——GUID を変えた、function が増えた、レイアウトが変わった——自動的に動きます。上げ忘れる余地がありません。独自のリリース番号に合わせたいときは `config.msOs20VendorRevision` で上書きでき、実際に使われた値は `microsoftOs20VendorRevision()` が返します。flat な set では set header の直下に1つ、subset 構成では function subset ごとに1つ入ります。
 
 `bcdUSB` はBOSを出すときだけ0x0201、出さないときは0x0200です。0x0201はhostがそもそもBOSを要求し始める閾値で、0x0210にすると実装していないUSB 2.1準拠を主張することになります。
 

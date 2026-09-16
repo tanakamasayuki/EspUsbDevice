@@ -456,19 +456,41 @@ driver claims - a vendor interface or a DFU interface - or when
 | Descriptor | Size | Contents |
 |------------|------|----------|
 | BOS | 33 or 57 bytes | Microsoft OS 2.0 platform capability, plus the WebUSB one when `webusbEnabled` |
-| MS OS 2.0 | 30, 162 or 206 bytes | a WinUSB compatible ID per interface that needs one, and a device interface GUID for the vendor interface |
+| MS OS 2.0 | 36, 168 or 218 bytes | a WinUSB compatible ID per interface that needs one, a vendor revision, and a device interface GUID for the vendor interface |
 
 **The MS OS 2.0 descriptor is what lets Windows open these interfaces.**
 Without it a `0xff` or DFU interface sits there with no driver and the user is
-sent to Zadig, which is not something a product can ship. APIs to replace the
-vendor code, GUID or contents are not implemented.
+sent to Zadig, which is not something a product can ship.
 
-The three sizes are: 30 for a DFU interface alone (set header plus one
-compatible ID), 162 for a vendor interface alone (the same plus the registry
-property), and 206 for both (two function subsets inside a configuration
-subset). **DFU gets no `DeviceInterfaceGUIDs`** - libusb, and therefore
-`dfu-util`, finds a WinUSB device through the USB device interface class rather
-than a per-function GUID, and Windows was measured to bind it without one.
+The three sizes are: 36 for a DFU interface alone (set header, vendor revision
+and one compatible ID), 168 for a vendor interface alone (the same plus the
+registry property), and 218 for both (two function subsets inside a
+configuration subset, each carrying its own revision). **DFU gets no
+`DeviceInterfaceGUIDs`** - libusb, and therefore `dfu-util`, finds a WinUSB
+device through the USB device interface class rather than a per-function GUID,
+and Windows was measured to bind it without one.
+
+**`config.deviceInterfaceGuid` is the GUID a host application looks the device
+up by**, the one it passes to `SetupDiGetClassDevs`. It does not decide which
+driver binds - the compatible ID does that alone, measured - but it does decide
+who finds you, and the default is shared by every EspUsbDevice vendor interface
+in the world. An application looking for its own product will also pick up
+unrelated ones until you give yours its own. It must be
+`{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`, braces included; `begin()` returns
+false with `ESP_ERR_INVALID_ARG` on anything else, because the registry property
+writes a constant length and a GUID of another shape would produce a set Windows
+rejects with nothing to say why.
+
+**`wVendorRevision` is what makes a changed GUID take effect.** Windows caches
+the registry properties it read the first time it enumerated a VID/PID/serial
+and re-reads them only when this number changes, so without it a PC that has
+already seen the device serves the old GUID forever. It defaults to a checksum
+of the finished descriptor set, which moves whenever anything in the set moves -
+a different GUID, another function, a different layout - so there is nothing to
+remember to bump. `config.msOs20VendorRevision` overrides it for a release
+scheme of your own, and `microsoftOs20VendorRevision()` reports whichever
+applied. A flat set carries it once under the set header; a subset set carries
+one in every function subset.
 
 `bcdUSB` reads 0x0201 whenever a BOS exists and 0x0200 when it does not. 0x0201
 is the threshold at which a host asks for the BOS at all; 0x0210 would claim a

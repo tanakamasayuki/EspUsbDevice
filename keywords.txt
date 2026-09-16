@@ -123,6 +123,7 @@ writeAvailable	KEYWORD2
 writeCapacity	KEYWORD2
 waitWritable	KEYWORD2
 directWriteSupported	KEYWORD2
+microsoftOs20VendorRevision	KEYWORD2
 writeDirect	KEYWORD2
 lastDirectError	KEYWORD2
 lastDirectErrorName	KEYWORD2

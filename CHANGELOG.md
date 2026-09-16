@@ -1,6 +1,51 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) New `EspUsbDeviceConfig::deviceInterfaceGuid`. The GUID Windows records
+  as a vendor interface's `DeviceInterfaceGUIDs` was hard-coded, so every
+  EspUsbDevice vendor interface in the world answered the same
+  `SetupDiGetClassDevs` enumeration and a host application looking for its own
+  product also found unrelated ones. It does not affect which driver binds - the
+  compatible ID does that alone - only who finds the device. Must be
+  `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`; `begin()` returns false with
+  `ESP_ERR_INVALID_ARG` on anything else, because the registry property writes a
+  constant length and another shape would produce a set Windows rejects with
+  nothing to say why. Unset keeps the previous GUID, so existing host-side
+  lookups keep working.
+- (EN) The Microsoft OS 2.0 descriptor set now carries
+  `MS_OS_20_FEATURE_VENDOR_REVISION`, which it never did. Windows caches the
+  registry properties it read the first time it enumerated a VID/PID/serial and
+  re-reads them only when that revision changes, so before this a firmware with
+  a different GUID could not take effect on a PC that had already seen the
+  device. It defaults to a checksum of the finished descriptor set - it moves
+  whenever anything in the set moves, so there is nothing to remember to bump -
+  and `EspUsbDeviceConfig::msOs20VendorRevision` overrides it for a release
+  scheme of your own. `microsoftOs20VendorRevision()` reports whichever applied.
+  A flat set carries it once under the set header, a subset set once per
+  function subset. Descriptor sets grow by 6 bytes per function: 30/162/206
+  become 36/168/218.
+- (JA) `EspUsbDeviceConfig::deviceInterfaceGuid` を追加しました。vendor
+  interface の `DeviceInterfaceGUIDs` として Windows が記録する GUID が直書きで、
+  世界中の EspUsbDevice 製 vendor interface が同じ `SetupDiGetClassDevs` の列挙に
+  応答していました。自分の製品を探す host アプリが無関係なデバイスまで拾う状態です。
+  どのドライバが当たるかには影響しません（それは compatible ID だけで決まります）。
+  決まるのは「誰が見つけるか」です。形式は
+  `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}` で、それ以外は `begin()` が
+  `ESP_ERR_INVALID_ARG` で false を返します。registry property が長さを固定値で
+  書くため、形式が違うと Windows が拒否する set ができ、しかも理由がどこにも
+  出ないからです。未指定なら従来の GUID のままなので、既存の host 側の検索は
+  そのまま動きます。
+- (JA) Microsoft OS 2.0 の descriptor set が `MS_OS_20_FEATURE_VENDOR_REVISION`
+  を出すようになりました。従来は出していませんでした。Windows は VID/PID/serial
+  ごとに最初の列挙で読んだ registry property をキャッシュし、この revision が
+  変わったときだけ読み直すため、これが無いと GUID を変えた firmware は「一度その
+  デバイスを見た PC」では効きませんでした。既定では完成した descriptor set の
+  チェックサムから導出します（set の中身が変われば動くので、上げ忘れる余地が
+  ありません）。独自のリリース番号に合わせたいときは
+  `EspUsbDeviceConfig::msOs20VendorRevision` で上書きでき、実際に使われた値は
+  `microsoftOs20VendorRevision()` が返します。flat な set では set header の直下に
+  1 つ、subset 構成では function subset ごとに 1 つ入ります。descriptor set は
+  function あたり 6 byte 増え、30／162／206 が 36／168／218 になります。
 - (EN) Correct the `writeDirect()` contract: cache maintenance is **not** the
   caller's job, and 2.4.0's documentation was wrong to ask for it. TinyUSB
   cleans the buffer when it arms the transfer, and on ESP32-P4 the L1 data cache
