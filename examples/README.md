@@ -243,6 +243,17 @@ See [AudioSpeakerM5/README.md](AudioSpeakerM5/README.md) for details.
 - EspUsbDevice itself does not depend on PCMFlow or PCMFlowDevice; only this
   example uses them as optional integration libraries.
 
+## VideoCamera
+
+USB Video Class camera streaming a generated test pattern - no image sensor
+needed. Windows, macOS and Linux bind their own UVC driver with nothing to
+install.
+See [VideoCamera/README.md](VideoCamera/README.md) for details.
+
+- Isochronous bandwidth is the constraint: a full-speed part carries 160x120
+  uncompressed at 15 fps, and MJPEG is what makes larger frames practical.
+- Arm frames from one place, paced to the advertised rate.
+
 ## AudioMicrophoneM5
 
 USB Audio microphone backed by the M5 built-in microphone (device -> host).

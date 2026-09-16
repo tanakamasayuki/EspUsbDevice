@@ -1,0 +1,21 @@
+profiles:
+  s3_peer_host:
+    fqbn: esp32:esp32:esp32s3:USBMode=default
+    platforms:
+      - platform: esp32:esp32 (3.3.11)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    libraries:
+      - dir: ../../../
+
+  # The board whose native USB is on the Windows PC, so the descriptor check
+  # and the manual UVC run below use the same board without re-flashing a
+  # different profile in between.
+  esp32s3:
+    fqbn: esp32:esp32:esp32s3:USBMode=default
+    platforms:
+      - platform: esp32:esp32 (3.3.11)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    libraries:
+      - dir: ../../../
+
+default_profile: s3_peer_host
