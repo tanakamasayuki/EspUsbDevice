@@ -57,19 +57,44 @@ device advertises and nothing else:
 vcodec=mjpeg  min s=320x240 fps=15 max s=320x240 fps=15
 ```
 
-**Streaming, with the current defaults**: 181 frames captured in 12 s,
-**every one byte-for-byte identical to the frame the device sent**, in
-consecutive order with no gaps or repeats. Device side: 15.16 fps measured
-against 15 advertised, 51 KB/s, zero failed transfers, clean stop when the
-capture ended.
+**The bytes arrive.** 181 frames captured in 12 s with `-c copy`, **every one
+byte-for-byte identical to the frame the device sent**, in consecutive order
+with no gaps or repeats. Device side: 15.16 fps measured against 15 advertised,
+51 KB/s, zero failed transfers, clean stop when the capture ended.
 
-| | value |
-|---|---|
-| frames captured | 181 |
-| byte-exact against `frames.h` | 181 / 181 |
-| frame sequence | consecutive, no drops |
-| device-side rate | 15.16 fps, 51 KB/s |
-| failed transfers | 0 |
+**The host decodes them as video.** That is a separate question, and `-c copy`
+does not answer it - it never decodes. `verify_frames.py` captures again
+through ffmpeg's MJPEG decoder (or the uncompressed path), writes PNGs, and
+checks the picture:
+
+```sh
+uv run --with pillow python verify_frames.py --format mjpeg
+uv run --with pillow python verify_frames.py --format yuy2    # -DVAR_FORMAT=1 build
+```
+
+Both formats decode to 30 frames with the eight colour bars correct in every
+frame and the block stepping one cell per source frame, never stalling:
+
+| | MJPEG 320x240 | uncompressed YUY2 160x120 |
+|---|---|---|
+| frames decoded | 30 | 30 |
+| colour bars correct | every frame | every frame |
+| block motion | 3 cells per sample, no stalls | 3 cells per sample, no stalls |
+
+(Three cells because the script samples at a third of the frame rate.)
+
+### Why the decode check exists
+
+The byte-for-byte comparison passed while the uncompressed pattern was wrong.
+The sketch wrote YUY2 as `Y0 U Y1 V` with **V held at 128**, which leaves the
+luma ramp exactly right and every colour wrong - and the first check written
+here only looked at luma, so it passed too. The picture was white, yellow-green
+and lavender instead of the standard bars. Both this sketch and
+`examples/VideoCamera` had it; both are fixed, and `verify_frames.py` now
+compares actual colours so the same mistake cannot pass again.
+
+The lesson generalises: a transport check and a content check are different
+tests, and passing the first says nothing about the second.
 
 ### The failure that came first, and why it was invisible
 
