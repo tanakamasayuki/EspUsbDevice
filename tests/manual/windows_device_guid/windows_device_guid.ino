@@ -22,8 +22,17 @@ EspUsbDeviceVendor Vendor(device);
 #ifndef VAR_COMPOSITE
 #define VAR_COMPOSITE 0
 #endif
-#if VAR_COMPOSITE
+#if VAR_COMPOSITE == 1
 EspUsbDeviceHidKeyboard Keyboard(device);
+#elif VAR_COMPOSITE == 2
+// The same interface count as variant 1, but MI_00 becomes mass storage
+// instead of HID. HID functions are always emitted first, so this is the only
+// way to change what sits at a given interface number without changing how
+// many there are - which is the case that keeps both child instance IDs and
+// changes only their compatible IDs.
+static uint8_t mscStorage[64 * 1024];
+EspUsbDeviceMsc Msc(device);
+EspUsbDeviceMscFatRamDisk MscDisk(mscStorage, sizeof(mscStorage));
 #endif
 
 #ifndef GUID_VARIANT
@@ -74,6 +83,10 @@ void setup()
   config.deviceInterfaceGuid = kGuid;
   config.msOs20VendorRevision = PINNED_REVISION;
 
+#if VAR_COMPOSITE == 2
+  MscDisk.format("WINGUID");
+  MscDisk.attach(Msc);
+#endif
   if (!device.begin(config))
   {
     Serial.printf("GUIDTEST_BEGIN_FAILED %s\n", device.lastErrorName());
