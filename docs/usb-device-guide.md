@@ -623,6 +623,21 @@ instance ID became `USB\VID_303A&PID_4080\8&2EBC545B&0&4` - a path, not a
 serial. The same board in another port is then a different device to Windows,
 with its own cached properties. Ship a serial unless you want that.
 
+**Interface numbers are the one place to be careful.** Swapping which function
+sits at which interface number, without changing how many there are, keeps both
+child instances and changes only what is inside them. Measured: `MI_00` went
+HID -> vendor and `MI_01` went vendor -> mass storage, with the revision held
+unchanged, and Windows re-bound both children correctly - `HidUsb` -> `WINUSB`
+and `WINUSB` -> `USBSTOR`. The drivers follow.
+
+The registry property does not. `MI_01` kept `DeviceInterfaceGUIDs` from when it
+was the vendor interface, even though it is now mass storage and the device
+sends no GUID for it at all. **Windows writes such a property when the instance
+has none and updates it when the revision moves, but it never removes one.** A
+host application enumerating that GUID will find a mass-storage interface that
+cannot answer it. Keep the mapping between interface number and function stable
+once you have shipped it; if you must change it, change the PID too.
+
 So, during development:
 
 - Changing descriptors, layout or driver expectations: **just reflash.** It
