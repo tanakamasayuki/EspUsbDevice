@@ -582,14 +582,64 @@ shows which driver bound.
 - **Event Viewer** - details of a failed driver bind.
 - **`pnputil /enum-devices /connected`** - which driver bound.
 
-**Windows caches descriptors per VID/PID.** This is the number one cause of "it
-still shows the old name" and "my change had no effect" in device development.
-Fix it by one of:
+#### What Windows re-reads, and what it keeps
 
-- Changing the PID whenever you change descriptors during development (that is
-  why the Info sketches here use separate PIDs)
-- Changing `config.serialNumber`
-- Deleting the device in Device Manager and replugging
+"Windows caches descriptors" is the usual shorthand and it is too broad to act
+on. Measured on Windows 11 against one device instance, changing one thing at a
+time ([`tests/manual/windows_device_guid`](../tests/manual/windows_device_guid/)):
+
+| You change | Windows picks it up? |
+|---|---|
+| Interfaces, endpoints, packet sizes | **Yes, every time** |
+| Which driver should bind | **Yes, every time** |
+| `deviceInterfaceGuid`, with the vendor revision moving | **Yes** |
+| `deviceInterfaceGuid`, with the vendor revision pinned | **No** - it keeps the old GUID |
+| `pid` or `serialNumber` | **Yes** - it is a different device to Windows |
+
+**The standard descriptors are read on every enumeration.** A device that was a
+single vendor interface and becomes a composite gets split into children; one
+that goes back becomes a single node again. Measured: an instance whose parent
+had `usbccgp` bound came back as a single-interface device and Windows re-bound
+that same instance to `WINUSB`, with the vendor revision deliberately held
+unchanged. **Driver binding follows your descriptors and needs no help.**
+
+**The Microsoft OS 2.0 registry properties are the exception.** Windows reads
+`DeviceInterfaceGUIDs` once per device instance and keeps it, re-reading only
+when `wVendorRevision` in the descriptor set changes. Measured: sending a
+different GUID under a pinned revision left the old one in the registry, on a
+parent instance and on an `&MI_01` child alike. This library derives the
+revision from the descriptor set by default, so it moves whenever the set moves
+and you get the re-read for free; see
+[advanced guide 3.7](usb-device-advanced.md#37-bos-and-microsoft-os-20).
+
+**A new identity is a clean slate.** Windows keys an instance on VID, PID and
+serial - `USB\VID_303A&PID_4080\GUID-TEST-1`. Change the PID or the serial and
+you get a new instance that reads everything fresh; measured, that holds even
+with the vendor revision pinned to a value the old instance never saw. The old
+instance stays in the registry, unused.
+
+**With no `serialNumber`, the instance is keyed on the port.** Measured, the
+instance ID became `USB\VID_303A&PID_4080\8&2EBC545B&0&4` - a path, not a
+serial. The same board in another port is then a different device to Windows,
+with its own cached properties. Ship a serial unless you want that.
+
+So, during development:
+
+- Changing descriptors, layout or driver expectations: **just reflash.** It
+  works.
+- Changing the device interface GUID: **let the revision derive itself**, which
+  is the default. Only a hand-pinned `msOs20VendorRevision` can trap you here.
+- Still seeing something stale, or a device stuck with a driver error:
+  changing the PID or `config.serialNumber` gives you a fresh instance. That is
+  also why the Info sketches here use separate PIDs.
+
+Two things this does **not** cover, because they were not measured here: the
+friendly name shown in Device Manager appears to have its own caching, and a
+device instance that has already **failed** to install can stay failed. The
+[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) project reports
+that a `CM_PROB_FAILED_INSTALL` instance did not re-evaluate even after the
+hardware IDs changed, so for a device stuck that way, a new PID or serial is the
+way out.
 
 ### 5.3 macOS
 
