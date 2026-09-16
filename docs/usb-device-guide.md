@@ -821,7 +821,12 @@ The procedure that produced these tables:
    `Microsoft-Windows-Kernel-PnP/Configuration` in Event Viewer instead: 400
    configured, 410 started, 411 start failed, 430 requires further
    installation. It also tells you whether a driver was re-selected
-   (`Device Updated`).
+   (`Device Updated`). Do not expect `setupapi.dev.log` to help with a WinUSB
+   device: on the build measured here it recorded a section only when a
+   class driver such as `usbser` was installed, and none for any of the
+   dozens of WinUSB binds through the Microsoft OS 2.0 compatible ID -
+   neither the successes nor the deliberate failure. Its silence means
+   nothing either way.
 5. **Check the device interface, not just the driver.** `pnputil
    /enum-interfaces /class {GUID}` lists every registration with its state,
    and the only test that matters is enumerating as an application does
