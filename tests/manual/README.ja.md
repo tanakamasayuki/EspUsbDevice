@@ -403,6 +403,30 @@ Microsoft OS 2.0 の function subset を解決するのは usbccgp.sys だけで
 3. 対照実験は `-DWINUSB_TEST_LAYOUT=2` と**別の**未使用 serial を足して、
    `CM_PROB_FAILED_INSTALL` と `USB\MS_COMP_WINUSB` の不在を確認します。
 
+## `windows_device_guid`（変更した GUID が Windows へ届くか）
+
+目的:
+
+- `EspUsbDeviceConfig::deviceInterfaceGuid` が Windows のレジストリまで届くことの確認。
+- 変更したときに、**すでにそのデバイスを列挙したことがある PC** で反映されることの確認。
+  これは descriptor set が `MS_OS_20_FEATURE_VENDOR_REVISION` を持つからこそ起きます。
+
+Windows は VID/PID/serial ごとに registry property をキャッシュするため、identity は固定して
+GUID と revision だけを動かします。Windows 11 での実測、instance は通して同一、4 変種とも
+`STATUS OK` / `SERVICE WINUSB`:
+
+| 変種 | 送った GUID | revision | Windows が保持した GUID |
+|---|---|---|---|
+| A | `{A1A1…}` | 21192（自動） | `{A1A1…}` |
+| B | `{B2B2…}` | 563（自動） | `{B2B2…}` — 更新 |
+| **C（対照）** | `{C3C3…}` | **563 に固定** | **`{B2B2…}` — 更新されない** |
+| C′ | `{C3C3…}` | 12898（自動） | `{C3C3…}` — 更新 |
+
+これを観察ではなくテストにしているのは対照です。C は revision を据え置いたまま新しい GUID を
+送り、Windows は古い方を保持しました。
+
+手順と背景: `windows_device_guid/README.ja.md`。
+
 ## `usb_ncm`（USB CDC-NCM ネットワークデバイス）
 
 目的:
