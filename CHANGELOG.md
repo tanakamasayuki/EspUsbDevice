@@ -1,6 +1,20 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) **Fixed: a HID class registered after a non-HID class never worked.**
+  TinyUSB asks for the report descriptor by its instance number, always 0 in
+  this build, and the library used that number as a position in its
+  registration table. With a vendor, CDC or MSC class registered first the
+  lookup landed on that class and returned nothing, so `GET_DESCRIPTOR(Report)`
+  was neither answered nor stalled and the host waited out its control timeout;
+  reports went to a TinyUSB instance that does not exist. Descriptors were
+  correct throughout, which is why enumeration looked fine. Measured on Windows
+  11: `HidUsb` failed with Code 10 about 6 s after plugging in and, in a
+  composite, the WinUSB function beside it was held behind that failure and
+  never enabled its device interface. Registering the HID class first was the
+  only working order. Regression guards: `tests/single/hid_registration_order`
+  (lookup for every order, no host) and `tests/peer/composite_vendor_hid`
+  (the host has to receive a key).
 - (EN) New `EspUsbDeviceConfig::deviceInterfaceGuid`. The GUID Windows records
   as a vendor interface's `DeviceInterfaceGUIDs` was hard-coded, so every
   EspUsbDevice vendor interface in the world answered the same
@@ -24,6 +38,18 @@
   A flat set carries it once under the set header, a subset set once per
   function subset. Descriptor sets grow by 6 bytes per function: 30/162/206
   become 36/168/218.
+- (JA) **修正: 非HIDクラスの後に登録したHIDクラスが一切動きませんでした。**
+  TinyUSB は report descriptor をインスタンス番号（このビルドでは常に0）で
+  要求しますが、ライブラリはその番号を登録テーブルの位置として使っていました。
+  vendor / CDC / MSC を先に登録すると lookup がそのクラスに当たって何も返さず、
+  `GET_DESCRIPTOR(Report)` は応答も STALL もされないままホストの control
+  タイムアウトまで待たされ、report は存在しない TinyUSB インスタンスへ送られて
+  いました。descriptor 自体は終始正しかったので、列挙は正常に見えます。
+  Windows 11 での実測は、挿してから約6秒後に `HidUsb` が Code 10 で失敗、複合
+  デバイスでは隣の WinUSB function がその失敗を待たされて device interface を
+  有効化しない、という症状でした。HIDクラスを先に登録する順だけが動く順でした。
+  回帰ガード: `tests/single/hid_registration_order`（全登録順の lookup、ホスト
+  不要）と `tests/peer/composite_vendor_hid`（ホストがキーを受け取ること）。
 - (JA) `EspUsbDeviceConfig::deviceInterfaceGuid` を追加しました。vendor
   interface の `DeviceInterfaceGUIDs` として Windows が記録する GUID が直書きで、
   世界中の EspUsbDevice 製 vendor interface が同じ `SetupDiGetClassDevs` の列挙に

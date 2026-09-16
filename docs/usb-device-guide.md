@@ -510,6 +510,16 @@ Composite HID does not add interfaces; it adds report IDs on one HID interface.
 Some host OSes behave differently depending on interface order and whether an
 IAD is present. After rearranging, re-verify on the OSes you actually target.
 
+Registration order decides interface and endpoint numbers
+([advanced 5.1](usb-device-advanced.md#51-numbering-rules)) and nothing else:
+a HID class works the same whether it is registered first or after a vendor,
+CDC or MSC class. That was not always so - in 2.4.0 and earlier a single HID class
+registered after a non-HID one never answered the host's report descriptor
+request, which on Windows 11 read as the keyboard failing with Code 10 about
+6 seconds after plugging in and, in a composite, the function next to it
+never becoming usable either. If a HID function is dead on an older build
+while the same classes work in another order, that is what you are seeing.
+
 ### Step 8. Check that it holds up
 
 Enumerating once is not the same as staying usable.

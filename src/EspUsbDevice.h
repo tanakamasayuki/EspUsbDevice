@@ -737,7 +737,14 @@ private:
   bool hasAudioClass() const;
   bool hasNetClass() const;
   uint8_t classReportId(uint8_t classInstance) const;
+  // Two different numbers meet here. classReportId() and classRuntimeInstance()
+  // take the class's slot in classes_ (EspUsbDeviceClass::hidInstance_), which
+  // is registration order. hidClassForInstance() takes TinyUSB's HID instance
+  // number - always 0 in this build - and returns the class behind it. Treating
+  // one as the other is what once broke a HID class registered after a non-HID
+  // one.
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
+  EspUsbDeviceClass *hidClassForInstance(uint8_t instance) const;
   void setLastError(esp_err_t error);
   void removeClass(EspUsbDeviceClass *deviceClass);
 
@@ -862,6 +869,9 @@ protected:
   friend class EspUsbDevice;
   explicit EspUsbDeviceClass(EspUsbDevice &device);
   EspUsbDevice &device_;
+  // This class's slot in EspUsbDevice::classes_, i.e. its registration order.
+  // Not a TinyUSB instance number, despite the name: the device maps it through
+  // classReportId() and classRuntimeInstance() before anything reaches TinyUSB.
   uint8_t hidInstance_ = 0;
 };
 
