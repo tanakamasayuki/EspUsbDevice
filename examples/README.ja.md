@@ -219,6 +219,16 @@ USB Audio speaker sink と PCMFlowDevice の M5 speaker helper をつなぐ例�
   `M5.Speaker` への安定した受け渡しを行います。
 - EspUsbDevice 本体は PCMFlow / PCMFlowDevice へ依存せず、この example だけが任意連携します。
 
+## VideoCamera
+
+テストパターンを生成して流す USB Video Class カメラです。イメージセンサは要りません。
+Windows・macOS・Linux はいずれも標準の UVC ドライバを何もインストールせずに当てます。
+詳しくは [VideoCamera/README.ja.md](VideoCamera/README.ja.md) を参照してください。
+
+- 制約は isochronous の帯域です。full speed なら 160x120 非圧縮が 15 fps で、
+  大きなフレームを実用にするのは MJPEG です。
+- フレームの投入は 1 箇所から、宣言したレートでペーシングします。
+
 ## AudioMicrophoneM5
 
 M5 内蔵マイクを使う USB Audio microphone（device → Host）の例です。

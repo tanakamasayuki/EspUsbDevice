@@ -168,6 +168,7 @@ static constexpr uint8_t USB_SUBCLASS_BOOT = 0x01;
 static constexpr uint8_t USB_PROTOCOL_KEYBOARD = 0x01;
 static constexpr uint8_t USB_PROTOCOL_MOUSE = 0x02;
 
+static constexpr uint8_t USB_ENDPOINT_ATTR_ISOCHRONOUS = 0x01;
 static constexpr uint8_t USB_ENDPOINT_ATTR_BULK = 0x02;
 static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
 static constexpr uint8_t USB_SCSI_CMD_SYNCHRONIZE_CACHE_10 = 0x35;
@@ -976,6 +977,17 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     // cannot hold that. Saying so here is the whole point: the alternative is
     // an endpoint that silently fails to open at enumeration.
     setLastError(ESP_ERR_INVALID_SIZE);
+    return false;
+  }
+  // Isochronous IN endpoints are allocated up front and their allocation is
+  // not refused when it does not fit, so a camera or microphone that outgrows
+  // the FIFO enumerates, binds a host driver and transmits nothing. Checked
+  // only when the configuration has one, because every other transfer type
+  // already fails visibly at enumeration and this arithmetic should not be
+  // able to refuse a configuration that has been working.
+  if (hasIsochronousInEndpoint(highSpeedBudget) && !transmitFifoFits(highSpeedBudget))
+  {
+    setLastError(ESP_ERR_NO_MEM);
     return false;
   }
 
@@ -1812,11 +1824,20 @@ bool EspUsbDevice::buildDescriptors()
   // report-instance bookkeeping.
   hidInterfacesLength_ = static_cast<uint16_t>(offset - 9);
   hidInterfaceCount_ = interfaceNumber;
+  // Classes whose high-speed descriptor differs by more than a packet size in
+  // an endpoint descriptor have to be asked again for the high-speed
+  // configuration rather than patched. Audio and video both size isochronous
+  // endpoints from the speed, so the offsets they were written at are kept.
   EspUsbDeviceClass *audioClass = nullptr;
   uint16_t audioOffset = 0;
   uint16_t audioLength = 0;
   uint8_t audioInterfaceNumber = 0;
   uint8_t audioEndpointNumber = 0;
+  EspUsbDeviceClass *videoClass = nullptr;
+  uint16_t videoOffset = 0;
+  uint16_t videoLength = 0;
+  uint8_t videoInterfaceNumber = 0;
+  uint8_t videoEndpointNumber = 0;
   for (size_t i = 0; i < classCount_; i++)
   {
     if (!classes_[i] || classes_[i]->isHid())
@@ -1842,6 +1863,14 @@ bool EspUsbDevice::buildDescriptors()
       audioLength = written;
       audioInterfaceNumber = classInterface;
       audioEndpointNumber = classEndpoint;
+    }
+    if (classes_[i]->isVideo())
+    {
+      videoClass = classes_[i];
+      videoOffset = classOffset;
+      videoLength = written;
+      videoInterfaceNumber = classInterface;
+      videoEndpointNumber = classEndpoint;
     }
     if (classes_[i]->isVendor())
     {
@@ -1950,6 +1979,22 @@ bool EspUsbDevice::buildDescriptors()
             MAX_CONFIG_DESCRIPTOR - audioOffset, audioInterfaceNumber,
             audioEndpointNumber, true);
     if (highSpeedAudioLength != audioLength)
+    {
+      setLastError(ESP_FAIL);
+      return false;
+    }
+  }
+  if (videoClass)
+  {
+    // Only the isochronous wMaxPacketSize differs between the two speeds, so
+    // the lengths must match; a mismatch would mean the rest of the
+    // configuration had shifted underneath the copy.
+    const uint16_t highSpeedVideoLength =
+        videoClass->configurationDescriptorForSpeed(
+            &configDescriptorHighSpeed_[videoOffset],
+            MAX_CONFIG_DESCRIPTOR - videoOffset, videoInterfaceNumber,
+            videoEndpointNumber, true);
+    if (highSpeedVideoLength != videoLength)
     {
       setLastError(ESP_FAIL);
       return false;
@@ -2468,6 +2513,134 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
 #endif
 }
 
+// Whether every transmit FIFO this configuration needs can be placed in the
+// controller's FIFO SPRAM.
+//
+// The DWC2 shares one small SPRAM between the receive FIFO, one transmit FIFO
+// per IN endpoint and, in DMA mode, two words per endpoint of endpoint-info.
+// dcd_edpt_open() allocates downward and refuses when the space is gone, which
+// for a bulk or interrupt endpoint surfaces as a failed enumeration. For an
+// isochronous endpoint it does not: the allocation happens up front, through
+// usbd_edpt_iso_alloc(), and an ESP32-S3 measured on 2026-09-16 programmed
+// DIEPTXF1 with 256 words at offset 512 - past the end of a 242-word area -
+// without complaint. The device then enumerated, bound its host driver,
+// reported frames going out, and delivered nothing.
+//
+// So this is checked before starting, in the same arithmetic dcd_dwc2.c uses.
+// Does this configuration declare an isochronous IN endpoint? Audio capture
+// and video both do; everything else in the library does not.
+bool EspUsbDevice::hasIsochronousInEndpoint(bool highSpeed) const
+{
+  const uint8_t *descriptor =
+      const_cast<EspUsbDevice *>(this)->configurationDescriptorForSpeed(0, highSpeed);
+  if (!descriptor)
+  {
+    return false;
+  }
+  const uint16_t total = static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8));
+  for (uint16_t offset = 0; offset + 2 <= total && descriptor[offset] > 0;
+       offset = static_cast<uint16_t>(offset + descriptor[offset]))
+  {
+    if (descriptor[offset + 1] == USB_DESC_ENDPOINT && descriptor[offset] >= 7 &&
+        (descriptor[offset + 2] & 0x80) != 0 &&
+        (descriptor[offset + 3] & 0x03) == USB_ENDPOINT_ATTR_ISOCHRONOUS)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool EspUsbDevice::transmitFifoFits(bool highSpeed) const
+{
+  // Same geometry as bulkInDoubleBufferMask(), from _dwc2_controller[] in
+  // dwc2_esp32.h, mirrored because the decision precedes tusb_init().
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  (void)highSpeed;
+  constexpr uint16_t fifoDepthWords = 256;
+  constexpr uint8_t endpointCount = 7;
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+  const uint16_t fifoDepthWords = highSpeed ? 1024 : 256;
+  const uint8_t endpointCount = highSpeed ? 16 : 7;
+#else
+  // An unrepresented target is not second-guessed: dcd_edpt_open() still has
+  // the final say, and refusing to start here would be worse than letting it.
+  (void)highSpeed;
+  return true;
+#endif
+
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || \
+    defined(CONFIG_IDF_TARGET_ESP32P4)
+  const uint8_t *descriptor =
+      const_cast<EspUsbDevice *>(this)->configurationDescriptorForSpeed(0, highSpeed);
+  if (!descriptor)
+  {
+    return true;
+  }
+  const uint16_t total = static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8));
+
+  const auto packetWords = [](uint16_t packet) -> uint16_t {
+    return static_cast<uint16_t>((packet + 3) / 4);
+  };
+
+  // EP0 IN is allocated first and its packet size also sets the receive FIFO's
+  // floor. Alternate settings of the same interface reuse one endpoint number,
+  // so an address is counted once, at its largest packet size.
+  uint16_t inPacket[16] = {};
+  inPacket[0] = CFG_TUD_ENDPOINT0_SIZE;
+  uint16_t largestOutPacket = CFG_TUD_ENDPOINT0_SIZE;
+  uint16_t offset = 0;
+  while (offset + 2 <= total && descriptor[offset] > 0)
+  {
+    const uint8_t length = descriptor[offset];
+    if (descriptor[offset + 1] == USB_DESC_ENDPOINT && length >= 7)
+    {
+      const uint8_t address = descriptor[offset + 2];
+      const uint16_t packet =
+          static_cast<uint16_t>((descriptor[offset + 4] | (descriptor[offset + 5] << 8)) & 0x07ff);
+      const uint8_t number = static_cast<uint8_t>(address & 0x0f);
+      if (address & 0x80)
+      {
+        if (packet > inPacket[number])
+        {
+          inPacket[number] = packet;
+        }
+      }
+      else if (packet > largestOutPacket)
+      {
+        largestOutPacket = packet;
+      }
+    }
+    offset = static_cast<uint16_t>(offset + length);
+  }
+
+  uint32_t needed = 0;
+  for (uint8_t number = 0; number < 16; number++)
+  {
+    if (inPacket[number] != 0)
+    {
+      needed += packetWords(inPacket[number]);
+    }
+  }
+  // Double-buffered bulk IN endpoints take twice their packet in FIFO.
+  const uint16_t doubled = bulkInDoubleBuffered_;
+  for (uint8_t number = 0; number < 16; number++)
+  {
+    if ((doubled & (1u << number)) != 0 && inPacket[number] != 0)
+    {
+      needed += packetWords(inPacket[number]);
+    }
+  }
+  // calc_device_grxfsiz(): fixed overhead, room for the largest OUT packet,
+  // two words per endpoint.
+  needed += static_cast<uint32_t>(14 + 2 * ((largestOutPacket / 4) + 1) +
+                                  2 * endpointCount);
+  // Buffer DMA reserves two words per endpoint above everything else.
+  const uint32_t available = fifoDepthWords - (2u * endpointCount);
+  return needed <= available;
+#endif
+}
+
 bool EspUsbDevice::validateControllerEndpoints(const uint8_t *descriptor,
                                                uint16_t length)
 {
@@ -2626,6 +2799,18 @@ bool EspUsbDevice::hasAudioClass() const
   for (size_t i = 0; i < classCount_; i++)
   {
     if (classes_[i] && classes_[i]->isAudio())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool EspUsbDevice::hasVideoClass() const
+{
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isVideo())
     {
       return true;
     }

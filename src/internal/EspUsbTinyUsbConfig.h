@@ -94,6 +94,9 @@
 #define CFG_TUD_AUDIO 1
 #define CFG_TUD_VENDOR 1
 #define CFG_TUD_NCM 1
+#define CFG_TUD_VIDEO 1
+// Streaming interfaces per video function. One camera, one stream.
+#define CFG_TUD_VIDEO_STREAMING 1
 // DFU in both shapes. They are separate TinyUSB drivers with separate interface
 // protocols (DFU_PROTOCOL_RT vs DFU_PROTOCOL_DFU), so both can be compiled in
 // and the host's descriptor match decides which one opens; EspUsbDeviceDfu
@@ -282,3 +285,58 @@
   (ESP_USB_TINYUSB_AUDIO_SW_PACKETS * CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX)
 #define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ                            \
   (ESP_USB_TINYUSB_AUDIO_SW_PACKETS * CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX)
+
+// UVC payload staging buffer, one per streaming interface, statically
+// allocated. The class driver assembles one payload here - UVC header plus
+// frame bytes - and this is the cap on dwMaxPayloadTransferSize it commits to.
+//
+// It must not exceed the isochronous endpoint's wMaxPacketSize, because
+// TinyUSB refuses to open the streaming alternate setting unless the endpoint
+// is at least as large as the committed payload (video_device.c,
+// _open_vs_itf). A full-speed isochronous endpoint carries at most 1023 bytes
+// per 1 ms frame, so 1023 is the largest value that works at both speeds -
+// 1024 leaves a full-speed host unable to start the stream at all, which it
+// reports as a failure to build its capture graph rather than as anything
+// about descriptors. Measured on Windows 11 with ffmpeg's DirectShow input.
+// Two limits meet here, and the smaller one wins.
+//
+// The transport limit is 1023: a full-speed isochronous endpoint carries at
+// most that per 1 ms frame, and TinyUSB refuses to open the streaming
+// alternate setting unless the endpoint is at least as large as the committed
+// payload (video_device.c, _open_vs_itf). 1024 leaves a full-speed host unable
+// to start the stream at all, which it reports as a failure to build its
+// capture graph rather than as anything about descriptors.
+//
+// The controller limit is smaller still on the S2 and S3, and it is the one
+// that bites. Their DWC2 has a 256-word (1 KB) FIFO SPRAM shared by the
+// receive FIFO, every transmit FIFO and the DMA endpoint-info area; after
+// EP0 and the receive FIFO there are about 164 words left, so a 1023-byte
+// endpoint (256 words) does not fit. Measured on an ESP32-S3 with a 1023-byte
+// endpoint: DIEPTXF1 was programmed 256 words at offset 512, outside the
+// 242-word usable area, the device reported sending frames, and not one byte
+// reached the host - followed some seconds later by a crash in an unrelated
+// EP0 path. 512 bytes (128 words) streams correctly.
+//
+// EspUsbDevice::begin() checks the whole configuration against the same FIFO
+// budget and fails rather than enumerate a camera that cannot transmit, so
+// raising this is safe to try: it either works or begin() says it does not.
+#ifndef CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#define CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE 1023
+#else
+#define CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE 512
+#endif
+#endif
+#if CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE > 1023
+#error "CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE must be 1023 or less: a larger payload than a full-speed isochronous endpoint can carry stops the host starting the stream"
+#endif
+// Isochronous by default, which is what a camera is: the host reserves
+// bandwidth up front and never retries a lost packet. Set to 1 from
+// build_opt.h for bulk streaming, which retries and therefore cannot drop a
+// frame, but competes with every other bulk endpoint for whatever bandwidth is
+// left. Windows' usbvideo.sys accepts both. This is a build-wide switch
+// because the class driver compiles one shape or the other, so a sketch that
+// changes it must rebuild the library (arduino-cli --clean).
+#ifndef CFG_TUD_VIDEO_STREAMING_BULK
+#define CFG_TUD_VIDEO_STREAMING_BULK 0
+#endif
