@@ -429,11 +429,33 @@ sudo wireshark   # usbmonX を選ぶ
 - **イベントビューアー** — ドライバのバインド失敗の詳細。
 - **`pnputil /enum-devices /connected`** — バインドされたドライバの確認。
 
-**Windowsは VID/PID ごとにディスクリプタをキャッシュします。** これはDevice側開発で最も多い「なぜか古い名前のまま」「変更が反映されない」の原因です。対策は次のいずれかです。
+#### Windowsが読み直すもの、保持したままのもの
 
-- 開発中は**ディスクリプタを変えるたびにPIDを変える**（このライブラリのInfoスケッチが別々のPIDを使っているのはこのためです）
-- `config.serialNumber` を変える
-- デバイスマネージャーで対象デバイスを削除してから挿し直す
+「Windowsはディスクリプタをキャッシュする」という言い方が広まっていますが、大雑把すぎて対策に使えません。Windows 11の同一デバイスインスタンスに対し、一度に1つだけ変えて実測しました（[`tests/manual/windows_device_guid`](../tests/manual/windows_device_guid/)）。
+
+| 変えたもの | Windowsは追随するか |
+|---|---|
+| インターフェース、エンドポイント、パケットサイズ | **する。毎回** |
+| どのドライバが当たるべきか | **する。毎回** |
+| `deviceInterfaceGuid`（vendor revisionも動く場合） | **する** |
+| `deviceInterfaceGuid`（vendor revisionを固定した場合） | **しない**。古いGUIDのまま |
+| `pid` / `serialNumber` | **する**。Windowsにとって別デバイスなので |
+
+**標準ディスクリプタは列挙のたびに読まれます。** vendorインターフェース1本だったものがcompositeになれば子デバイスに分割され、戻せば単一ノードに戻ります。実測では、親に `usbccgp` が当たっていたインスタンスを単一インターフェースに戻したところ、**同じインスタンスのまま `WINUSB` に再バインド**されました。vendor revisionは意図的に据え置いたままです。**ドライバの選択はディスクリプタに追随するので、こちらから何かする必要はありません。**
+
+**例外がMicrosoft OS 2.0のregistry propertyです。** Windowsは `DeviceInterfaceGUIDs` をデバイスインスタンスごとに一度読んで保持し、descriptor set内の `wVendorRevision` が変わったときだけ読み直します。実測では、revisionを固定したまま別のGUIDを送っても古いGUIDがレジストリに残りました。親インスタンスでも `&MI_01` の子でも同じです。このライブラリは既定でrevisionをdescriptor setから導出するので、setが変われば自動的に読み直されます。詳細は[応用ガイド 3.7](usb-device-advanced.ja.md#37-bosとmicrosoft-os-20)。
+
+**identityを変えれば白紙からです。** Windowsはインスタンスを VID・PID・serial で識別します（`USB\VID_303A&PID_4080\GUID-TEST-1`）。PIDかserialを変えれば新しいインスタンスになり、すべてを読み直します。実測では、古いインスタンスが一度も見ていない値にvendor revisionを固定していても、そうなりました。古いインスタンスはレジストリに残りますが使われません。
+
+**`serialNumber` を出さないと、インスタンスはポートで識別されます。** 実測したインスタンスIDは `USB\VID_303A&PID_4080\8&2EBC545B&0&4` で、serialではなくパスです。同じ基板でも挿し口が変わればWindowsには別デバイスになり、キャッシュも別々になります。それを望まないならserialを出してください。
+
+開発中の指針としては、
+
+- ディスクリプタ・構成・ドライバの想定を変えた: **焼き直すだけでよい。** それで反映されます
+- device interface GUIDを変えた: **revisionは自動導出に任せる**（既定です）。ここで詰まるのは `msOs20VendorRevision` を手で固定したときだけです
+- それでも古いまま、あるいはドライバエラーで固まっている: PIDか `config.serialNumber` を変えれば新しいインスタンスになります。このライブラリのInfoスケッチが別々のPIDを使っているのもこのためです
+
+ここで**測っていないこと**が2つあります。デバイスマネージャーに出る表示名は別のキャッシュを持っているようだ、という点と、**一度インストールに失敗した**インスタンスは失敗したまま残りうる、という点です。後者について[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols)は、`CM_PROB_FAILED_INSTALL` が付いたインスタンスはhardware IDが変わっても再評価されなかったと報告しています。その状態に陥ったデバイスから抜け出すには、PIDかserialを変えるのが確実です。
 
 ### 5.3 macOS
 

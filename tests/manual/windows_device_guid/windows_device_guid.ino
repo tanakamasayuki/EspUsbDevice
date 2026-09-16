@@ -16,12 +16,35 @@
 
 EspUsbDevice device;
 EspUsbDeviceVendor Vendor(device);
+// Added only for the composite variant: a second interface is what makes
+// Windows load usbccgp and split the device into children, which is the layout
+// change the guide needs an answer for.
+#ifndef VAR_COMPOSITE
+#define VAR_COMPOSITE 0
+#endif
+#if VAR_COMPOSITE
+EspUsbDeviceHidKeyboard Keyboard(device);
+#endif
 
 #ifndef GUID_VARIANT
 #define GUID_VARIANT 0
 #endif
 #ifndef PINNED_REVISION
 #define PINNED_REVISION 0
+#endif
+// The identity axes. Windows keys a device instance on VID, PID and serial, so
+// these are what decide whether it is looking at "this device again" or a new
+// one - which is a different question from whether it re-reads the descriptors.
+#ifndef VAR_PID
+#define VAR_PID 0x4080
+#endif
+#ifndef VAR_SERIAL
+#define VAR_SERIAL "guid-test-1"
+#endif
+// 1 omits iSerialNumber entirely, which makes Windows fall back to keying the
+// instance on where the device is plugged in.
+#ifndef VAR_NO_SERIAL
+#define VAR_NO_SERIAL 0
 #endif
 
 #if GUID_VARIANT == 0
@@ -42,8 +65,10 @@ void setup()
   // VID, PID and serial, and a changed identity would make it read the
   // descriptors afresh for a new device, which proves nothing.
   config.vid = 0x303a;
-  config.pid = 0x4080;
-  config.serialNumber = "guid-test-1";
+  config.pid = VAR_PID;
+#if !VAR_NO_SERIAL
+  config.serialNumber = VAR_SERIAL;
+#endif
   config.manufacturer = "EspUsbDevice";
   config.product = "GUID test";
   config.deviceInterfaceGuid = kGuid;
@@ -54,11 +79,14 @@ void setup()
     Serial.printf("GUIDTEST_BEGIN_FAILED %s\n", device.lastErrorName());
     return;
   }
-  Serial.printf("GUIDTEST variant=%d guid=%s revision=%u len=%u subsets=%d\n",
-                (int)GUID_VARIANT, kGuid,
-                (unsigned)device.microsoftOs20VendorRevision(),
+  Serial.printf("GUIDTEST variant=%d pid=0x%04x serial=%s composite=%d\n",
+                (int)GUID_VARIANT, (unsigned)VAR_PID,
+                VAR_NO_SERIAL ? "(none)" : VAR_SERIAL, (int)VAR_COMPOSITE);
+  Serial.printf("GUIDTEST guid=%s revision=%u len=%u subsets=%d interfaces=%u\n",
+                kGuid, (unsigned)device.microsoftOs20VendorRevision(),
                 (unsigned)device.microsoftOs20DescriptorLength(),
-                device.microsoftOs20UsesSubsets() ? 1 : 0);
+                device.microsoftOs20UsesSubsets() ? 1 : 0,
+                (unsigned)device.configurationDescriptor(0)[4]);
 }
 
 void loop()

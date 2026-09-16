@@ -56,6 +56,27 @@ every variant `STATUS OK problem=CM_PROB_NONE` and `SERVICE WINUSB`:
 | **C, control** | `{C3C3…}` | **563, pinned** | **`{B2B2…}` - not updated** |
 | C′ | `{C3C3…}` | 12898 (derived) | `{C3C3…}` - updated |
 
+### The rest of the matrix
+
+The same sketch covers the identity and layout axes, which is what the user
+guide's "what Windows re-reads" table is built from. `-DVAR_PID=`,
+`-DVAR_SERIAL=`, `-DVAR_NO_SERIAL=1` and `-DVAR_COMPOSITE=1` select them.
+Measured, all `STATUS OK` with a driver bound:
+
+| Change, revision pinned unless noted | Instance | Result |
+|---|---|---|
+| vendor only -> vendor + HID | same parent, new `&MI_00` / `&MI_01` | parent re-bound to `usbccgp`, children created, `MI_01` got `WINUSB` and read the GUID fresh |
+| vendor + HID -> vendor only | same parent | **parent re-bound `usbccgp` -> `WINUSB`**, GUID kept (revision unchanged) |
+| GUID changed on the `&MI_01` child | same child | GUID kept - the cache applies to children too |
+| built against published 2.4.0, then against the fix | same | revision descriptor appears for the first time and the new GUID **is** taken |
+| `pid` 0x4080 -> 0x4083 | **new** | everything read fresh, revision pinned to an unused value |
+| `serialNumber` changed | **new** | everything read fresh |
+| no `serialNumber` at all | `…\8&2EBC545B&0&4` | keyed on the port, not a serial |
+
+Two conclusions the user guide leans on: **driver binding follows the
+descriptors on every enumeration and needs no revision**, and **only the
+Microsoft OS 2.0 registry properties are cached behind one**.
+
 **The control is the test.** Without it, B updating only shows that Windows
 re-read something; it cannot distinguish "the revision made it re-read" from
 "it re-reads every time". C sends a different GUID under an unchanged revision
