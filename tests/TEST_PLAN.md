@@ -84,7 +84,7 @@ tests/
 | Vendor direct transfers | ✅ `vendor_direct` (the library's own `directWriteSupported()`, and every refusal: null / zero / oversize / misaligned / PSRAM / not mounted, plus the buffered-only API going quiet) + `vendor_direct_off` (the default build refuses everything with `NotSupported`) | ✅ `usb_vendor_direct` (blocks streamed from the caller's own buffer arrive byte for byte and in order, armed from the completion callback) | not implemented | measured 42.6 MB/s on P4 HS against 33.9 for the buffered path, 8 reads in flight |
 | Bulk IN transmit FIFO | ✅ `bulk_in_fifo` (no bits without a bulk IN endpoint, one bulk IN always doubled, composite bits are a subset of the declared bulk IN endpoints and all-or-nothing, Single forces off, Double applies or refuses) | not implemented | not implemented | measured 22.98 -> 28.93 MB/s on P4 HS |
 | USB Audio | ✅ UAC1/UAC2 descriptors | ✅ UAC1 `usb_audio_speaker` / `usb_audio_microphone` / `usb_audio_headset`, UAC2 `usb_audio_uac2` | not implemented | ✅ `examples/AudioSpeaker` / `AudioMicrophone` / `AudioHeadset` / `AudioSpeakerM5` |
-| Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | |
+| Composite (multi-function) | ✅ `composite_constraints` (Audio combinations / MAX_CLASSES), `hid_registration_order` (HID class found in every registration order) | ✅ `composite_hid_audio` / `composite_hid_cdc` / `composite_hid_msc` / `composite_hid_vendor` / `composite_vendor_hid` / `composite_hid_cdc_msc` / `composite_cdc_msc_vendor` | planned (configs within the S3 budget) | |
 | Core dependency boundary | ✅ `dependency_boundary` | | | |
 | Serial-log allowlist integrity | ✅ `known_findings` | | | |
 
@@ -477,6 +477,7 @@ and every data plane.
 44. ✅ `unit/midi_descriptor` (multi-cable MIDI descriptor bytes for every symmetric and asymmetric cable-count pair, and 1 cable still matching `TUD_MIDI_DESCRIPTOR()`; host g++)
 45. ✅ `loopback/usb_midi_cables` (4-cable MIDI, cable number preserved both directions)
 46. ✅ `peer/usb_midi_cables` (asymmetric 4-in / 5-out MIDI, which is what pins each direction; Host-decoded counts before and after traffic, every cable both directions, interleaved cables in one transfer, SysEx on a non-zero cable, a receive-only cable refused for sending; needs EspUsbHost's unreleased `getMidiPortInfo()`, so `--profile s3_peer_local`)
+47. ✅ `single/hid_registration_order` + `peer/composite_vendor_hid` (found → fixed: a single HID class registered after a non-HID class was looked up by TinyUSB instance number as a table position, so it returned no report descriptor and sent reports to a non-existent instance; the peer test registers Vendor before the keyboard and requires the host to receive the key, which enumeration alone did not catch)
 
 ## Acceptance Rules
 

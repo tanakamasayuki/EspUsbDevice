@@ -1369,21 +1369,45 @@ const uint16_t *EspUsbDevice::stringDescriptor(uint8_t index, uint16_t langid)
   return stringDescriptor_;
 }
 
+// The class behind TinyUSB HID instance `instance` when the HID is not merged.
+//
+// `instance` is TinyUSB's slot number, not a position in classes_. This build
+// drives one HID interface (CFG_TUD_HID == 1), so the slot is always 0 and the
+// class behind it is whichever one HID class was registered - wherever it sits
+// in registration order. Indexing classes_ with the slot number used to work
+// only while the HID class happened to be registered first: a vendor, CDC or
+// MSC class registered before it made the lookup land on that class, fail the
+// isHid() test and return nullptr. TinyUSB then armed no data stage for
+// GET_DESCRIPTOR(Report) and sent no STALL either (tu_memcpy_s refuses a null
+// source and hid_device.c ignores the result), so the host waited out its
+// control-transfer timeout. Measured on Windows 11: HidUsb failed to start
+// with Code 10 about 6 s after arrival, and because usbccgp starts a composite
+// device's children in order, a WinUSB function next to it was held behind the
+// failure and never enabled its device interface.
+EspUsbDeviceClass *EspUsbDevice::hidClassForInstance(uint8_t instance) const
+{
+  if (instance != 0 || compositeHid())
+  {
+    return nullptr;
+  }
+  for (size_t i = 0; i < classCount_; i++)
+  {
+    if (classes_[i] && classes_[i]->isHid())
+    {
+      return classes_[i];
+    }
+  }
+  return nullptr;
+}
+
 const uint8_t *EspUsbDevice::hidReportDescriptor(uint8_t instance)
 {
   if (compositeHid())
   {
     return instance == 0 ? hidReportDescriptor_ : nullptr;
   }
-  if (instance >= classCount_ || !classes_[instance])
-  {
-    return nullptr;
-  }
-  if (!classes_[instance]->isHid())
-  {
-    return nullptr;
-  }
-  return classes_[instance]->hidReportDescriptor();
+  EspUsbDeviceClass *hid = hidClassForInstance(instance);
+  return hid ? hid->hidReportDescriptor() : nullptr;
 }
 
 uint16_t EspUsbDevice::hidReportDescriptorLength(uint8_t instance)
@@ -1392,11 +1416,8 @@ uint16_t EspUsbDevice::hidReportDescriptorLength(uint8_t instance)
   {
     return instance == 0 ? hidReportDescriptorLength_ : 0;
   }
-  if (instance >= classCount_ || !classes_[instance] || !classes_[instance]->isHid())
-  {
-    return 0;
-  }
-  return classes_[instance]->hidReportDescriptorLength();
+  EspUsbDeviceClass *hid = hidClassForInstance(instance);
+  return hid ? hid->hidReportDescriptorLength() : 0;
 }
 
 void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
@@ -1443,9 +1464,10 @@ void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_
     }
     return;
   }
-  if (instance < classCount_ && classes_[instance])
+  EspUsbDeviceClass *hid = hidClassForInstance(instance);
+  if (hid)
   {
-    classes_[instance]->onHidSetReport(reportId, reportType, data, length);
+    hid->onHidSetReport(reportId, reportType, data, length);
   }
 }
 
@@ -1466,9 +1488,10 @@ void EspUsbDevice::handleHidSetProtocol(uint8_t instance, uint8_t protocol)
     }
     return;
   }
-  if (instance < classCount_ && classes_[instance])
+  EspUsbDeviceClass *hid = hidClassForInstance(instance);
+  if (hid)
   {
-    classes_[instance]->onHidSetProtocol(protocol);
+    hid->onHidSetProtocol(protocol);
   }
 }
 
@@ -2644,9 +2667,17 @@ uint8_t EspUsbDevice::maxCdcPorts()
   return ESP_USB_DEVICE_CDC_PORTS;
 }
 
+// The TinyUSB HID instance a class's reports go out on. There is one HID
+// interface in this build whether the HID is a single class or a merged
+// composite, so it is slot 0 either way; `classInstance` is the class's
+// position in classes_ and says nothing about the slot. Returning it used to
+// send a HID class registered after a non-HID one to tud_hid_n_report() with an
+// instance that does not exist - see hidClassForInstance() for the symptom the
+// same mistake produced on the descriptor side.
 uint8_t EspUsbDevice::classRuntimeInstance(uint8_t classInstance) const
 {
-  return compositeHid() ? 0 : classInstance;
+  (void)classInstance;
+  return 0;
 }
 
 void EspUsbDevice::setLastError(esp_err_t error)

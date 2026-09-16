@@ -712,6 +712,20 @@ NCM has the same shape. Vendor uses one number for both directions (`n` and
 registration order changes the numbers, which breaks any host-side script with
 hard-coded endpoint addresses.
 
+Numbers are all the order changes. The TinyUSB instance behind a HID class is
+always 0 - this build has one HID interface, whether that is one class or the
+merged composite - and the library resolves it to the HID class wherever that
+class sits in the registration table. In 2.4.0 and earlier it indexed the table with
+the instance number instead, so a HID class registered after a vendor, CDC or
+MSC class was looked up in the wrong slot: `hidReportDescriptor(0)` returned
+null, TinyUSB neither answered nor stalled `GET_DESCRIPTOR(Report)` (its copy
+refuses a null source and the HID class ignores the result), and the host sat
+out its control timeout. Measured on Windows 11: `HidUsb` failed with Code 10
+about 6 s after arrival and, because `usbccgp` starts a composite's children
+in order, the WinUSB function next to it started only after that failure and
+never enabled its device interface. Registration order made the same two
+functions work or not with byte-identical descriptors.
+
 ### 5.2 The controller limits in practice
 
 `validateControllerEndpoints()` **walks the assembled descriptor** and counts
