@@ -451,16 +451,13 @@ sudo wireshark   # usbmonX を選ぶ
 
 **インターフェース番号だけは注意が必要です。** 本数を変えずに「どの番号にどの機能が載るか」を入れ替えると、子インスタンスは両方そのまま残り、中身だけが変わります。実測では `MI_00` が HID → vendor、`MI_01` が vendor → マスストレージになり、revisionは据え置いたまま、Windowsは両方の子を正しく再バインドしました（`HidUsb` → `WINUSB`、`WINUSB` → `USBSTOR`）。ドライバは追随します。
 
-**registry propertyは追随しません。** `MI_01` には vendor インターフェースだった頃の `DeviceInterfaceGUIDs` が残りました。いまはマスストレージで、デバイスはその番号向けのGUIDを一切送っていないのにです。**Windowsは「無いところには書き、revisionが動けば更新するが、消しはしない」**ということです。そのGUIDを列挙するhostアプリは、応答できないマスストレージのインターフェースを見つけることになります。一度出荷したら**インターフェース番号と機能の対応は変えない**でください。変えるならPIDも一緒に変えます。
+**registry propertyは追随しません。**ただし、見た目ほど困りません。`MI_01` には vendor インターフェースだった頃の `DeviceInterfaceGUIDs` が残りました。いまはマスストレージで、デバイスはその番号向けのGUIDを送っていないのにです。1階層上でも同じことが起きます。単一vendorインターフェースとして出荷したデバイスはGUIDが自分のノードに登録され、あとでcompositeになると、その値は親に残ったまま、有効な方は子に載ります。**Windowsは「無いところには書き、revisionが動けば更新するが、消しはしない」**ということです。
 
-**単一インターフェースをcompositeに育てるときも、同じ問題が1階層上で起きます。** 非compositeのデバイスはGUIDが自分のノードに登録され、compositeでは子に登録されます。未使用PIDで実測しました。単一vendorインターフェース（GUID A）→ 同じPID・同じserialのまま vendor + HID composite（GUID B）とすると、親にAが残ったまま子にBが載ります。
+**ただし、値の残骸は「幽霊デバイス」ではありません。** アプリケーションと同じ方法——`SetupDiGetClassDevs` に `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE` ——で列挙すると、残骸のGUIDは**何も返さず**、有効な方だけがインターフェース1本を返しました。両方の値が同時にレジストリに載っている状態で実測しています。レジストリの値だけではdevice interfaceは作られず、作るのはそのノードにバインドされたドライバです。`usbccgp` の親も `USBSTOR` の子も、WinUSBのインターフェースは作りません。**残骸がアプリの邪魔をすることはありません。**
 
-```
-USB\VID_303A&PID_4084\GUID-TEST-1        usbccgp   {A1A1…}   ← 残骸、device scope
-USB\VID_303A&PID_4084&MI_01\9&…&0001     WINUSB    {B2B2…}   ← 有効、function scope
-```
+**効くのは生きている方です。** `deviceInterfaceGuid` を変えてrevisionが動かないと、列挙される側のインターフェースが古いGUIDに応答し続け、新しいGUIDを探すよう更新したアプリは何も見つけられません。このライブラリがrevisionを自動導出しているのは、この失敗を防ぐためです。`msOs20VendorRevision` を手で固定したときだけ、ここに落ちます。
 
-1台のデバイスが2つのGUIDに応答し、しかも古い方はWinUSBの要求に一切応えられないノードを指します。**すでに出荷したものに2つ目のfunctionを足すときは、PIDを変えてください。** vendor単独の製品にDFUを足すのが、まさにこの移行にあたります。
+**最初からトポロジを固定しておきたい**——あとでfunctionを足してもGUIDの登録先が動かないようにしたい——なら `config.msOs20CcgpDevice` を立ててください。インターフェース本数によらずWindowsにcompositeとして扱わせるので、functionは最初から子ノードを持ちます。単一vendorインターフェースでの実測では、親が `usbccgp`、子 `&MI_00` が `WINUSB` にバインドされ、GUIDは**子だけ**に登録されて**親には付きませんでした**。
 
 開発中の指針としては、
 

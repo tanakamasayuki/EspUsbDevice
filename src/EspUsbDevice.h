@@ -136,6 +136,25 @@ struct EspUsbDeviceConfig
   // begin() returns false with ESP_ERR_INVALID_ARG on anything else rather than
   // shipping a descriptor Windows will reject. nullptr keeps the default.
   const char *deviceInterfaceGuid = nullptr;
+  // Ask Windows to treat this as a composite device even when it is not one.
+  //
+  // `MS_OS_20_FEATURE_CCGP_DEVICE` makes Windows load usbccgp.sys whatever the
+  // interface count, class codes or configuration count say, which means the
+  // device's functions get their own child nodes and their own registry
+  // properties.
+  //
+  // Why that is worth asking for: Windows records `DeviceInterfaceGUIDs` on the
+  // device's own node when it is not composite, and on the child when it is -
+  // and it never removes one. A product that ships as a single vendor interface
+  // and later adds a second function therefore ends up with a stale GUID on the
+  // parent and the live one on a child, answering the same host-side lookup
+  // twice (measured; see the user guide, "What Windows re-reads"). Being
+  // composite from the first release avoids ever writing the device-scope one.
+  //
+  // Forces the subset layout, because function subsets are the point. Costs 4
+  // bytes plus the subset headers. Default off: a device that is not going to
+  // grow does not need it, and the flat layout is what has been measured most.
+  bool msOs20CcgpDevice = false;
   // wVendorRevision in the Microsoft OS 2.0 descriptor set.
   //
   // Windows caches the registry properties it read from a device the first time
@@ -691,7 +710,8 @@ private:
   // for WinUSB: the vendor interface and DFU.
   // Plus 6 bytes per function for the vendor revision descriptor, which sits in
   // every function subset (or once under the set header when flat).
-  static constexpr size_t MAX_MS_OS_20_DESCRIPTOR = 342;
+  // Plus 4 for the CCGP feature descriptor when a device asks to be composite.
+  static constexpr size_t MAX_MS_OS_20_DESCRIPTOR = 346;
 
   bool buildDescriptors();
   // Allocates the three configuration descriptor buffers on first use. False (and

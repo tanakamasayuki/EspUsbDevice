@@ -82,6 +82,10 @@ void setup()
   config.product = "GUID test";
   config.deviceInterfaceGuid = kGuid;
   config.msOs20VendorRevision = PINNED_REVISION;
+#ifndef VAR_CCGP
+#define VAR_CCGP 0
+#endif
+  config.msOs20CcgpDevice = VAR_CCGP != 0;
 
 #if VAR_COMPOSITE == 2
   MscDisk.format("WINGUID");
@@ -95,6 +99,7 @@ void setup()
   Serial.printf("GUIDTEST variant=%d pid=0x%04x serial=%s composite=%d\n",
                 (int)GUID_VARIANT, (unsigned)VAR_PID,
                 VAR_NO_SERIAL ? "(none)" : VAR_SERIAL, (int)VAR_COMPOSITE);
+  Serial.printf("GUIDTEST ccgp=%d\n", (int)VAR_CCGP);
   Serial.printf("GUIDTEST guid=%s revision=%u len=%u subsets=%d interfaces=%u\n",
                 kGuid, (unsigned)device.microsoftOs20VendorRevision(),
                 (unsigned)device.microsoftOs20DescriptorLength(),

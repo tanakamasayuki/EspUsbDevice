@@ -72,8 +72,14 @@ Measured, all `STATUS OK` with a driver bound:
 | `pid` 0x4080 -> 0x4083 | **new** | everything read fresh, revision pinned to an unused value |
 | `serialNumber` changed | **new** | everything read fresh |
 | no `serialNumber` at all | `…\8&2EBC545B&0&4` | keyed on the port, not a serial |
-| single interface (GUID A) -> composite (GUID B), fresh PID | parent kept, children new | **parent keeps A at device scope while the child carries B** - one device, two GUIDs, the stale one on a node that cannot serve WinUSB |
+| single interface (GUID A) -> composite (GUID B), fresh PID | parent kept, children new | parent keeps A at device scope while the child carries B |
 | swap the functions at `MI_00` / `MI_01`, count unchanged | **both children unchanged** | both re-bound: `HidUsb`->`WINUSB` and `WINUSB`->`USBSTOR`. The GUID was **added** to the child that gained the vendor function, and **left behind** on the one that lost it |
+| `msOs20CcgpDevice` on a single vendor interface | parent + one child | parent binds `usbccgp`, child `&MI_00` binds `WINUSB`, and the GUID lands **only on the child** - the device-scope value is never written |
+| enumerate both GUIDs with `SetupDiGetClassDevs(DIGCF_PRESENT \| DIGCF_DEVICEINTERFACE)` | - | **the stale GUID returns nothing; the live one returns exactly one interface.** A leftover registry value does not create a device interface - the driver bound to that node does |
+
+That last row is the one that decides how much the leftovers matter, and it was
+measured only after the earlier rows had been written up as if a stale value
+were an enumerable device. It is not.
 
 Two conclusions the user guide leans on: **driver binding follows the
 descriptors on every enumeration and needs no revision**, and **only the

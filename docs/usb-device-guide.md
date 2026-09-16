@@ -630,29 +630,37 @@ HID -> vendor and `MI_01` went vendor -> mass storage, with the revision held
 unchanged, and Windows re-bound both children correctly - `HidUsb` -> `WINUSB`
 and `WINUSB` -> `USBSTOR`. The drivers follow.
 
-The registry property does not. `MI_01` kept `DeviceInterfaceGUIDs` from when it
-was the vendor interface, even though it is now mass storage and the device
-sends no GUID for it at all. **Windows writes such a property when the instance
-has none and updates it when the revision moves, but it never removes one.** A
-host application enumerating that GUID will find a mass-storage interface that
-cannot answer it. Keep the mapping between interface number and function stable
-once you have shipped it; if you must change it, change the PID too.
+The registry property does not follow, but that turns out to matter less than it
+looks. `MI_01` kept `DeviceInterfaceGUIDs` from when it was the vendor
+interface, even though it is now mass storage and the device sends no GUID for
+it. The same happens one level up: a device that ships as a single vendor
+interface registers its GUID on its own node, and if it later becomes a
+composite, that value stays on the parent while the live one goes to the child.
+**Windows writes such a property when the instance has none and updates it when
+the revision moves, but it never removes one.**
 
-**Growing a single-interface device into a composite has the same problem, one
-level up.** A non-composite device gets its GUID on its own node; a composite
-gets it on the child. Measured on a fresh PID: single vendor interface with GUID
-A, then the same PID and serial as a vendor + HID composite with GUID B, and the
-result is the parent still carrying A while the child carries B -
+**A stale value is not a stale device, though.** Enumerating the interface class
+the way an application does - `SetupDiGetClassDevs` with `DIGCF_PRESENT |
+DIGCF_DEVICEINTERFACE` - returns nothing for the stale GUID and exactly one
+interface for the live one, measured on a device where both values were sitting
+in the registry at once. The registry value alone does not create a device
+interface; the driver bound to that node does, and a `usbccgp` parent or a
+`USBSTOR` child does not create a WinUSB one. So the leftovers do not produce a
+phantom device for your application to trip over.
 
-```
-USB\VID_303A&PID_4084\GUID-TEST-1        usbccgp   {A1A1…}   <- stale, device scope
-USB\VID_303A&PID_4084&MI_01\9&…&0001     WINUSB    {B2B2…}   <- live, function scope
-```
+What does bite is the live interface. If you change `deviceInterfaceGuid` and
+the revision does not move, the interface that *is* enumerable keeps answering
+to the old GUID, and an application updated to look for the new one finds
+nothing. That is the failure this library's derived revision exists to prevent,
+and it is why pinning `msOs20VendorRevision` by hand is the only way to hit it.
 
-One device answering two GUIDs, and the stale one points at a node that cannot
-serve a WinUSB request at all. **Change the PID when you add a second function
-to something you have already shipped.** Adding DFU to a vendor-only product is
-exactly this migration.
+If you want the topology stable from the start - so that adding a second
+function later does not move where the GUID is registered - set
+`config.msOs20CcgpDevice`. It asks Windows to treat the device as composite
+whatever its interface count, so the functions get child nodes immediately.
+Measured on a single vendor interface: the parent binds `usbccgp`, the child
+`&MI_00` binds `WINUSB`, and the GUID is registered on the child with **nothing
+on the parent**.
 
 So, during development:
 
