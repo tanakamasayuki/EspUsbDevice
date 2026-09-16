@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 2.5.0
 - (EN) **New class `EspUsbDeviceVideo`: a USB Video Class camera.** One control
   and one streaming interface advertising one format (MJPEG or uncompressed
   YUY2) at one frame size and rate; `sendFrame()` hands over a whole frame and
