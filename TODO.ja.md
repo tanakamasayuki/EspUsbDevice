@@ -1,6 +1,6 @@
 # TODO
 
-更新日: 2026-09-15（OTA 経路: 調査・設計を `docs/ota-over-usb.ja.md` にまとめ、DFU class / firmware writer / bootloader 再起動を実装して実機検証）
+更新日: 2026-09-16（UVC カメラ class を実装し Windows 実機で検証。あわせて isochronous IN の送信 FIFO 予算を `begin()` で検査するようにした）
 
 ## 未完了
 
@@ -16,6 +16,11 @@
     - いずれも buffered 既定の挙動は変えない方針。D1 と違って RAM と API 表面が増えるので、採否は自前の実測後に判断する
   - [ ] （任意）`EspUsbDeviceDfu` を dfu-util 本体でも確認。PC 相手の end-to-end は P4 実機で確認済みだが、host 側は自前の pyusb DFU host（このマシンに dfu-util が未インストールで、導入は sudo が要る system 変更のため）。プロトコルは同じなので優先度は低い。
   - [ ] `rebootToRomDfu()` の ESP32-S2 での確認。S3 では「`USB_PHY_SEL` eFuse が要る／未焼成なら拒否」まで実測して決着した（下記「完了」）。S2 は ROM の唯一の USB が OTG なので eFuse 不要のはずだが、リグに S2 が無いため未検証。
+- [ ] UVC（`EspUsbDeviceVideo`）の残り。Windows 11 で MJPEG と非圧縮 YUY2 のストリーミングまで実機検証済み（`tests/manual/windows_uvc`）。残っているのは:
+  - [ ] 複数 format / 複数 frame size の宣言。現状は 1 format・1 サイズ・1 レート固定で、ホストは選択の余地がない。descriptor builder は frame descriptor を配列で出せる形にすれば済むが、probe/commit で選ばれた frame index を sketch へ渡す経路（`onCommit()` は既にある）と、`sendFrame()` 側のサイズ検証をどう変えるかの設計が要る。
+  - [ ] P4 high speed での実機検証。FS（S3）は済んでいるが、HS では isochronous の packet size と FIFO 予算の計算が別経路（`transmitFifoFits(highSpeed=true)`）で、実機で通していない。P4 の native USB が PC に直結したリグが要る。
+  - [ ] macOS / Linux での確認。UVC は標準クラスなので動く見込みだが、測っていない。
+  - [ ] （任意）bulk streaming（`CFG_TUD_VIDEO_STREAMING_BULK=1`）の実機確認。descriptor は `tests/single/video_descriptor` が両形態を見ているが、bulk で実際に流したことはない。
 - [ ] CCID の拡張検討: 複数 slot、extended APDU / chaining、`ccidIdentifyCard()` が使う UID 経路のような ATR 以外の識別、PIN pad。いずれも現状は class descriptor で非対応と宣言しているので Host からは要求されない。
 - [ ] Keyboard macro / Serial-to-keyboard / Button mouse などの応用 example。
 - [ ] （ESP32KeyBridge 側の作業）`src/ESP32KeyBridgeEspUsbDevice.h` の出力 adapter を NKRO 対応にする。`EspUsbDeviceNkroKeyboardReport` を受ける `sendReport()` overload と `heldState()` が両ライブラリに揃ったので、6KRO へ落ちる理由はもう無い。`buildHidKeyboardRolloverReport()` の使い道（bitmap 版ビルダーを足すか、adapter 側で `KeySet` から直接 bitmap を組むか）を決め、重複送信の抑制は adapter 側に置く（ライブラリ側は抑制しない契約）。BLE 出力 adapter も同時に。
