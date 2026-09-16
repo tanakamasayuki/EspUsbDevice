@@ -116,8 +116,18 @@ struct EspUsbDeviceConfig
   const char *manufacturer = "EspUsbDevice";
   const char *product = "EspUsbDevice";
   const char *serialNumber = nullptr;
+  // The three values a host keys the device on. VID/PID default to Espressif's
+  // vendor ID and the first PID of the range ESP-IDF's TinyUSB uses by default
+  // (0x4000-0x4007), which is fine on a bench and not for anything you ship:
+  // see the user guide, "VID, PID and the other identity fields".
   uint16_t vid = 0x303a;
   uint16_t pid = 0x4000;
+  // bcdDevice: the device release number, BCD, major in the high byte. Windows
+  // folds it into a hardware ID (USB\VID_303A&PID_4000&REV_0100) that an INF
+  // can match on; it is not part of the device instance key, so changing it
+  // does not make the device a new one to the host. 0x0100 = 1.00, which is
+  // what every release before this emitted.
+  uint16_t deviceVersion = 0x0100;
   bool selfPowered = false;
   uint16_t maxPowerMilliamps = 100;
   bool webusbEnabled = false;

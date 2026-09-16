@@ -1,6 +1,12 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) New `EspUsbDeviceConfig::deviceVersion`: `bcdDevice`, the device release
+  number, which was fixed at 0x0100. Windows folds it into a hardware ID
+  (`USB\VID_xxxx&PID_xxxx&REV_0100`) that an INF can match on. Measured on
+  Windows 11: changing it updates that hardware ID on the next plug-in, keeps
+  the same device instance, and triggers no driver reconfiguration. Default
+  0x0100, so nothing changes unless you set it.
 - (EN) **Fixed: a HID class registered after a non-HID class never worked.**
   TinyUSB asks for the report descriptor by its instance number, always 0 in
   this build, and the library used that number as a position in its
@@ -38,6 +44,12 @@
   A flat set carries it once under the set header, a subset set once per
   function subset. Descriptor sets grow by 6 bytes per function: 30/162/206
   become 36/168/218.
+- (JA) `EspUsbDeviceConfig::deviceVersion` を追加しました。device descriptor の
+  `bcdDevice`（デバイスのリリース番号）で、従来は 0x0100 固定でした。Windows は
+  これを hardware ID（`USB\VID_xxxx&PID_xxxx&REV_0100`）に畳み込み、INF の照合に
+  使えます。Windows 11 での実測: 変更すると次の接続で hardware ID が更新され、
+  device instance は同じまま、ドライバの再構成は起きません。既定は 0x0100 なので、
+  設定しなければ何も変わりません。
 - (JA) **修正: 非HIDクラスの後に登録したHIDクラスが一切動きませんでした。**
   TinyUSB は report descriptor をインスタンス番号（このビルドでは常に0）で
   要求しますが、ライブラリはその番号を登録テーブルの位置として使っていました。
