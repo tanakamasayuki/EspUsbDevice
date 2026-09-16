@@ -1973,6 +1973,12 @@ bool EspUsbDevice::microsoftOs20SubsetLayout() const
   default:
     break;
   }
+  // Asking to be treated as composite makes usbccgp load whatever the interface
+  // count is, so the function subsets it needs become the right shape.
+  if (config_.msOs20CcgpDevice)
+  {
+    return true;
+  }
   // Windows resolves a function subset through usbccgp.sys, which it loads only
   // for a composite device. bNumInterfaces is what decides that here: one
   // interface means no usbccgp, so the compatible ID has to sit directly under
@@ -2133,6 +2139,16 @@ void EspUsbDevice::buildWebUsbDescriptors()
     size_t revisionOffsets[3];
     uint8_t revisionCount = 0;
 
+    // Device scope, so it goes under the set header ahead of any subset: it is
+    // what makes usbccgp load in the first place.
+    if (config_.msOs20CcgpDevice)
+    {
+      put16(&set[offset], 4);
+      offset += 2;
+      put16(&set[offset], 7); // MS_OS_20_FEATURE_CCGP_DEVICE
+      offset += 2;
+    }
+
     // Flat sets carry it once, directly under the set header. Subsets carry one
     // in every function subset, which is where Windows looks for it when
     // usbccgp has split the device up.
@@ -2148,8 +2164,10 @@ void EspUsbDevice::buildWebUsbDescriptors()
     }
 
     size_t configurationLengthOffset = 0;
+    size_t configurationOffset = offset;
     if (useSubsets)
     {
+      configurationOffset = offset;
       put16(&set[offset], 8);
       offset += 2;
       put16(&set[offset], 1); // MS_OS_20_SUBSET_HEADER_CONFIGURATION
@@ -2240,7 +2258,8 @@ void EspUsbDevice::buildWebUsbDescriptors()
       put16(&set[setLengthOffset], static_cast<uint16_t>(offset));
       if (useSubsets)
       {
-        put16(&set[configurationLengthOffset], static_cast<uint16_t>(offset - 10));
+        put16(&set[configurationLengthOffset],
+              static_cast<uint16_t>(offset - configurationOffset));
       }
       // Derived from the completed set, with the revision fields still zero, so
       // the same descriptors always produce the same number and any change to
