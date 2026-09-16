@@ -438,6 +438,15 @@ interface とその状態、アプリの列挙が返すもの、Kernel-PnP の�
 
 手順と計測表: `windows_identity/README.ja.md`。
 
+## `windows_uvc`（ホストが UVC カメラを受け入れ、フレームを受け取れるか）
+
+`make_frames.py` が生成した MJPEG フレーム（または手続き的に作る YUY2 パターン）を流す UVC
+カメラと、キャプチャのコマンド、そしてデバイスが送ったものとのバイト単位の突き合わせです。
+DWC2 の送信 FIFO レジスタも表示します。isochronous エンドポイントのサイズを突き止めたのが
+これで、1023 バイトのエンドポイントは S3 の FIFO に入らず、拒否もされず、何も流れません。
+
+手順と計測結果: `windows_uvc/README.ja.md`。
+
 ## `usb_ncm`（USB CDC-NCM ネットワークデバイス）
 
 目的:
