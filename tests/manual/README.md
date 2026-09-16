@@ -434,6 +434,31 @@ Steps:
 3. For the control, add `-DWINUSB_TEST_LAYOUT=2` and **another** unused serial,
    and expect `CM_PROB_FAILED_INSTALL` with no `USB\MS_COMP_WINUSB`.
 
+## `windows_device_guid` (does a changed GUID reach Windows)
+
+Purpose:
+
+- Confirm `EspUsbDeviceConfig::deviceInterfaceGuid` reaches the Windows registry.
+- Confirm that changing it takes effect on a PC that has already enumerated the
+  device - which only happens because the descriptor set carries
+  `MS_OS_20_FEATURE_VENDOR_REVISION`.
+
+The identity is held fixed and only the GUID and revision move, because Windows
+caches registry properties per VID/PID/serial. Measured on Windows 11, one
+instance throughout, all four variants `STATUS OK` / `SERVICE WINUSB`:
+
+| Variant | GUID sent | Revision | GUID Windows kept |
+|---|---|---|---|
+| A | `{A1A1…}` | 21192 (derived) | `{A1A1…}` |
+| B | `{B2B2…}` | 563 (derived) | `{B2B2…}` - updated |
+| **C, control** | `{C3C3…}` | **563, pinned** | **`{B2B2…}` - not updated** |
+| C′ | `{C3C3…}` | 12898 (derived) | `{C3C3…}` - updated |
+
+The control is what makes this a test rather than an observation: C sends a new
+GUID under an unchanged revision and Windows keeps the old one.
+
+Steps and the full rationale: `windows_device_guid/README.md`.
+
 ## `usb_ncm` (USB CDC-NCM network device)
 
 Purpose:
