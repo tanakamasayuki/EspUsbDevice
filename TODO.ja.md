@@ -17,7 +17,7 @@
   - [ ] （任意）`EspUsbDeviceDfu` を dfu-util 本体でも確認。PC 相手の end-to-end は P4 実機で確認済みだが、host 側は自前の pyusb DFU host（このマシンに dfu-util が未インストールで、導入は sudo が要る system 変更のため）。プロトコルは同じなので優先度は低い。
   - [ ] `rebootToRomDfu()` の ESP32-S2 での確認。S3 では「`USB_PHY_SEL` eFuse が要る／未焼成なら拒否」まで実測して決着した（下記「完了」）。S2 は ROM の唯一の USB が OTG なので eFuse 不要のはずだが、リグに S2 が無いため未検証。
 - [ ] UVC（`EspUsbDeviceVideo`）の残り。Windows 11 で MJPEG と非圧縮 YUY2 のストリーミングまで実機検証済み（`tests/manual/windows_uvc`）。残っているのは:
-  - [ ] 複数 format / 複数 frame size の宣言。現状は 1 format・1 サイズ・1 レート固定で、ホストは選択の余地がない。descriptor builder は frame descriptor を配列で出せる形にすれば済むが、probe/commit で選ばれた frame index を sketch へ渡す経路（`onCommit()` は既にある）と、`sendFrame()` 側のサイズ検証をどう変えるかの設計が要る。
+  - [ ] 複数 format / 複数 frame size の宣言。現状は 1 format・1 サイズ・1 レート固定で、ホストは選択の余地がない。**具体的な需要が出た**: EspUsbHost の UVC host は「必要最小限の alternate を選ぶ」選択ロジックを持つが、相手になるカメラが 1 format しか出さないので検証できない（2026-09-17、先方から）。複数 format・複数 alternate を出せるようになれば、そのロジックのペアテストが組める。descriptor builder は frame descriptor を配列で出せる形にすれば済むが、probe/commit で選ばれた frame index を sketch へ渡す経路（`onCommit()` は既にある）と、`sendFrame()` 側のサイズ検証をどう変えるかの設計が要る。
   - [ ] P4 high speed での実機検証。FS（S3）は済んでいるが、HS では isochronous の packet size と FIFO 予算の計算が別経路（`transmitFifoFits(highSpeed=true)`）で、実機で通していない。P4 の native USB が PC に直結したリグが要る。
   - [ ] macOS / Linux での確認。UVC は標準クラスなので動く見込みだが、測っていない。
   - [ ] （任意）bulk streaming（`CFG_TUD_VIDEO_STREAMING_BULK=1`）の実機確認。descriptor は `tests/single/video_descriptor` が両形態を見ているが、bulk で実際に流したことはない。
