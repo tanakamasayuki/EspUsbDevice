@@ -88,15 +88,48 @@
 #define CFG_TUD_CDC 2
 #endif
 #endif
+// Every class is compiled in by default so that any sketch can use any class
+// without reconfiguring the library, and each one behind #ifndef so a sketch
+// that knows it will never use a class can drop it from build_opt.h and get
+// the RAM back. TinyUSB allocates each class's buffers statically at file
+// scope, so an unused class costs RAM whether or not a sketch instantiates
+// anything. Measured on an ESP32-S3 with examples/Keyboard, which uses HID
+// alone: CDC-NCM 16,016 bytes, Audio 7,760, MSC 4,096, CDC 2,824, MIDI 1,288,
+// Vendor 1,276, DFU 1,024, Video 512 - about 34 KB, against HID's own 12.
+//
+//   // build_opt.h, for a keyboard that will never be anything else
+//   -DCFG_TUD_NCM=0
+//   -DCFG_TUD_AUDIO=0
+//   -DCFG_TUD_MSC=0
+//
+// Turning a class off makes its EspUsbDevice class fail to link if the sketch
+// still instantiates one, which is the intended way to find out. build_opt.h
+// is library-wide and needs `arduino-cli --clean`.
+#ifndef CFG_TUD_MSC
 #define CFG_TUD_MSC 1
+#endif
+#ifndef CFG_TUD_HID
 #define CFG_TUD_HID 1
+#endif
+#ifndef CFG_TUD_MIDI
 #define CFG_TUD_MIDI 1
+#endif
+#ifndef CFG_TUD_AUDIO
 #define CFG_TUD_AUDIO 1
+#endif
+#ifndef CFG_TUD_VENDOR
 #define CFG_TUD_VENDOR 1
+#endif
+#ifndef CFG_TUD_NCM
 #define CFG_TUD_NCM 1
+#endif
+#ifndef CFG_TUD_VIDEO
 #define CFG_TUD_VIDEO 1
+#endif
 // Streaming interfaces per video function. One camera, one stream.
+#ifndef CFG_TUD_VIDEO_STREAMING
 #define CFG_TUD_VIDEO_STREAMING 1
+#endif
 // DFU in both shapes. They are separate TinyUSB drivers with separate interface
 // protocols (DFU_PROTOCOL_RT vs DFU_PROTOCOL_DFU), so both can be compiled in
 // and the host's descriptor match decides which one opens; EspUsbDeviceDfu
@@ -106,8 +139,12 @@
 // descriptor and a set of control requests, all of which travel on EP0 - which
 // is why it is the one class that can be added to a device whose endpoint
 // budget is already full.
+#ifndef CFG_TUD_DFU
 #define CFG_TUD_DFU 1
+#endif
+#ifndef CFG_TUD_DFU_RUNTIME
 #define CFG_TUD_DFU_RUNTIME 1
+#endif
 
 // Class buffer sizes. Every one of these is behind #ifndef so a sketch can
 // raise it from build_opt.h (-DCFG_TUD_VENDOR_TX_BUFSIZE=8192) without copying
