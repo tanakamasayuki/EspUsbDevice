@@ -569,6 +569,11 @@ public:
 
   bool begin();
   bool begin(const EspUsbDeviceConfig &config);
+  // Stops the device and releases the bus. A host sees this as an unplug and a
+  // following begin() as a plug, which is indistinguishable from the cable
+  // being pulled - so a host-side test can reproduce disconnection without
+  // anyone touching the hardware. The EspUsbHost suite drives exactly this
+  // from its peer to test replugging a camera mid-stream.
   void end();
   void task();
   bool ready() const;
