@@ -1,6 +1,34 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) **Every TinyUSB class can now be compiled out from `build_opt.h`.** They
+  are all still enabled by default, so nothing changes unless a sketch asks -
+  but each `CFG_TUD_*` switch is behind `#ifndef`, where previously only
+  `CFG_TUD_CDC` was. This matters because TinyUSB gives each class its buffers
+  as file-scope statics: a class costs RAM whether or not a sketch instantiates
+  it. Measured on an ESP32-S3 with `examples/Keyboard`, which uses HID alone,
+  the unused classes came to about 34 KB against HID's own 12 bytes - CDC-NCM
+  16,016, Audio 7,760, MSC 4,096, CDC 2,824, MIDI 1,288, Vendor 1,276, DFU
+  1,024, Video 512. Disabling them took that sketch from 59,568 to 24,016
+  bytes of RAM and 349,989 to 319,061 of flash. **Disabling a class the sketch
+  does use will not fail the build**: the Arduino core's own TinyUSB is on the
+  link line and its copy resolves the missing symbols, so the device ends up
+  assembled from two differently configured stacks. The user guide's 3.4 has
+  the table, the switches and that warning.
+- (JA) **TinyUSB の各クラスを `build_opt.h` からコンパイル対象外にできるようになりました。**
+  既定では全クラスが有効なままなので、スケッチが指定しない限り何も変わりません。
+  変更点は、各 `CFG_TUD_*` を `#ifndef` で囲んだことです（従来は `CFG_TUD_CDC`
+  だけでした）。効くのは、TinyUSB が各クラスのバッファをファイルスコープの静的
+  変数として持つためです。**スケッチがインスタンス化しなくても RAM を消費します。**
+  ESP32-S3 で `examples/Keyboard`（HID だけを使う例）を実測すると、使っていない
+  クラスの合計が約 34 KB で、実際に使っている HID は 12 バイトでした（CDC-NCM
+  16,016、Audio 7,760、MSC 4,096、CDC 2,824、MIDI 1,288、Vendor 1,276、DFU 1,024、
+  Video 512）。これらを無効にすると、同じスケッチで RAM が 59,568 → 24,016 バイト、
+  flash が 349,989 → 319,061 バイトになります。**使っているクラスを無効にしても
+  ビルドは失敗しません。** Arduino コアの TinyUSB がリンク対象に入っていて、
+  足りないシンボルをコア側のコピーが解決するため、設定の異なる 2 つのスタックが
+  混ざったデバイスになります。表・スイッチ・この注意はユーザーガイドの 3.4 に
+  あります。
 
 ## 2.5.0
 - (EN) **New class `EspUsbDeviceVideo`: a USB Video Class camera.** One control

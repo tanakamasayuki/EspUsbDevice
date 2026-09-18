@@ -102,9 +102,16 @@
 //   -DCFG_TUD_AUDIO=0
 //   -DCFG_TUD_MSC=0
 //
-// Turning a class off makes its EspUsbDevice class fail to link if the sketch
-// still instantiates one, which is the intended way to find out. build_opt.h
-// is library-wide and needs `arduino-cli --clean`.
+// Turning off a class the sketch actually uses does NOT fail to build, which
+// is the trap here. The Arduino core ships its own TinyUSB, and its archive is
+// on the link line: when this library's copy of a driver is compiled out, the
+// missing symbols resolve against the core's instead. Measured with
+// examples/UsbNetwork and -DCFG_TUD_NCM=0 - it linked, and ncm_epbuf came from
+// libarduino_tinyusb.a rather than from class/net/ncm_device.c.o. The result
+// is a device assembled from two differently configured stacks. So disable
+// only what the sketch is certain never to instantiate, and check the device
+// still enumerates as it should. build_opt.h is library-wide and needs
+// `arduino-cli --clean`.
 #ifndef CFG_TUD_MSC
 #define CFG_TUD_MSC 1
 #endif
