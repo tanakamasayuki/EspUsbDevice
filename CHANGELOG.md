@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 2.5.1
 - (EN) **Every TinyUSB class can now be compiled out from `build_opt.h`.** They
   are all still enabled by default, so nothing changes unless a sketch asks -
   but each `CFG_TUD_*` switch is behind `#ifndef`, where previously only
