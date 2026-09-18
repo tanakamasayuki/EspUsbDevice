@@ -445,6 +445,57 @@ not even need to attach a host.
 The class limit fails quietly, so when building a composite always confirm the
 interface list in DescriptorDump.
 
+#### RAM: every class costs whether you use it or not
+
+TinyUSB gives each class its buffers as file-scope statics, so a class that is
+compiled in costs RAM even if no sketch ever instantiates it. Measured on an
+ESP32-S3 with [`Keyboard`](../examples/Keyboard/), which uses HID alone:
+
+| Class | RAM | Used by this sketch |
+|---|---:|---|
+| CDC-NCM | 16,016 | no |
+| USB Audio | 7,760 | no |
+| MSC | 4,096 | no |
+| CDC ACM | 2,824 | no |
+| USB MIDI | 1,288 | no |
+| Vendor | 1,276 | no |
+| DFU | 1,024 | no |
+| USB Video | 512 | no |
+| **HID** | **12** | **yes** |
+
+That is about 34 KB, against 12 bytes for the one class in use, out of 55 KB of
+RAM-resident static data in the whole image.
+
+**Any class can be dropped from `build_opt.h`.** For a keyboard that will never
+be anything else:
+
+```
+-DCFG_TUD_NCM=0
+-DCFG_TUD_AUDIO=0
+-DCFG_TUD_MSC=0
+-DCFG_TUD_MIDI=0
+-DCFG_TUD_VENDOR=0
+-DCFG_TUD_VIDEO=0
+-DCFG_TUD_DFU=0
+-DCFG_TUD_DFU_RUNTIME=0
+-DCFG_TUD_CDC=0
+```
+
+Measured on the same sketch: **59,568 -> 24,016 bytes of RAM** and 349,989 ->
+319,061 of flash. These are library-wide switches, so **`arduino-cli --clean`**
+is required - without it the sketch is rebuilt and the library is not, and
+nothing changes.
+
+**Disabling a class the sketch does use will not fail the build.** That is the
+one thing to be careful of. The Arduino core ships its own TinyUSB and its
+archive is on the link line, so when this library's copy of a driver is
+compiled out, the missing symbols resolve against the core's copy instead.
+Measured with [`UsbNetwork`](../examples/UsbNetwork/) and `-DCFG_TUD_NCM=0`: it
+linked, and the network buffer came from `libarduino_tinyusb.a` rather than
+from this library - a device built from two differently configured stacks.
+Disable only what the sketch is certain never to instantiate, and confirm it
+still enumerates the way it should.
+
 ### 3.5 Mutually exclusive with the stock Arduino-ESP32 USB stack
 
 This library builds its own TinyUSB and initialises the ESP-IDF PHY/controller
