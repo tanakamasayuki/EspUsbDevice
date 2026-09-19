@@ -2,18 +2,18 @@ profiles:
   s3_peer_host:
     fqbn: esp32:esp32:esp32s3:USBMode=default
     platforms:
-      - platform: esp32:esp32 (3.3.11)
+      - platform: esp32:esp32 (3.3.12)
         platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
     libraries:
       - dir: ../../../
-
   # A rig-independent profile: the board whose native USB goes to the PC.
   # s3_peer_host names a board the peer suites share, and a device-only test
   # should not have to wait for it.
+
   esp32s3:
     fqbn: esp32:esp32:esp32s3:USBMode=default
     platforms:
-      - platform: esp32:esp32 (3.3.11)
+      - platform: esp32:esp32 (3.3.12)
         platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
     libraries:
       - dir: ../../../
