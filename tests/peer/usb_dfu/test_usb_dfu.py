@@ -15,6 +15,10 @@ The two ``E (...) esp_ota_ops`` lines the peer logs are those refusals and are
 registered in ``tests/conftest.py``.
 """
 
+import time
+
+import pexpect
+
 # DFU 1.1 state numbers (dfu.h). Named because the assertions below are about
 # the state machine, not about integers.
 DFU_IDLE = 2
@@ -25,6 +29,20 @@ DFU_ERROR = 10
 DFU_STATUS_OK = 0
 DFU_STATUS_ERR_WRITE = 3
 DFU_STATUS_ERR_VERIFY = 7
+
+
+def _wait_device_ready(device):
+    # setup completion precedes host startup; SET_CONFIGURATION comes later.
+    # Retry only this prerequisite, never a DFU transfer or its assertions.
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        device.write(b"?")
+        try:
+            device.expect_exact("DEVICE_READY 1\n", timeout=0.5)
+            return
+        except pexpect.TIMEOUT:
+            continue
+    raise AssertionError("DFU peer was not configured by the host within 20 seconds")
 
 
 def _enumeration(dut):
@@ -110,7 +128,7 @@ def _download_then_failed_verification(dut, device):
     for command, block in (("2", 0), ("3", 1)):
         dut.write(command)
         match = dut.expect(
-            rf"DFU_DNLOAD sent=1 block={block} len=256 ok=1 status=(\d+) state=(\d+)",
+            rf"DFU_DNLOAD sent=1 block={block} len=256 ok=1 status=(\d+) state=(\d+)\r?\n",
             timeout=20,
         )
         assert int(match.group(1)) == DFU_STATUS_OK
@@ -175,8 +193,7 @@ def _recovers_for_another_download(dut, device):
 def test_usb_dfu(dut, peers):
     device = peers["device"]
 
-    device.write("?")
-    device.expect_exact("DEVICE_READY 1")
+    _wait_device_ready(device)
 
     _enumeration(dut)
     _functional_descriptor(dut, device)

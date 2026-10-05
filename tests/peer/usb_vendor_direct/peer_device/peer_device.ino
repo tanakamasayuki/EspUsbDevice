@@ -106,7 +106,7 @@ void loop()
     Serial.println("DEVICE_DIRECT_STOP");
   }
 
-  while (Serial.available() > 0)
+  while (Serial.available() > 0 && !usbTestControlPending())
   {
     switch (Serial.read())
     {

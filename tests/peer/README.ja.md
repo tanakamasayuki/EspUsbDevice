@@ -18,12 +18,16 @@ host sketch は `waitForUsbTestStart()` で待機し、起動時に USB を有�
 `TEST_PEER_BOOTED <sketch>` を問い合わせてから、`G` で host を開始します。
 peer の起動確認（`0x1c`）は setup 完了後に応答し、USB 列挙を前提にしません。
 本文の `DEVICE_READY` は引き続き host による configuration 完了を検証します。
+setup 完了と configuration 完了は別です。DFU テストは DFU 要求を送る前に、
+期限付きで ready 状態を問い合わせます。
 
 teardown は assertion が失敗しても、予約済み制御バイト `0x1f` で host、各 peer の
 順に停止します。各 sketch は `TEST_STOPPED` を返し、次の書き込みまで待機します。
 停止応答がなければ警告を残し、host の停止が失敗しても全 peer の停止を試みます。
 コマンドを bytes で送ることで、シリアルへの暗黙の改行付加を防ぎます。
 共通処理は `../usb_test_lifecycle.py` と `../sketch_support/UsbTestLifecycle.h` にあります。
+sketch は読み取り直前の `usbTestControlPending()` でも制御バイトを確認し、
+制御バイトを消費する前に共通処理へ戻ります。
 
 ## ハードウェア接続
 

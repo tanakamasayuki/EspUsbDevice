@@ -34,6 +34,12 @@ static void waitForUsbTestStart(const char *identity)
 // A control byte avoids collisions with existing sketch commands (including
 // printable keyboard input). Check before any wait-for-device or application
 // work, and stay quiet after shutdown until the next module uploads firmware.
+static inline bool usbTestControlPending()
+{
+  return Serial.available() > 0 &&
+         (Serial.peek() == 0x1c || Serial.peek() == 0x1f);
+}
+
 template <typename Stop>
 static bool handleUsbTestStop(Stop stop, const char *peerIdentity = nullptr)
 {

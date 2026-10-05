@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- (EN) Fixed NCM shutdown sending a link notification after TinyUSB had been
+  deinitialized, which could reset ESP32-S3 through the watchdog in `device.end()`.
+  Serial-log auditing now also detects watchdog reset reasons from the boot log.
+- (JA) NCM 終了時に、TinyUSB の終了後もリンク通知を送っていた問題を修正しました。
+  ESP32-S3 で `device.end()` 中に watchdog リセットが発生する原因になっていました。
+  シリアルログ監査も、起動ログに記録された watchdog のリセット理由を検出します。
+
+- (EN) The DFU peer test now polls for host configuration before sending DFU
+  requests, avoiding a startup race after releasing the host gate. Test sketches
+  check for lifecycle control bytes before reading application input,
+  so shutdown commands cannot be mistaken for application input.
+- (JA) DFU peer テストは host の開始後、configuration 完了を上限付きで確認して
+  から DFU 要求を送るようにし、起動直後の競合を解消しました。各 test sketch は
+  シリアル入力の読み取り直前にも制御バイトを確認し、停止コマンドを通常の
+  入力として消費しないようにしました。
+
 - (EN) Peer tests now enable the USB host only after every peer has been uploaded
   and finished setup. Loopback tests wait for pytest to connect before starting,
   preserving enumeration output previously lost in full runs. Shared teardown

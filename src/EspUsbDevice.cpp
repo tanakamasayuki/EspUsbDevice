@@ -3744,7 +3744,10 @@ bool EspUsbDeviceNet::afterDeviceStarted()
 void EspUsbDeviceNet::end()
 {
 #if ESP_USB_DEVICE_HAS_TINYUSB
-  if (g_activeNet == this)
+  // Device::end() deinitializes TinyUSB before ending its classes. An NCM
+  // link notification after that would use deleted synchronization objects
+  // and a stopped controller; only send it while the stack is initialized.
+  if (g_activeNet == this && tud_inited())
   {
     tud_network_link_state(0, false);
   }

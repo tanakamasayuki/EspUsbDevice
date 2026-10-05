@@ -131,7 +131,7 @@ void loop()
     micTxBytes += capture.write(samples, sizeof(samples));
   }
 
-  while (Serial.available() > 0)
+  while (Serial.available() > 0 && !usbTestControlPending())
   {
     const char command = static_cast<char>(Serial.read());
     const bool hostReady = waitForHost();

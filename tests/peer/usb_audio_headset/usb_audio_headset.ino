@@ -105,7 +105,7 @@ void loop()
   {
     return;
   }
-  if (Serial.available() > 0)
+  if (Serial.available() > 0 && !usbTestControlPending())
   {
     const char command = static_cast<char>(Serial.read());
     waitForDevice();

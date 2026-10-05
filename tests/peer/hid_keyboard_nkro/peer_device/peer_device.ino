@@ -134,7 +134,7 @@ void loop()
   {
     return;
   }
-  if (Serial.available() > 0)
+  if (Serial.available() > 0 && !usbTestControlPending())
   {
     const char command = Serial.read();
     const bool hostReady = waitForHost();

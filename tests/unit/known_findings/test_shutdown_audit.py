@@ -43,3 +43,14 @@ def test_disconnect_allowance_is_limited_to_completed_shutdown(
     )
     assert len(unexpected) == unexpected_count
     assert len(known) == known_count
+
+
+def test_watchdog_reset_is_unexpected(audit_module, tmp_path):
+    log = tmp_path / "peer-device.log"
+    log.write_text("TEST_STOPPING\nrst:0x8 (TG1WDT_SYS_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)\n")
+    unexpected, known = audit_module._serial_error_lines(
+        "peer/usb_ncm/test_usb_ncm.py::test_usb_ncm", log
+    )
+    assert len(unexpected) == 1
+    assert "TG1WDT_SYS_RST" in unexpected[0]
+    assert not known

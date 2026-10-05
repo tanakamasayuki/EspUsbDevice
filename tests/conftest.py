@@ -15,6 +15,7 @@ _SERIAL_ERROR_PATTERNS = (
     re.compile(r"abort\(\)"),
     re.compile(r"Backtrace:"),
     re.compile(r"(?:task |interrupt )?watchdog", re.IGNORECASE),
+    re.compile(r"rst:.*\([^)]*WDT[^)]*\)", re.IGNORECASE),
     re.compile(r"Stack canary watchpoint triggered", re.IGNORECASE),
     re.compile(r"CORRUPT HEAP", re.IGNORECASE),
     re.compile(r"Brownout detector was triggered", re.IGNORECASE),

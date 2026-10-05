@@ -36,7 +36,7 @@ void loop()
     {
         return;
     }
-    if (Serial.available() <= 0)
+    if (Serial.available() <= 0 || usbTestControlPending())
     {
         delay(1);
         return;

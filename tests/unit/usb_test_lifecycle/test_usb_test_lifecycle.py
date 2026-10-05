@@ -107,13 +107,21 @@ int main() {
   int ends = 0;
   auto stop = [&] { ++ends; };
   Serial.input = {'h'};
+  assert(!usbTestControlPending());
   assert(!handleUsbTestStop(stop, "example"));
   assert(Serial.peek() == 'h' && ends == 0);
   Serial.input = {0x1c};
+  assert(usbTestControlPending());
   assert(handleUsbTestStop(stop, "example"));
   assert(Serial.output.find("TEST_PEER_BOOTED example\\n") != std::string::npos);
   assert(ends == 0);
-  Serial.input = {0x1f};
+  Serial.input = {'h', 0x1f};
+  std::string applicationInput;
+  while (Serial.available() > 0 && !usbTestControlPending()) {
+    applicationInput += static_cast<char>(Serial.read());
+  }
+  assert(applicationInput == "h" && Serial.peek() == 0x1f);
+  assert(usbTestControlPending());
   assert(handleUsbTestStop(stop, "example"));
   assert(ends == 1);
   assert(Serial.output.find("TEST_STOPPING\\n") != std::string::npos);
