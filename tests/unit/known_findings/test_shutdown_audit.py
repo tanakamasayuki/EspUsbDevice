@@ -28,6 +28,10 @@ ERROR = "E (10) USB HOST: Enqueue URB error: ESP_ERR_INVALID_STATE\n"
     ("TEST_STOPPED\nTEST_STOPPING\n" + ERROR, 1, 0, "loopback"),
     (ERROR + "TEST_STOPPING\n" + ERROR + "TEST_STOPPED\n" + ERROR, 2, 1, "loopback"),
     ("TEST_STOPPING\n" + ERROR + "TEST_STOPPED\n", 1, 0, "peer"),
+], ids=[
+    "outside-shutdown", "completed-shutdown", "too-many-disconnects",
+    "incomplete-shutdown", "earlier-stop-is-not-completion",
+    "errors-around-shutdown", "peer-is-not-loopback",
 ])
 def test_disconnect_allowance_is_limited_to_completed_shutdown(
     audit_module, tmp_path, text, unexpected_count, known_count, group
