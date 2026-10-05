@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include <NetworkServer.h>
 #include <NetworkClient.h>
@@ -164,6 +165,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_ncm_soak"))
+  {
+    return;
+  }
   if (!sinkClient || !sinkClient.connected())
   {
     NetworkClient incoming = sink.accept();

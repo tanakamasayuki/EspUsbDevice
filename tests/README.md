@@ -82,8 +82,10 @@ def test_composite_hid_cdc(dut, peers):
 ```
 
 Two reasons. A failure names the function it happened in, not just a line
-number; and a module that is one test cannot have tests that only pass in a
-particular order.
+number; and one test per module avoids repeated serial connection and state
+carryover between pytest tests sharing one upload. Checks inside the test still
+need to establish their own preconditions; merging alone does not remove order
+dependence.
 
 ### Ask, do not await
 
@@ -109,10 +111,11 @@ and asking it asserts the same thing waiting for the banner did.
 `peer/usb_msc` has had this shape from the start and was the only peer module
 that survived being run in reverse while the rest were still reading banners.
 
-`loopback/` still waits for a banner, deliberately: each module there is a single
-test with its own upload, so nothing can run ahead of the line it reads. See
-[loopback/README.md](loopback/README.md) for the full reason and for when that
-stops being true.
+`loopback/` waits for banners only after pytest connects and sends `G` to release
+the sketch's startup gate. Even one test per upload can lose output emitted
+before serial connection. The peer upload gate and shutdown of both boards are
+documented in [peer/README.md](peer/README.md) and
+[loopback/README.md](loopback/README.md).
 
 ### Modules that are deliberately ordered
 

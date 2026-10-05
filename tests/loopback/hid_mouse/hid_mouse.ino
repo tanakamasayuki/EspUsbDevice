@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include "EspUsbHost.h"
 
@@ -54,6 +55,7 @@ static bool sendClick(uint8_t button)
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("hid_mouse");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_hid_mouse");
@@ -156,5 +158,9 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   delay(1);
 }

@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include "EspUsbHost.h"
 #include <string.h>
@@ -261,6 +262,7 @@ static bool microsoftOs20()
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("usb_vendor");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_usb_vendor");
@@ -430,6 +432,10 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   pollDeviceVendorRx();
   delay(1);
 }

@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 EspUsbDevice device;
@@ -92,6 +93,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_vendor"))
+  {
+    return;
+  }
   processVendorRx();
   if (Serial.available() > 0)
   {

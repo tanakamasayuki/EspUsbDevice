@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include "EspUsbHost.h"
 
@@ -196,6 +197,7 @@ static bool sendHostSysEx()
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("usb_midi");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_usb_midi");
@@ -270,6 +272,10 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   pollDeviceMidi();
   delay(1);
 }

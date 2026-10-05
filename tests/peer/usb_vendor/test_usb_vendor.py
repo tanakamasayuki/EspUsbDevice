@@ -109,7 +109,7 @@ def _full_packet_write_with_zlp(dut, device):
         dut.expect_exact("VENDOR_WRITE_MPS ok=1 len=64 zlp=1")
 
         device.write("b")
-        m = device.expect(r"DEVICE_RX_BYTES rx=(\d+) chunks=(\d+) last=(\d+)", timeout=10)
+        m = device.expect(r"DEVICE_RX_BYTES rx=(\d+) chunks=(\d+) last=(\d+)\r?\n", timeout=10)
         # Byte count is the assertion that matters: all 64 arrive, and the ZLP adds
         # nothing (the sketch only counts non-empty reads, and a stray extra byte
         # would show up here).
@@ -152,7 +152,7 @@ def _queued_writes(dut, device):
         received = 0
         for _ in range(deadline_reads):
             device.write("b")
-            m = device.expect(r"DEVICE_RX_BYTES rx=(\d+) chunks=(\d+) last=(\d+)", timeout=10)
+            m = device.expect(r"DEVICE_RX_BYTES rx=(\d+) chunks=(\d+) last=(\d+)\r?\n", timeout=10)
             received = int(m.group(1))
             if received >= 256:
                 break

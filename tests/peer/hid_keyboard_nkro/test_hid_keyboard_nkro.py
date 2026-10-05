@@ -43,7 +43,7 @@ PRESS_RE = re.compile(r"PRESS keycode=0x([0-9a-fA-F]{2})")
 PRESS_MOD_RE = re.compile(r"PRESS keycode=0x([0-9a-fA-F]{2}) n=\d+ mod=0x([0-9a-fA-F]{2})")
 # Left Shift (usage 0xE1) is bit 1 of the modifier byte.
 LEFT_SHIFT_BIT = 0x02
-MAX_RE = re.compile(r"MAX n=(\d+)")
+MAX_RE = re.compile(r"MAX n=(\d+)\r?\n")
 
 
 def _text(group):

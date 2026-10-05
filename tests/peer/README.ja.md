@@ -10,6 +10,21 @@
 device sketch は serial command で制御します。USB の挙動を決定的にし、host 側の
 assertion を安定させるためです。
 
+## 開始と終了
+
+host sketch は `waitForUsbTestStart()` で待機し、起動時に USB を有効にしません。
+`conftest.py` の fixture が `dut` と `peers` の両方を要求するため、peer の
+書き込みが先に完了します。host の `TEST_IDLE <sketch>` と各 peer の
+`TEST_PEER_BOOTED <sketch>` を問い合わせてから、`G` で host を開始します。
+peer の起動確認（`0x1c`）は setup 完了後に応答し、USB 列挙を前提にしません。
+本文の `DEVICE_READY` は引き続き host による configuration 完了を検証します。
+
+teardown は assertion が失敗しても、予約済み制御バイト `0x1f` で host、各 peer の
+順に停止します。各 sketch は `TEST_STOPPED` を返し、次の書き込みまで待機します。
+停止応答がなければ警告を残し、host の停止が失敗しても全 peer の停止を試みます。
+コマンドを bytes で送ることで、シリアルへの暗黙の改行付加を防ぎます。
+共通処理は `../usb_test_lifecycle.py` と `../sketch_support/UsbTestLifecycle.h` にあります。
+
 ## ハードウェア接続
 
 ホストボードとデバイスボードの USB data pin を接続します。

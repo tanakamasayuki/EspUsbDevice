@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include <WebServer.h>
 
@@ -74,6 +75,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_ncm"))
+  {
+    return;
+  }
   server.handleClient();
 
   if (Serial.available() > 0)

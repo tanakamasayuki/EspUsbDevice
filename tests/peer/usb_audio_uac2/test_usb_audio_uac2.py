@@ -66,7 +66,7 @@ def _device_state(device):
     match = device.expect(
         r"UAC2_STATE proto=(\w+) rate=(\d+) master_mute=(\d) master_vol=(-?\d+) "
         r"ch1_mute=(\d) ch1_vol=(-?\d+) cap_mute=(\d) cap_vol=(-?\d+) "
-        r"range=(-?\d+:-?\d+:-?\d+)",
+        r"range=(-?\d+:-?\d+:-?\d+)\r?\n",
         timeout=10,
     )
     fields = (
@@ -230,7 +230,7 @@ def _streaming_both_directions(dut, device):
     # tracks a 48 kHz clock, so it has no reason to ask for a large correction.
     dut.write("f")
     feedback = dut.expect(
-        r"AUDIO_FEEDBACK has=1 rate=(\d+) updates=([1-9]\d*) rejects=(\d+) pacing=(\d+)"
+        r"AUDIO_FEEDBACK has=1 rate=(\d+) updates=([1-9]\d*) rejects=(\d+) pacing=(\d+)\r?\n"
     )
     rate = int(feedback.group(1))
     updates = int(feedback.group(2))

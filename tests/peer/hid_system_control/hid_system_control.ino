@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbHost.h"
 
 EspUsbHost usb;
@@ -11,6 +12,7 @@ static uint16_t devicePid = 0;
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("hid_system_control");
   delay(500);
 
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
@@ -52,6 +54,10 @@ static bool waitForDevice(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { usb.end(); }))
+  {
+    return;
+  }
   while (Serial.available() > 0)
   {
     const char command = static_cast<char>(Serial.read());

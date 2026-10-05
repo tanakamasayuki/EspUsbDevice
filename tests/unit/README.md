@@ -109,3 +109,11 @@ actually exist. Its rules are keyed on pytest node ids with nothing connecting
 them to the tests they name, so a rename or a merge detaches a rule silently -
 the test still passes, and the expected line it covered comes back as an
 unexpected finding. That happened when `peer/` went from 110 tests to 29.
+
+## `usb_test_lifecycle`
+
+Exercises readiness retries, peer boot before host startup, and shutdown of
+every board after assertions or setup fail. Cleanup timeouts must preserve the
+original assertion. A host g++ test compiles the shared sketch helper against a
+fake Serial interface to check the startup gate, preservation of ordinary
+commands, peer boot queries, and idempotent shutdown.

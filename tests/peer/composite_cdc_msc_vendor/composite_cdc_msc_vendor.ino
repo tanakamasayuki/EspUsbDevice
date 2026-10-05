@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbHost.h"
 #include <string.h>
 
@@ -82,6 +83,7 @@ static void waitForMsc()
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("composite_cdc_msc_vendor");
   delay(500);
 
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
@@ -132,6 +134,10 @@ static bool waitForDevice(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { usb.end(); }))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     char command = Serial.read();

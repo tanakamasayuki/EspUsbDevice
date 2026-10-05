@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // Peer device for the CCID test: a USB smart card reader with one slot and an
@@ -122,6 +123,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_ccid"))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = Serial.read();

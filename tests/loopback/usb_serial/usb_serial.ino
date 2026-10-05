@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include "EspUsbHost.h"
 #include <string.h>
@@ -99,6 +100,7 @@ static bool waitLineCoding(uint32_t baud, uint8_t stopBits, uint8_t parity, uint
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("usb_serial");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_usb_serial");
@@ -190,5 +192,9 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   delay(1);
 }

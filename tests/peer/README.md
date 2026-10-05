@@ -10,6 +10,22 @@
 The device sketch is controlled by serial commands. This keeps the USB behavior
 deterministic and makes host-side assertions stable.
 
+## Startup and shutdown
+
+The host sketch waits at `waitForUsbTestStart()` before enabling USB.
+`conftest.py` requests both `dut` and `peers`, so peer uploads finish first. It
+then queries `TEST_IDLE <sketch>` on the host and `TEST_PEER_BOOTED <sketch>` on
+every peer before releasing the host with `G`. The peer boot query (`0x1c`)
+answers after setup completes, without requiring USB enumeration; ordinary
+`DEVICE_READY` queries still verify host configuration in the test body.
+
+Teardown sends `0x1f` to stop the host first and then each peer, including when
+assertions fail. Each responds `TEST_STOPPED` and stays idle until its next
+upload. Missing shutdown acknowledgements are warnings, and every peer is
+attempted even if host shutdown fails. Control commands are bytes to avoid
+implicit serial newlines. The shared implementation is in
+`../usb_test_lifecycle.py` and `../sketch_support/UsbTestLifecycle.h`.
+
 ## Hardware
 
 Connect the USB data pins between the host and device boards:

@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 // USB host side of the DFU peer test. Drives the DFU control requests by hand
 // over EP0 - there is no DFU host class here, and none is needed: every DFU
 // transfer is a control transfer, which is the whole point of the class.
@@ -206,6 +207,7 @@ static void printFunctional()
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("usb_dfu");
   delay(500);
 
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &info)
@@ -222,6 +224,10 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { usb.end(); }))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = Serial.read();

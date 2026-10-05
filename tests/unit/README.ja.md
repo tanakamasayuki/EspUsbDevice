@@ -96,3 +96,11 @@ jack descriptor と endpoint ブロックを自前で組み立てています。
 ルールは pytest の node id で引いているだけで、名指ししたテストとの結び付きが何もないため、
 リネームやマージで黙って外れます。テストは通ったままで、許可していたはずの行が
 「未知の異常」として再出現します。`peer/` を 110 テストから 29 に統合したときに実際に起きました。
+
+## `usb_test_lifecycle`
+
+起動確認の再問い合わせ、peer の setup 完了後に host を開始する順序、setup や
+assertion が失敗した場合も全 board を停止することを検証します。停止応答の
+timeout は元の assertion を隠しません。共通 sketch helper を偽の Serial と
+システムの g++ でコンパイルし、開始ゲート、通常コマンドの保持、peer 起動確認、
+停止の冪等性を検証します。

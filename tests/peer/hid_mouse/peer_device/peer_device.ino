@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 EspUsbDevice device;
@@ -64,6 +65,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "hid_mouse"))
+  {
+    return;
+  }
   while (Serial.available() > 0)
   {
     char command = static_cast<char>(Serial.read());

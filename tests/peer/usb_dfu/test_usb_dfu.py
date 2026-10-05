@@ -41,11 +41,11 @@ def _enumeration(dut):
 def _functional_descriptor(dut, device):
     """Read back from the wire, not from the host driver's parsed view."""
     device.write("t")
-    transfer = int(device.expect(r"DEVICE_XFER (\d+)", timeout=10).group(1))
+    transfer = int(device.expect(r"DEVICE_XFER (\d+)\r?\n", timeout=10).group(1))
 
     dut.write("f")
     match = dut.expect(
-        r"DFU_FUNCTIONAL ok=1 attrs=0x(\w+) timeout=(\d+) transfer=(\d+) bcd=0x(\w+) total=\d+",
+        r"DFU_FUNCTIONAL ok=1 attrs=0x(\w+) timeout=(\d+) transfer=(\d+) bcd=0x(\w+) total=\d+\r?\n",
         timeout=10,
     )
     attrs = int(match.group(1), 16)
@@ -60,7 +60,7 @@ def _functional_descriptor(dut, device):
 
 def _idle_at_rest(dut):
     dut.write("s")
-    match = dut.expect(r"DFU_STATUS ok=1 status=(\d+) state=(\d+) poll=\d+", timeout=10)
+    match = dut.expect(r"DFU_STATUS ok=1 status=(\d+) state=(\d+) poll=\d+\r?\n", timeout=10)
     assert int(match.group(1)) == DFU_STATUS_OK
     assert int(match.group(2)) == DFU_IDLE
 
@@ -76,13 +76,13 @@ def _bad_magic_is_refused(dut, device):
     device.expect_exact("DEVICE_RESET")
 
     dut.write("1")
-    match = dut.expect(r"DFU_DNLOAD sent=1 block=0 len=64 ok=1 status=(\d+) state=(\d+)", timeout=20)
+    match = dut.expect(r"DFU_DNLOAD sent=1 block=0 len=64 ok=1 status=(\d+) state=(\d+)\r?\n", timeout=20)
     assert int(match.group(1)) == DFU_STATUS_ERR_WRITE
     assert int(match.group(2)) == DFU_ERROR
 
     device.write("s")
     match = device.expect(
-        r"DEVICE_DFU blocks=(\d+) bytes=(\d+) errors=(\d+) complete=(\d+) status=(\d+)",
+        r"DEVICE_DFU blocks=(\d+) bytes=(\d+) errors=(\d+) complete=(\d+) status=(\d+)\r?\n",
         timeout=10,
     )
     assert int(match.group(1)) == 0, "nothing was accepted"
@@ -92,7 +92,7 @@ def _bad_magic_is_refused(dut, device):
     # CLRSTATUS is the documented way out of dfuERROR, and it has to work or the
     # device would need a replug after every mistyped file.
     dut.write("c")
-    match = dut.expect(r"DFU_CLRSTATUS sent=1 status=(\d+) state=(\d+)", timeout=10)
+    match = dut.expect(r"DFU_CLRSTATUS sent=1 status=(\d+) state=(\d+)\r?\n", timeout=10)
     assert int(match.group(1)) == DFU_STATUS_OK
     assert int(match.group(2)) == DFU_IDLE
 
@@ -118,7 +118,7 @@ def _download_then_failed_verification(dut, device):
 
     device.write("s")
     match = device.expect(
-        r"DEVICE_DFU blocks=(\d+) bytes=(\d+) errors=(\d+) complete=(\d+) status=(\d+)",
+        r"DEVICE_DFU blocks=(\d+) bytes=(\d+) errors=(\d+) complete=(\d+) status=(\d+)\r?\n",
         timeout=10,
     )
     assert int(match.group(1)) == 2, "both blocks reached the sketch"
@@ -126,13 +126,13 @@ def _download_then_failed_verification(dut, device):
     assert int(match.group(3)) == 0, "no error yet"
 
     dut.write("m")
-    match = dut.expect(r"DFU_MANIFEST sent=1 ok=1 status=(\d+) state=(\d+)", timeout=30)
+    match = dut.expect(r"DFU_MANIFEST sent=1 ok=1 status=(\d+) state=(\d+)\r?\n", timeout=30)
     assert int(match.group(1)) == DFU_STATUS_ERR_VERIFY
     assert int(match.group(2)) == DFU_ERROR
 
     device.write("s")
     match = device.expect(
-        r"DEVICE_DFU blocks=(\d+) bytes=(\d+) errors=(\d+) complete=(\d+) status=(\d+)",
+        r"DEVICE_DFU blocks=(\d+) bytes=(\d+) errors=(\d+) complete=(\d+) status=(\d+)\r?\n",
         timeout=10,
     )
     assert int(match.group(3)) == 1, "the failed verification is reported once"
@@ -144,7 +144,7 @@ def _boot_partition_unchanged(device):
     """The peer still boots what it is running. This is the assertion that keeps
     the rig alive, and the one a broken commit path would break first."""
     device.write("b")
-    match = device.expect(r"DEVICE_BOOT boot=(\w+) running=(\w+)", timeout=10)
+    match = device.expect(r"DEVICE_BOOT boot=(\w+) running=(\w+)\r?\n", timeout=10)
     assert match.group(1) == match.group(2), match.group(0)
 
 
@@ -161,13 +161,13 @@ def _recovers_for_another_download(dut, device):
     device.expect_exact("DEVICE_RESET")
 
     dut.write("2")
-    match = dut.expect(r"DFU_DNLOAD sent=1 block=0 len=256 ok=1 status=(\d+) state=(\d+)", timeout=20)
+    match = dut.expect(r"DFU_DNLOAD sent=1 block=0 len=256 ok=1 status=(\d+) state=(\d+)\r?\n", timeout=20)
     assert int(match.group(1)) == DFU_STATUS_OK
     assert int(match.group(2)) == DFU_DNLOAD_IDLE
 
     # DFU_ABORT drops it again, which is what dfu-util sends when the user stops.
     dut.write("x")
-    match = dut.expect(r"DFU_ABORT sent=1 status=(\d+) state=(\d+)", timeout=10)
+    match = dut.expect(r"DFU_ABORT sent=1 status=(\d+) state=(\d+)\r?\n", timeout=10)
     assert int(match.group(1)) == DFU_STATUS_OK
     assert int(match.group(2)) == DFU_IDLE
 

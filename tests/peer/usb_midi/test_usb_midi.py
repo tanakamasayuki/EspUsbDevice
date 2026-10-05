@@ -80,7 +80,7 @@ def _device_is_supported(dut, device):
     gating on that flag would have ignored it.
     """
     dut.write("i")
-    m = dut.expect(r"DEVICE_INFO vid=303a pid=4017 supported=(\d) interfaces=(\d+)", timeout=10)
+    m = dut.expect(r"DEVICE_INFO vid=303a pid=4017 supported=(\d) interfaces=(\d+)\r?\n", timeout=10)
     assert int(m.group(1)) == 1, m.group(0)
     # AudioControl + MIDIStreaming.
     assert int(m.group(2)) == 2, m.group(0)

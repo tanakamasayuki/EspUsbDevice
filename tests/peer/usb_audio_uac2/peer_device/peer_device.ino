@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // UAC2 headset peer: speaker (host -> device) and microphone (device -> host)
@@ -69,6 +70,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_audio_uac2"))
+  {
+    return;
+  }
   uint8_t received[192];
   const size_t receivedLength = playback.read(received, sizeof(received));
   rxBytes += receivedLength;

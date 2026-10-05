@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // USB Audio headset (speaker + microphone on one device). Verifies both
@@ -58,6 +59,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_audio_headset"))
+  {
+    return;
+  }
   uint8_t received[192];
   const size_t receivedLength =
       playback.read(received, sizeof(received));

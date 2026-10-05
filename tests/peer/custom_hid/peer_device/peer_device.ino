@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 static const uint8_t REPORT_DESCRIPTOR[] = {
@@ -78,6 +79,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "custom_hid"))
+  {
+    return;
+  }
   while (Serial.available() > 0)
   {
     const char command = static_cast<char>(Serial.read());

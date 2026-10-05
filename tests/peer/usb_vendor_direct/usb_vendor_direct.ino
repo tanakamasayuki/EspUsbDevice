@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbHost.h"
 
 EspUsbHost usb;
@@ -83,6 +84,7 @@ static void printVendorInfo()
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("usb_vendor_direct");
   delay(500);
 
   usb.onVendorData([](const EspUsbHostVendorData &data)
@@ -131,6 +133,10 @@ static bool waitForDevice(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { usb.end(); }))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = Serial.read();

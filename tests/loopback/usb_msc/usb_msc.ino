@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include "EspUsbHost.h"
 #include <string.h>
@@ -319,6 +320,7 @@ static bool checkErrors()
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("usb_msc");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_usb_msc");
@@ -390,5 +392,9 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   delay(1);
 }

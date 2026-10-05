@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // Composite device: HID keyboard + CDC ACM on one EspUsbDevice.
@@ -67,6 +68,10 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "composite_hid_cdc"))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     char command = Serial.read();

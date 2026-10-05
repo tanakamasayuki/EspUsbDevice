@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbHost.h"
 
 // DUT for the UAC2 peer test: an EspUsbHost host driving the EspUsbDevice UAC2
@@ -18,6 +19,7 @@ void setup()
 {
   Serial.setTxBufferSize(4096);
   Serial.begin(115200);
+  waitForUsbTestStart("usb_audio_uac2");
   delay(500);
 
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
@@ -109,6 +111,10 @@ static bool waitForDevice(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { usb.end(); }))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = static_cast<char>(Serial.read());

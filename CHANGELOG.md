@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- (EN) Peer tests now enable the USB host only after every peer has been uploaded
+  and finished setup. Loopback tests wait for pytest to connect before starting,
+  preserving enumeration output previously lost in full runs. Shared teardown
+  stops the host and device even when a test fails. Serial-log auditing now waits
+  for listeners to close and no longer allows upload-window URB errors. Variable
+  fields captured from serial output now wait for the line ending before matching.
+- (JA) peer テストは全 peer の書き込みと setup 完了を確認してから USB host を
+  開始します。loopback テストも pytest の接続後に開始し、全体実行で失われていた
+  列挙ログを保持します。共通 teardown は失敗時も host と device を停止します。
+  シリアルログ監査は listener の終了後に読み取り、書き込み中の URB エラーの
+  許容ルールを削除しました。シリアル出力の可変長フィールドも行末まで待ってから
+  読み取ります。
+
 - (EN) Fixed CDC-NCM NTB divisors rejected by updated Windows 11 NCM drivers
   with Code 10. Both `wNdbInDivisor` and `wNdbOutDivisor` now default to `4`
   instead of `1`, matching the existing four-byte transmit alignment. Backports

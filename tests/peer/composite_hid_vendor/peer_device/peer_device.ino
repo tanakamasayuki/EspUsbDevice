@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // Composite device: HID keyboard + bulk Vendor on one EspUsbDevice.
@@ -97,6 +98,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "composite_hid_vendor"))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     char command = Serial.read();

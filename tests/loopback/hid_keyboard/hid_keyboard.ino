@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include "EspUsbHost.h"
 #include <string.h>
@@ -71,6 +72,7 @@ static bool sendKeyboardLeds(bool numLock, bool capsLock, bool scrollLock, uint8
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("hid_keyboard");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_hid_keyboard");
@@ -264,5 +266,9 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   delay(1);
 }

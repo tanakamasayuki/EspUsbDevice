@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // Device side of the NKRO peer test: an NKRO keyboard that holds multi-key
@@ -129,6 +130,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "hid_keyboard_nkro"))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = Serial.read();

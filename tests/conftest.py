@@ -28,12 +28,21 @@ class _KnownSerialFinding:
     line_pattern: re.Pattern[str]
     max_count: int
     reason: str
+    shutdown_only: bool = False
 
 
 # These are keyed on pytest node ids, so renaming or merging a test silently
 # detaches its entry: the test still passes and the line it allowed comes back
 # as an unexpected finding. Grep this tuple when you rename a test.
 _KNOWN_SERIAL_FINDINGS = (
+    _KnownSerialFinding(
+        nodeid_pattern="*loopback/*",
+        log_name="dut.log",
+        line_pattern=re.compile(r"USB HOST: Enqueue URB error: ESP_ERR_INVALID_STATE$"),
+        max_count=1,
+        reason="an in-flight host transfer races the deliberate loopback unplug during completed shutdown",
+        shutdown_only=True,
+    ),
     _KnownSerialFinding(
         nodeid_pattern="*loopback/usb_msc/test_loopback_usb_msc.py::test_loopback_usb_msc",
         log_name="dut.log",
@@ -48,19 +57,6 @@ _KNOWN_SERIAL_FINDINGS = (
         max_count=1,
         reason="GET_MAX_LUN fallback for single-LUN MSC",
     ),
-    # Scoped to any peer test rather than one, because it is a property of the
-    # window and not of a test: the Host board is already a USB host while the
-    # peer board is being re-flashed, so it enqueues against a device that is
-    # going away. It appears roughly once per full peer run and lands on a
-    # different test every time - observed on hid_gamepad, custom_hid,
-    # hid_keyboard, hid_system_control, hid_vendor, composite_hid_cdc and
-    # usb_msc. Naming one test made every other sighting look like a new
-    # problem, which twice led to a full run being read as an improvement.
-    #
-    # This entry is also the check for the eventual fix. Gating the Host
-    # sketches' usb.begin() on the plugin's START command should close the
-    # window at the source; when that lands, delete this entry and a run that
-    # stays clean is the evidence. See the dut-lifecycle work.
     # The DFU test refuses two images on purpose - one with a bad magic byte and
     # one that fails verification - and those refusals are what it asserts. Both
     # are logged by esp_ota_ops at error level on the peer, so they arrive here
@@ -95,16 +91,6 @@ _KNOWN_SERIAL_FINDINGS = (
         max_count=4,
         reason="the test image is nonsense on purpose; failing verification is the assertion",
     ),
-    _KnownSerialFinding(
-        nodeid_pattern="*peer/*",
-        log_name="dut.log",
-        line_pattern=re.compile(
-            r"USB HOST: Enqueue URB error: ESP_ERR_INVALID_STATE$"
-        ),
-        max_count=1,
-        reason="Host is already a USB host while the peer is being re-flashed; "
-        "moves between tests, remove this entry once START gating lands",
-    ),
 )
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _AUDIT_RESULTS_KEY = pytest.StashKey[
@@ -122,8 +108,17 @@ def _serial_error_lines(
     known = []
     known_counts = [0] * len(_KNOWN_SERIAL_FINDINGS)
     text = log_path.read_text(encoding="utf-8", errors="replace")
-    for line_number, raw_line in enumerate(text.splitlines(), start=1):
-        line = _ANSI_ESCAPE_RE.sub("", raw_line)
+    lines = [_ANSI_ESCAPE_RE.sub("", line) for line in text.splitlines()]
+    completed_shutdown_lines = set()
+    shutdown_start = None
+    for line_number, line in enumerate(lines, start=1):
+        if line == "TEST_STOPPING":
+            shutdown_start = line_number
+        elif line == "TEST_STOPPED" and shutdown_start is not None:
+            completed_shutdown_lines.update(range(shutdown_start + 1, line_number))
+            shutdown_start = None
+
+    for line_number, line in enumerate(lines, start=1):
         if not any(pattern.search(line) for pattern in _SERIAL_ERROR_PATTERNS):
             continue
 
@@ -135,6 +130,7 @@ def _serial_error_lines(
                 and fnmatch(nodeid, rule.nodeid_pattern)
                 and log_path.name == rule.log_name
                 and rule.line_pattern.search(line)
+                and (not rule.shutdown_only or line_number in completed_shutdown_lines)
             ):
                 known_counts[index] += 1
                 matched_rule = rule
@@ -149,18 +145,12 @@ def _serial_error_lines(
 
 
 @pytest.fixture(autouse=True)
-def serial_log_audit(request):
+def serial_log_audit(request, test_case_tempdir):
     """Collect suspicious DUT and peer serial output without failing the test."""
     yield
 
-    # Host-only tests (e.g. the keymap reverse-lookup unit test) have no board
-    # and thus no serial logs; pytest-embedded's test_case_tempdir is absent for
-    # them, so there is nothing to audit.
-    try:
-        test_case_tempdir = request.getfixturevalue("test_case_tempdir")
-    except pytest.FixtureLookupError:
-        return
-
+    # Do not request dut/peers: their serial listeners must finish writing before
+    # this fixture reads the logs. Unit tests simply have no *.log files.
     log_dir = Path(test_case_tempdir)
     log_paths = sorted(log_dir.glob("*.log"))
     request.config.stash[_AUDIT_LOG_COUNT_KEY] += len(log_paths)

@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbHost.h"
 
 // Host side (DUT) of the NKRO peer test. Reports each pressed keycode and how
@@ -16,6 +17,7 @@ static volatile uint8_t connectedAddress = 0;
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("hid_keyboard_nkro");
   delay(500);
 
   usb.setKeyboardLayout(ESP_USB_HOST_KEYBOARD_LAYOUT_EN_US);
@@ -84,6 +86,10 @@ static bool waitForDevice(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { usb.end(); }))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = Serial.read();

@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbHost.h"
 #include <NetworkClient.h>
 
@@ -163,6 +164,7 @@ void setup()
 {
   Serial.setTxBufferSize(4096);
   Serial.begin(115200);
+  waitForUsbTestStart("usb_ncm_soak");
   delay(500);
 
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
@@ -206,6 +208,10 @@ static bool waitForDevice(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { usb.end(); }))
+  {
+    return;
+  }
   if (attached)
   {
     const uint32_t ip = static_cast<uint32_t>(usb.networkLocalIP(deviceAddress));

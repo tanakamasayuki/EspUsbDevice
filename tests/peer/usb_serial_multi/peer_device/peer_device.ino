@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // Device side for the two-port CDC test.
@@ -83,6 +84,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_serial_multi"))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = Serial.read();

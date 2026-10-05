@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 // Multi-cable USB MIDI loopback: a 4-cable device talking to the host stack on
 // the same board.
 //
@@ -151,6 +152,7 @@ static bool sendHostNoteOnPerCable()
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("usb_midi_cables");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_usb_midi_cables");
@@ -228,6 +230,10 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   pollDeviceMidi();
   delay(1);
 }

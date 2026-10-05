@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 // The device half of the direct transfer path test.
 //
 // Streams fixed blocks with EspUsbDeviceVendor::writeDirect(), arming the next
@@ -81,6 +82,10 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_vendor_direct"))
+  {
+    return;
+  }
   static bool started = false;
   if (!started && Vendor.mounted())
   {

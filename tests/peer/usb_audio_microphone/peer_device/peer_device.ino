@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // USB Audio source (microphone): device -> host PCM. Generates a loud, varying
@@ -51,6 +52,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_audio_microphone"))
+  {
+    return;
+  }
   EspUsbAudioEvent event;
   while (audio.pollEvent(event))
   {

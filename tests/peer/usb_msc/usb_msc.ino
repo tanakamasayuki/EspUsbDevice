@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbHost.h"
 
 EspUsbHost usb;
@@ -14,6 +15,7 @@ static void waitForMsc()
 void setup()
 {
     Serial.begin(115200);
+    waitForUsbTestStart("usb_msc");
     delay(500);
 
     usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
@@ -30,6 +32,10 @@ void setup()
 
 void loop()
 {
+    if (handleUsbTestStop([] { usb.end(); }))
+    {
+        return;
+    }
     if (Serial.available() <= 0)
     {
         delay(1);

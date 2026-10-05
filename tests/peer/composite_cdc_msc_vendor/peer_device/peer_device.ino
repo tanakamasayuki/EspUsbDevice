@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include <Arduino.h>
 #include "EspUsbDevice.h"
 
@@ -147,6 +148,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "composite_cdc_msc_vendor"))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     char command = Serial.read();

@@ -27,16 +27,16 @@ import time
 ENUM_RE = re.compile(
     r"NCM_ENUM count=[1-9][0-9]* protocol=CDC-NCM complete=1 "
     r"ctrl=(\d+) data=(\d+) alt=(\d+) "
-    r"in=0x([0-9a-fA-F]+) out=0x([0-9a-fA-F]+) notify=0x([0-9a-fA-F]+)"
+    r"in=0x([0-9a-fA-F]+) out=0x([0-9a-fA-F]+) notify=0x([0-9a-fA-F]+)\r?\n"
 )
 
 STATS_RE = re.compile(
     r"NETWORK_STATS ready=(\d+) link=(\d+) netif=(\d+) rxNtb=(\d+) "
-    r"rxFrames=(\d+) tx=(\d+) txFail=(\d+) ip=([0-9.]+)"
+    r"rxFrames=(\d+) tx=(\d+) txFail=(\d+) ip=([0-9.]+)\r?\n"
 )
 
 DEVICE_STATS_RE = re.compile(
-    r"DEVICE_STATS link=(\d+) net=(\d+) ip=([0-9.]+) served=(\d+)"
+    r"DEVICE_STATS link=(\d+) net=(\d+) ip=([0-9.]+) served=(\d+)\r?\n"
 )
 
 

@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 #include "EspUsbHost.h"
 
@@ -52,6 +53,7 @@ static bool clickSystem(const char *name, uint8_t usage)
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("hid_system_control");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_hid_system_control");
@@ -110,5 +112,9 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   delay(1);
 }

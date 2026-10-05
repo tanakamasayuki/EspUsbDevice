@@ -67,7 +67,7 @@ INTERLEAVED_CABLES = [3, 0, 2, 1]
 
 def _port_info(dut):
     dut.write("i")
-    m = dut.expect(r"MIDI_PORT_INFO ok=(\d) in=(\d+) out=(\d+) iface=(\d+)", timeout=10)
+    m = dut.expect(r"MIDI_PORT_INFO ok=(\d) in=(\d+) out=(\d+) iface=(\d+)\r?\n", timeout=10)
     return m
 
 

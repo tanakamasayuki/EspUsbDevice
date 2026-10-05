@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 // Peer side of the multi-cable USB MIDI peer test: an asymmetric EspUsbDevice with
 // 4 cables device-to-host and 5 host-to-device.
 //
@@ -75,6 +76,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_midi_cables"))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = Serial.read();

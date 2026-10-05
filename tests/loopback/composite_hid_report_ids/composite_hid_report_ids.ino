@@ -1,3 +1,4 @@
+#include "../../sketch_support/UsbTestLifecycle.h"
 // Two HID classes on one interface, seen by a real host.
 //
 // A composite HID device merges its classes' report descriptors into one and
@@ -112,6 +113,7 @@ static void reportMergedDescriptor(const uint8_t *data, uint16_t length)
 void setup()
 {
   Serial.begin(115200);
+  waitForUsbTestStart("composite_hid_report_ids");
   delay(1000);
 
   Serial.println("TEST_BEGIN loopback_composite_hid_report_ids");
@@ -241,5 +243,9 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); usb.end(); }))
+  {
+    return;
+  }
   delay(1);
 }

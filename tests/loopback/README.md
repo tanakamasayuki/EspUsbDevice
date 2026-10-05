@@ -8,27 +8,33 @@ EspUsbDevice run on the same chip.
 The first target is HID keyboard loopback with descriptor logging so P4
 port/speed behavior can be verified before broader class coverage is added.
 
-## Why these wait for a banner when `peer/` asks
+## Startup and shutdown
 
-Every test here opens by waiting for `HOST_DEVICE`, the line the sketch prints
-once when its own host half enumerates its own device half. `tests/peer` moved
-away from exactly that shape: a line printed once at enumeration is only visible
-to whichever test reads it first, so the peer modules now ask (`?` ->
-`DEVICE_READY <0|1>`) instead of awaiting an announcement.
+Each module has one test and one firmware upload. The sketch waits for pytest
+at `waitForUsbTestStart()` before running setup's USB work or printing test
+output. The shared fixture asks `Q` until `TEST_IDLE <sketch>` responds, then
+sends `G` without consuming a start ACK. This keeps the initial enumeration and
+result lines visible even when serial connection happens late. Moving a banner
+after enumeration alone cannot guarantee this.
 
-That change is not needed here, and the reason is structural rather than a
-judgement call. Each module in this directory is a single test with its own
-sketch and its own upload, so the test that reads the banner is always the first
-thing to run after the board comes up. There is no second test to be starved of
-it, and no order for it to depend on.
+On success or failure, teardown sends the reserved control byte `0x1f`. The
+sketch stops the device, then the host, and answers `TEST_STOPPED`. Both USB
+controllers share a chip; stopping the device task first avoids scheduling
+transfers while host shutdown releases controller resources. Subsequent
+loop iterations remain idle until the next firmware upload. Commands are sent
+as bytes so `SerialDut.write()` does not append a newline ahead of the stop
+command. Shutdown timeouts are reported as warnings without hiding the original
+failure.
 
-What did bite once was timing rather than order: the sketch printed its port
-report at boot, and in a full run that output could scroll past before pytest
-attached to the serial port, which failed inside the suite and passed when run
-alone. The fix was to move the report after enumeration so it is emitted with
-`HOST_DEVICE` rather than ahead of it. If a module here ever grows a second
-test, or starts reporting something before enumeration again, convert it to the
-`peer/` shape rather than re-tuning the timing.
+Shutdown is marked by `TEST_STOPPING` and `TEST_STOPPED`. The serial audit
+allows at most one `Enqueue URB error: ESP_ERR_INVALID_STATE` only inside a
+completed shutdown interval: a pending host transfer can race this deliberate
+unplug. The same error during startup or the test body remains unexpected.
+
+The shared code lives in `../usb_test_lifecycle.py` and
+`../sketch_support/UsbTestLifecycle.h`; `conftest.py` applies it only to hardware
+tests in this directory. Do not add a second test to a module without designing
+how it reinitializes the stopped firmware.
 
 ## Tests
 

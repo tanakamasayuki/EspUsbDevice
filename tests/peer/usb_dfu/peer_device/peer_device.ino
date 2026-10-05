@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 // Peer device for the DFU test: an ordinary HID keyboard with an
 // EspUsbDeviceDfu function beside it.
 //
@@ -60,6 +61,10 @@ void setup()
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "usb_dfu"))
+  {
+    return;
+  }
   if (Serial.available() > 0)
   {
     const char command = Serial.read();

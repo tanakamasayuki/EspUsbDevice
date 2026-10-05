@@ -19,7 +19,7 @@ _SOAK_RE = (
 )
 _STATS_RE = (
     r"SOAK_STATS ready=(\d) link=(\d) netif=(\d) rxNtb=(\d+) rxFrames=(\d+) "
-    r"tx=(\d+) txFail=(\d+) heap=(\d+) block=(\d+)"
+    r"tx=(\d+) txFail=(\d+) heap=(\d+) block=(\d+)\r?\n"
 )
 
 
@@ -60,7 +60,7 @@ def _attach(dut, timeout=30):
     deadline = time.monotonic() + timeout
     while True:
         dut.write("p")
-        match = dut.expect(r"NETWORK_IP ip=(\d+\.\d+\.\d+\.\d+)", timeout=10)
+        match = dut.expect(r"NETWORK_IP ip=(\d+\.\d+\.\d+\.\d+)\r?\n", timeout=10)
         if match.group(1).startswith(b"192.168.7."):
             return
         if time.monotonic() >= deadline:
@@ -84,7 +84,7 @@ def _run_soak(dut, device, command, duration_s):
     device.write("s")
     state = device.expect(
         r"DEVICE_STATE link=(\d) net=(\d) ip=\S+ sink=(\d+) source=(\d+) "
-        r"writeFails=(\d+) canXmit=(\d) canXmitSmall=(\d) heap=(\d+) block=(\d+)",
+        r"writeFails=(\d+) canXmit=(\d) canXmitSmall=(\d) heap=(\d+) block=(\d+)\r?\n",
         timeout=15,
     )
     print("device:", state.group(0))
@@ -100,7 +100,7 @@ def _run_soak(dut, device, command, duration_s):
     # A wedged NCM transmit state machine shows up as a fresh connection that
     # either cannot be made or delivers nothing.
     dut.write("v")
-    recover = dut.expect(r"RECOVER connect=(\d) bytes=(\d+)", timeout=30)
+    recover = dut.expect(r"RECOVER connect=(\d) bytes=(\d+)\r?\n", timeout=30)
     print("recover:", recover.group(0))
 
     return soak, stats, state, recover

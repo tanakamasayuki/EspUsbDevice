@@ -1,3 +1,4 @@
+#include "../../../sketch_support/UsbTestLifecycle.h"
 #include "EspUsbDevice.h"
 
 // Device side of the keyboard peer test. Every printable byte received on Serial
@@ -87,6 +88,10 @@ static bool waitForHost(uint32_t timeoutMs = 5000)
 
 void loop()
 {
+  if (handleUsbTestStop([] { device.end(); }, "hid_keyboard"))
+  {
+    return;
+  }
   while (Serial.available() > 0)
   {
     char c = static_cast<char>(Serial.read());

@@ -103,7 +103,7 @@ def test_usb_vendor_direct(dut, peers):
         dut.write("r")
         # The window starts wherever the host's pipe sits, so do not anchor on a
         # stamp: capture the field and let _complete_blocks() find the blocks.
-        m = dut.expect(r"VENDOR_READ len=\d+ data=(\S+)", timeout=10)
+        m = dut.expect(r"VENDOR_READ len=\d+ data=(\S+)\r?\n", timeout=10)
         stamps = _complete_blocks(m.group(1))
         assert stamps, f"no whole block in the read: {m.group(1)}"
         # Consecutive inside one window: a gap would mean a transfer was lost
@@ -117,7 +117,7 @@ def test_usb_vendor_direct(dut, peers):
     assert len(set(seen)) > 1, f"stream did not advance: {seen}"
 
     device.write("s")
-    m = device.expect(r"DEVICE_DIRECT_STAT blocks=(\d+) bytes=(\d+) armfail=(\d+) zerolen=(\d+)")
+    m = device.expect(r"DEVICE_DIRECT_STAT blocks=(\d+) bytes=(\d+) armfail=(\d+) zerolen=(\d+)\r?\n")
     blocks, byts, armfail, zerolen = (int(m.group(i)) for i in range(1, 5))
     assert blocks > 0, "the completion callback never fired"
     assert byts == blocks * 21, f"bytes {byts} != blocks {blocks} * 21"
