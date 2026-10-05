@@ -1,0 +1,12 @@
+{
+  "class/net/ncm_device.c": [
+    {
+      "before": "  .wNdbInDivisor            = 1,\n",
+      "after": "  // Windows NCM validation requires a power-of-two divisor of at least 4.\n  .wNdbInDivisor            = 4,\n"
+    },
+    {
+      "before": "  .wNdbOutDivisor           = 1,\n",
+      "after": "  .wNdbOutDivisor           = 4,\n"
+    }
+  ]
+}

@@ -37,7 +37,8 @@ compileされること、Audioのcompile-time上限を確認します。controll
 ## `tinyusb_vendor`
 
 `src/` に取り込んだ TinyUSB の pin metadata、header、選択した device source が、
-`third_party/tinyusb/UPSTREAM.json` が指す upstream commit と byte-identical であること、
+`third_party/tinyusb/UPSTREAM.json` が指す upstream commit に `LOCAL_PATCHES.json` の
+記録済み修正を適用した結果と byte-identical であること、
 および意図しない `.c` が build 対象へ増えていないことを確認します。キャッシュが無ければ
 upstream の tarball を取得します。この層でネットワークに触るのはここだけです。
 

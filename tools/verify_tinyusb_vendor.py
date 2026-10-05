@@ -26,6 +26,25 @@ ARCHIVE = CACHE / "src"
 TARBALL = CACHE / "tinyusb.tar.gz"
 MANIFEST = ROOT / "third_party" / "tinyusb" / "BUILD_FILES.txt"
 BUILD = ROOT / "src"
+LOCAL_PATCHES = json.loads(
+    (ROOT / "third_party" / "tinyusb" / "LOCAL_PATCHES.json").read_text(encoding="utf-8")
+)
+
+
+def expected_bytes(relative: str) -> bytes:
+    """Apply recorded local replacements without modifying the upstream cache."""
+    content = (ARCHIVE / relative).read_bytes()
+    for replacement in LOCAL_PATCHES.get(relative, []):
+        before = replacement["before"].encode("utf-8")
+        after = replacement["after"].encode("utf-8")
+        if not before or content.count(before) != 1:
+            raise ValueError(
+                f"local patch no longer applies uniquely: {relative}; "
+                "review LOCAL_PATCHES.json against the upstream pin"
+            )
+        content = content.replace(before, after, 1)
+    return content
+
 
 SOURCE_FILES = {
     "tusb.c",
@@ -165,6 +184,8 @@ def main() -> int:
     errors: list[str] = []
     build_files = build_upstream_files()
     expected_files = manifest_files()
+    if set(LOCAL_PATCHES) - expected_files:
+        errors.append("LOCAL_PATCHES.json contains files outside BUILD_FILES.txt")
     if build_files != expected_files:
         errors.append(
             "Arduino build tree differs from BUILD_FILES.txt:\n"
@@ -202,11 +223,16 @@ def main() -> int:
         built = BUILD / relative
         if not archived.is_file():
             errors.append(f"build-only upstream file: {relative}")
-        elif archived.read_bytes() != built.read_bytes():
-            errors.append(
-                f"modified upstream file: {relative} "
-                "(use --refresh if the local verification cache is suspect)"
-            )
+        else:
+            try:
+                if expected_bytes(relative) != built.read_bytes():
+                    errors.append(
+                        f"modified upstream file: {relative} "
+                        "(including recorded local patches; use --refresh if "
+                        "the local verification cache is suspect)"
+                    )
+            except ValueError as exc:
+                errors.append(str(exc))
 
     if errors:
         print("\n".join(errors))

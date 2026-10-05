@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- (EN) Fixed CDC-NCM NTB divisors rejected by updated Windows 11 NCM drivers
+  with Code 10. Both `wNdbInDivisor` and `wNdbOutDivisor` now default to `4`
+  instead of `1`, matching the existing four-byte transmit alignment. Backports
+  [TinyUSB PR #3914](https://github.com/hathach/tinyusb/pull/3914) for
+  [issue #3](https://github.com/tanakamasayuki/EspUsbDevice/issues/3).
+  Vendor verification and update tools now apply the recorded local patch so
+  future imports preserve the fix. Host unit tests and vendor verification pass;
+  Windows 11 hardware validation is pending.
+- (JA) Windows 11 の更新後の NCM ドライバで Code 10 の原因となる CDC-NCM の
+  NTB divisor を修正しました。`wNdbInDivisor` と `wNdbOutDivisor` の既定値を
+  両方 `1` から `4` へ変更し、既存の送信処理の 4 バイト境界と整合させました。
+  [Issue #3](https://github.com/tanakamasayuki/EspUsbDevice/issues/3) に対して
+  [TinyUSB PR #3914](https://github.com/hathach/tinyusb/pull/3914) の修正を取り込んでいます。
+  vendor 検証・更新ツールも記録済みのローカル修正を適用し、今後の取り込みで
+  修正を保持します。ホスト単体テストと vendor 検証は成功しています。
+  Windows 11 実機での確認は未実施です。
+
 ## 2.5.1
 - (EN) **Every TinyUSB class can now be compiled out from `build_opt.h`.** They
   are all still enabled by default, so nothing changes unless a sketch asks -

@@ -14,7 +14,8 @@ USB configuration and runtime do not depend on Arduino-ESP32's prebuilt
 - Build manifest: `BUILD_FILES.txt` (48 files: 14 sources and 34 headers)
 - Verification cache: the pinned upstream tarball and its 48 selected files are
   downloaded on demand under ignored `.upstream-cache/`
-- Local patches: none at initial import
+- Local patches: `LOCAL_PATCHES.json` records exact replacements applied by both
+  verification and update scripts; the upstream cache stays unchanged.
 
 The verification cache is downloaded from the canonical
 [`hathach/tinyusb`](https://github.com/hathach/tinyusb) repository.
@@ -51,7 +52,8 @@ ESP32 DWC2 device controller:
 The complete upstream source tree is not stored in this repository. The
 verification script downloads the tarball for the pinned commit when its
 ignored local cache is absent, extracts only the 48 manifest entries, and
-compares them byte-for-byte with the Arduino build tree. Normal Arduino builds
+applies the recorded local patches, and compares the result byte-for-byte with
+the Arduino build tree. Normal Arduino builds
 never download anything. The build tree is a minimal projection measured from
 clean S2, S3, and P4 compiler dependency files. Host, Type-C, video, printer,
 MTP, MIDI 2.0, ECM/RNDIS, non-FreeRTOS OSALs, and non-ESP32 portable files are
@@ -59,9 +61,19 @@ not copied into the build tree. DFU joined the selection when
 `EspUsbDeviceDfu` was added; it is the one class here that costs no endpoint,
 so the two drivers are carried for every sketch.
 
-The `src/` build tree is a mechanical copy from the pinned snapshot. Its
-upstream files are not patched. `src/tusb_config.h` and
+The `src/` build tree is a mechanical copy from the pinned snapshot plus the
+recorded local patches. `src/tusb_config.h` and
 `src/internal/EspUsbTinyUsbConfig.h` are first-party integration files.
+
+## Local patches
+
+- `class/net/ncm_device.c`: set both `wNdbInDivisor` and `wNdbOutDivisor` to
+  `4` for Windows NCM compatibility (EspUsbDevice issue #3). This matches the
+  existing four-byte transmit alignment and backports
+  [TinyUSB PR #3914](https://github.com/hathach/tinyusb/pull/3914).
+- An upstream pin change must review these replacements. The scripts fail if
+  a replacement no longer matches exactly once; remove it when the new upstream
+  already includes the fix.
 
 ## Update rules
 

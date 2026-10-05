@@ -28,9 +28,8 @@ def parse_args() -> argparse.Namespace:
 def changed_files(paths: set[str]) -> list[str]:
     changed = []
     for relative in sorted(paths):
-        upstream = vendor.ARCHIVE / relative
         destination = vendor.BUILD / relative
-        if not destination.is_file() or upstream.read_bytes() != destination.read_bytes():
+        if not destination.is_file() or vendor.expected_bytes(relative) != destination.read_bytes():
             changed.append(relative)
     return changed
 
@@ -40,6 +39,8 @@ def main() -> int:
     try:
         vendor.validate_metadata()
         expected = vendor.manifest_files()
+        if set(vendor.LOCAL_PATCHES) - expected:
+            raise ValueError("LOCAL_PATCHES.json contains files outside BUILD_FILES.txt")
         build_files = vendor.build_upstream_files()
         if build_files != expected:
             raise ValueError(
@@ -49,6 +50,9 @@ def main() -> int:
         if args.refresh and vendor.CACHE.exists():
             shutil.rmtree(vendor.CACHE)
         vendor.populate_upstream_cache(expected)
+        # Validate all local patches before allowing any build-tree changes.
+        for relative in sorted(expected):
+            vendor.expected_bytes(relative)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"TinyUSB update failed: {exc}")
         return 1
@@ -76,10 +80,9 @@ def main() -> int:
         return 0
 
     for relative in changed:
-        source = vendor.ARCHIVE / relative
         destination = vendor.BUILD / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        destination.write_bytes(vendor.expected_bytes(relative))
 
     remaining = changed_files(expected)
     if remaining:

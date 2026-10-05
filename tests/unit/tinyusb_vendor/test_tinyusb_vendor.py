@@ -2,8 +2,28 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).parents[3]
+
+
+@pytest.mark.parametrize("upstream", [b"already fixed\n", b"old\nold\n"])
+def test_local_patch_rejects_upstream_drift(monkeypatch, tmp_path, upstream):
+    monkeypatch.syspath_prepend(str(ROOT / "tools"))
+    import verify_tinyusb_vendor as vendor
+
+    source = tmp_path / "sample.c"
+    source.write_bytes(upstream)
+    monkeypatch.setattr(vendor, "ARCHIVE", tmp_path)
+    monkeypatch.setattr(
+        vendor, "LOCAL_PATCHES",
+        {"sample.c": [{"before": "old\n", "after": "fixed\n"}]},
+    )
+
+    with pytest.raises(ValueError, match="local patch no longer applies uniquely"):
+        vendor.expected_bytes("sample.c")
+    assert source.read_bytes() == upstream
 
 
 def test_tinyusb_pin_metadata_is_explicit():

@@ -14,7 +14,8 @@ EspUsbDevice v2は、USB設定とruntimeをArduino-ESP32のprebuilt
 - Build manifest: `BUILD_FILES.txt`（48 file: source 14、header 34）
 - Verification cache: 固定したupstream tarballと選択済み48 fileを、検証時だけ
   ignoredな`.upstream-cache/`以下へ取得
-- 初回import時のlocal patch: なし
+- Local patch: `LOCAL_PATCHES.json`に正確な置換内容を記録し、verify/updateの両方で
+  適用する。upstream cache自体は変更しない。
 
 検証用cacheはcanonical upstreamである
 [`hathach/tinyusb`](https://github.com/hathach/tinyusb)から取得します。
@@ -49,7 +50,8 @@ ESP32 DWC2 device controller:
 
 完全なupstream source treeはこのrepositoryで管理しません。検証scriptは、固定commitの
 tarballがignored local cacheにない場合だけdownloadし、manifestにある48 fileだけを
-展開してArduino build treeとbyte-for-byteで比較します。通常のArduino buildは何も
+展開し、記録済みlocal patchを適用した結果をArduino build treeとbyte-for-byteで
+比較します。通常のArduino buildは何も
 downloadしません。
 
 Arduino build treeは、S2/S3/P4のclean buildで生成したcompiler dependencyから求めた
@@ -58,9 +60,18 @@ FreeRTOS以外のOSAL、ESP32以外のportable fileはbuild treeへコピーし�
 `EspUsbDeviceDfu`の追加時に選択対象へ入りました。endpointを消費しない唯一のclassなので、
 2つのdriverは全スケッチが抱えます。
 
-`src/`内のTinyUSB build treeは固定snapshotからの機械的なcopyで、upstream fileへ
-patchを加えていません。`src/tusb_config.h`と
+`src/`内のTinyUSB build treeは固定snapshotからの機械的なcopyに、記録済みlocal
+patchを適用したものです。`src/tusb_config.h`と
 `src/internal/EspUsbTinyUsbConfig.h`はEspUsbDevice独自のintegration fileです。
+
+## Local patch
+
+- `class/net/ncm_device.c`: Windows NCMとの互換性のため、`wNdbInDivisor`と
+  `wNdbOutDivisor`を両方`4`へ変更（EspUsbDevice issue #3）。既存の送信処理の
+  4 byte alignmentと整合し、
+  [TinyUSB PR #3914](https://github.com/hathach/tinyusb/pull/3914)の修正を取り込む。
+- upstream pin更新時は置換内容も見直す。置換元が正確に1か所へ一致しなければ
+  scriptは失敗する。新しいupstreamに修正が含まれる場合は該当patchを削除する。
 
 ## 更新ルール
 

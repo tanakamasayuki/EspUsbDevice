@@ -44,8 +44,8 @@ initialization.
 ## `tinyusb_vendor`
 
 Checks that the TinyUSB pin metadata, headers, and selected device sources
-vendored under `src/` remain byte-identical to the upstream commit named in
-`third_party/tinyusb/UPSTREAM.json`, and that no unintended `.c` file has
+vendored under `src/` match the upstream commit plus recorded local patches specified in
+`third_party/tinyusb/UPSTREAM.json` and `LOCAL_PATCHES.json`, and that no unintended `.c` file has
 entered the build. It fetches that upstream tarball on a cache miss, which is
 the only thing in this layer that touches the network.
 
