@@ -2,12 +2,10 @@
 microphone (device -> host). Both directions must enumerate, start, and carry PCM
 at the same time.
 
-The preconditions are asked rather than awaited. This module was already a single
-test, so its boot-banner waits worked - but only by being first by construction.
-``HEADSET_DEVICE_READY`` is printed once by the device's setup() and the
-``AUDIO_STREAM`` lines once by the host's connect callback; the device now answers
-'?' with a ready flag and the host answers 'S' with the same stream report, so
-nothing here depends on having seen boot.
+The device answers '?' with its configuration state, and the host answers 'S'
+with complete stream descriptors. The host's 'i' readiness snapshot is queried
+with a deadline before starting streams. Descriptor output is query-only, so a
+boot report cannot satisfy a query before its command has been handled.
 
 The cases are named functions driven from a list. ``_streaming`` starts both
 directions and resets the counters it then reads, so it establishes what it
@@ -16,6 +14,8 @@ needs; the order is not load-bearing.
 
 import time
 
+import pexpect
+
 
 def _both_streams_present(dut, device):
     """The device exposes both an OUT (speaker) and an IN (microphone) stream.
@@ -23,19 +23,27 @@ def _both_streams_present(dut, device):
     Read from the descriptors, so it holds whether or not either stream has been
     started.
     """
-    dut.write("S")
-    dut.expect("AUDIO_STREAM .* dir=OUT ")
-    dut.expect("AUDIO_STREAM .* dir=IN ")
+    dut.write(b"S")
+    dut.expect(r"AUDIO_STREAM [^\r\n]* dir=OUT [^\r\n]*\r?\n")
+    dut.expect(r"AUDIO_STREAM [^\r\n]* dir=IN [^\r\n]*\r?\n")
 
 
 def _ready_both_directions(dut, device):
     """A stable device that is ready in both directions.
 
-    The 'i' command polls for up to 15 s, which tolerates the re-enumeration the
-    device can do at startup, so this does not depend on boot timing.
+    Retry only this prerequisite, including an incomplete serial reply. The
+    firmware answers a fresh snapshot for each query; audio transfer assertions
+    below are executed once.
     """
-    dut.write("i")
-    dut.expect("HOST_AUDIO addr=[1-9][0-9]* out=1 in=1", timeout=20)
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        dut.write(b"i")
+        try:
+            dut.expect(r"HOST_AUDIO addr=[1-9][0-9]* out=1 in=1\r?\n", timeout=1)
+            return
+        except pexpect.TIMEOUT:
+            continue
+    raise AssertionError("Headset host was not ready in both directions within 20 seconds")
 
 
 def _streaming(dut, device):

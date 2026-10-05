@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- (EN) Headset tests now read complete descriptor replies and poll a repeatable
+  host readiness query with a deadline, tolerating an incomplete serial reply.
+  Removed duplicate descriptor output at connection time so a boot report cannot
+  satisfy the test's explicit query before it is handled.
+- (JA) headset テストは記述子の応答を行末まで読み、host の準備状態を期限付きで
+  問い合わせるようにしました。シリアル応答が途中で切れても再問い合わせできます。
+  接続時の記述子の重複出力も削除し、問い合わせを処理する前に起動ログだけで
+  テストの待機が成立する競合を解消しました。
+
 - (EN) Fixed NCM shutdown sending a link notification after TinyUSB had been
   deinitialized, which could reset ESP32-S3 through the watchdog in `device.end()`.
   Serial-log auditing now also detects watchdog reset reasons from the boot log.

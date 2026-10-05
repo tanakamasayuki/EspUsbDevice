@@ -49,8 +49,10 @@ void setup()
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device)
                         {
                           Serial.printf("DEVICE_CONNECTED addr=%u class=0x%02x\n", device.address, device.deviceClass);
-
-                          reportAudioStreams(device.address); });
+                          // Descriptors are reported only in response to S.
+                          // A boot report could satisfy pytest before its query
+                          // was processed and leave a duplicate report queued.
+                          audioAddress = device.address; });
 
   usb.onAudioData([](const EspUsbHostAudioData &data)
                   {
@@ -115,14 +117,8 @@ void loop()
     }
     else if (command == 'i')
     {
-      // Wait for a stable device that is ready in BOTH directions (it can
-      // re-enumerate a few times at startup). Poll up to 15 s so the test
-      // synchronizes regardless of run order or boot timing.
-      const uint32_t start = millis();
-      while (!(audioAddress != 0 && usb.audioOutputReady(audioAddress) && usb.audioInputReady(audioAddress)) && millis() - start < 15000)
-      {
-        delay(50);
-      }
+      // A repeatable snapshot: pytest polls this prerequisite with a deadline.
+      // Keep loop() responsive to the next query and to shutdown.
       Serial.printf("HOST_AUDIO addr=%u out=%u in=%u\n",
                     audioAddress,
                     usb.audioOutputReady(audioAddress) ? 1 : 0,
