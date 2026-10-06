@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+## 2.6.0
 - (EN) Headset tests now read complete descriptor replies and poll a repeatable
   host readiness query with a deadline, tolerating an incomplete serial reply.
   Removed duplicate descriptor output at connection time so a boot report cannot
