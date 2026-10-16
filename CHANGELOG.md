@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+## 2.6.1
 - (EN) Honor HID `timeoutMs`: wait for a busy IN endpoint, with zero retaining
   polling behavior and a busy timeout reporting `ESP_ERR_TIMEOUT`. Consecutive
   mouse press/release no longer need a sketch delay or retry when the host polls
