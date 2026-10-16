@@ -13,6 +13,14 @@ instead. They look like unit tests and several of them start TinyUSB only to
 leave it stopped, but they need a board, so keeping them here made `unit/`
 un-runnable in CI and hid that fact behind an upload error.
 
+## `hid_send`
+
+Compiles the shipped `sendHidReport()` with a controlled endpoint and clock.
+Checks immediate sends, busy polling, readiness within the deadline, timeout,
+clock wraparound, disconnect during a wait, and invalid arguments. The peer
+mouse test checks consecutive press/release reports without a sketch delay or
+retry on real hardware.
+
 ## `ccid_descriptor`
 
 Host g++ test for the CCID interface and class descriptor. The descriptor

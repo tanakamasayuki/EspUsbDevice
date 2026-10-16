@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- (EN) Honor HID `timeoutMs`: wait for a busy IN endpoint, with zero retaining
+  polling behavior and a busy timeout reporting `ESP_ERR_TIMEOUT`. Consecutive
+  mouse press/release no longer need a sketch delay or retry when the host polls
+  within the deadline. Document RAM disk `attach()` preserving media/writable
+  settings and the required `mediaPresent(true)` before device startup.
+- (JA) HID の `timeoutMs` を実装し、使用中の IN endpoint を期限付きで待機します。
+  `0` は待機せず、使用中のまま期限を迎えると `ESP_ERR_TIMEOUT` を返します。
+  ホストが期限内に取得する場合、マウスの押下・解放にスケッチ側の待機・再試行は不要です。
+  RAM ディスクの `attach()` がメディア有無・書き込み許可を維持する仕様と、
+  デバイス開始前の `mediaPresent(true)` 設定を明記しました。
+
 ## 2.6.0
 - (EN) Headset tests now read complete descriptor replies and poll a repeatable
   host readiness query with a deadline, tolerating an incomplete serial reply.

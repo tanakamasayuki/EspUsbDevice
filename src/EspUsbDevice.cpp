@@ -1207,7 +1207,6 @@ void EspUsbDevice::removeClass(EspUsbDeviceClass *deviceClass)
 
 bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs)
 {
-  (void)timeoutMs;
 #if ESP_USB_DEVICE_HAS_TINYUSB
   if (!tinyusbStarted_)
   {
@@ -1219,15 +1218,32 @@ bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void 
     setLastError(ESP_FAIL);
     return false;
   }
-  if (!tud_hid_n_ready(instance))
+  if (instance >= CFG_TUD_HID)
   {
-    setLastError(ESP_ERR_INVALID_STATE);
+    setLastError(ESP_ERR_INVALID_ARG);
     return false;
+  }
+  const uint32_t startedAt = millis();
+  while (!tud_hid_n_ready(instance))
+  {
+    if (!tinyusbStarted_ || !tud_ready())
+    {
+      setLastError(ESP_ERR_INVALID_STATE);
+      return false;
+    }
+    if (millis() - startedAt >= timeoutMs)
+    {
+      setLastError(ESP_ERR_TIMEOUT);
+      return false;
+    }
+    // The library's USB task processes completion; let it run while waiting.
+    delay(1);
   }
   const bool ok = tud_hid_n_report(instance, reportId, data, length);
   setLastError(ok ? ESP_OK : ESP_FAIL);
   return ok;
 #else
+  (void)timeoutMs;
   (void)instance;
   (void)reportId;
   (void)data;

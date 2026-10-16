@@ -206,6 +206,18 @@ lsusb -v -d 303a:      # descriptors as the host parsed them
 
 ## 6. Class-specific issues
 
+### Consecutive HID reports
+
+- `sendHidReport()` and helpers such as mouse `move()` / `press()` / `release()`
+  wait up to `timeoutMs` (100 ms by default) while the IN endpoint is busy with
+  the previous transfer. `0` polls without waiting; a busy endpoint returns
+  `false` with `ESP_ERR_TIMEOUT`. Success means the report was copied and queued,
+  not that the host has received it. An unconfigured/disconnected device returns
+  `ESP_ERR_INVALID_STATE`.
+- Use `timeoutMs = 0` inside USB callbacks; wait from the normal sketch task.
+  Keyboard `write()` hold times and inter-key delays control input pacing;
+  they do not confirm transfer completion.
+
 ### HID keyboard
 
 - **Wrong characters arrive** - the host decodes scancodes with its own
@@ -226,7 +238,16 @@ lsusb -v -d 303a:      # descriptors as the host parsed them
 
 ### MSC
 
-- **Will not mount** - the FAT image or block size is off. Compare against
+- Call `msc.mediaPresent(true)` before `device.begin()`. `EspUsbDeviceMscRamDisk`
+  and `EspUsbDeviceMscFatRamDisk` `attach()` install callbacks and geometry while
+  preserving media/writable settings. Defaults are absent media and writable;
+  use `msc.isWritable(false)` for read-only access. In contrast,
+  `EspUsbDeviceMscFirmwareDisk::attach()` sets media present and writable.
+- **Composite enumeration stops after adding MSC** - some TinyUSB host versions
+  retry failed TEST UNIT READY commands without a limit when media is absent.
+  This prevents later interfaces from being initialized and the device-wide
+  mount completion callback from running.
+- **Will not mount with media present** - check the FAT image and block size against
   [`MSCFatRamDisk`](../examples/MSCFatRamDisk/), which is a known-good
   minimal image.
 

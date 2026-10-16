@@ -57,7 +57,7 @@ def _buttons(dut, device):
     bit from the preceding click would fail here rather than pass quietly.
 
     The pause between clicks keeps the two boards from printing on top of each
-    other at 115200 baud; the device already spaces press and release itself.
+    other at 115200 baud; press and release are sent consecutively without a sketch retry or delay.
     """
     for command, mask in [("M", 4), ("m", 1), ("R", 2), ("b", 8), ("f", 16)]:
         device.write(command)

@@ -196,6 +196,17 @@ lsusb -v -d 303a:      # ホストが解釈したディスクリプタ
 
 ## 6. クラス別の問題
 
+### HID の連続送信
+
+- `sendHidReport()` とマウスの `move()` / `press()` / `release()` などは、
+  前の転送で IN endpoint が使用中なら `timeoutMs`（既定 100 ms）まで待ちます。
+  `0` は待たずに判定し、使用中なら `false` と `ESP_ERR_TIMEOUT` を返します。
+  成功はレポートをコピーして送信予約したことを表し、ホストの受信完了は保証しません。
+  未構成・切断中は `ESP_ERR_INVALID_STATE` を返します。
+- USB コールバック内では `timeoutMs = 0` を指定してください。
+  待機は通常のスケッチタスクで行います。キーボードの `write()` のキー保持時間や
+  キー間隔は入力の間隔であり、送信完了の確認ではありません。
+
 ### HID keyboard
 
 - **違う文字が入力される** - ホストは自分のレイアウトでscancodeを解釈します。
@@ -217,7 +228,15 @@ lsusb -v -d 303a:      # ホストが解釈したディスクリプタ
 
 ### MSC
 
-- **マウントされない** - FATイメージかブロックサイズの問題です。既知の正常な
+- **マウントされない** - まず `msc.mediaPresent(true)` を `device.begin()` 前に
+  呼んでいるか確認します。`EspUsbDeviceMscRamDisk` / `EspUsbDeviceMscFatRamDisk` の
+  `attach()` はコールバックと容量を設定しますが、メディア有無・書き込み許可は変更しません。
+  初期値はメディアなし・書き込み可です。読み取り専用なら `msc.isWritable(false)` を指定します。
+  `EspUsbDeviceMscFirmwareDisk::attach()` はメディアあり・書き込み可に設定します。
+- **MSC を追加すると複合デバイスの列挙が完了しない** - TinyUSB のホスト実装によっては、
+  メディアなしの TEST UNIT READY 失敗を上限なく再試行します。その間、MSC より後の
+  インターフェース初期化とデバイス全体のマウント完了通知が進みません。
+- メディアありでもマウントされない場合は FAT イメージやブロックサイズを、既知の正常な
   最小イメージである[`MSCFatRamDisk`](../examples/MSCFatRamDisk/)と
   比較します。
 

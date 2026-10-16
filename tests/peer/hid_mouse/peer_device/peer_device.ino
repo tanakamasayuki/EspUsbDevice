@@ -6,16 +6,7 @@ EspUsbDeviceHidMouse mouse(device);
 
 static bool sendMove(int8_t x, int8_t y, int8_t wheel = 0, uint8_t buttons = 0)
 {
-  const uint32_t start = millis();
-  while (millis() - start < 3000)
-  {
-    if (mouse.move(x, y, wheel, buttons))
-    {
-      return true;
-    }
-    delay(5);
-  }
-  return false;
+  return mouse.move(x, y, wheel, buttons);
 }
 
 static bool sendClick(uint8_t button)
@@ -24,7 +15,7 @@ static bool sendClick(uint8_t button)
   {
     return false;
   }
-  delay(50);
+  // No sketch delay/retry: sendHidReport must wait for the press to finish.
   return sendMove(0, 0, 0, 0);
 }
 

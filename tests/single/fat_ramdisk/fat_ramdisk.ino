@@ -144,7 +144,16 @@ static void testAttachAndEject()
   disk.onEject([&ejected]()
                { ejected = true; });
   check(disk.attach(msc), "fat_attach");
+  check(!msc.testUnitReady(), "attach_preserves_absent_media");
+  check(msc.writable(), "default_writable");
+  uint8_t absentBuffer[512] = {};
+  check(msc.read10(0, 0, absentBuffer, sizeof(absentBuffer)) == -1, "absent_read_rejected");
+  msc.isWritable(false);
   msc.mediaPresent(true);
+  check(disk.attach(msc), "reattach");
+  check(msc.testUnitReady(), "reattach_preserves_present_media");
+  check(!msc.writable(), "reattach_preserves_read_only");
+  check(msc.write10(10, 0, absentBuffer, sizeof(absentBuffer)) == -1, "readonly_write_rejected");
   msc.isWritable(true);
 
   check(msc.testUnitReady(), "msc_ready");

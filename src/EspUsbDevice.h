@@ -590,6 +590,10 @@ public:
   const char *lastErrorName() const;
 
   bool addClass(EspUsbDeviceClass *deviceClass);
+  // Wait up to timeoutMs for the HID IN endpoint to become available; 0 polls
+  // once. A busy timeout sets ESP_ERR_TIMEOUT. Success queues a copied report,
+  // rather than waiting for the host to receive it. Call from the sketch task;
+  // USB callbacks must use timeoutMs = 0 so the USB task can keep progressing.
   bool sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs = 100);
 
   // Restart into the chip's ROM download loader - "boot mode", the state the
@@ -1835,6 +1839,9 @@ class EspUsbDeviceMscRamDisk
 public:
   EspUsbDeviceMscRamDisk(uint8_t *storage, uint32_t blockCount, uint16_t blockSize = 512);
 
+  // Installs callbacks and geometry, preserving media/writable settings.
+  // Call msc.mediaPresent(true) before device.begin() to expose the disk.
+  // MSC is writable by default; use msc.isWritable(false) for read-only media.
   bool attach(EspUsbDeviceMsc &msc);
   bool valid() const;
   uint8_t *data();
@@ -1864,6 +1871,9 @@ public:
   EspUsbDeviceMscFatRamDisk(uint8_t *storage, size_t size);
 
   bool format(const char *volumeLabel = "ESPUSB");
+  // Like RamDisk::attach(), preserves media/writable settings. Explicitly call
+  // msc.mediaPresent(true) before device.begin(); unlike FirmwareDisk::attach(),
+  // this does not mark media present or force write access.
   bool attach(EspUsbDeviceMsc &msc);
   void onEject(EjectCallback callback);
   bool addFile(const char *name, const uint8_t *data, size_t size);
