@@ -1,15 +1,14 @@
+// en: Serve a local web page through a USB network interface.
+// ja: USBネットワークinterface経由でローカルWebページを提供する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 #include <WebServer.h>
 
-// USB network device (CDC-NCM) with a built-in DHCP server and web page.
-// Plug the board into a PC and it appears as a USB network adapter: the PC is
-// handed an address on 192.168.7.0/24 and can browse to http://192.168.7.1/.
-// No Wi-Fi, no drivers to install (Windows / macOS / Linux support NCM natively).
-//
-// This is the "USB config portal" pattern: a device the PC reaches directly over
-// USB, without any network setup. See also examples/CompositeHidCdcMsc for
-// combining USB functions.
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceNet net(device);
 WebServer server(80);
@@ -40,12 +39,13 @@ static String buildPage()
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
-  // Device is the gateway (192.168.7.1) and runs a DHCP server so the PC gets an
-  // address automatically. To instead join a PC-bridged LAN, use net.dhcpClient(true);
-  // for a fixed address with no DHCP, just call net.ipConfig(...).
+  // en: Device is the gateway (192.168.7.1) and runs a DHCP server so the PC gets an address automatically. To instead join a PC-bridged LAN, use net.dhcpClient(true); for a fixed address with no DHCP, just call net.ipConfig(...).
+  // ja: 直接接続ではdevice側にIPとDHCP serverを設定する。別LANへ参加する構成とは分ける。
   net.ipConfig(IPAddress(192, 168, 7, 1), IPAddress(192, 168, 7, 1), IPAddress(255, 255, 255, 0));
   net.dhcpServer(true);
 
@@ -56,11 +56,15 @@ void setup()
   config.product = "EspUsbDevice NCM";
   config.serialNumber = "espusb-ncm-web";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
     return;
   }
+  // en: USB enumeration comes first; IP configuration and the application connection are later steps.
+  // ja: USB列挙の次にIP設定を行い、その後にアプリの接続を確認する。
   if (!net.beginNetwork())
   {
     Serial.println("NET_BEGIN_FAILED");

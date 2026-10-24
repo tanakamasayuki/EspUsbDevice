@@ -64,3 +64,29 @@ payload が出た直後に呼ばれるので、その中で次を投入すると
   各ホスト OS からの観測方法
 - [tests/manual/windows_uvc](../../tests/manual/windows_uvc/) — 上の数値の元になった
   Windows での実測
+
+## 読み方と確認の手順
+
+### 実行前の準備
+
+試験画像を生成し、USBカメラのframeとして流す。
+
+上のハードウェア・依存libraryの条件を確認し、boardと例のprofileを選び、診断Serialの接続先を確認します。[サンプルの進め方](../../docs/example-workflow.ja.md)では導入・コネクタ・USBの役割・開始成功と相手の利用可能状態の違いを説明しています。
+
+### コードを追う
+
+センサではなくframeBufferへ画像を生成します。`loop()`のstreaming()・`frameInFlight()`・`sendFrame()`を追い、前のframeが空いてから描き直します。完了callbackは進捗を記録し、次のframeは別に時刻制御して、バスの空きがframe rateを決めないようにします。
+
+### APIの使い方と改造時の注意
+
+両端で画素形式・寸法・stride・frame rateを合わせます。USBに届いたbyteが、そのまま完成画像とは限りません。解像度を上げる前に、stream交渉、frameの完成、buffer容量、受け手の速度を別々に確認します。
+
+APIが再利用を許すまでframe bufferの所有を保ちます。callbackデータは戻ると再利用される場合があるので、受信frameを別taskへ渡す前にコピーします。受け手が遅い場合は破棄かqueueの方針が必要です。frame数やUSB送信成功だけでは、PCが全画像を表示した証拠になりません。
+
+### 一つずつ確認する
+
+最初は例を変更せず、上の操作とログ・ホストアプリの結果を照合します。相手がいない場合から接続へ進み、最終結果だけでなく、どの段階まで成功したかを見ます。端子・format・命令を一つ変える前に元の設定へ戻せるようにします。例のエラー表示だけで、汎用の再試行・回復方針まで実装されるわけではありません。
+
+- [スケッチ](VideoCamera.ino)
+- [全サンプル](../README.ja.md)
+- [サンプルの進め方](../../docs/example-workflow.ja.md)

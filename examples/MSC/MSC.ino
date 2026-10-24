@@ -1,5 +1,12 @@
+// en: Expose raw RAM blocks as USB mass storage.
+// ja: RAM上の生blockをUSBストレージとして公開する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceMsc msc(device);
 
@@ -19,6 +26,8 @@ static void prepareDisk()
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -38,6 +47,8 @@ void setup()
                     return true;
                   });
 
+  // en: Attach the medium before starting USB; host and sketch must not edit its filesystem independently.
+  // ja: USB開始前に媒体を接続する。ホストとスケッチが別々にfilesystemを書き換えないようにする。
   if (!disk.attach(msc))
   {
     Serial.println("MSC_ATTACH_FAILED");
@@ -51,6 +62,8 @@ void setup()
   config.product = "EspUsbDevice MSC";
   config.serialNumber = "espusb-msc";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());

@@ -71,3 +71,27 @@ which is what happens if the endpoint is advertised anyway.
   budget and how to observe the device from each host OS
 - [tests/manual/windows_uvc](../../tests/manual/windows_uvc/) - the measured
   Windows results behind the numbers above
+
+## Walkthrough and checks
+
+### Before running
+
+Generate test images and stream them as USB camera frames. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+The sketch generates images in frameBuffer rather than reading a sensor. Follow `streaming()`, `frameInFlight()` and `sendFrame()` in `loop()`: redraw only after the previous frame is free. The completion callback records progress; arming the next frame is paced separately so bus availability does not define frame rate.
+
+### API use and adaptation
+
+Match pixel encoding, dimensions, stride and frame rate on both ends. Bytes arriving at USB are not automatically complete images. Confirm stream negotiation, frame completeness, buffer capacity and consumer speed separately before increasing resolution.
+
+Keep a frame buffer owned until the API permits reuse. Callback data can be recycled on return; copy before handing a received frame to another task. A slow consumer needs an explicit drop or queue policy. Frame counters and USB send success do not by themselves prove that the PC displayed every image.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](VideoCamera.ino)
+- [All examples](../README.md)
+- [Example workflow](../../docs/example-workflow.md)

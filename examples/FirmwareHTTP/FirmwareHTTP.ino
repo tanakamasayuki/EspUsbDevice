@@ -1,20 +1,15 @@
+// en: Upload an application through a web page over USB networking.
+// ja: USBネットワーク上のWebページからapplicationを更新する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 #include <WebServer.h>
 #include <HTTPUpdateServer.h>
 
-// Firmware update over USB with nothing on the host but a browser.
-//
-// The board is a USB network adapter (CDC-NCM) with its own DHCP server, so the
-// PC gets an address the moment it is plugged in and can open a page on the
-// device. HTTPUpdateServer adds the stock upload form at /update, and the
-// bytes go straight into the spare OTA partition.
-//
-// No driver to install (Windows, macOS and Linux all speak NCM), no host tool,
-// no boot mode. Open http://192.168.7.1/ and pick a file.
-//
-// Needs a partition scheme with two application partitions - the Arduino
-// "Default" one has them, "Huge APP" does not.
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceNet net(device);
 WebServer server(80);
@@ -46,6 +41,8 @@ static String buildPage()
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -54,16 +51,19 @@ void setup()
     Serial.println("NO_OTA_PARTITION - select a partition scheme with two app partitions");
   }
 
-  // The device hands the PC an address and is the only thing on the link. It
-  // does not advertise itself as a gateway, so the PC's own internet route is
-  // untouched - see examples/UsbNetwork for the rest of the options.
+  // en: The device hands the PC an address and is the only thing on the link. It does not advertise itself as a gateway, so the PC's own internet route is untouched - see examples/UsbNetwork for the rest of the options.
+  // ja: PCへIPを配る直接接続の構成。主回線のdefault routeを置き換える設定とは分ける。
   net.dhcpServer(true);
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin())
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
     return;
   }
+  // en: USB enumeration comes first; IP configuration and the application connection are later steps.
+  // ja: USB列挙の次にIP設定を行い、その後にアプリの接続を確認する。
   if (!net.beginNetwork())
   {
     Serial.println("NETWORK_FAILED");
@@ -72,10 +72,8 @@ void setup()
 
   server.on("/", []()
             { server.send(200, "text/html", buildPage()); });
-  // Serves a file-upload form at /update and writes what it receives through
-  // Arduino's Update library into the same OTA partition
-  // EspUsbDeviceFirmwareUpdate would use. Pass a user and password to
-  // setup() on anything that leaves a desk.
+  // en: Serves a file-upload form at /update and writes what it receives through Arduino's Update library into the same OTA partition EspUsbDeviceFirmwareUpdate would use. Pass a user and password to setup() on anything that leaves a desk.
+  // ja: Webのuploadを更新APIへ渡す。フォーム受付とimage検証の完了は別に確認する。
   updater.setup(&server, "/update");
   server.begin();
 
@@ -86,9 +84,8 @@ void loop()
 {
   server.handleClient();
 
-  // Confirm this image once the USB link is up, cancelling any pending
-  // bootloader rollback. A no-op unless the bootloader was built with
-  // CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE.
+  // en: Confirm this image once the USB link is up, cancelling any pending bootloader rollback. A no-op unless the bootloader was built with CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE.
+  // ja: このアプリが動作したことを確認して検証状態を更新する。署名・認証の代わりではない。
   static bool confirmed = false;
   if (!confirmed && net.networkUp())
   {

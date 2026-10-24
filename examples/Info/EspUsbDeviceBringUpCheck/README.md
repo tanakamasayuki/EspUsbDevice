@@ -74,3 +74,27 @@ STATUS mounted=1 t=9000ms leds=0x02
 - [EspUsbDeviceDescriptorDump](../EspUsbDeviceDescriptorDump/) - run next when the descriptors are the suspect
 - [EspUsbDeviceConsole](../EspUsbDeviceConsole/) - hand-drive transfers once enumeration works
 - [docs/usb-device-guide.md](../../../docs/usb-device-guide.md) - the full bring-up procedure
+
+## Walkthrough and checks
+
+### Before running
+
+Separate internal device startup from host configuration. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+Inspect beginOk, ready transitions and the printed configuration before changing a USB class. If startup succeeds but ready stays false, check the data connector, cable and host enumeration. A physical cable alone is not a configured HID device.
+
+### API use and adaptation
+
+Treat startup, enumeration, interface discovery and actual class communication as separate checkpoints. A descriptor says what a device advertises; it does not prove a transfer completed or that a protocol is implemented. Keep received lengths and capacity checks when adapting a descriptor walker. An interface number, endpoint address, USB address and physical port identify different things.
+
+First compare the same device directly connected and reconnected. Add a hub or more functions only after the simple case is understood. Preserve the error name and the operation that produced it. Large dumps are diagnostic work, not a pattern for high-rate callbacks.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](EspUsbDeviceBringUpCheck.ino)
+- [All examples](../../README.md)
+- [Example workflow](../../../docs/example-workflow.md)

@@ -1,5 +1,12 @@
+// en: Generate complete gamepad axis, hat and button states.
+// ja: 軸・hat・ボタンの全状態を生成してゲームパッドへ送る。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceHidGamepad gamepad(device);
 
@@ -29,6 +36,8 @@ static void sendStep()
   const uint8_t hat = HATS[stepIndex % (sizeof(HATS) / sizeof(HATS[0]))];
   const uint32_t buttons = 1UL << (stepIndex % 8);
 
+  // en: The report carries the complete current axes, hat and button bitmap.
+  // ja: reportへ軸・hat・全ボタンの現在状態をまとめて送る。
   if (gamepad.send(x, y, z, rz, -x, -y, hat, buttons))
   {
     Serial.printf("GAMEPAD_TX x=%d y=%d z=%d rz=%d hat=%u buttons=0x%08lx\n",
@@ -49,6 +58,8 @@ static void sendStep()
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -59,6 +70,8 @@ void setup()
   config.product = "EspUsbDevice Gamepad";
   config.serialNumber = "espusb-gamepad";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());

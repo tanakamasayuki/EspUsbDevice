@@ -1,16 +1,12 @@
-// A USB Video Class camera with no camera: it streams a generated test
-// pattern, so it runs on any supported board with nothing attached.
-//
-// Windows, macOS and Linux all bind their own UVC driver with nothing to
-// install, and the device shows up wherever webcams do.
-//
-// Know the speed before you design around this. A full-speed part (S2, S3, and
-// P4 in full-speed mode) has about 1 MB/s of isochronous bandwidth, so this
-// example's 160x120 uncompressed frames run at 15 fps and 320x240 would manage
-// about 6. MJPEG is what makes larger frames practical, and a high-speed P4
-// has about 24 MB/s. See docs/usb-device-guide.md.
+// en: Generate test images and stream them as USB camera frames.
+// ja: 試験画像を生成し、USBカメラのframeとして流す。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceVideo Camera(device, "EspUsbDevice Camera");
 
@@ -18,23 +14,19 @@ static const uint16_t kWidth = 160;
 static const uint16_t kHeight = 120;
 static const uint8_t kFrameRate = 15;
 
-// One frame, rebuilt between transfers. The class driver reads this buffer
-// payload by payload while a transfer is in flight, so it must not be touched
-// until the completion callback has run - which is why the next frame is only
-// drawn once frameInFlight() is false.
+// en: One frame, rebuilt between transfers. The class driver reads this buffer payload by payload while a transfer is in flight, so it must not be touched until the completion callback has run - which is why the next frame is only drawn once frameInFlight() is false.
+// ja: frame転送中はbufferを変更せず、frameInFlight()がfalseになってから描き直す。
 static uint8_t frameBuffer[kWidth * kHeight * 2];
 static uint32_t frameCount = 0;
 static uint32_t nextFrameDueMs = 0;
 static bool wasStreaming = false;
 
-// YUY2 colour bars with a block that steps across the bottom once per frame.
-// The moving block is the point: a still image cannot tell a live stream from
-// a stuck one.
+// en: YUY2 colour bars with a block that steps across the bottom once per frame. The moving block is the point: a still image cannot tell a live stream from a stuck one.
+// ja: YUY2の試験画像に動く部分を加え、静止画像だけでは分からないstreamの停止を見分ける。
 static void drawFrame(uint32_t index)
 {
-  // BT.601 colour bars as {Y, U, V}. YUY2 carries one U and one V per pair of
-  // pixels and both matter: hold V at 128 and the picture still looks like a
-  // plausible test pattern with every colour wrong.
+  // en: BT.601 colour bars as {Y, U, V}. YUY2 carries one U and one V per pair of pixels and both matter: hold V at 128 and the picture still looks like a plausible test pattern with every colour wrong.
+  // ja: YUY2では2画素で色差成分を共有する。画素ごとに独立したRGBとして扱わない。
   static const uint8_t bars[8][3] = {
       {235, 128, 128}, {210, 16, 146}, {170, 166, 16}, {145, 54, 34},
       {106, 202, 222}, {81, 90, 240},  {41, 240, 110}, {16, 128, 128}};
@@ -70,6 +62,8 @@ static void drawFrame(uint32_t index)
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(2000);
 
@@ -77,12 +71,11 @@ void setup()
   Camera.setFrameSize(kWidth, kHeight);
   Camera.setFrameRate(kFrameRate);
 
-  // Fires on the USB device task when the last payload of a frame has gone.
-  // Keep it short; this one only counts.
+  // en: Fires on the USB device task when the last payload of a frame has gone. Keep it short; this one only counts.
+  // ja: frame完了はUSBタスクから通知される。ここでは記録だけを行い短く戻る。
   Camera.onFrameComplete([]() { frameCount++; });
-  // The host negotiates before it starts, and what it committed to can differ
-  // from what was advertised. A camera that can change resolution reads the
-  // committed frame index here.
+  // en: The host negotiates before it starts, and what it committed to can differ from what was advertised. A camera that can change resolution reads the committed frame index here.
+  // ja: ホストの確定formatは提示した候補と異なる場合がある。commitされた条件で解釈する。
   Camera.onCommit([](const EspUsbDeviceVideoCommit &commit)
                   {
                     Serial.printf("Host committed: frame %u, %lu ns interval, payload %lu bytes\n",
@@ -97,11 +90,12 @@ void setup()
   config.manufacturer = "EspUsbDevice";
   config.product = "EspUsbDevice Camera";
   config.serialNumber = "camera-1";
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
-    // ESP_ERR_NO_MEM here means the controller's transmit FIFO cannot back the
-    // isochronous endpoint alongside everything else in the configuration.
-    // Lower CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE, or drop another function.
+    // en: ESP_ERR_NO_MEM here means the controller's transmit FIFO cannot back the isochronous endpoint alongside everything else in the configuration. Lower CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE, or drop another function.
+    // ja: 送信FIFO等の資源が足りない場合は、frame転送設定や複合機能の構成を見直す。
     Serial.printf("begin() failed: %s\n", device.lastErrorName());
     return;
   }
@@ -126,20 +120,21 @@ void loop()
   }
   wasStreaming = streaming;
 
-  // One place arms frames, paced to the advertised rate. Arming from the
-  // completion callback instead would send as fast as the endpoint drains,
-  // which is not the frame rate the host was promised.
+  // en: One place arms frames, paced to the advertised rate. Arming from the completion callback instead would send as fast as the endpoint drains, which is not the frame rate the host was promised.
+  // ja: 次のframeはloop()側で時刻制御する。転送が空く速さだけでframe rateを決めない。
   if (streaming && !Camera.frameInFlight() &&
       static_cast<int32_t>(millis() - nextFrameDueMs) >= 0)
   {
     nextFrameDueMs += 1000UL / kFrameRate;
     if (static_cast<int32_t>(millis() - nextFrameDueMs) > 0)
     {
-      // A long stall would otherwise leave the deadline behind and send a
-      // burst to catch up.
+      // en: A long stall would otherwise leave the deadline behind and send a burst to catch up.
+      // ja: 長い停止後の追い付き連送を避け、次の時刻を現在へ合わせる。
       nextFrameDueMs = millis();
     }
     drawFrame(frameCount);
+    // en: Keep this frame unchanged until the transfer is no longer in flight.
+    // ja: 転送中でなくなるまで、このframeを上書きしない。
     Camera.sendFrame(frameBuffer, sizeof(frameBuffer));
   }
   delay(1);

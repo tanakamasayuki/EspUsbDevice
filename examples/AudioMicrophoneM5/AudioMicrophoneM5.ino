@@ -1,19 +1,18 @@
+// en: Send M5 microphone PCM as a USB capture stream.
+// ja: M5のマイクPCMをUSB録音streamへ送る。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include <EspUsbDevice.h>
 #include <M5Unified.h>
 
-// USB Audio microphone (device -> host) backed by the M5 built-in microphone.
-// The device captures PCM from M5.Mic and streams it to the host, so it appears
-// as a recording/input device on the PC.
-//
-// M5 PDM microphones run comfortably at 16 kHz mono, so the USB Audio device is
-// declared at that rate. M5.Mic.record() is asynchronous and double-buffered:
-// it fills the buffer you pass in the background, so this sketch keeps a small
-// ring of blocks and sends the oldest (already-completed) block to the host.
 
 static constexpr uint32_t kSampleRate = 16000;
 static constexpr size_t kBlockSamples = 240;  // 15 ms at 16 kHz mono
 static constexpr size_t kRingBlocks = 3;       // >= 3 so the oldest block is complete
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbAudioFunction audio(device);
 EspUsbAudioCaptureStream &capture = audio.addCaptureStream();
@@ -27,8 +26,8 @@ static uint32_t lastLogMs = 0;
 static int rateLineY = 0;
 static uint32_t shownRate = 0xFFFFFFFFu;
 
-// Draw the current USB Audio sample rate on a fixed screen line, repainting only
-// when it changes. The fixed-width field overwrites any previous digits.
+// en: Draw the current USB Audio sample rate on a fixed screen line, repainting only when it changes. The fixed-width field overwrites any previous digits.
+// ja: USB音声のsample rate表示は、値が変わった部分だけ描き直す。
 static void showSampleRate(uint32_t rate)
 {
   if (rate == shownRate)
@@ -45,6 +44,8 @@ void setup()
 {
   auto cfg = M5.config();
   M5.begin(cfg);
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -61,6 +62,8 @@ void setup()
     return;
   }
 
+  // en: Declare rate, channels, bytes per sample and valid bits before the device starts.
+  // ja: sample rate・channel・sampleあたりbyte数・有効bitを、device開始前に宣言する。
   capture.addFormat({kSampleRate, 1, 2, 16});
 
   EspUsbDeviceConfig usb;
@@ -70,6 +73,8 @@ void setup()
   usb.product = "EspUsbDevice M5 Microphone";
   usb.serialNumber = "espusb-m5-microphone";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(usb))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
@@ -89,6 +94,8 @@ void loop()
   showSampleRate(audio.currentSampleRate());
 
   EspUsbAudioEvent event;
+  // en: Drain recorded audio events here; stream state and USB enumeration are separate checks.
+  // ja: 記録された音声eventをここで取り出す。stream状態とUSB列挙は別に確認する。
   while (audio.pollEvent(event))
   {
     if (event.type == EspUsbAudioEventType::StreamStateChanged &&
@@ -100,14 +107,15 @@ void loop()
     }
   }
 
-  // Enqueue the next capture block. When record() accepts it, the oldest block
-  // in the ring (kRingBlocks-1 iterations back) is complete; push that to the
-  // host. capture.write() feeds the bounded USB IN FIFO.
+  // en: Enqueue the next capture block. When record() accepts it, the oldest block in the ring (kRingBlocks-1 iterations back) is complete; push that to the host. capture.write() feeds the bounded USB IN FIFO.
+  // ja: 次の録音を受け付けたら、ring内の完成済みblockを有限のUSB IN bufferへ渡す。
   if (M5.Mic.isEnabled() && M5.Mic.record(micRing[recIdx], kBlockSamples, kSampleRate))
   {
     const size_t doneIdx = (recIdx + 1) % kRingBlocks;
     if (micEnabled)
     {
+      // en: Capture sends PCM to the host; a finite buffer may accept fewer bytes than requested.
+      // ja: CaptureはホストへPCMを送る。有限bufferのため要求した全byteを受け付けるとは限らない。
       const size_t written =
           capture.write(micRing[doneIdx],
                         kBlockSamples * sizeof(int16_t));

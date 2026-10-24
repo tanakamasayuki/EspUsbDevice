@@ -58,3 +58,29 @@ endpoint をこのライブラリ側で構成します。
 - [Keyboard](../Keyboard/) - HID keyboard device
 - [Serial](../Serial/) - CDC ACM serial device
 - [MSCFatRamDisk](../MSCFatRamDisk/) - FAT RAM disk mass-storage device
+
+## 読み方と確認の手順
+
+### 実行前の準備
+
+CDCの操作port・キーボード・FAT RAM diskを組み合わせる。
+
+上のハードウェア・依存libraryの条件を確認し、boardと例のprofileを選び、診断Serialの接続先を確認します。[サンプルの進め方](../../docs/example-workflow.ja.md)では導入・コネクタ・USBの役割・開始成功と相手の利用可能状態の違いを説明しています。
+
+### コードを追う
+
+一つのdeviceが3機能をまとめます。CDCを開き、試し書き用editorへフォーカスを合わせてtype命令を使い、file managerでは別のdiskを見ます。lineBufferで受信長を制限するため、実用途で長い命令を受ける前に長さ超過の扱いを確認します。
+
+### APIの使い方と改造時の注意
+
+blockはLBAと媒体のblock長で扱い、ファイルにはその上のfilesystemが必要です。容量取得、mount、ファイル操作の成否を分けます。返却byte数を確認し、handleを閉じ、ホストの未完了書き込みを終えてから取り外し・再利用します。USB接続やFAT署名だけではfilesystemの正常を保証しません。
+
+同じ媒体の書き手は一つにします。ホストがmountしたvolumeを、スケッチも独立に書き換えないようにします。RAM例はresetで変化が失われますが、実媒体の例は永続データを変えます。残したいファイルがある媒体を使う前に、どの操作を行う例かを確認します。
+
+### 一つずつ確認する
+
+最初は例を変更せず、上の操作とログ・ホストアプリの結果を照合します。相手がいない場合から接続へ進み、最終結果だけでなく、どの段階まで成功したかを見ます。端子・format・命令を一つ変える前に元の設定へ戻せるようにします。例のエラー表示だけで、汎用の再試行・回復方針まで実装されるわけではありません。
+
+- [スケッチ](CompositeHidCdcMsc.ino)
+- [全サンプル](../README.ja.md)
+- [サンプルの進め方](../../docs/example-workflow.ja.md)

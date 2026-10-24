@@ -1,36 +1,14 @@
-// EspUsbDeviceConsole - drive the USB device by hand from a serial terminal.
-//
-// The device-side counterpart of a protocol console: instead of rebuilding a
-// sketch for every experiment, type a command into the UART serial monitor and
-// watch what the host does with it. Useful for
-//   - finding out which HID usage a host application actually reacts to,
-//   - sending a hand-built raw report before committing to a report descriptor,
-//   - watching what the host sends *down* to the device (HID output reports,
-//     vendor control requests, vendor bulk OUT) while its own software runs.
-//
-// Two serial connections are involved. Commands are typed on the UART/JTAG
-// serial port used for flashing; the USB device connector goes to the host
-// under test. On a board with only one connector, use a peer board or accept
-// that the serial log disappears when you unplug.
-//
-// Commands (type `help` for the same list at runtime):
-//   help                       this list
-//   state                      mount state, speed, LEDs, HID protocol
-//   text <string>              send the string as keystrokes
-//   key <usage> [modifiers]    tap one raw HID usage, e.g. `key 0x04 0x02`
-//   hold <usage> [modifiers]   press and keep held
-//   release                    release everything held
-//   mouse <dx> <dy> [buttons] [wheel]
-//   click <1|2|4>              mouse left / right / middle
-//   report <id> <hex...>       raw HID report, e.g. `report 1 00 00 04 00 00 00 00 00`
-//   vendor <hex...>            raw bytes on the vendor bulk IN endpoint
-//   vendortext <string>        the same, as ASCII
-//
-// Everything the host sends back is printed with a `HOST_` prefix.
+// en: Control HID and vendor data explicitly from a diagnostic console.
+// ja: 診断consoleからHIDとVendorデータを明示的に操作する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 
 #include "EspUsbDevice.h"
 #include "tusb.h"
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 EspUsbDeviceHidMouse mouse(device);
@@ -52,9 +30,8 @@ static void printHex(const uint8_t *data, size_t length)
   }
 }
 
-// Splits off the first whitespace-delimited token, leaving the remainder in
-// `rest`. Commands take free-form text after the verb, so a full tokenizer
-// would get in the way of `text hello world`.
+// en: Splits off the first whitespace-delimited token, leaving the remainder in `rest`. Commands take free-form text after the verb, so a full tokenizer would get in the way of `text hello world`.
+// ja: 先頭の空白区切りtokenを取り出し、残りを次の解析へ渡す。
 static String nextToken(String &rest)
 {
   rest.trim();
@@ -71,8 +48,8 @@ static String nextToken(String &rest)
   return token;
 }
 
-// Accepts `04`, `0x04` and decimal, because captures and datasheets mix all
-// three and retyping them in one base is where transcription errors come from.
+// en: Accepts `04`, `0x04` and decimal, because captures and datasheets mix all three and retyping them in one base is where transcription errors come from.
+// ja: 数値の表記を解析する。16進の接頭辞と命令ごとの入力規則を確認する。
 static bool parseNumber(const String &text, long &value)
 {
   if (text.length() == 0)
@@ -167,9 +144,8 @@ static void handleCommand(String input)
     return;
   }
 
-  // Everything below puts something on the wire, and a report sent while the
-  // host has not selected a configuration is silently dropped rather than
-  // queued. Saying so is more useful than a bare `false` from the send call.
+  // en: Everything below puts something on the wire, and a report sent while the host has not selected a configuration is silently dropped rather than queued. Saying so is more useful than a bare `false` from the send call.
+  // ja: 送信を行う命令の前にホストの設定済み状態を確認する。
   if (!device.ready())
   {
     Serial.println("ERROR not mounted - the host has not enumerated this device");
@@ -179,6 +155,8 @@ static void handleCommand(String input)
   if (verb == "text")
   {
     Serial.printf("SEND text \"%s\" ok=%u\n", rest.c_str(),
+                  // en: Send keyboard state or key operations, not serial text; account for the corresponding release.
+                  // ja: シリアル文字列ではなくキー状態・操作を送る。対応する解放も考える。
                   keyboard.write(rest.c_str()) ? 1 : 0);
     return;
   }
@@ -267,8 +245,8 @@ static void handleCommand(String input)
       Serial.println("ERROR no payload bytes");
       return;
     }
-    // Instance 0 is the HID interface the library allocated first; every HID
-    // class registered in this sketch shares it and is told apart by report ID.
+    // en: Instance 0 is the HID interface the library allocated first; every HID class registered in this sketch shares it and is told apart by report ID.
+    // ja: 機能ごとのreport IDを使う。HID interfaceの番号と機能の種類を混同しない。
     const bool ok = device.sendHidReport(0, static_cast<uint8_t>(reportId), payload,
                                          length);
     Serial.printf("SEND report id=%u length=%u ok=%u data=", (unsigned)reportId,
@@ -314,12 +292,16 @@ static void handleCommand(String input)
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
   Serial.println();
   Serial.println("=== EspUsbDevice console ===");
 
+  // en: The USB task delivers this host notification; it is not a callback executed by loop().
+  // ja: ホストからの通知はUSBタスクで届く。loop()が実行するcallbackではない。
   keyboard.onOutputReport([](const EspUsbDeviceHidKeyboardOutputReport &report)
                           {
                             Serial.printf("HOST_HID_OUTPUT leds=0x%02x num=%u caps=%u scroll=%u\n",
@@ -330,20 +312,22 @@ void setup()
 
   keyboard.onProtocol([](const EspUsbDeviceHidProtocolEvent &event)
                       {
-                        // Hosts switch to boot protocol in BIOS/UEFI and back to
-                        // report protocol once the OS driver loads, so seeing this
-                        // flip is normal - and it changes which report format the
-                        // library puts on the wire.
+                        // en: Hosts switch to boot protocol in BIOS/UEFI and back to report protocol once the OS driver loads, so seeing this flip is normal - and it changes which report format the library puts on the wire.
+                        // ja: ホストがboot/report protocolを切り替えると、送信されるreport形式も変わる。
                         Serial.printf("HOST_HID_PROTOCOL instance=%u protocol=%s\n",
                                       event.instance,
                                       event.protocol ? "report" : "boot");
                       });
 
+  // en: This callback runs on the USB task; keep work bounded and hand larger processing to the application.
+  // ja: USBタスクで動くcallback。処理を短く保ち、大きな仕事はアプリ側へ渡す。
   vendor.onRx([](size_t available)
               {
                 uint8_t buffer[64];
                 while (available > 0)
                 {
+                  // en: Read only bytes already buffered; application message boundaries must be tracked separately.
+                  // ja: bufferに届いたbyteを読む。アプリのメッセージの区切りは別に管理する。
                   const size_t chunk = vendor.read(buffer, min(available, sizeof(buffer)));
                   if (chunk == 0)
                   {
@@ -358,15 +342,16 @@ void setup()
                 }
               });
 
+  // en: Check request direction and fields, and answer only the protocol implemented by this example.
+  // ja: 要求の方向とfieldを確認し、この例が実装するprotocolだけへ応答する。
   vendor.onControlRequest([](const EspUsbDeviceVendorControlRequest &request)
                           {
                             Serial.printf("HOST_VENDOR_CONTROL stage=%u type=0x%02x request=0x%02x value=0x%04x index=0x%04x length=%u\n",
                                           request.stage, request.bmRequestType,
                                           request.bRequest, request.wValue,
                                           request.wIndex, request.wLength);
-                            // Answer IN requests with a fixed banner so the host
-                            // sees a successful transfer rather than a stall; edit
-                            // this to replay whatever the real protocol returns.
+                            // en: Answer IN requests with a fixed banner so the host sees a successful transfer rather than a stall; edit this to replay whatever the real protocol returns.
+                            // ja: IN要求へ固定bannerを返す。実機のprotocolへ合わせる場合は内容と長さを変更する。
                             static const char banner[] = "EspUsbDeviceConsole";
                             if (request.bmRequestType & 0x80)
                             {
@@ -385,6 +370,8 @@ void setup()
   config.product = "EspUsbDevice Console";
   config.serialNumber = "espusb-console";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   beginOk = device.begin(config);
   if (!beginOk)
   {

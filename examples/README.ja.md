@@ -6,6 +6,18 @@
 このライブラリを使う sketch では Arduino-ESP32 標準の `USB.begin()`、
 `USBHIDKeyboard`、`USBHIDMouse` は使いません。
 
+
+## 目的と手順から選ぶ
+
+[サンプルの進め方](../docs/example-workflow.ja.md)で、接続・認識・通信の段階とcallbackの扱いを確認します。
+
+1. [BringUpCheck](Info/EspUsbDeviceBringUpCheck/README.ja.md)でbegin()とホストの設定完了を分けて確認します。
+2. [Serial](Serial/README.ja.md)で、ログ用Serialと新たに現れるCDC portを区別します。
+3. [Keyboard](Keyboard/README.ja.md)や[Gamepad](Gamepad/README.ja.md)を、対応するPCアプリで確認します。
+4. [DescriptorDump](Info/EspUsbDeviceDescriptorDump/README.ja.md)で、宣言した機能とinterface・endpointの関係を読みます。
+5. 複合機能・音声・ストレージ・更新は、単機能を確認してから進めます。
+
+
 ## Info（診断・切り分け用）
 
 機能のデモではなく、**動かないときに原因を切り分けるための**スケッチです。

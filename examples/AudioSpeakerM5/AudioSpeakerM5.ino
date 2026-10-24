@@ -1,3 +1,8 @@
+// en: Play received USB PCM through an M5 speaker.
+// ja: 受信したUSB PCMをM5のスピーカーで鳴らす。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include <EspUsbDevice.h>
 #include <M5Unified.h>
 #include <PCMFlowDeviceM5.h>
@@ -5,6 +10,8 @@
 static constexpr uint32_t kSampleRate = 48000;
 static constexpr size_t kMaxPlayFrames = (kSampleRate * 80u) / 1000u;
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbAudioFunction audio(device);
 EspUsbAudioPlaybackStream &playback = audio.addPlaybackStream();
@@ -20,9 +27,8 @@ static uint32_t lastLogMs = 0;
 static int rateLineY = 0;
 static uint32_t shownRate = 0xFFFFFFFFu;
 
-// Draw the current USB Audio sample rate on a fixed screen line, repainting only
-// when it changes (the host can change it at runtime via the sampling-freq
-// control). The fixed-width field overwrites any previous digits.
+// en: Draw the current USB Audio sample rate on a fixed screen line, repainting only when it changes (the host can change it at runtime via the sampling-freq control). The fixed-width field overwrites any previous digits.
+// ja: USB音声のsample rate表示は、値が変わった部分だけ描き直す。
 static void showSampleRate(uint32_t rate)
 {
   if (rate == shownRate)
@@ -39,6 +45,8 @@ void setup()
 {
   auto cfg = M5.config();
   M5.begin(cfg);
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -58,6 +66,8 @@ void setup()
     return;
   }
 
+  // en: Declare rate, channels, bytes per sample and valid bits before the device starts.
+  // ja: sample rate・channel・sampleあたりbyte数・有効bitを、device開始前に宣言する。
   playback.addFormat({kSampleRate, 2, 2, 16});
 
   EspUsbDeviceConfig usb;
@@ -67,6 +77,8 @@ void setup()
   usb.product = "EspUsbDevice M5 Speaker";
   usb.serialNumber = "espusb-m5-speaker";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(usb))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
@@ -86,6 +98,10 @@ void loop()
   showSampleRate(audio.currentSampleRate());
 
   uint8_t pcm[384];
+  // en: Read only bytes already buffered; application message boundaries must be tracked separately.
+  // ja: bufferに届いたbyteを読む。アプリのメッセージの区切りは別に管理する。
+  // en: Playback is host-to-device PCM; the return value is actual bytes, not audio frames.
+  // ja: Playbackはホストから受けるPCM。戻り値は実byte数であり、frame数ではない。
   const size_t received = playback.read(pcm, sizeof(pcm));
   if (received)
   {
@@ -104,6 +120,8 @@ void loop()
   }
 
   EspUsbAudioEvent event;
+  // en: Drain recorded audio events here; stream state and USB enumeration are separate checks.
+  // ja: 記録された音声eventをここで取り出す。stream状態とUSB列挙は別に確認する。
   while (audio.pollEvent(event))
   {
     if (event.type == EspUsbAudioEventType::StreamStateChanged &&

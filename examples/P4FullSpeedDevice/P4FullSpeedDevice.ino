@@ -1,3 +1,8 @@
+// en: Start the P4 FullSpeed controller as a USB keyboard.
+// ja: P4のFullSpeed controllerでUSBキーボードを開始する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
 #if !defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -7,32 +12,24 @@
 #include "hal/usb_wrap_ll.h"
 #include "soc/usb_wrap_struct.h"
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
   keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);
 
-  // ESP32-P4 FullSpeed Device:
-  //   TinyUSB rhport 0
-  //   internal FS PHY
-  //   default USB OTG FS pins: GPIO26=D-, GPIO27=D+
-  //
-  // Optional FS PHY swap — leave this commented for GPIO26/GPIO27.
-  // Uncomment it BEFORE device.begin() to route USB OTG FS to
   // GPIO24=D-, GPIO25=D+ instead. USB Serial/JTAG then moves to
-  // GPIO26/GPIO27, so a Serial monitor on GPIO24/GPIO25 disconnects.
-  // This is a runtime route change; it does not modify eFuse.
-  //
-  // usb_wrap_ll_phy_select(&USB_WRAP, 0);
 
-  // The PHY selection only routes D-/D+. VBUS switching, VBUS sensing, and
-  // USB-C CC resistors/controllers remain board-specific. Check the schematic
-  // before connecting a cable or supplying VBUS.
+  // en: The PHY selection only routes D-/D+. VBUS switching, VBUS sensing, and USB-C CC resistors/controllers remain board-specific. Check the schematic before connecting a cable or supplying VBUS.
+  // ja: PHYの変更はD−/D+の経路だけ。VBUSやUSB-C CCの処理は基板の回路図で別に確認する。
 
   EspUsbDeviceConfig config;
   config.vid = 0x303a;
@@ -42,6 +39,8 @@ void setup()
   config.serialNumber = "espusb-p4-fs";
   config.controller = EspUsbController::FullSpeed;
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());

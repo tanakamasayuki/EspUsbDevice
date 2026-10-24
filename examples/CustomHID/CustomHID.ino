@@ -1,3 +1,8 @@
+// en: Describe and send a custom input-only HID report.
+// ja: 独自の入力専用HID reportを定義して送る。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
 static const uint8_t REPORT_DESCRIPTOR[] = {
@@ -13,6 +18,8 @@ static const uint8_t REPORT_DESCRIPTOR[] = {
     0xc0,             // End Collection
 };
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceHidCustom customHid(device, REPORT_DESCRIPTOR, sizeof(REPORT_DESCRIPTOR), 8);
 
@@ -45,6 +52,8 @@ static void sendCustomReport()
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -55,6 +64,8 @@ void setup()
   config.product = "EspUsbDevice Custom HID";
   config.serialNumber = "espusb-custom-hid";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());

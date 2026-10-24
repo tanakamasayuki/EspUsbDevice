@@ -57,3 +57,29 @@ callback は TinyUSB device task で実行されます。短く済ませ、中�
 - CCID メッセージの上限は 271 byte です。増やす場合はビルド時に
   `ESP_USB_DEVICE_CCID_BUFFER_SIZE` を定義してください。
 - Arduino-ESP32 標準の `USB.begin()` とは併用できません。
+
+## 読み方と確認の手順
+
+### 実行前の準備
+
+CCID readerを模擬し、一部のAPDUへ応答する。
+
+上のハードウェア・依存libraryの条件を確認し、boardと例のprofileを選び、診断Serialの接続先を確認します。[サンプルの進め方](../../docs/example-workflow.ja.md)では導入・コネクタ・USBの役割・開始成功と相手の利用可能状態の違いを説明しています。
+
+### コードを追う
+
+ATRとUIDはサンプル配列で、実reader ICから取得したものではありません。`onApdu()`で入力長と返信容量を確認してデータとstatusを作ります。UARTのi/rで挿入状態を変えPC/SC clientで確認します。任意の実カードapplicationを実装する例ではありません。
+
+### APIの使い方と改造時の注意
+
+readerの列挙、interface開始、カード有無、活性化・ATR、APDUの各段階を分けます。CCID転送の成功とアプリのstatus wordは別の問いです。出力容量と実応答長の検査を残し、カード不在を空の正常応答として解釈しないようにします。
+
+reader固有の疑似APDU・escapeは全スマートカードの共通命令ではありません。正確なreader・カードの組合せを確認して再利用します。callbackを短く保ち、完了待ちのreader操作はスケッチのアプリ側経路で行います。callback後も必要なデータはコピーします。
+
+### 一つずつ確認する
+
+最初は例を変更せず、上の操作とログ・ホストアプリの結果を照合します。相手がいない場合から接続へ進み、最終結果だけでなく、どの段階まで成功したかを見ます。端子・format・命令を一つ変える前に元の設定へ戻せるようにします。例のエラー表示だけで、汎用の再試行・回復方針まで実装されるわけではありません。
+
+- [スケッチ](SmartCardReader.ino)
+- [全サンプル](../README.ja.md)
+- [サンプルの進め方](../../docs/example-workflow.ja.md)

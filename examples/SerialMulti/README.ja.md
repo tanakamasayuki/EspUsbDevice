@@ -73,3 +73,29 @@ CDC は1ポートにつき **IN endpoint を2本**使います（通知＋デー
 - [Serial](../Serial/) - CDC ACM 1ポート
 - [CompositeHidCdcMsc](../CompositeHidCdcMsc/) - HID + CDC + MSC の複合デバイス
 - [USBVendor](../USBVendor/) - bulk vendor interface。IN endpoint は 2本でなく 1本
+
+## 読み方と確認の手順
+
+### 実行前の準備
+
+一つのUSB機器に独立した複数のCDC portを公開する。
+
+上のハードウェア・依存libraryの条件を確認し、boardと例のprofileを選び、診断Serialの接続先を確認します。[サンプルの進め方](../../docs/example-workflow.ja.md)では導入・コネクタ・USBの役割・開始成功と相手の利用可能状態の違いを説明しています。
+
+### コードを追う
+
+Console・DataLinkは同じdeviceに属しますが、受信状態とDTRは別です。OS側の各portを開き、ラベル付き応答を比較します。OSの番号が固定とは考えず操作で対応を確認し、条件付きの追加portは選択targetに合わせて読みます。
+
+### APIの使い方と改造時の注意
+
+`device.ready()`はUSBの設定済み状態、`CDCのconnected()`はホストのDTRに関わり、別の問いに答えます。受信通知の量は一行・一packetの区切りではありません。実際に読めたbyteから自分でメッセージを組み立てます。`write()`はbyte、`print()`/`printf()`はテキスト整形です。`flush()`はPCアプリが消費済みという保証ではありません。
+
+line coding通知はホストが求めたシリアル条件であり、USBの速度を変えません。callbackを短く保ち、大きな解析は同期した受け渡しでloop()へ分けます。確実な命令通信には受付byte数・未送信の後半・切断時の途中入力を扱う方針が必要です。
+
+### 一つずつ確認する
+
+最初は例を変更せず、上の操作とログ・ホストアプリの結果を照合します。相手がいない場合から接続へ進み、最終結果だけでなく、どの段階まで成功したかを見ます。端子・format・命令を一つ変える前に元の設定へ戻せるようにします。例のエラー表示だけで、汎用の再試行・回復方針まで実装されるわけではありません。
+
+- [スケッチ](SerialMulti.ino)
+- [全サンプル](../README.ja.md)
+- [サンプルの進め方](../../docs/example-workflow.ja.md)

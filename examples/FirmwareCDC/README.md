@@ -61,3 +61,27 @@ uv run --with pyserial python3 firmware_cdc.py /dev/ttyACM0 build/FirmwareCDC.in
   can reflash the board.
 - This library is not designed to run together with Arduino's built-in USB
   device classes.
+
+## Walkthrough and checks
+
+### Before running
+
+Receive a length-delimited firmware image through CDC. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+The host first sends the FW size command and waits for readiness before streaming exactly that many binary bytes. `readCommand()` and `readImage()` handle different states; a serial terminal sending text is not a binary uploader. Distinguish receive progress from `update.end()` verification and restart.
+
+### API use and adaptation
+
+Use the intended application image for the selected target and partition layout, not a merged Flash dump or bootloader binary. Follow availability/capacity checks before beginning the upload. Transport acknowledgment, received byte count, image validation, boot selection and a successful next boot are different stages. The ROM-loader example changes boot mode rather than using the same in-application update path.
+
+Keep the documented recovery/upload route available before testing. Ordinary firmware replacement can leave NVS data intact, so do not assume a fresh application has fresh settings. `markValid()` concerns application validation, not authenticity of arbitrary received images; deployed products need an explicit authorization and image-verification policy. Reboot/Flash work belongs in the execution path used by the example, not in newly added long-running USB callbacks.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](FirmwareCDC.ino)
+- [All examples](../README.md)
+- [Example workflow](../../docs/example-workflow.md)

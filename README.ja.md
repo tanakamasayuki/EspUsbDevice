@@ -4,6 +4,8 @@
 
 EspUsbDevice は、新しい ESP32 Arduino USB Device ライブラリです。
 
+初心者向けの操作順は[サンプルの進め方](docs/example-workflow.ja.md)、目的別の入口は[全サンプル一覧](examples/README.ja.md)を参照してください。各例のREADMEで配線・操作・API・失敗時の確認を説明しています。
+
 Arduino-ESP32 標準の `USB`、`USBHIDKeyboard`、`USBHIDMouse` API との互換は
 目標にしません。port、speed、descriptor、endpoint packet size、raw class
 report をスケッチから明示的に制御できる、よりよい小さな USB Device ライブラリを

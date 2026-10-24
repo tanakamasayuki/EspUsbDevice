@@ -1,5 +1,12 @@
+// en: Bridge basic messages between USB MIDI and a MIDI UART.
+// ja: USB MIDIとMIDI用UARTの間で基本メッセージを中継する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceMidi MIDI(device);
 
@@ -63,6 +70,8 @@ static bool readSerialMidiMessage(EspUsbDeviceMidiPacket &packet)
   }
 
   const uint32_t start = millis();
+  // en: Read only bytes already buffered; application message boundaries must be tracked separately.
+  // ja: bufferに届いたbyteを読む。アプリのメッセージの区切りは別に管理する。
   while (Serial1.available() < size - 1)
   {
     if (millis() - start > 10)
@@ -102,6 +111,8 @@ static void writeSerialMidiMessage(const EspUsbDeviceMidiPacket &packet)
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -114,6 +125,8 @@ void setup()
   config.product = "EspUsbDevice MIDI Interface";
   config.serialNumber = "espusb-midi-interface";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
@@ -135,6 +148,8 @@ void loop()
     }
   }
 
+  // en: Decode MIDI packet fields; USB cable and MIDI channel are different selectors.
+  // ja: MIDI packetのfieldを解釈する。USB cableとMIDI channelは別の指定。
   while (MIDI.readPacket(packet))
   {
     writeSerialMidiMessage(packet);

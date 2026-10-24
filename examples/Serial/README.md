@@ -56,3 +56,27 @@ class descriptors and endpoints.
 
 - [Keyboard](../Keyboard/) - HID keyboard device
 - [Mouse](../Mouse/) - HID mouse device
+
+## Walkthrough and checks
+
+### Before running
+
+Create a CDC serial function with receive and line-state diagnostics. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+Declare UsbSerial on the device, register callbacks, then begin the device. Open the new USB serial port and send letters plus CR/LF: this sketch replies per character, not once per input line. Compare DTR and periodic tick output with a terminal open and closed.
+
+### API use and adaptation
+
+`device.ready()` concerns USB configuration; the CDC `connected()` state concerns host DTR. They answer different questions. The callback's receive amount is not a line or packet boundary: read the actual bytes and accumulate your own complete messages. Use `write()` for bytes and `print()`/`printf()` for text formatting. `flush()` is not a guarantee that the PC application consumed the data.
+
+Line-coding callbacks report the host's requested serial parameters; they do not change USB speed. Keep callbacks short and use a synchronized handoff to `loop()` for larger parsing. For reliable commands, check the number of bytes accepted, keep any unsent suffix, and decide what partial input means after disconnect.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](Serial.ino)
+- [All examples](../README.md)
+- [Example workflow](../../docs/example-workflow.md)

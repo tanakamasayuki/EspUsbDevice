@@ -77,3 +77,27 @@ before the USB PHY is started, so the host never sees a broken device.
 - [Serial](../Serial/) - single CDC ACM port
 - [CompositeHidCdcMsc](../CompositeHidCdcMsc/) - HID + CDC + MSC in one device
 - [USBVendor](../USBVendor/) - bulk vendor interface, 1 IN endpoint instead of 2
+
+## Walkthrough and checks
+
+### Before running
+
+Expose independent CDC serial ports on one USB device. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+Console and DataLink attach to the same device but have separate receive state and DTR. Open each OS port and compare its labeled response. Match each logical port by testing it rather than assuming the OS numbers are stable; the conditional additional port depends on the selected target.
+
+### API use and adaptation
+
+`device.ready()` concerns USB configuration; the CDC `connected()` state concerns host DTR. They answer different questions. The callback's receive amount is not a line or packet boundary: read the actual bytes and accumulate your own complete messages. Use `write()` for bytes and `print()`/`printf()` for text formatting. `flush()` is not a guarantee that the PC application consumed the data.
+
+Line-coding callbacks report the host's requested serial parameters; they do not change USB speed. Keep callbacks short and use a synchronized handoff to `loop()` for larger parsing. For reliable commands, check the number of bytes accepted, keep any unsent suffix, and decide what partial input means after disconnect.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](SerialMulti.ino)
+- [All examples](../README.md)
+- [Example workflow](../../docs/example-workflow.md)

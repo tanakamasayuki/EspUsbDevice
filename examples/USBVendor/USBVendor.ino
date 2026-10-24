@@ -1,5 +1,12 @@
+// en: Echo vendor bulk data and answer explicit control requests.
+// ja: Vendor bulkデータをechoし、定義したcontrol要求へ応答する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceVendor UsbVendor(device);
 
@@ -21,14 +28,20 @@ static void printHex(const uint8_t *data, size_t length)
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
+  // en: This callback runs on the USB task; keep work bounded and hand larger processing to the application.
+  // ja: USBタスクで動くcallback。処理を短く保ち、大きな仕事はアプリ側へ渡す。
   UsbVendor.onRx([](size_t available)
                  {
                    uint8_t buffer[64];
                    while (available > 0)
                    {
+                     // en: Read only bytes already buffered; application message boundaries must be tracked separately.
+                     // ja: bufferに届いたbyteを読む。アプリのメッセージの区切りは別に管理する。
                      const size_t chunk = UsbVendor.read(buffer, min(available, sizeof(buffer)));
                      if (chunk == 0)
                      {
@@ -49,6 +62,8 @@ void setup()
                    }
                  });
 
+  // en: Check request direction and fields, and answer only the protocol implemented by this example.
+  // ja: 要求の方向とfieldを確認し、この例が実装するprotocolだけへ応答する。
   UsbVendor.onControlRequest([](const EspUsbDeviceVendorControlRequest &request)
                              {
                                controlCount++;
@@ -81,6 +96,8 @@ void setup()
   config.webusbEnabled = true;
   config.webusbUrl = "example.com/espusbdevice";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());

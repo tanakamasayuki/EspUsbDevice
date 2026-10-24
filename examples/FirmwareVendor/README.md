@@ -66,3 +66,27 @@ automatically from the Microsoft OS 2.0 descriptor this library emits.
   reflash the board.
 - This library is not designed to run together with Arduino's built-in USB
   device classes.
+
+## Walkthrough and checks
+
+### Before running
+
+Receive firmware through Vendor bulk with control-plane commands. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+Control requests reserve start/commit/abort work, while `loop()` performs update operations and drains bulk bytes. Follow the documented request numbers and status reply rather than treating control acknowledgment as completed Flash programming. A host uploader must also handle partial input and reported errors.
+
+### API use and adaptation
+
+Use the intended application image for the selected target and partition layout, not a merged Flash dump or bootloader binary. Follow availability/capacity checks before beginning the upload. Transport acknowledgment, received byte count, image validation, boot selection and a successful next boot are different stages. The ROM-loader example changes boot mode rather than using the same in-application update path.
+
+Keep the documented recovery/upload route available before testing. Ordinary firmware replacement can leave NVS data intact, so do not assume a fresh application has fresh settings. `markValid()` concerns application validation, not authenticity of arbitrary received images; deployed products need an explicit authorization and image-verification policy. Reboot/Flash work belongs in the execution path used by the example, not in newly added long-running USB callbacks.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](FirmwareVendor.ino)
+- [All examples](../README.md)
+- [Example workflow](../../docs/example-workflow.md)

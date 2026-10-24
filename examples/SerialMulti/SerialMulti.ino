@@ -1,33 +1,20 @@
+// en: Expose independent CDC serial ports on one USB device.
+// ja: 一つのUSB機器に独立した複数のCDC portを公開する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
-// Two independent USB CDC ACM serial ports on one device.
-//
-// The host sees two COM ports / two /dev/ttyACM* nodes, each with its own
-// buffers, line coding and DTR state. A common use is separating a machine
-// protocol from a human console so log output never corrupts a command stream.
-//
-// How many ports fit is decided by the controller, not by this sketch: each
-// port costs two IN endpoints (notification + data). An S2/S3 has four
-// non-control IN endpoints, so two ports is its maximum and nothing else fits
-// beside them. The ESP32-P4's high-speed controller has seven, which leaves
-// room for two ports plus HID and Vendor, or for three ports on their own.
-// Exceeding the budget makes begin() fail with ESP_ERR_INVALID_SIZE before the
-// PHY is started, so the host never sees a half-built device.
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 
-// The name is what the host shows for each port. Give the ports distinct
-// names: they are otherwise identical ACM functions, and without names a user
-// has no way to tell which node is which.
+// en: The name is what the host shows for each port. Give the ports distinct names: they are otherwise identical ACM functions, and without names a user has no way to tell which node is which.
+// ja: ホストに表示するport名を別々にし、同じCDC形式でも利用者が区別できるようにする。
 EspUsbDeviceCdcSerial Console(device, "Console");
 EspUsbDeviceCdcSerial DataLink(device, "Data Link");
 
-// The third port exists only where the endpoint budget has room for it. Two
-// ports already spend all four of the S2/S3 controller's non-control IN
-// endpoints; the P4's high-speed controller has seven, so a third fits with one
-// to spare. Registering it on an S3 would not fail quietly - begin() would
-// return ESP_ERR_INVALID_SIZE and the device would never enumerate - so the
-// port is compiled in only where it can actually exist.
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
 #define SERIAL_MULTI_HAS_THIRD_PORT 1
 EspUsbDeviceCdcSerial Telemetry(device, "Telemetry");
@@ -39,6 +26,8 @@ static uint32_t lastTickMs = 0;
 
 static void echoLine(EspUsbDeviceCdcSerial &port, const char *label)
 {
+  // en: Read only bytes already buffered; application message boundaries must be tracked separately.
+  // ja: bufferに届いたbyteを読む。アプリのメッセージの区切りは別に管理する。
   while (port.available() > 0)
   {
     const int value = port.read();
@@ -63,6 +52,8 @@ static void echoLine(EspUsbDeviceCdcSerial &port, const char *label)
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -89,16 +80,17 @@ void setup()
   EspUsbDeviceConfig config;
   config.vid = 0x303a;
   config.pid = 0x4018;
-  // The P4 defaults to its high-speed controller, which is where the third
-  // port's endpoints come from. Selecting FullSpeed here would drop the budget
-  // back to the S3's four IN endpoints and make begin() refuse the third port.
+  // en: The P4 defaults to its high-speed controller, which is where the third port's endpoints come from. Selecting FullSpeed here would drop the budget back to the S3's four IN endpoints and make begin() refuse the third port.
+  // ja: controllerによってendpoint資源が異なる。複数port構成を変えたら開始結果を確認する。
   config.controller = EspUsbController::Auto;
   config.manufacturer = "EspUsb";
   config.product = "EspUsbDevice DualSerial";
-  // A stable serial number is what lets a host keep the same port names across
-  // replugs, and lets several of these boards coexist on one machine.
+  // en: A stable serial number is what lets a host keep the same port names across replugs, and lets several of these boards coexist on one machine.
+  // ja: 機器のserial番号を安定させ、ホストが再接続や複数台を識別する手掛かりにする。
   config.serialNumber = "espusb-dualserial-0001";
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());

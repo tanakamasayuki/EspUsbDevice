@@ -1,32 +1,28 @@
+// en: Combine a CDC command port, keyboard and FAT RAM disk.
+// ja: CDCの操作port・キーボード・FAT RAM diskを組み合わせる。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
-// Composite (all-in-one) USB device: HID keyboard + CDC ACM serial + MSC FAT
-// RAM disk on a single EspUsbDevice. Register each function with the same
-// EspUsbDevice instance and call begin() once; the library assigns interface
-// numbers and endpoints and builds the composite configuration descriptor.
-//
-// This reaches the ESP32-S3 non-control IN endpoint limit: keyboard, CDC
-// notification, CDC data-in, and MSC bulk-in. Duplex data endpoints share their
-// IN/OUT endpoint number. Adding MIDI or bulk Vendor exceeds the S3 IN limit.
-// See docs/DESIGN_NOTES.ja.md
-// "複合時の endpoint 予算の上限".
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 EspUsbDeviceCdcSerial UsbSerial(device);
 EspUsbDeviceMsc msc(device);
 
-// 48 KB RAM disk: kept small enough that the composite's .bss also fits the
-// ESP32-S2 DRAM budget (a 96 KB disk overflows S2 by ~27 KB at link time; S3/P4
-// have more DRAM). FAT12 still formats fine at this size.
+// en: 48 KB RAM disk: kept small enough that the composite's .bss also fits the ESP32-S2 DRAM budget (a 96 KB disk overflows S2 by ~27 KB at link time; S3/P4 have more DRAM). FAT12 still formats fine at this size.
+// ja: 複合機能のbufferも収まるようRAM diskを抑える。大容量には媒体とメモリ配置を再検討する。
 static uint8_t storage[48 * 1024];
 EspUsbDeviceMscFatRamDisk disk(storage, sizeof(storage));
 
 static char lineBuffer[128];
 static size_t lineLength = 0;
 
-// Handle one complete line received over USB CDC. "type <text>" is typed out on
-// the HID keyboard; anything else is echoed back over CDC.
+// en: Handle one complete line received over USB CDC. "type <text>" is typed out on the HID keyboard; anything else is echoed back over CDC.
+// ja: CDCで完成した一行を解釈し、type命令でHIDの文字入力を行う。
 static void handleCdcLine(const char *line)
 {
   if (strncmp(line, "type ", 5) == 0)
@@ -46,10 +42,14 @@ static void handleCdcLine(const char *line)
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
   // --- MSC: a FAT-formatted RAM disk that shows up as a removable drive. ---
+  // en: Prepare the volume before USB exposes it; this operation is not a read-only inspection.
+  // ja: USBへ公開する前にvolumeを準備する。読み取りだけの確認操作ではない。
   if (!disk.format("ESPUSB"))
   {
     Serial.println("FAT_FORMAT_FAILED");
@@ -65,6 +65,8 @@ void setup()
   msc.productRevision("1.0");
   msc.mediaPresent(true);
   msc.isWritable(true);
+  // en: Attach the medium before starting USB; host and sketch must not edit its filesystem independently.
+  // ja: USB開始前に媒体を接続する。ホストとスケッチが別々にfilesystemを書き換えないようにする。
   if (!disk.attach(msc))
   {
     Serial.println("MSC_ATTACH_FAILED");
@@ -87,6 +89,8 @@ void setup()
   config.serialNumber = "espusb-composite";
 
   // A single begin() brings up all three functions as one composite device.
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
@@ -99,6 +103,8 @@ void setup()
 void loop()
 {
   // Assemble CDC input into lines and act on each completed line.
+  // en: Read only bytes already buffered; application message boundaries must be tracked separately.
+  // ja: bufferに届いたbyteを読む。アプリのメッセージの区切りは別に管理する。
   while (UsbSerial.available() > 0)
   {
     const int value = UsbSerial.read();

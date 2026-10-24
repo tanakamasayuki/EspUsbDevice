@@ -62,3 +62,27 @@ back into USB APIs from it.
 - The largest CCID message is 271 bytes. Define
   `ESP_USB_DEVICE_CCID_BUFFER_SIZE` at build time for more.
 - Do not use this library together with Arduino-ESP32's `USB.begin()`.
+
+## Walkthrough and checks
+
+### Before running
+
+Emulate a CCID reader and respond to selected APDUs. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+The ATR and UID are example arrays, not data from a physical reader chip. `onApdu()` checks input length and output capacity before building data and status bytes. Use UART i/r to change inserted state, then query it from a PC/SC client; this does not implement arbitrary real-card applications.
+
+### API use and adaptation
+
+Separate reader enumeration, interface opening, card presence, activation/ATR and APDU exchange. A successful CCID transfer and an application status word answer different questions. Keep the supplied output capacity and actual response length checks; do not interpret an absent card as an empty valid response.
+
+Reader-specific pseudo-APDUs and escape commands are not universal smart-card commands. Check the exact reader/card combination before reusing a command. Keep callback work bounded and run waiting reader operations through the application path shown in the sketch. Returned data must be copied if needed after a callback.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](SmartCardReader.ino)
+- [All examples](../README.md)
+- [Example workflow](../../docs/example-workflow.md)

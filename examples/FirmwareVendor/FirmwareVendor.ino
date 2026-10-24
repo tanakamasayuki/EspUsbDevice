@@ -1,26 +1,13 @@
+// en: Receive firmware through Vendor bulk with control-plane commands.
+// ja: Vendor bulkとcontrol命令を使ってfirmwareを受け取る。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
-// Firmware update over a vendor-specific interface: control requests for the
-// commands, a bulk OUT endpoint for the image.
-//
-//   python3 firmware_vendor.py build/FirmwareVendor.ino.bin
-//
-// This is the fastest route in the library. Bulk OUT on an ESP32-P4 high-speed
-// link moves an image in a fraction of the time DFU's EP0 transfers take, and
-// nothing about the protocol is negotiated - it is three control requests and a
-// stream. The cost is that the host side is yours to write and to ship;
-// examples/FirmwareDFU is the same job with a standard tool instead.
-//
-// The protocol:
-//
-//   control OUT  0x40 0x01  wValue=size_lo wIndex=size_hi   start
-//   bulk OUT                                                 the image
-//   control OUT  0x40 0x02                                   commit and restart
-//   control OUT  0x40 0x03                                   abort
-//   control IN   0xc0 0x04  -> 8 bytes                       state and progress
-//
-// Needs a partition scheme with two application partitions.
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 EspUsbDeviceFirmwareUpdate update;
@@ -30,8 +17,8 @@ static constexpr uint8_t REQUEST_COMMIT = 0x02;
 static constexpr uint8_t REQUEST_ABORT = 0x03;
 static constexpr uint8_t REQUEST_STATUS = 0x04;
 
-// State the control requests set and loop() acts on. Control requests and
-// onRx() both run on the usbd task, so nothing here may touch flash.
+// en: State the control requests set and loop() acts on. Control requests and onRx() both run on the usbd task, so nothing here may touch flash.
+// ja: control要求の通知とFlash操作を分離し、loop()で保留した仕事を実行する。
 static volatile bool startRequested = false;
 static volatile bool commitRequested = false;
 static volatile bool abortRequested = false;
@@ -56,6 +43,8 @@ static void statusReply(uint8_t reply[8])
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -64,11 +53,13 @@ void setup()
     Serial.println("NO_OTA_PARTITION - select a partition scheme with two app partitions");
   }
 
+  // en: Check request direction and fields, and answer only the protocol implemented by this example.
+  // ja: 要求の方向とfieldを確認し、この例が実装するprotocolだけへ応答する。
   vendor.onControlRequest(
       [](const EspUsbDeviceVendorControlRequest &request) -> bool
       {
-        // Only the setup stage carries a decision; the data and ack stages are
-        // the stack finishing what was decided here.
+        // en: Only the setup stage carries a decision; the data and ack stages are the stack finishing what was decided here.
+        // ja: 要求の判断はSETUP段階で行い、後続stageと同じ処理を繰り返さない。
         if (request.stage != ESP_USB_DEVICE_CONTROL_STAGE_SETUP)
         {
           return true;
@@ -97,6 +88,8 @@ void setup()
         }
       });
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin())
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());
@@ -105,12 +98,13 @@ void setup()
   Serial.println("Ready. python3 firmware_vendor.py <firmware.bin>");
 }
 
-// Everything that touches flash happens here, on the sketch's own task. The
-// bulk endpoint NAKs while this runs, which is the host slowing down rather
-// than the device stalling.
+// en: Everything that touches flash happens here, on the sketch's own task. The bulk endpoint NAKs while this runs, which is the host slowing down rather than the device stalling.
+// ja: Flashを扱う処理はスケッチ側のtaskで行う。USB callbackは要求を渡す。
 static void drainBulk()
 {
   uint8_t buffer[512];
+  // en: Read only bytes already buffered; application message boundaries must be tracked separately.
+  // ja: bufferに届いたbyteを読む。アプリのメッセージの区切りは別に管理する。
   while (vendor.available() > 0)
   {
     const size_t got = vendor.read(buffer, sizeof(buffer));
@@ -145,6 +139,8 @@ void loop()
     expected = requestedSize;
     reportedKiB = 0;
     lastError = 0;
+    // en: Begin only for the intended application image and size; this can write an update partition.
+    // ja: 意図したapplication imageと長さで開始する。更新partitionへの書き込みを伴う。
     if (!update.begin(expected))
     {
       lastError = static_cast<uint32_t>(update.lastError());

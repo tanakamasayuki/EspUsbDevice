@@ -55,3 +55,29 @@ USB 経由で直接アクセスします。
 - [CompositeHidCdcMsc](../CompositeHidCdcMsc/) - 複数の USB function を複合
 - [Serial](../Serial/) - CDC ACM serial device
 - `tests/manual/usb_ncm` - 最小構成の NCM + DHCP 手動/pytest テスト（host からの ping）
+
+## 読み方と確認の手順
+
+### 実行前の準備
+
+USBネットワークinterface経由でローカルWebページを提供する。
+
+上のハードウェア・依存libraryの条件を確認し、boardと例のprofileを選び、診断Serialの接続先を確認します。[サンプルの進め方](../../docs/example-workflow.ja.md)では導入・コネクタ・USBの役割・開始成功と相手の利用可能状態の違いを説明しています。
+
+### コードを追う
+
+`USB開始後にnet.beginNetwork()`し、`loop()`でWeb serverを処理します。表示URLを開く前にホストの新しいnetwork interfaceとIPを確認します。USB NCMだけでInternet・Wi-Fi・routing・別interfaceへのbridgeが用意されるわけではありません。
+
+### APIの使い方と改造時の注意
+
+USB列挙、使えるnetwork interface、link、IP設定、route・DNS、アプリ接続の順に確認します。IPがあるだけではInternet疎通は保証されません。直接接続のUSB subnetの試験で、PCの主回線のdefault routeをむやみに変えず、使用interfaceと宛先を確認します。
+
+networkやUSBのcallbackと、Web・clientのメイン処理は分けます。待つHTTP・DNS・ファイル処理をUSB callbackへ入れません。network開始とclient/serverの戻り値を確認し、抜き差し後に状態を取り直す方針を決めます。ローカル疎通と外部serviceの成功は別に記録します。
+
+### 一つずつ確認する
+
+最初は例を変更せず、上の操作とログ・ホストアプリの結果を照合します。相手がいない場合から接続へ進み、最終結果だけでなく、どの段階まで成功したかを見ます。端子・format・命令を一つ変える前に元の設定へ戻せるようにします。例のエラー表示だけで、汎用の再試行・回復方針まで実装されるわけではありません。
+
+- [スケッチ](UsbNetwork.ino)
+- [全サンプル](../README.ja.md)
+- [サンプルの進め方](../../docs/example-workflow.ja.md)

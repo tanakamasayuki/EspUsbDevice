@@ -1,18 +1,14 @@
-// EspUsbDeviceBringUpCheck - the first sketch to run on a new board.
-//
-// Answers, in order:
-//   1. Does this build and start on this target at all?
-//   2. Which USB controller did the library pick, and did begin() succeed?
-//   3. Does the host enumerate the board (device.ready() becomes true)?
-//   4. At which speed, and does host -> device traffic reach the sketch?
-//
-// It registers a HID keyboard but never sends a key, so it is safe to leave
-// plugged into a PC. Press CapsLock / NumLock on the host keyboard to prove the
-// host -> device direction: the LED output report is printed here.
+// en: Separate internal device startup from host configuration.
+// ja: Device内部の開始とホストによる認識完了を分ける。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 
 #include "EspUsbDevice.h"
 #include "tusb.h"
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 
@@ -48,8 +44,8 @@ static const char *controllerName(EspUsbController controller)
   }
 }
 
-// Which controller Auto resolves to, so the log says what the hardware will
-// actually do rather than repeating the request.
+// en: Which controller Auto resolves to, so the log says what the hardware will actually do rather than repeating the request.
+// ja: Autoが選ぶcontrollerも表示し、実際に使うハードウェアを確認する。
 static const char *resolvedControllerName(EspUsbController controller)
 {
   if (controller != EspUsbController::Auto)
@@ -103,6 +99,8 @@ static void printChecklist()
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -114,6 +112,8 @@ void setup()
 
   // Reading the LED report is what proves host -> device works. Nothing is ever
   // sent in the other direction by this sketch.
+  // en: The USB task delivers this host notification; it is not a callback executed by loop().
+  // ja: ホストからの通知はUSBタスクで届く。loop()が実行するcallbackではない。
   keyboard.onOutputReport([](const EspUsbDeviceHidKeyboardOutputReport &report)
                           {
                             Serial.printf("HOST_OUTPUT_REPORT leds=0x%02x num=%u caps=%u scroll=%u\n",
@@ -129,13 +129,15 @@ void setup()
   config.manufacturer = "EspUsb";
   config.product = "EspUsbDevice BringUpCheck";
   config.serialNumber = "espusb-bringup";
-  // On ESP32-P4, set this to FullSpeed if the cable goes to the FS connector.
-  // config.controller = EspUsbController::FullSpeed;
+  // en: On ESP32-P4, set this to FullSpeed if the cable goes to the FS connector. config.controller = EspUsbController::FullSpeed;
+  // ja: ケーブルがつながるP4側のcontrollerへ合わせる。modeだけでは配線は変わらない。
 
   Serial.printf("CONTROLLER requested=%s resolved=%s\n",
                 controllerName(config.controller),
                 resolvedControllerName(config.controller));
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   beginOk = device.begin(config);
   beginMs = millis();
   if (!beginOk)

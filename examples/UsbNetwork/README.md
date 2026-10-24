@@ -63,3 +63,27 @@ the device directly over USB, with zero network setup.
 - [CompositeHidCdcMsc](../CompositeHidCdcMsc/) - combine multiple USB functions
 - [Serial](../Serial/) - CDC ACM serial device
 - `tests/manual/usb_ncm` - a minimal NCM + DHCP manual/pytest test (host ping)
+
+## Walkthrough and checks
+
+### Before running
+
+Serve a local web page through a USB network interface. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+Start the USB device before `net.beginNetwork()`, then run the web server handler in `loop()`. Confirm the new host network interface and its address before opening the printed URL. USB NCM does not automatically provide Internet access, Wi-Fi, routing or a bridge to another interface.
+
+### API use and adaptation
+
+Check in order: USB enumeration, usable network interface, link, IP configuration, route/DNS and application connection. An IP address does not prove Internet access. Avoid changing your main PC's default route merely to test a directly connected USB subnet; inspect the selected interface and destination first.
+
+Network callbacks and USB callbacks are separate from the application web/client loop. Keep blocking HTTP, DNS and file work outside USB callbacks. Check the return of network startup and client/server operations; decide how to reacquire state after unplugging. Record local connectivity separately from success of an external service.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](UsbNetwork.ino)
+- [All examples](../README.md)
+- [Example workflow](../../docs/example-workflow.md)

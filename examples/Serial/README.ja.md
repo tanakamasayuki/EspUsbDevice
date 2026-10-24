@@ -52,3 +52,29 @@ Arduino-ESP32 標準の `USBSerial` / `USBCDC` は使いません。`EspUsbDevic
 
 - [Keyboard](../Keyboard/) - HID keyboard device
 - [Mouse](../Mouse/) - HID mouse device
+
+## 読み方と確認の手順
+
+### 実行前の準備
+
+受信とline stateを観察できるCDCシリアル機能を作る。
+
+上のハードウェア・依存libraryの条件を確認し、boardと例のprofileを選び、診断Serialの接続先を確認します。[サンプルの進め方](../../docs/example-workflow.ja.md)では導入・コネクタ・USBの役割・開始成功と相手の利用可能状態の違いを説明しています。
+
+### コードを追う
+
+deviceへUsbSerialを登録してcallbackを用意し、deviceを開始します。新しいUSBシリアルportへ文字とCR/LFを送り、一行単位ではなく文字ごとに返信することを確認します。端末の開閉でDTRと定期tickの関係を比べます。
+
+### APIの使い方と改造時の注意
+
+`device.ready()`はUSBの設定済み状態、`CDCのconnected()`はホストのDTRに関わり、別の問いに答えます。受信通知の量は一行・一packetの区切りではありません。実際に読めたbyteから自分でメッセージを組み立てます。`write()`はbyte、`print()`/`printf()`はテキスト整形です。`flush()`はPCアプリが消費済みという保証ではありません。
+
+line coding通知はホストが求めたシリアル条件であり、USBの速度を変えません。callbackを短く保ち、大きな解析は同期した受け渡しでloop()へ分けます。確実な命令通信には受付byte数・未送信の後半・切断時の途中入力を扱う方針が必要です。
+
+### 一つずつ確認する
+
+最初は例を変更せず、上の操作とログ・ホストアプリの結果を照合します。相手がいない場合から接続へ進み、最終結果だけでなく、どの段階まで成功したかを見ます。端子・format・命令を一つ変える前に元の設定へ戻せるようにします。例のエラー表示だけで、汎用の再試行・回復方針まで実装されるわけではありません。
+
+- [スケッチ](Serial.ino)
+- [全サンプル](../README.ja.md)
+- [サンプルの進め方](../../docs/example-workflow.ja.md)

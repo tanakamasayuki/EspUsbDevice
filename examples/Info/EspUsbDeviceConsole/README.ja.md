@@ -82,3 +82,29 @@ HOST_HID_OUTPUT leds=0x02 num=0 caps=1 scroll=0
 - [EspUsbDeviceBringUpCheck](../EspUsbDeviceBringUpCheck/) — 列挙されない場合はまずこちら
 - [EspUsbDeviceDescriptorDump](../EspUsbDeviceDescriptorDump/) — 何を宣言しているかの確認
 - [docs/usb-device-guide.ja.md](../../../docs/usb-device-guide.ja.md) — 実験の進め方全体
+
+## 読み方と確認の手順
+
+### 実行前の準備
+
+診断consoleからHIDとVendorデータを明示的に操作する。
+
+上のハードウェア・依存libraryの条件を確認し、boardと例のprofileを選び、診断Serialの接続先を確認します。[サンプルの進め方](../../../docs/example-workflow.ja.md)では導入・コネクタ・USBの役割・開始成功と相手の利用可能状態の違いを説明しています。
+
+### コードを追う
+
+help/stateから始め、試し書き用文書でtextや一つのキーを試します。key/tapとhold/releaseを区別し、次の試験前に解放を確認します。UARTの操作は生成するUSB動作の指示であり、Vendor bulk interfaceそのものではありません。
+
+### APIの使い方と改造時の注意
+
+内部開始、列挙、interfaceの発見、classの実通信を別の確認点にします。descriptorは相手が提示した内容であり、実転送やprotocolの実装を保証しません。descriptorの走査を改造するときも受信長と容量検査を残します。interface番号・endpoint address・USB address・物理portは別の識別子です。
+
+最初は同じ機器の直接接続と再接続を比べ、理解してからhubや機能を増やします。異常ではエラー名と失敗した操作を一緒に控えます。大量dumpは診断用であり、高頻度callbackの処理例としてそのまま使わないようにします。
+
+### 一つずつ確認する
+
+最初は例を変更せず、上の操作とログ・ホストアプリの結果を照合します。相手がいない場合から接続へ進み、最終結果だけでなく、どの段階まで成功したかを見ます。端子・format・命令を一つ変える前に元の設定へ戻せるようにします。例のエラー表示だけで、汎用の再試行・回復方針まで実装されるわけではありません。
+
+- [スケッチ](EspUsbDeviceConsole.ino)
+- [全サンプル](../../README.ja.md)
+- [サンプルの進め方](../../../docs/example-workflow.ja.md)

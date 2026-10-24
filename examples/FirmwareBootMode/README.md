@@ -83,3 +83,27 @@ has the detail, including what Secure Boot and the `USB_PHY_SEL` eFuse change.
 - This replaces the **whole flash**, unlike [`FirmwareDFU`](../FirmwareDFU/) and
   [`FirmwareHTTP`](../FirmwareHTTP/), which write one OTA partition while the
   sketch keeps running.
+
+## Walkthrough and checks
+
+### Before running
+
+Request the chip ROM loader from CDC or DFU runtime. Follow the hardware and dependency requirements above, select the board and the example's profile, and locate the diagnostic Serial connection. [Example workflow](../../docs/example-workflow.md) explains installation, connectors, USB roles and the difference between startup and a usable peer.
+
+### Follow the code
+
+CDC input b, the selected line-coding trigger and DFU detach request set a flag; `loop()` performs `rebootToBootloader()`. This changes the boot mode rather than writing an application image. Expect the USB identity/port to change and use the chip's upload path afterwards.
+
+### API use and adaptation
+
+Use the intended application image for the selected target and partition layout, not a merged Flash dump or bootloader binary. Follow availability/capacity checks before beginning the upload. Transport acknowledgment, received byte count, image validation, boot selection and a successful next boot are different stages. The ROM-loader example changes boot mode rather than using the same in-application update path.
+
+Keep the documented recovery/upload route available before testing. Ordinary firmware replacement can leave NVS data intact, so do not assume a fresh application has fresh settings. `markValid()` concerns application validation, not authenticity of arbitrary received images; deployed products need an explicit authorization and image-verification policy. Reboot/Flash work belongs in the execution path used by the example, not in newly added long-running USB callbacks.
+
+### Verify one change at a time
+
+Run the unchanged example first and compare the operation above with its logs or host application. Test the peer absent and then connected; note which stage succeeds instead of expecting the final result immediately. Reset to the original configuration before changing one pin, format or command. The demonstration's error logging is not a general retry or recovery policy.
+
+- [Sketch](FirmwareBootMode.ino)
+- [All examples](../README.md)
+- [Example workflow](../../docs/example-workflow.md)

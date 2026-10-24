@@ -6,6 +6,18 @@ Arduino sketches that show the basic `EspUsbDevice` usage. Sketches using this
 library should not call Arduino-ESP32's `USB.begin()`, `USBHIDKeyboard`, or
 `USBHIDMouse`.
 
+
+## Choose by purpose and workflow
+
+[Working through the examples](../docs/example-workflow.md) explains connection, enumeration, communication and callback handling.
+
+1. Use [BringUpCheck](Info/EspUsbDeviceBringUpCheck/README.md) to distinguish begin() from host configuration.
+2. Use [Serial](Serial/README.md) to distinguish diagnostics from the new CDC port.
+3. Try [Keyboard](Keyboard/README.md) or [Gamepad](Gamepad/README.md) in the matching host application.
+4. Use [DescriptorDump](Info/EspUsbDeviceDescriptorDump/README.md) to relate function declarations to interfaces and endpoints.
+5. Progress to composite functions, audio, storage and updates after one function is understood.
+
+
 ## Info (Diagnostics)
 
 Not feature demos - these are the sketches for **finding out why something does

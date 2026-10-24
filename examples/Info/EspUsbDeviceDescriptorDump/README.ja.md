@@ -101,3 +101,29 @@ BEGIN ok error=ESP_OK
 - [EspUsbDeviceBringUpCheck](../EspUsbDeviceBringUpCheck/) — 先にこちらを動かす
 - [tests/manual/device_inspect](../../../tests/manual/device_inspect/) — Host 側から見た同じ descriptor
 - [docs/usb-device-guide.ja.md](../../../docs/usb-device-guide.ja.md) — descriptor の設計方針
+
+## 読み方と確認の手順
+
+### 実行前の準備
+
+宣言したUSB機能から生成されたdescriptorを調べる。
+
+上のハードウェア・依存libraryの条件を確認し、boardと例のprofileを選び、診断Serialの接続先を確認します。[サンプルの進め方](../../../docs/example-workflow.ja.md)では導入・コネクタ・USBの役割・開始成功と相手の利用可能状態の違いを説明しています。
+
+### コードを追う
+
+DUMP_ENABLEを一つずつ変えて再ビルドし、configuration長・interface・endpoint・HID report descriptorを比べます。機器の提示内容を調べるもので、各endpointやclassの実転送を証明するものではありません。
+
+### APIの使い方と改造時の注意
+
+内部開始、列挙、interfaceの発見、classの実通信を別の確認点にします。descriptorは相手が提示した内容であり、実転送やprotocolの実装を保証しません。descriptorの走査を改造するときも受信長と容量検査を残します。interface番号・endpoint address・USB address・物理portは別の識別子です。
+
+最初は同じ機器の直接接続と再接続を比べ、理解してからhubや機能を増やします。異常ではエラー名と失敗した操作を一緒に控えます。大量dumpは診断用であり、高頻度callbackの処理例としてそのまま使わないようにします。
+
+### 一つずつ確認する
+
+最初は例を変更せず、上の操作とログ・ホストアプリの結果を照合します。相手がいない場合から接続へ進み、最終結果だけでなく、どの段階まで成功したかを見ます。端子・format・命令を一つ変える前に元の設定へ戻せるようにします。例のエラー表示だけで、汎用の再試行・回復方針まで実装されるわけではありません。
+
+- [スケッチ](EspUsbDeviceDescriptorDump.ino)
+- [全サンプル](../../README.ja.md)
+- [サンプルの進め方](../../../docs/example-workflow.ja.md)

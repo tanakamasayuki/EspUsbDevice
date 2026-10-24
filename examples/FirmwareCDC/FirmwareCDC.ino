@@ -1,24 +1,13 @@
+// en: Receive a length-delimited firmware image through CDC.
+// ja: CDCから長さを指定したfirmware imageを受け取る。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
-// Firmware update over a plain CDC serial port.
-//
-// The smallest update path there is: a length, then that many bytes. Useful
-// when the host side has to be a script you control rather than a standard
-// tool, and as the shape to copy when adding an update command to a device
-// that already has a serial port for something else.
-//
-//   python3 firmware_cdc.py /dev/ttyACM0 firmware.bin
-//
-// The protocol is three lines and a blob:
-//
-//   host -> device   "FW <size>\n"
-//   device -> host   "READY\n"          (or "ERR <reason>\n")
-//   host -> device   <size> bytes
-//   device -> host   "OK\n"             (or "ERR <reason>\n"), then it restarts
-//
-// Needs a partition scheme with two application partitions - the Arduino
-// "Default" one has them, "Huge APP" does not.
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceCdcSerial port(device, "Firmware");
 EspUsbDeviceFirmwareUpdate update;
@@ -40,10 +29,12 @@ static void fail(const char *reason)
   Serial.printf("Update failed: %s\n", reason);
 }
 
-// Read the "FW <size>" line a byte at a time. Nothing here is time critical:
-// the transfer has not started yet.
+// en: Read the "FW <size>" line a byte at a time. Nothing here is time critical: the transfer has not started yet.
+// ja: サイズ命令を一文字ずつ読み、binary本体を受け取る状態と分ける。
 static void readCommand()
 {
+  // en: Read only bytes already buffered; application message boundaries must be tracked separately.
+  // ja: bufferに届いたbyteを読む。アプリのメッセージの区切りは別に管理する。
   while (port.available() > 0)
   {
     const int byte = port.read();
@@ -73,6 +64,8 @@ static void readCommand()
       }
       // The size is known here, so an image too big for the partition is
       // refused before the host sends a single byte of it.
+      // en: Begin only for the intended application image and size; this can write an update partition.
+      // ja: 意図したapplication imageと長さで開始する。更新partitionへの書き込みを伴う。
       if (!update.begin(size))
       {
         fail(update.lastErrorName());
@@ -94,9 +87,8 @@ static void readCommand()
   }
 }
 
-// The image itself. This runs in loop(), not in a USB callback: flash erase
-// takes milliseconds and every class callback in this library runs on the usbd
-// task, where that time is taken from the whole device.
+// en: The image itself. This runs in loop(), not in a USB callback: flash erase takes milliseconds and every class callback in this library runs on the usbd task, where that time is taken from the whole device.
+// ja: Flash操作を含む受信処理はloop()で行い、USB callbackへ移さない。
 static void readImage()
 {
   uint8_t buffer[512];
@@ -131,6 +123,8 @@ static void readImage()
   // end() checks the image header, the length and the checksum before it moves
   // the boot partition, so a truncated or corrupt upload fails here rather than
   // at the next boot.
+  // en: Finishing reception and passing image verification are different steps.
+  // ja: 受信完了とimage検証の成功は別の段階。
   if (!update.end())
   {
     fail(update.lastErrorName());
@@ -146,6 +140,8 @@ static void readImage()
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
@@ -160,6 +156,8 @@ void setup()
                   static_cast<unsigned>(EspUsbDeviceFirmwareUpdate::capacity()));
   }
 
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin())
   {
     Serial.printf("USB_BEGIN_FAILED %s\n", device.lastErrorName());

@@ -1,23 +1,18 @@
+// en: Emulate a CCID reader and respond to selected APDUs.
+// ja: CCID readerを模擬し、一部のAPDUへ応答する。
+// en: Wiring, operation and adaptation notes: README.md.
+// ja: 配線・操作・改造時の注意: README.ja.md。
+
 #include "EspUsbDevice.h"
 
-// USB CCID smart card reader. The board enumerates as a reader with one slot;
-// the "card" behind that slot is this sketch. A PC/SC host (pcsc_scan, Windows
-// "Smart Card" service, EspUsbHost's ccid* API) can list the reader, activate
-// the card, read its ATR, and exchange APDUs with it.
-//
-// The emulated card answers two instructions:
-//   FF CA 00 00 00  Get UID (PC/SC pseudo APDU)  -> the 4-byte UID below + 9000
-//   80 01 00 00 Lc  echo                          -> the data sent back + 9000
-// Anything else gets 6D00 (instruction not supported), like a real card would.
-//
-// Send a card in and out over the serial monitor: 'i' inserts, 'r' removes.
 
+// en: Keep the USB owner and its function objects alive for the whole session.
+// ja: USB全体と各機能のオブジェクトを、接続の使用中ずっと残す。
 EspUsbDevice device;
 EspUsbDeviceCcid Ccid(device);
 
-// PC/SC synthetic ATR for a contactless storage card: the historical bytes
-// carry the PC/SC RID A0 00 00 03 06, standard 03 (ISO 14443 A part 3) and card
-// name 00 01 (MIFARE Classic 1K), which is how a host names the card.
+// en: PC/SC synthetic ATR for a contactless storage card: the historical bytes carry the PC/SC RID A0 00 00 03 06, standard 03 (ISO 14443 A part 3) and card name 00 01 (MIFARE Classic 1K), which is how a host names the card.
+// ja: このATRはPC/SC用の模擬データ。実カードから取得した値ではない。
 static const uint8_t CARD_ATR[] = {
     0x3b, 0x8f, 0x80, 0x01, 0x80, 0x4f, 0x0c, 0xa0, 0x00, 0x00,
     0x03, 0x06, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x6a,
@@ -71,9 +66,13 @@ static size_t answerApdu(const uint8_t *apdu, size_t length, uint8_t *response, 
 
 void setup()
 {
+  // en: Serial is the diagnostic path; confirm its board-specific route separately from USB data.
+  // ja: Serialは診断用。基板のどの経路から読めるかを、USBデータ接続とは別に確認する。
   Serial.begin(115200);
   delay(1500);
 
+  // en: The handler must respect both APDU length and response capacity before writing a reply.
+  // ja: 返信を書く前にAPDUの長さと返信領域の容量を確認する。
   Ccid.onApdu(answerApdu);
   Ccid.onPower([](bool on)
                { Serial.printf("CARD %s\n", on ? "activated" : "deactivated"); });
@@ -83,6 +82,8 @@ void setup()
   config.product = "EspUsbDevice CCID Reader";
   config.serialNumber = "espusb-ccid";
   config.pid = 0x4021;
+  // en: Start all declared functions together; the host configures the device afterwards.
+  // ja: 宣言した機能をまとめて開始する。ホストによる認識と設定はその後に進む。
   if (!device.begin(config))
   {
     Serial.printf("begin failed: %s\n", device.lastErrorName());
