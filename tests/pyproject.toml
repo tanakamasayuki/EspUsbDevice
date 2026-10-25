@@ -17,7 +17,8 @@ dependencies = [
     # test file does the same job and reaches peers too. They were removed from
     # PyPI rather than yanked, so a pin naming them cannot resolve at all - which
     # is why this floor went 1.5.1 -> 1.4.1 -> 1.6.0 within a day.
-    "pytest-embedded-arduino-cli>=1.6.0",
+    # 1.9 adds profile combinations and the pre-build applicability hook.
+    "pytest-embedded-arduino-cli>=1.9.0",
     "pytest-html>=4.1.1",
 ]
 

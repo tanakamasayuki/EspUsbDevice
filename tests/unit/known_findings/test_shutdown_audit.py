@@ -54,3 +54,13 @@ def test_watchdog_reset_is_unexpected(audit_module, tmp_path):
     assert len(unexpected) == 1
     assert "TG1WDT_SYS_RST" in unexpected[0]
     assert not known
+
+
+def test_profile_suffix_keeps_specific_allowance(audit_module, tmp_path):
+    log = tmp_path / "dut.log"
+    log.write_text("E (10) USBH: Dev 1 EP 0 STALL\n")
+    unexpected, known = audit_module._serial_error_lines(
+        "peer/usb_msc/test_usb_msc.py::test_usb_msc[primary=s3_peer_host,device=s3_peer_device]", log
+    )
+    assert not unexpected
+    assert len(known) == 1

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from usb_test_matrix import COMBINATION_KEY, LEDGER_KEY, REQUIREMENTS, RequiredRuns
+
 
 _SERIAL_ERROR_PATTERNS = (
     re.compile(r"(?:^|\s)E \(\d+\)"),
@@ -128,7 +130,7 @@ def _serial_error_lines(
         for index, rule in enumerate(_KNOWN_SERIAL_FINDINGS):
             if (
                 known_counts[index] < rule.max_count
-                and fnmatch(nodeid, rule.nodeid_pattern)
+                and fnmatch(nodeid.split("[", 1)[0], rule.nodeid_pattern)
                 and log_path.name == rule.log_name
                 and rule.line_pattern.search(line)
                 and (not rule.shutdown_only or line_number in completed_shutdown_lines)
@@ -184,18 +186,35 @@ def serial_log_audit(request, test_case_tempdir):
     )
 
 
+def pytest_addoption(parser):
+    group = parser.getgroup("USB bench")
+    group.addoption("--usb-local-host", action="store_true", help="Include local Host profiles")
+    group.addoption("--usb-require", action="append", default=[], choices=sorted(REQUIREMENTS),
+                    help="Fail unless this suite passes on its required wiring in this run")
+
+
 def pytest_configure(config):
     config.stash[_AUDIT_RESULTS_KEY] = []
     config.stash[_AUDIT_LOG_COUNT_KEY] = 0
     config.stash[_AUDIT_ROOTS_KEY] = set()
+    suites = config.getoption("usb_require")
+    if suites and config.getoption("run_mode") == "build":
+        raise pytest.UsageError("--usb-require needs hardware execution, not --run-mode=build")
+    config.stash[LEDGER_KEY] = RequiredRuns(suites)
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
+    pair = item.stash.get(COMBINATION_KEY, None)
+    if pair is not None:
+        item.config.stash[LEDGER_KEY].record(pair, item.nodeid, report.when, report.outcome)
     if report.when != "teardown":
         return
+
+    if report.failed and pair is not None:
+        item.session.shouldstop = "USB teardown failed; bench state is not confirmed safe for the next case"
 
     section = item.stash.get(_AUDIT_SECTION_KEY, "")
     if section:
@@ -203,7 +222,25 @@ def pytest_runtest_makereport(item, call):
         report.sections.append(("serial error audit teardown", section))
 
 
+def pytest_sessionfinish(session, exitstatus):
+    config = session.config
+    if config.getoption("collectonly"):
+        return
+    ledger = config.stash[LEDGER_KEY]
+    unexpected = any(row[2] for row in config.stash[_AUDIT_RESULTS_KEY])
+    if ledger.suites and (ledger.missing() or unexpected) and session.exitstatus == 0:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    ledger = config.stash[LEDGER_KEY]
+    if ledger.suites and not config.getoption("collectonly"):
+        terminalreporter.section("required USB runs", sep="=")
+        missing = ledger.missing()
+        for entry in missing:
+            terminalreporter.write_line(f"NOT PASSED: {entry}", red=True)
+        if not missing:
+            terminalreporter.write_line("All required cases completed setup, call, and teardown.")
     results = config.stash[_AUDIT_RESULTS_KEY]
     log_count = config.stash[_AUDIT_LOG_COUNT_KEY]
     log_roots = sorted(config.stash[_AUDIT_ROOTS_KEY])
@@ -223,7 +260,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if unexpected_count:
         terminalreporter.write_line(
             f"Found {unexpected_count} unexpected suspicious line(s) in "
-            f"{unexpected_test_count} test(s); tests were not failed."
+            f"{unexpected_test_count} test(s); --usb-require treats these as a run failure."
         )
     else:
         terminalreporter.write_line(

@@ -23,7 +23,7 @@ setup 完了と configuration 完了は別です。DFU テストは DFU 要求�
 
 teardown は assertion が失敗しても、予約済み制御バイト `0x1f` で host、各 peer の
 順に停止します。各 sketch は `TEST_STOPPED` を返し、次の書き込みまで待機します。
-停止応答がなければ警告を残し、host の停止が失敗しても全 peer の停止を試みます。
+停止応答がなければ全 peer の停止を試みた後、teardown error として後続試験を中断します。
 コマンドを bytes で送ることで、シリアルへの暗黙の改行付加を防ぎます。
 共通処理は `../usb_test_lifecycle.py` と `../sketch_support/UsbTestLifecycle.h` にあります。
 sketch は読み取り直前の `usbTestControlPending()` でも制御バイトを確認し、

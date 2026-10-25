@@ -1,7 +1,12 @@
-# getMidiPortInfo() is not in a released EspUsbHost yet, so there is no profile
-# against a published version - the DUT can only be built from the local checkout.
-# Add an `EspUsbHost (x.y.z)` profile once cable discovery ships.
 profiles:
+  s3_peer_host:
+    fqbn: esp32:esp32:esp32s3:USBMode=default
+    platforms:
+      - platform: esp32:esp32 (3.3.12)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    libraries:
+      - EspUsbHost (2.10.1)
+
   s3_peer_local:
     fqbn: esp32:esp32:esp32s3:USBMode=default
     platforms:
@@ -10,4 +15,4 @@ profiles:
     libraries:
       - dir: ../../../../EspUsbHost
 
-default_profile: s3_peer_local
+default_profile: s3_peer_host

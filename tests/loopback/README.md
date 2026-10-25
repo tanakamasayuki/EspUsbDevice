@@ -23,8 +23,8 @@ controllers share a chip; stopping the device task first avoids scheduling
 transfers while host shutdown releases controller resources. Subsequent
 loop iterations remain idle until the next firmware upload. Commands are sent
 as bytes so `SerialDut.write()` does not append a newline ahead of the stop
-command. Shutdown timeouts are reported as warnings without hiding the original
-failure.
+command. Shutdown timeouts raise a teardown error and stop the matrix; the original
+test failure is retained by pytest.
 
 Shutdown is marked by `TEST_STOPPING` and `TEST_STOPPED`. The serial audit
 allows at most one `Enqueue URB error: ESP_ERR_INVALID_STATE` only inside a

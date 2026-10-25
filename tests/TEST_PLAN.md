@@ -42,8 +42,8 @@ version. Normal verification should use only the default profiles. The
 local-validation profiles `s3_peer_local` and `p4_loopback_local` use a local
 checkout and are only for pre-release validation of unreleased Host-side fixes,
 for example
-`uv run --env-file .env pytest peer/ --profile=s3_peer_local` or
-`uv run --env-file .env pytest loopback/ --profile=p4_loopback_local`.
+`uv run --env-file .env pytest peer/ --profile=s3_peer_local --peer-profile=device:s3_peer_local --usb-local-host` or
+`uv run --env-file .env pytest loopback/ --profile=p4_loopback_local --usb-local-host`.
 
 ```text
 tests/
@@ -225,8 +225,8 @@ every cable, so a count accumulated from observed packets rather than read from 
 descriptors fails. It also covers several packets on different cables inside one
 bulk transfer (a cable decoded once per transfer instead of once per packet pairs
 them up wrongly) and SysEx on a non-zero cable, where the cable is repeated on every
-packet of the message. `getMidiPortInfo()` is unreleased, so its only profile is
-`s3_peer_local`.
+packet of the message. The default `s3_peer_host` profile uses released Host 2.10.1, including
+`getMidiPortInfo()`, and has passed on hardware.
 
 **Its peer is asymmetric - 4 cables device-to-host, 5 host-to-device - because
 that is the only way to check which endpoint's count belongs to which direction.**
@@ -477,7 +477,7 @@ and every data plane.
 43. ✅ `unit/nkro_report` (NKRO state report struct: bitmap layout, modifier routing, boundaries; host g++)
 44. ✅ `unit/midi_descriptor` (multi-cable MIDI descriptor bytes for every symmetric and asymmetric cable-count pair, and 1 cable still matching `TUD_MIDI_DESCRIPTOR()`; host g++)
 45. ✅ `loopback/usb_midi_cables` (4-cable MIDI, cable number preserved both directions)
-46. ✅ `peer/usb_midi_cables` (asymmetric 4-in / 5-out MIDI, which is what pins each direction; Host-decoded counts before and after traffic, every cable both directions, interleaved cables in one transfer, SysEx on a non-zero cable, a receive-only cable refused for sending; needs EspUsbHost's unreleased `getMidiPortInfo()`, so `--profile s3_peer_local`)
+46. ✅ `peer/usb_midi_cables` (asymmetric 4-in / 5-out MIDI, which is what pins each direction; Host-decoded counts before and after traffic, every cable both directions, interleaved cables in one transfer, SysEx on a non-zero cable, a receive-only cable refused for sending; verified with released EspUsbHost 2.10.1 on the default profile)
 47. ✅ `single/video_descriptor` + `manual/windows_uvc` (UVC camera: descriptor walked without a host, then Windows 11 binding usbvideo and 181/181 frames byte-exact. Found on the way: a 1023-byte isochronous endpoint does not fit the S3's transmit FIFO and fails silently, so `begin()` now checks the FIFO budget)
 48. ✅ `single/hid_registration_order` + `peer/composite_vendor_hid` (found → fixed: a single HID class registered after a non-HID class was looked up by TinyUSB instance number as a table position, so it returned no report descriptor and sent reports to a non-existent instance; the peer test registers Vendor before the keyboard and requires the host to receive the key, which enumeration alone did not catch)
 
