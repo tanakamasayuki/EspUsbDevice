@@ -1048,13 +1048,9 @@ public:
   // sit there with nothing to push it out - and a caller waiting for room is by
   // definition not about to add more.
   bool waitWritable(size_t bytes, uint32_t timeoutMs = 100);
-  // Send whatever is in the transmit FIFO now, whole packet or not.
-  //
-  // Needed after a write shorter than wMaxPacketSize: TinyUSB arms a transfer
-  // only once a whole packet has accumulated, so a short message - a reply, a
-  // status word, the tail of a stream - is not on the wire until this is
-  // called. A sketch that streams in large blocks never notices; one that
-  // answers requests has to call it after every answer.
+  // Request transmission of pending copied bytes. write() already does this,
+  // including for short replies. This does not wait for wire completion and
+  // does not establish a message boundary on the byte stream.
   void flush();
 
   // --- Direct transfer path -----------------------------------------------

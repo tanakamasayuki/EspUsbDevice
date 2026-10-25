@@ -7,6 +7,8 @@ bool started = false;
 uint8_t buffer[129];
 size_t expected = 0;
 size_t received = 0;
+size_t chunk = sizeof(buffer);
+bool explicitFlush = false;
 
 void setup() {
   Serial.begin(115200);
@@ -25,12 +27,15 @@ void loop() {
     } else if (command == "status") {
       Serial.printf("DEVICE_READY %u\r\n", unsigned(device.ready()));
     } else if (command.startsWith("expect ")) {
-      size_t length = command.substring(7).toInt();
+      unsigned length = 0, requestedChunk = 0, flush = 0;
+      sscanf(command.c_str(), "expect %u %u %u", &length, &requestedChunk, &flush);
       if (length == 0 || length > sizeof(buffer) || expected) {
         Serial.println("INVALID_EXPECT");
       } else {
         expected = length;
         received = 0;
+        chunk = requestedChunk ? requestedChunk : sizeof(buffer);
+        explicitFlush = flush != 0;
         Serial.printf("ARMED %u\r\n", unsigned(expected));
       }
     } else if (command == "stop") {
@@ -46,10 +51,9 @@ void loop() {
       size_t sent = 0;
       const uint32_t deadline = millis() + 3000;
       while (sent < received && int32_t(deadline - millis()) > 0) {
-        sent += vendor.write(buffer + sent, received - sent);
-        // Current API needs this even for a one-byte reply. The v3 design
-        // experiment will compare automatic dispatch and explicit batching.
-        vendor.flush();
+        const size_t remaining = received - sent;
+        sent += vendor.write(buffer + sent, remaining < chunk ? remaining : chunk);
+        if (explicitFlush) vendor.flush();
         delay(1);
       }
       if (sent == received) Serial.printf("ECHOED %u\r\n", unsigned(sent));

@@ -3229,7 +3229,16 @@ size_t EspUsbDeviceVendor::write(const uint8_t *buffer, size_t size)
   {
     size = available;
   }
-  return size ? tud_vendor_n_write(0, buffer, static_cast<uint32_t>(size)) : 0;
+  const size_t written = size ? tud_vendor_n_write(0, buffer, static_cast<uint32_t>(size)) : 0;
+#if CFG_TUD_VENDOR_TXRX_BUFFERED
+  // A normal write must also progress a short reply, just as CDC write does.
+  // This schedules pending bytes; it does not wait for wire completion.
+  if (written)
+  {
+    tud_vendor_n_write_flush(0);
+  }
+#endif
+  return written;
 #else
   return 0;
 #endif

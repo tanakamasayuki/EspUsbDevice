@@ -13,8 +13,11 @@ def test_vendor_roundtrip(dut, peers):
         device.write("status")
         device.expect_exact("DEVICE_READY 1\r\n", timeout=10)
 
-        for length in (1, 63, 64, 65, 127, 128, 129):
-            device.write(f"expect {length}")
+        cases = [(n, 129, False) for n in (1, 63, 64, 65, 127, 128, 129)]
+        cases += [(n, chunk, flush) for n in (1, 64, 129)
+                  for chunk in (1, 17) for flush in (False, True)]
+        for length, chunk, flush in cases:
+            device.write(f"expect {length} {chunk} {int(flush)}")
             device.expect_exact(f"ARMED {length}\r\n", timeout=5)
             dut.write(f"exchange {length}")
             dut.expect_exact(f"ROUNDTRIP_OK {length}\r\n", timeout=10)

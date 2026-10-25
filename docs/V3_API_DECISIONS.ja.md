@@ -77,3 +77,13 @@ vendor.write(reply, length);
 
 この順序は全置換の最終目標を変えない。P4/S2/S31、五台ベンチ、OS互換は後段の計画として残す。
 最初のAPI採用をそれらの実機待ちにはしないが、S3で成立しただけで全SoC対応を宣言しない。
+
+## 採用記録: Vendor writeの自動送出
+
+2026-10-26。copy writeで受け入れたbyteがあれば送出を予約する方式を採用した。
+S3–S3新規probeで1/63/64/65/127/128/129 byteを明示flushなしで往復し、
+1/64/129 byteを1または17 byteずつwriteする場合と、各write後に既存のflushを加える場合も確認した。
+計19条件、1 passed、39.84秒。結果は`validation/.pytest-results/vendor-auto-write.xml`。
+writeの戻り値・buffer寿命・callback contextは維持し、flushは完了待ちには変えていない。
+短いwriteごとの転送予約が増える可能性は残る。まとめ書き専用APIは必要性を実測してから追加する。
+現時点の試験は転送速度やP4/S2/S31の動作を証明するものではない。
