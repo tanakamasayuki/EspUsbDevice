@@ -1,6 +1,8 @@
 # v3 実装の出発点と判断契約
 
 2026-10-26。対象は[開発計画](V3_DEVELOPMENT_PLAN.ja.md)の段階1〜3。
+実装の優先順と既存利用への影響判断は[V3_API_DECISIONS.ja.md](V3_API_DECISIONS.ja.md)を優先する。
+以下のregistryや結果型を先にすべて完成させず、Vendorの自然な利用経路に必要な分だけ作る。
 これは実装済みAPIの説明ではない。以下のAPI名・型名は実装を開始するための案であり、
 実験で改善できる。互換aliasを設けず、採用後はexample・試験・この文書を同じ変更で揃える。
 CH32RVへコードを移植する作業、OEP固有protocolの実装は含めない。
@@ -203,8 +205,8 @@ if (!result) recycleUnsubmitted(buffer);  // rejected: still ours
 // accepted: completion owns the return path, including disconnect/reset/cancel
 ```
 
-これらは構文の提案であり、現headerに通ると主張しない。段階2の最初の変更で最小headerと
-compile-onlyの利用例を作り、戻り値を無視しない実例へ置換する。API名はその時点で一本化する。
+これらは構文の提案であり、現headerに通ると主張しない。対象APIを実装する変更で最小headerと
+新しいcompile-onlyの利用例を作り、戻り値を無視しない実例へ置換する。API名はその時点で一本化する。
 
 ## 実装へ渡す能力表の注意
 

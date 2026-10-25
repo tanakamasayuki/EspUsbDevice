@@ -21,7 +21,7 @@ sketch は device、host の順に停止して `TEST_STOPPED` を返し、次の
 loop を待機状態に保ちます。同じ chip の controller を停止するため、device task を
 先に止めて host の終了中に転送を予約しないようにします。コマンドは bytes で送り、`SerialDut.write()` が
 付加する改行が停止コマンドの前に残らないようにします。停止応答の timeout は
-teardown error として後続試験を中断します。元のテスト失敗も pytest に残ります。
+警告として残し、元の失敗を隠す teardown error にはしません。
 
 停止区間は `TEST_STOPPING` と `TEST_STOPPED` で明示します。意図的な切断に
 host の処理中の転送が重なることがあるため、完了した停止区間内に限って

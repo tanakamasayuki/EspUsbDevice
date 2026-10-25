@@ -25,23 +25,24 @@ profile / 実機 / negotiated speed:
 残った条件 / 次の実験:
 ```
 
-## E0: 試験環境と誤った合格の防止
+## E0: 独立したS3–S3環境
 
-- 入力: plugin 1.9.0、S3 Keyboard/CDC/複合、P4 loopback CDC。
-- `all × all`を収集し、正規組は通り、local重複と未結線組はbuild前に理由付きskipされることを確認。
-  unitだけの実行にはprofile optionを付けない（Arduino sketchゼロのprofile選択はpluginがusage errorにする）。
-- 必須全件skipの実行を作り、`--usb-require=s3-smoke`で終了値1となることを確認。
-  teardown失敗、別profileの成功、部分実行、前回の成功を現在の合格へ数えない。
-- 停止応答が欠けた場合は残りのboardの停止も試み、teardown errorでmatrixを止める。
-- 単体テストで上記判定を確認し、実機では停止を含む成功経路を確認する。
-  本物の給電異常を人為的に作る必要はない。
+- `validation/`でconftestなし、旧test/helperなし、新規Host/Device sketchのみを収集する。
+- S3–S3のVendor往復を1/63/64/65/127/128/129 byteで確認する。開始・停止はtest本文で明示する。
+- plugin標準のprofile・port・lock・dut/peersだけを使用。通信assertionをretry/skipで隠さない。
+- 現在は1ケースだけなので、今回1 passedであることとJUnitを確認する。終了値0だけでは全件skipを区別できない。
+- 必須case監査、cleanup失敗後の停止、serial監査が必要になったらpluginへの追加候補として整理する。
+  独自conftestを別のファイルへ移して使い続けない。
+- 新APIの優先実験は[V3_API_DECISIONS.ja.md](V3_API_DECISIONS.ja.md)の短いwriteと容量/mode変更。
+  E1/E2の基盤は、その実装に必要な分だけ作る。
 
 ## E1: 未使用費用、registry、確保失敗
 
 **問い:** Function表を分離すれば必要なクラスだけがリンクされ、資源が設定に比例するか。
 
-1. S3同一profileで「ライブラリなし」「includeのみ」「Device宣言のみ」「Keyboard」
-   「CDC」「Keyboard+CDC」「CDC二つ」を別sketchとしてbuildし、map/data/bss/Flashを保存。
+1. 最初はS3同一profileで「ライブラリなし」「includeのみ」「Device宣言のみ」「Vendor」を
+   新規sketchとしてbuildし、map/data/bss/Flashを保存する。後続クラスの実装時に
+   「Keyboard」「CDC」「Keyboard+CDC」「CDC二つ」を追加し、先に全構成を要求しない。
 2. function/helper別のsymbolの参照元を追う。includeだけでtask/PHYを起動しない。
    CDCのみでAudio/NCM/MSC/SD/OTAの実装・bufferが残れば参照を切る。
 3. CDC容量128/512/2048、1個/2個でbegin前後・end後のheapとtask数を記録。
@@ -90,7 +91,7 @@ CH32の集約通知を名前だけ合わせて移植しない。
 通常writeのflush規則は短い要求応答と連続stream双方のログで選ぶ。
 strict directを成立させられないメモリはコピーAPIへ明示的に誘導する。
 
-## E4: DMA、cache、transfer分割
+## E4: DMA、cache、transfer分割（S3でAPI成立後）
 
 **問い:** 利用者がcacheを意識せず安全にzero-copyを選択できるか。
 
@@ -158,11 +159,11 @@ Audioのfeedbackなど必須protocolを高速化のため削除しない。周�
 | task/イベントqueue・統計 | ESP runtime option / opt-in観測 | E1/E2、未使用時コスト、overflow動作 |
 
 基本Keyboard/Mouse、layout、NKRO、gamepad、consumer/system control、custom/vendor HIDも
-同じraw report層へ載せて、現在のunitとpeer試験を新APIへ移す。
+同じraw report層へ載せ、新契約を対象にunitとpeer試験を新しく作る。旧試験への整合維持は求めない。
 OEPのbuild_opt.hは最後の外部確認材料とし、USB関連overrideと内部`tud_*`呼出しを除去できるかを確認する。
 OEPへ実際に変更を加えることは本ライブラリの準備作業には含めない。
 
-## E8: 五台ベンチと未入手機種
+## E8: 五台ベンチと未入手機種（初期試験の対象外）
 
 | 順序 | 実験 | 合格の証拠 |
 | --- | --- | --- |
@@ -183,7 +184,7 @@ S2/S31の具体的board・connector・VBUS switchは未確定。購入候補の�
 各classのOS依存箇所をWindows/Linux/macOSで確認する。特にCDC、HID、MSC、MIDI、
 UAC1/UAC2、UVC、NCM、DFU、WebUSB/MS OS identityはEspUsbHostだけの成功で終えない。
 長時間・反復の長さはE2/E5で出た故障時間を超えるよう決め、初回は1時間の通信と100回再構成から開始する。
-すべてのexampleをbuildし、移行表の未移行項目、残存TinyUSB参照、未確認SoC/OSを明記する。
+新APIの出荷用exampleを作ってbuildし、移行表の未移行項目、残存TinyUSB参照、未確認SoC/OSを明記する。
 v2比較値がないことはリリースを止める理由にしない。
 
 ## Solが判断を進めるルール

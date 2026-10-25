@@ -42,8 +42,8 @@ uv run --env-file .env pytest --run-mode=build
 Host 側の未リリース修正をリリース前検証する場合だけ使います。
 
 ```sh
-uv run --env-file .env pytest peer/ --profile=s3_peer_local --peer-profile=device:s3_peer_local --usb-local-host
-uv run --env-file .env pytest loopback/ --profile=p4_loopback_local --usb-local-host
+uv run --env-file .env pytest peer/ --profile=s3_peer_local
+uv run --env-file .env pytest loopback/ --profile=p4_loopback_local
 ```
 
 `EspUsbHost` / `EspUsbDevice` のライブラリバージョンを上げた直後、または
@@ -55,31 +55,6 @@ release profile と local profile を切り替えた直後は、古い build cac
 uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
 ```
-
-## v3の一括profile試験
-
-pluginはlock済みの1.9.0を使用します。通常入口は以下です。
-
-```sh
-uv run --env-file .env pytest --profiles=all --peer-profiles=all --collect-only -q
-uv run --env-file .env pytest --profiles=all --peer-profiles=all --usb-require=s3-smoke --usb-require=p4-smoke -rs --junitxml=.pytest-results/all.xml
-uv run pytest unit/
-```
-
-結線表は`usb_test_matrix.py`です。現時点ではS3 released同士と、明示opt-inのlocal同士、
-P4 loopbackを記録しています。未結線の組とlocal重複はbuild前skip。build-onlyは結線条件を除きます。
-unitだけにprofile optionを付けるとArduino sketchがないためusage errorになります。
-複数profileは`.env.example`のprofile別portを使用し、未設置のportは設定しません。
-設定済みportの故障をskipへ変えません。single試験にはpeerの結線フィルタを適用しません。
-
-`--usb-require`は今回のsetup/call/teardownがすべて成功した必須caseを確認します。
-S3はKeyboard/CDC/複合、P4はloopback CDCです。全件skip、別profileだけの成功、途中中断、
-build-onlyを成功に数えません。予期しないserial監査行も終了値を失敗にします。
-collect-onlyでは実行成功を要求しません。段階ごとの追加caseは`REQUIREMENTS`へ登録します。
-USB停止の応答がなければ全boardの停止を試み、teardown errorで後続試験を中断します。
-実機は一つのpytestプロセスで逐次実行します。
-
-準備結果と次の作業は[引き渡し記録](../docs/V3_HANDOFF.ja.md)を参照してください。
 
 ## peer テストの形
 
@@ -182,8 +157,7 @@ example のビルドはこの実行に含まれません——`tools/build_check
 
 各テスト終了時に、Host 側の `dut.log` と peer 側の `peer-*.log` が自動的に監査されます。
 ESP-IDF のエラーログ、`ESP_ERR_*`、panic、assert、watchdog などの疑わしい行は、テストを
-通常は失敗させずに端末の `serial log audit` サマリーへ集計されます。
-`--usb-require`指定時は予期しない行があれば実行全体を失敗にします。HTML レポートを有効にしている
+失敗させずに端末の `serial log audit` サマリーへ集計されます。HTML レポートを有効にしている
 場合は、該当テストの展開ログにも追加されます。完全なシリアルログは
 `/tmp/pytest-embedded/` 以下に保存されます。
 

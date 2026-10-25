@@ -2,9 +2,10 @@
 
 作成日: 2026-10-25。調査基準: EspUsbDevice 2.6.1、commit `b1094cd`。
 
-2026-10-26追記: `v3` worktreeで準備を実施した。
-[引き渡し記録](V3_HANDOFF.ja.md)、[API・所有権の出発案](V3_ARCHITECTURE.ja.md)、
-[実験台帳](V3_EXPERIMENTS.ja.md)を実装時の入口とする。以下の段階2以降は未実装。
+2026-10-26更新: 開発用試験は既存test/sampleから独立した`validation/`へ変更した。
+初期実機はS3–S3だけ。conftestによる独自制御は行わない。
+[引き渡し](V3_HANDOFF.ja.md)、[API変更の判断](V3_API_DECISIONS.ja.md)、
+[所有権の出発案](V3_ARCHITECTURE.ja.md)、[実験台帳](V3_EXPERIMENTS.ja.md)を参照。
 
 v3は、現在の明示的な構成と基本的な使い勝手を軸に、使う機能だけにコード・メモリ・実行コストを
 持たせるmajor releaseとする。公開APIを整理し、ビルド時の容量・転送方式設定を実行時の設定へ移す。
@@ -55,13 +56,14 @@ link map、簡単なsize確認、開始・終了時の資源確認を中心に�
 
 基本例のDeviceと機能オブジェクトの宣言、`begin(config)`、識別文字列、Keyboard/Mouseの基本操作、
 CDCの`available/read/write/print`は自然な形であれば維持する。
-既存の基本sketchは使いやすさの確認材料にし、変更不要であることを絶対条件にはしない。
+旧sampleと旧testを今回の設計・合否基準にしない。新しい利用コードから使いやすさを確認する。
 基本例・複合例の最終形を先に書いて、意味が明確で設定が簡潔かを確認する。
 
 基本APIも詳細APIも、統一感・資源所有・最適化のために変更できる。互換性のためだけのshim、
 旧名alias、二重状態を作らない。作業中は既存exampleや利用側がbuild不能でもよく、旧APIを動かすために
 中間の互換層を作らない。段階の対象になった機能を新APIで動かし、リリースまでに出荷exampleを揃える。
-変更ごとに旧API、新API、理由、利用側の修正例を記録する。
+変更ごとに旧API、新API、利点、不利益、既存利用への影響と移行例を記録する。
+破壊的変更が可能でも、変更に利点のない名前や通常操作まで一律に変更しない。
 
 | 整理対象 | v3で定める契約 |
 | --- | --- |
@@ -85,17 +87,18 @@ ESP固有のtask/core/cache設定は共通概念と分ける。CH32RV側の変�
 Core、Host版、plugin版、board revision、build option、結線を試験結果とともに記録する。
 小さな実装単位と実機確認を繰り返し、全APIの事前確定や別製品の試作スタックは作らない。
 変更中に未対応となるクラスは明記し、各段階の完了時にはその段階の対象構成を新APIでbuild・実行できる状態にする。
-全クラスや旧APIが全commitで動くことは要求しない。未実装と失敗を隠すためにテストを削除・無条件skipしない。
+旧クラス・旧sample・旧testの整合維持は開発途中の要件にしない。新しい試験は新APIの契約から作る。
+未実装と失敗を隠すために新試験を削除・無条件skipしない。
 
 | 段階 | 作業と成果物 | 次へ進む条件 |
 | --- | --- | --- |
-| 0 試験環境 | 現行commitと依存版を記録。plugin更新、profileと結線表、一括実行、必須試験の判定を整備。既存S3の代表通信で治具を確認 | 対象外skipと実行失敗が区別できる。比較ベンチマークは不要 |
-| 1 API設計 | ESP/CH32RV/v3の対応表、基本例、複合例、streaming例の利用コード、所有権・通知契約を作成 | 実装の出発契約と実測で選ぶ項目を分離し、実験・採用基準を定める。未使用機能がリンクされない構造を説明できる |
-| 2 小さな実装 | HID Keyboard、CDC、両者の複合を新しい資源管理で動かす。必要なら旧EP0/DWC2を内部境界で利用 | S3 peerの機能、未使用クラス除外、確保失敗、終了・再開始を確認 |
-| 3 異なる転送方式 | Vendorの通常/直接転送と受信、Audioの最小周期転送を実装。P4でDMA/cacheの成立性を早期確認 | 終端・中断・buffer返却・周期性を確認。共通設計を見直してから全classへ展開 |
+| 0 試験環境 | 独立したvalidationにS3–S3のみ。標準pluginと普通のtest関数で新規probeを実行 | conftest/helper依存なしでbuild/upload/通信/停止を確認 |
+| 1 API判断 | TinyUSB制約による不自然な操作を抽出し、before/after、利点、不利益、移行負担を比較 | 最初はVendorの短い返信・容量・転送方式。実験と採用基準を定める |
+| 2 Vendorから実装 | copy writeの自然な送出、instance別容量、再構成、borrowed転送。必要なregistry/lifecycleだけを同時に実装 | S3でE1/E2/E3、build_optなしの設定切替、返却、未使用費用を確認 |
+| 3 共通性の確認 | CDC、HID、最小Audioへ展開。別instanceと複合構成で契約を確認 | byte stream/report/周期転送で責務が自然。P4 DMA/cacheは後段でE4を実施 |
 | 4 全クラスへ展開 | HID各種、複数CDC、MIDI、MSCとhelper、Vendor、NCMと任意network、CCID、DFU/OTA、UAC1/UAC2、Video | 現行機能の移行表と代表複合構成が埋まり、設定がAPIまたは自動算出に移る |
 | 5 共通スタックとDWC2 | EP0・標準要求・イベント・転送管理・DWC2を独自実装へ切り替え。クラス変更とはcommitと比較を分ける | reset、SETUP割込み、STALL解除、alternate setting、suspend/resume、remote wakeup、DMA/FIFOを確認 |
-| 6 対応機種とリリース | S2実機、P4のFS/HS、OS互換、長時間・再構成試験、全example、移行ガイド、依存監査 | 新APIの基本例、機能回帰、資源確認、TinyUSB依存撤去が揃う。S31は新規対応として別に判定 |
+| 6 対応機種とリリース | S2実機、P4のFS/HS、OS互換、長時間・再構成試験、新APIの代表example、移行ガイド、依存監査 | 新APIの基本例、機能回帰、資源確認、TinyUSB依存撤去が揃う。S31は新規対応として別に判定 |
 
 段階2〜5の内部境界は実装結果で調整する。旧・新クラスが同一interfaceをclaimする構造や、
 不足symbolがArduino同梱TinyUSBへ解決されるfallbackは認めない。
@@ -114,7 +117,7 @@ DWC2由来コードを参照・改変した場合はライセンスと出所を�
 
 | 作業 | モデル運用案 | 確認点 |
 | --- | --- | --- |
-| 段階0のplugin・profile・結線条件整備 | Sol Medium | 収集結果、必要な組の実行、誤ったskipがないこと |
+| 段階0の独立S3–S3試験 | Sol Medium | 標準pluginだけで新規probeを実行。拡張不足はplugin側へ提案 |
 | 段階1の所有権・通知・APIの骨格 | 現在のモデルでまとめてからSolへ渡す、またはSolの高い推論設定で作成 | 基本・複合・streamingの利用例と状態遷移で矛盾を確認 |
 | 段階2〜4のクラス実装・example・試験 | Sol Mediumを基本とし、複雑な変更だけHigh相当へ上げる | 一つの機能経路を実装し、対象試験を通してから広げる |
 | EP0、DWC2、DMA/cache、割込みとの競合 | Sol High以上を候補とし、重要な境界で現在のモデルまたはAstraによる別のレビューを検討 | 状態遷移、同期、buffer寿命をコードとログで確認 |
@@ -129,11 +132,10 @@ Solだけで進めてもよく、重要箇所のレビューは別セッショ�
 
 ### 最初の作業単位
 
-1. 現在のモデルまたはSolで、資源所有・状態遷移・通知context・基本/複合/streaming例の骨格を短い設計文書にする。
-   未使用コストと最終形に直結する判断を先に決め、全クラスの細部は実装で調整する。
-2. Solで段階0の試験環境を整え、S3の既存代表通信を実行する。v2の性能測定は行わない。
-3. Solで段階2を「登録と開始/終了」「Keyboard」「CDC」「複合」の検証可能な単位に分けて進める。
-4. 最初の複合構成が通ったところで、APIと所有権のレビューを一度行う。問題がなければ同じ進め方で段階3以降へ進む。
+1. Solで新しいS3 Vendor probeを使い、短いwriteの自動送出と明示batchを比較する。
+2. API変更の利点・不利益・既存利用への影響を記録し、採用する操作を決める。
+3. Vendorのinstance configと所有権を実装するために必要なregistry/lifecycleを作る。
+4. copy/borrowedと再構成が通ったらCDCへ展開し、HID/Audioとの複合で共通設計を見直す。
 
 各単位は「目的、今回の範囲、完了条件、必要な試験」を示して依頼する。単なる調査だけで終えず、
 実装・対象試験・記録までを一単位とする。設計の改善に必要な関連箇所の変更は許容する。
@@ -163,74 +165,30 @@ OEPは大容量通信と複合構成の外部利用例として追加する。OE
 Hostとの相互誤解で試験が成功しないよう、PC OSや独立したhostによる列挙・通信試験も残す。
 Host側の不具合は再現条件を分離し、Device側の非準拠なworkaroundで隠さない。
 
-## 最新pluginによる一括試験
+## 独立した試験環境
 
-参照したpluginは`~/dev/pytest-embedded-arduino-cli`の1.9.0、commit `5ef1658`。
-`TESTING_ADVANCED.ja.md`の「profile の組合せと適用条件」と`README.ja.md`の実行modeを基準とする。
-`pytest_arduino_cli_skip_reason`のhook登録はpluginの実装でも確認した。
-段階0で`tests/pyproject.toml`を`>=1.9.0`へ更新し、lockは1.9.0で検証した。
-
-### 候補の展開と結線による除外
-
-標準の入口は、各sketchのprimary/peer profileを展開する一括実行とする。
-以下の入口と、現行S3/P4用の結線条件・必須結果判定を段階0で整備した。
+開発用入口は`validation/`。旧`tests/`と`examples/`を読み込まず、新規sketchとtestを作る。
+別のpyproject/lock/venvを使い、標準pytestの`--noconftest`でconftest読込みを無効にする。
+独自hook、fixture差替え、nodeid集計、既知ログ許可表、互換helperを置かない。
+通常のtest本文から開始・通信・停止を明示し、pluginのdut/peersとprofile/port/lockを使う。
 
 ```sh
-cd tests
-uv run --env-file .env pytest --profiles=all --peer-profiles=all --collect-only -q
-uv run --env-file .env pytest --profiles=all --peer-profiles=all --usb-require=s3-smoke --usb-require=p4-smoke -rs --junitxml=.pytest-results/all.xml
+cd validation
+uv sync --locked
+uv run --env-file .env pytest --collect-only -q
+uv run --env-file .env pytest -q -rs --junitxml=.pytest-results/s3-vendor.xml
 ```
 
-`--profiles=all`は全チップの自動発見ではなく、各`sketch.yaml`に書かれた候補の展開である。
-`--peer-profiles=all`との直積から、実際の結線・役割・コントローラに適合する組だけを実行する。
-`--run-mode=all`はbuild/upload/testの実行modeであり、profile展開とは別である。
+初期profileはS3 HostとS3 Deviceに一つずつ。P4やlocal複製を増やしてskipする仕組みは作らない。
+将来機材を増やしたとき、標準のprofile候補選択と`all`の範囲で結線を表現できるかを確認する。
+必要な機能が不足するなら、再現例・必要な結果・受入条件をまとめてplugin側への追加依頼を優先する。
+conftestは標準化できない必要性が実証された場合の最後の手段とし、別ファイルへ移した独自hookで代替しない。
 
-- 結線表を一か所に置き、`tests/peer/conftest.py`の`pytest_arduino_cli_skip_reason(item, combination)`で共通条件を適用する。
-- 個別のclass/速度条件は`arduino_skip_if`を使用できる。理由を必須にする。
-- `combination.primary`と`combination.peers["device"]`を役割表へ解決して判定する。profile名の一致で結線を判断しない。
-- 現在の`(s3_peer_host, s3_peer_device)`は名前が異なるが正規の組である。
-- local Host profileと重複Device profileも`all`に入る。通常はreleased Hostの組を必須とし、local組は設定で明示的に有効化する。除外理由を残す。
-- 判定は設定だけを読み、収集中にport接続やfixture取得をしない。`peers`はfixture依存に明示する。
-- 配線による制限をunitやsingleへ伝播させない。`.ino`を持たないunitは一度だけ実行する。
-- build-onlyでは結線不足を理由にcompileを省かない。配線条件を実機modeに限定し、機種の機能制約とは分ける。全exampleのbuild matrixも維持する。
-
-### portと結果の取り扱い
-
-複数候補の役割はprofile別のport設定を使い、共通`--port`や共通環境変数を流用しない。
-例としてprimaryに`TEST_SERIAL_PORT_S3_PEER_HOST`、peerに
-`TEST_SERIAL_PORT_PEER_DEVICE_S3_PEER_DEVICE`を設定する。実機の識別と結線は別々に記録する。
-S2の書き込み・ログ用UARTも含め、試験USBとは独立した制御経路を用意する。
-
-| 状況 | 結果 |
-| --- | --- |
-| 結線のない組、対象外の機能、通常実行対象外のlocal組 | build前の理由付きskip |
-| 組合せmodeでport未解決、同じ物理portを二役に割当 | pluginの設備skip。未検証として記録 |
-| 設定済みportの接続失敗、compile/upload失敗、lock timeout | error |
-| 実行した通信・状態検証が不一致 | failed |
-| teardown失敗 | error。次の構成を安全に実行できると仮定しない |
-
-`--collect-only`は適用条件を確認できるが、port不足・接続状態の確認はしない。
-全件skipでもpytestは通常終了値0になるため、`--usb-require`で今回の必須構成と必須caseの
-setup/call/teardown成功を検証する。JUnitとともに結果を保存する。
-過去の`state.json`やbuild-onlyの結果を実機成功に数えない。
-必須集合は開発段階ごとに定義し、初期はS3 peer、後段でP4 FS/HSとS2を加える。
-S31未入手・未対応は明示し、v3既存機種の合格をS31対応済みと解釈しない。
-
-### 反復試験の時間
-
-実機の組合せ実行は逐次とし、xdistで並列化しない。同じP4を使うHS/FS試験も直列化する。
-既存の開始待機・停止応答・serial error監査を維持し、nodeidへの組合せ追加後も監査条件が一致することを確認する。
-通常は対象caseだけを増分buildで反復し、Core/依存変更、profile切替、段階完了時はclean検証する。
-Host側の再compile削減は実際のcacheと依存追跡を確認してから採用する。
-`--run-mode=test`はcompileを省くがuploadは行い、Deviceだけを再buildするoptionではない。
-Hostの書き込み省略を前提に計画しない。
-
-単独切り分けも維持する。全体ではprofile名が異なるため、単一`--profile`指定は対象suiteを限定する。
-
-```sh
-uv run --env-file .env pytest peer/ --profile=s3_peer_host -rs
-uv run --env-file .env pytest loopback/ --profile=p4_loopback -rs
-```
+plugin 1.9.0の最新ローカルguideのprofile組合せ、peer、conftestの章を参照した。
+port未設定によるskipは未検証、設定済みportへの接続やbuild/upload失敗はerror、通信不一致はfailed。
+全件skipを失敗にする標準optionは追加候補として記録し、現在は今回の結果が1 passedであることを確認する。
+終了値0だけを合格としない。旧`--usb-require`の独自監査は撤去した。
+試験は逐次実行し、compile省略時もuploadは行うというpluginの通常動作に従う。
 
 ## 機種と常駐ベンチ
 
@@ -282,7 +240,7 @@ Host役割交代時のVBUS source競合を防ぐ構成にする。USB-Cのrole�
 
 ### ベンチを決める最初の実験
 
-1. 既存S3 peerの代表通信で治具と試験環境を確認する。性能比較は不要。
+1. 新規S3–S3 probeで治具と試験環境を確認する。性能比較は不要。
 2. P4 FS HostとS2 Device、逆のS2 HostとP4 FS Deviceを個別に確認する。
 3. S31入手後、P4 HS HostとS31 Deviceを確認し、実際のnegotiated speedを記録する。
 4. 三台共有結線でP4のHS/FS試験を逐次反復し、停止・port選択・VBUSの干渉がないことを確認する。
@@ -296,13 +254,12 @@ Host役割交代時のVBUS source競合を防ぐ構成にする。USB-Cのrole�
 - 未使用機能が重い資源を持ち込まず、開始/終了と失敗時の資源管理が確認できる。v2との性能比較は必須にしない。
 - 容量・個数・転送方式はAPIまたは構成から決まり、利用側にTinyUSB設定や内部関数を要求しない。
 - TinyUSBの上位/下位依存と意図しないCore同梱版へのリンクがなく、必要な出所・licenseは保持する。
-- 一括試験は結線対象だけを実行し、必須caseの未実行を見逃さない。個別実行でも同じ試験ができる。
+- 機材拡大時の一括試験は標準plugin機能を基本にし、未実行を合格扱いしない。必要な共通機能はplugin側へ追加する。
 - S3、P4 FS/HS、S2の確認状況とS31新規対応状況を区別し、未検証を対応済みにしない。
 - Windows/Linux/macOSの対象class、長時間試験、Firmware更新などの結果と残課題をリリース判断に残す。
 
 ## 次に着手する作業
 
-段階0と段階1の出発案を整備した。実施範囲と結果は[引き渡し記録](V3_HANDOFF.ja.md)を参照。
-Solは同記録の作業Aから始め、registry/lifecycleの最小実装とE1/E2を進める。
-API名・既定容量は実装と実験で確定し、旧API互換層は作らない。
-最初のKeyboard+CDC複合とVendor/最小Audioの成立時点で設計を見直し、それから全クラスへ広げる。
+[API変更の判断](V3_API_DECISIONS.ja.md)に沿ってVendorの短い送信と容量・modeを優先する。
+[引き渡し](V3_HANDOFF.ja.md)の独立S3–S3 probeから着手し、APIごとに影響と実験結果を記録する。
+旧test/sampleへの追従や、汎用registryの先行完成を目的にしない。

@@ -34,8 +34,8 @@ Arduino Core 標準 USB Device では制御しづらい項目をこのリポジ�
 このため、peer / loopback の default profile は released `EspUsbHost` を使います。
 通常の確認では default profile だけを使います。`s3_peer_local` と `p4_loopback_local` は、
 Host 側の未リリース修正をこのリポジトリでリリース前検証する場合だけ使います。
-例: `uv run --env-file .env pytest peer/ --profile=s3_peer_local --peer-profile=device:s3_peer_local --usb-local-host`、
-`uv run --env-file .env pytest loopback/ --profile=p4_loopback_local --usb-local-host`。
+例: `uv run --env-file .env pytest peer/ --profile=s3_peer_local`、
+`uv run --env-file .env pytest loopback/ --profile=p4_loopback_local`。
 
 ```text
 tests/
@@ -201,7 +201,7 @@ MIDI を対象にします（上記2つは既定の 1 cable を引き続きカ�
 実装なら失敗します。さらに、1 回の bulk transfer に異なる cable の packet を複数入れる場合
 （cable を packet 単位ではなく transfer 単位で読むと組み合わせがずれます）と、0 以外の cable
 での SysEx（cable は message の全 packet に繰り返し載ります）もカバーします。
-`getMidiPortInfo()` を含む released Host 2.10.1 の `s3_peer_host` を標準profileとし、実機確認済みです。
+`getMidiPortInfo()` は未リリースのため、profile は `s3_peer_local` のみです。
 
 **peer が非対称（device → Host 4 本、Host → device 5 本）なのは、どちらの endpoint の数が
 どちらの方向に入るかを確認できる唯一の方法だからです。** クラス仕様は embedded jack を
@@ -417,7 +417,7 @@ HID + HID（keyboard + mouse、vendor など）は report ID 多重で単一 HID
 43. ✅ `unit/nkro_report`（NKRO 状態 report struct の bitmap レイアウト / modifier 振り分け / 境界。host g++）
 44. ✅ `unit/midi_descriptor`（対称・非対称すべての cable 数の組み合わせの descriptor byte、および 1 cable が `TUD_MIDI_DESCRIPTOR()` と一致すること。host g++）
 45. ✅ `loopback/usb_midi_cables`（4 cable MIDI、cable 番号が双方向で保たれること）
-46. ✅ `peer/usb_midi_cables`（非対称 4-in / 5-out MIDI＝方向を確定できる構成: 通信前後の Host 側 cable 数、全 cable の双方向、1 transfer 内の cable 混在、0 以外の cable での SysEx、受信専用 cable への送信が失敗すること。released EspUsbHost 2.10.1 の標準profileで確認済み）
+46. ✅ `peer/usb_midi_cables`（非対称 4-in / 5-out MIDI＝方向を確定できる構成: 通信前後の Host 側 cable 数、全 cable の双方向、1 transfer 内の cable 混在、0 以外の cable での SysEx、受信専用 cable への送信が失敗すること。EspUsbHost の未リリース `getMidiPortInfo()` が必要なため `--profile s3_peer_local`）
 47. ✅ `single/video_descriptor` + `manual/windows_uvc`（UVC カメラ: ホスト無しで descriptor を走査し、そのうえで Windows 11 が usbvideo をバインドし 181/181 フレームがバイト一致。途中で判明: 1023 バイトの isochronous エンドポイントは S3 の送信 FIFO に入らず、しかも無言で失敗する。そのため `begin()` が FIFO 予算を検査するようにした）
 48. ✅ `single/hid_registration_order` + `peer/composite_vendor_hid`（発見 → 修正: 非HIDクラスの後に登録した単独HIDクラスを TinyUSB のインスタンス番号でテーブル位置として引いていたため、report descriptor を返さず、report を存在しないインスタンスへ送っていた。peer テストは Vendor をキーボードより先に登録し、ホストがキーを受け取ることまで要求する。列挙だけでは捕まらなかった）
 

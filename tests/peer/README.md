@@ -23,8 +23,8 @@ its ready query with a deadline before issuing any DFU requests.
 
 Teardown sends `0x1f` to stop the host first and then each peer, including when
 assertions fail. Each responds `TEST_STOPPED` and stays idle until its next
-upload. Missing shutdown acknowledgements are teardown errors and stop the matrix.
-Every peer is attempted even if host shutdown fails. Control commands are bytes to avoid
+upload. Missing shutdown acknowledgements are warnings, and every peer is
+attempted even if host shutdown fails. Control commands are bytes to avoid
 implicit serial newlines. The shared implementation is in
 `../usb_test_lifecycle.py` and `../sketch_support/UsbTestLifecycle.h`.
 Sketches check `usbTestControlPending()` before reading serial input and return

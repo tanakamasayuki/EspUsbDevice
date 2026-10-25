@@ -48,8 +48,8 @@ Regular peer and loopback tests use the released EspUsbHost version. Local
 profiles are only for pre-release validation of unreleased Host-side fixes.
 
 ```sh
-uv run --env-file .env pytest peer/ --profile=s3_peer_local --peer-profile=device:s3_peer_local --usb-local-host
-uv run --env-file .env pytest loopback/ --profile=p4_loopback_local --usb-local-host
+uv run --env-file .env pytest peer/ --profile=s3_peer_local
+uv run --env-file .env pytest loopback/ --profile=p4_loopback_local
 ```
 
 After upgrading `EspUsbHost` / `EspUsbDevice`, or after switching between release
@@ -60,31 +60,6 @@ crashes or unexpected timeouts. Rebuild with `--clean` in that case.
 uv run --env-file .env pytest peer/ --profile=s3_peer_host --clean
 uv run --env-file .env pytest loopback/ --profile=p4_loopback --clean
 ```
-
-## v3 profile matrix
-
-Use the locked plugin 1.9.0. Run hardware sequentially in one pytest process:
-
-```sh
-uv run --env-file .env pytest --profiles=all --peer-profiles=all --collect-only -q
-uv run --env-file .env pytest --profiles=all --peer-profiles=all --usb-require=s3-smoke --usb-require=p4-smoke -rs --junitxml=.pytest-results/all.xml
-uv run pytest unit/
-```
-
-`usb_test_matrix.py` records wired profile pairs. Released S3 peers and P4
-loopback are enabled; local pairs require `--usb-local-host`. Unwired pairs
-skip before building. Build-only ignores wiring, but local profiles still need
-opt-in. Do not pass profile options to unit-only runs: there are no sketches.
-Use profile-specific ports from `.env.example`; leave absent boards unassigned.
-Configured port failures remain errors. Peer wiring does not filter single tests.
-
-`--usb-require` requires fresh setup, call, and teardown passes on the named
-wiring. S3 requires Keyboard, CDC, and their composite; P4 requires loopback CDC.
-Skipped, unfinished, wrong-profile, and build-only results cannot satisfy a gate.
-Unexpected serial audit findings also fail a required run. Collection alone does
-not require execution. Add later stage gates to `REQUIREMENTS`.
-Missing USB stop acknowledgements attempt all boards, then raise a teardown
-error and stop the matrix. See the [handoff record](../docs/V3_HANDOFF.ja.md).
 
 ## The shape of a peer test
 
@@ -199,8 +174,7 @@ Check workflow cover it.
 After each test, the host `dut.log` and peer `peer-*.log` files are audited
 automatically. Suspicious ESP-IDF errors, `ESP_ERR_*` values, panics, asserts,
 and watchdog messages are summarized under `serial log audit` without failing
-the test. With `--usb-require`, unexpected findings fail the overall run.
-When the HTML report is enabled, findings are also appended to that
+the test. When the HTML report is enabled, findings are also appended to that
 test's expandable log. Complete serial logs remain available under
 `/tmp/pytest-embedded/`.
 

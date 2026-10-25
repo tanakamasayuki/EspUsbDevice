@@ -53,11 +53,10 @@ def test_failed_assertion_still_stops_every_board():
     events = []
     host = FakeDut("host", events, stop_error=True)
     peers = [FakeDut("peer1", events, stop_error=True), FakeDut("peer2", events)]
-    with pytest.raises(RuntimeError, match="USB shutdown was not acknowledged") as caught:
-        with usb_test_session(host, "example", peers):
-            raise AssertionError("product failure")
-    assert str(caught.value.__context__) == "product failure"
-    assert "host" in str(caught.value) and "peer" in str(caught.value)
+    with pytest.warns(UserWarning, match="USB shutdown was not acknowledged"):
+        with pytest.raises(AssertionError, match="product failure"):
+            with usb_test_session(host, "example", peers):
+                raise AssertionError("product failure")
     assert [e[0] for e in events if e[1] == "stop"] == ["host", "peer1", "peer2"]
 
 
