@@ -1,5 +1,6 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbAudioRequest.h"
+#include "internal/EspUsbTinyUsbRuntime.h"
 
 #include <string.h>
 
@@ -70,12 +71,14 @@ EspUsbAudioFunction::~EspUsbAudioFunction()
 
 EspUsbAudioPlaybackStream &EspUsbAudioFunction::addPlaybackStream()
 {
+  if (started_.load()) { device_.setLastError(ESP_ERR_INVALID_STATE); return playback_; }
   playbackEnabled_ = true;
   return playback_;
 }
 
 EspUsbAudioCaptureStream &EspUsbAudioFunction::addCaptureStream()
 {
+  if (started_.load()) { device_.setLastError(ESP_ERR_INVALID_STATE); return capture_; }
   captureEnabled_ = true;
   return capture_;
 }
@@ -96,6 +99,7 @@ bool EspUsbAudioFunction::addFormat(
     espusb::internal::AudioDirection direction,
     const EspUsbAudioFormat &format)
 {
+  if (started_.load()) { device_.setLastError(ESP_ERR_INVALID_STATE); return false; }
   if (format.sampleRate == 0 || format.channels == 0)
   {
     return false;
@@ -147,8 +151,18 @@ bool EspUsbAudioFunction::buildGraph(uint8_t interfaceNumber,
   return controls_.configure(model_, graph_);
 }
 
+esp_err_t EspUsbAudioFunction::configure(const EspUsbAudioConfig &config)
+{
+  if (started_.load()) return ESP_ERR_INVALID_STATE;
+  if (config.eventCapacity > SIZE_MAX / sizeof(espusb::internal::AudioRuntimeEvent)) return ESP_ERR_INVALID_SIZE;
+  config_ = config; return ESP_OK;
+}
+size_t EspUsbAudioFunction::eventCapacity() const { return events_.capacity(); }
+
 bool EspUsbAudioFunction::begin()
 {
+  if (!registered_ || started_.load() || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  startError_ = ESP_ERR_INVALID_ARG;
   if ((!playbackEnabled_ && !captureEnabled_) ||
       (playbackEnabled_ && model_.playback().formatCount() != 1) ||
       (captureEnabled_ && model_.capture().formatCount() != 1))
@@ -157,7 +171,7 @@ bool EspUsbAudioFunction::begin()
   }
   if (g_activeAudio && g_activeAudio != this)
   {
-    return false;
+    startError_ = ESP_ERR_INVALID_STATE; return false;
   }
   if (!buildGraph(graph_.controlInterface,
                   graph_.playback.dataEndpoint
@@ -167,24 +181,27 @@ bool EspUsbAudioFunction::begin()
   {
     return false;
   }
-  events_.clear();
+  if (!events_.configure(config_.eventCapacity)) { startError_ = ESP_ERR_NO_MEM; return false; }
   playbackAlternate_ = 0;
   captureAlternate_ = 0;
   playback_.resetStats();
   capture_.resetStats();
   g_activeAudio = this;
+  started_.store(true); startError_ = ESP_OK;
   return true;
 }
 
 void EspUsbAudioFunction::end()
 {
+  if (g_activeAudio == this && device_.tinyusbStarted_) { device_.end(); return; }
+  started_.store(false);
   if (g_activeAudio == this)
   {
     g_activeAudio = nullptr;
   }
   playbackAlternate_ = 0;
   captureAlternate_ = 0;
-  events_.clear();
+  events_.release();
   playback_.resetStats();
   capture_.resetStats();
 }
@@ -217,6 +234,7 @@ uint16_t EspUsbAudioFunction::configurationDescriptorForSpeed(
     uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
     uint8_t endpointNumber, bool highSpeed)
 {
+  if (started_.load()) { device_.setLastError(ESP_ERR_INVALID_STATE); return 0; }
   if (!buildGraph(interfaceNumber, endpointNumber))
   {
     return 0;
@@ -245,7 +263,7 @@ uint16_t EspUsbAudioFunction::configurationDescriptorForSpeed(
 int EspUsbAudioPlaybackStream::available() const
 {
 #if ESP_USB_AUDIO_HAS_TINYUSB
-  return static_cast<int>(tud_audio_available());
+  return function_.started_.load() ? static_cast<int>(tud_audio_available()) : 0;
 #else
   return 0;
 #endif
@@ -254,7 +272,7 @@ int EspUsbAudioPlaybackStream::available() const
 size_t EspUsbAudioPlaybackStream::read(void *data, size_t length)
 {
 #if ESP_USB_AUDIO_HAS_TINYUSB
-  if (!data || length == 0)
+  if (!function_.started_.load() || !data || length == 0)
   {
     return 0;
   }
@@ -270,7 +288,7 @@ size_t EspUsbAudioPlaybackStream::read(void *data, size_t length)
 bool EspUsbAudioPlaybackStream::clearBuffer()
 {
 #if ESP_USB_AUDIO_HAS_TINYUSB
-  return tud_audio_clear_ep_out_ff();
+  return function_.started_.load() && tud_audio_clear_ep_out_ff();
 #else
   return false;
 #endif
@@ -296,7 +314,7 @@ void EspUsbAudioPlaybackStream::resetStats()
 size_t EspUsbAudioCaptureStream::write(const void *data, size_t length)
 {
 #if ESP_USB_AUDIO_HAS_TINYUSB
-  if (!data || length == 0)
+  if (!function_.started_.load() || !data || length == 0)
   {
     return 0;
   }
@@ -331,7 +349,7 @@ size_t EspUsbAudioCaptureStream::write(const void *data, size_t length)
 bool EspUsbAudioCaptureStream::clearBuffer()
 {
 #if ESP_USB_AUDIO_HAS_TINYUSB
-  return tud_audio_clear_ep_in_ff();
+  return function_.started_.load() && tud_audio_clear_ep_in_ff();
 #else
   return false;
 #endif

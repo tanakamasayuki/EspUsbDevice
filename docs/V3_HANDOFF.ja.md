@@ -457,3 +457,19 @@ serial原本は/tmp/pytest-embedded/2026-10-26_17-57-02-044220/、コピーとJU
 次の実装はAudioの最小周期経路とruntime容量・callback所有権を調べ、残るclassを独自化すること。
 MSCのOS/media試験、人工的な旧完了eventとqueue満杯の組合せ、reset/endの同時条件は未検証として残す。
 共通EP0/core/DCDとP4/S2/S31の実機対応は未完であり、最終目標の達成とはしない。
+
+
+## Audio eventのruntime容量と検証の入口
+
+2026-10-27。EspUsbAudioConfig.eventCapacityを追加し、begin時に実数分だけ確保、0でevent配列を省略する。
+queueをmulti-producer対応にし、稼働中の構成変更と未登録AudioのFIFO操作を拒否する。
+Function破棄はUSB停止後にevent領域を解放する。PCMのlegacy driver/FIFO/globalはまだ残る。
+新規audio_eventsとallocation_failureのaudio-events-related.xmlは2 passed、0 skipped、0 unfinished、77.39秒。
+容量0/1/8/17件の実USB Mute、200件の並列producer、metadata反復、稼働中破棄、
+413取得点の失敗/回復を含み、全case両board STOPPED、panicなし。
+API/利点・不利益/原本は[V3_AUDIO_API.ja.md](V3_AUDIO_API.ja.md)を参照。
+
+次は独自Audio transportへ進む。FS/HSのpacketサイズをdescriptorから求め、選択方向だけのring/DMAを確保する。
+UAC1/UAC2 control、feedback、captureの端数rate、alt設定変更/reset/endと旧完了eventを揃えて検証する。
+現状はformat/control stateの固定配列と単一形式・single global制約があり、今回のevent変更だけでは解消していない。
+全体収集は15件になった。直近の全体成功はMSC時点の14件（772.40秒）で、今回は関連2件を実行した。

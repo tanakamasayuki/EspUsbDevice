@@ -1568,6 +1568,10 @@ private:
   std::atomic<uint32_t> underrunBytes_{0};
 };
 
+struct EspUsbAudioConfig {
+  size_t eventCapacity = 8;
+};
+
 class EspUsbAudioFunction : public EspUsbDeviceClass
 {
 public:
@@ -1582,6 +1586,10 @@ public:
   bool hasPlaybackStream() const { return playbackEnabled_; }
   bool hasCaptureStream() const { return captureEnabled_; }
 
+  esp_err_t configure(const EspUsbAudioConfig &config);
+  const EspUsbAudioConfig &configuration() const { return config_; }
+  size_t eventCapacity() const;
+  esp_err_t startError() const override { return startError_; }
   bool begin() override;
   void end() override;
   bool isHid() const override { return false; }
@@ -1646,6 +1654,9 @@ private:
   void pushControlEvent(espusb::internal::AudioControlSelector selector,
                         uint8_t entityId, uint8_t channel, int32_t value);
 
+  EspUsbAudioConfig config_;
+  esp_err_t startError_ = ESP_OK;
+  std::atomic<bool> started_{false};
   bool playbackEnabled_ = false;
   bool captureEnabled_ = false;
   EspUsbAudioProtocol protocol_ = EspUsbAudioProtocol::Uac1;

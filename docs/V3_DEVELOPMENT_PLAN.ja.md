@@ -190,7 +190,7 @@ conftestは標準化できない必要性が実証された場合の最後の手
 plugin 1.10.0のrelease guideのprofile組合せ、`--combo`、peerの章を再確認した。
 `--combo all`は対応profileのない組を展開せず、適合する組がないtestは`combo=none`でskipする。
 port未設定によるskipは未検証、設定済みportへの接続やbuild/upload失敗はerror、通信不一致はfailed。
-全件skipを失敗にする標準optionは追加候補として記録し、現在は今回の結果が14 passedであることを確認する。
+全件skipを失敗にする標準optionは追加候補として記録し、現在は今回の結果が15 passedであることを確認する。
 終了値0だけを合格としない。旧`--usb-require`の独自監査は撤去した。
 試験は逐次実行し、compile省略時もuploadは行うというpluginの通常動作に従う。
 

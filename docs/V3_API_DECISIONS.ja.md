@@ -279,3 +279,16 @@ MSCの最終OUTはMPS単位でarmし、storageへ渡す量とCSW residueをSCSI�
 sector長をMPSへ切り上げず、Hostが最終packetに余分なbyteを含めても次sectorへ書かない。
 511/512 byte sectorの各BOT13ケースと隣接sectorの保持を実測し、追加bufferなしの方式を採用した。
 5最小build/nmと標準全14試験（772.40秒）が成功した。
+
+
+## 採用記録: Audio event領域の任意化と構成の停止中変更
+
+固定8件の配列をeventCapacityの実数分へ移し、0なら通知配列を省略する。
+満杯なら古いeventを保って新しい通知をdropし、無効化時は意図した省略をdrop数に含めない。
+multi-producerのslot競合を短いcritical sectionで防ぎ、通知経路では追加確保しない。
+稼働中の容量/format/方向の変更を拒否し、未登録Audioがglobal FIFOへアクセスする経路も止める。
+通常のDevice/stream/pollEvent手順は維持する。
+
+利点は不要通知の配列省略・容量調整・明示的な開始エラー。不利益は有効時の動的確保と短いlock。
+PCM側のTinyUSB class/FIFO/globalは残っており、Audio全置換の完了とは扱わない。
+S3の実USB制御と413取得点の失敗回復は[Audioガイド](V3_AUDIO_API.ja.md)へ記録した。

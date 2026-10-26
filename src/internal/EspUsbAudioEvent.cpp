@@ -1,53 +1,58 @@
 #include "EspUsbAudioEvent.h"
-
-namespace espusb {
-namespace internal {
-
-bool AudioEventQueue::push(const AudioRuntimeEvent &event)
-{
-  const uint8_t head = head_.load(std::memory_order_relaxed);
-  const uint8_t tail = tail_.load(std::memory_order_acquire);
-  if (static_cast<uint8_t>(head - tail) >= CAPACITY)
+#include "EspUsbMemory.h"
+#if __has_include("freertos/FreeRTOS.h")
+#include "freertos/FreeRTOS.h"
+#else
+#include <mutex>
+#endif
+namespace {
+#if __has_include("freertos/FreeRTOS.h")
+portMUX_TYPE eventLock = portMUX_INITIALIZER_UNLOCKED;
+struct Guard {
+  Guard() { portENTER_CRITICAL(&eventLock); }
+  ~Guard() { portEXIT_CRITICAL(&eventLock); }
+};
+#else
+std::mutex eventLock;
+struct Guard {
+  Guard() { eventLock.lock(); }
+  ~Guard() { eventLock.unlock(); }
+};
+#endif
+}
+namespace espusb { namespace internal {
+AudioEventQueue::~AudioEventQueue() { release(); }
+bool AudioEventQueue::configure(size_t capacity) {
+  if (capacity > SIZE_MAX / sizeof(AudioRuntimeEvent)) return false;
+  auto *replacement = capacity ? static_cast<AudioRuntimeEvent *>(allocateUsbMemory(capacity * sizeof(AudioRuntimeEvent))) : nullptr;
+  if (capacity && !replacement) return false;
+  AudioRuntimeEvent *previous;
   {
-    dropped_.fetch_add(1, std::memory_order_relaxed);
-    return false;
+    Guard guard;
+    previous = events_; events_ = replacement; capacity_ = capacity;
+    head_ = tail_ = used_ = 0; dropped_ = 0;
   }
-  events_[head % CAPACITY] = event;
-  head_.store(static_cast<uint8_t>(head + 1), std::memory_order_release);
+  freeUsbMemory(previous);
   return true;
 }
-
-bool AudioEventQueue::pop(AudioRuntimeEvent &event)
-{
-  const uint8_t tail = tail_.load(std::memory_order_relaxed);
-  const uint8_t head = head_.load(std::memory_order_acquire);
-  if (tail == head)
-  {
-    return false;
-  }
-  event = events_[tail % CAPACITY];
-  tail_.store(static_cast<uint8_t>(tail + 1), std::memory_order_release);
-  return true;
+void AudioEventQueue::release() { configure(0); }
+size_t AudioEventQueue::capacity() const { Guard guard; return capacity_; }
+bool AudioEventQueue::push(const AudioRuntimeEvent &event) {
+  Guard guard;
+  if (!capacity_) return false;
+  if (used_ == capacity_) { ++dropped_; return false; }
+  new (events_ + head_) AudioRuntimeEvent(event);
+  if (++head_ == capacity_) head_ = 0;
+  ++used_; return true;
 }
-
-size_t AudioEventQueue::pending() const
-{
-  const uint8_t head = head_.load(std::memory_order_acquire);
-  const uint8_t tail = tail_.load(std::memory_order_acquire);
-  return static_cast<uint8_t>(head - tail);
+bool AudioEventQueue::pop(AudioRuntimeEvent &event) {
+  Guard guard;
+  if (!used_) return false;
+  event = events_[tail_];
+  if (++tail_ == capacity_) tail_ = 0;
+  --used_; return true;
 }
-
-uint32_t AudioEventQueue::dropped() const
-{
-  return dropped_.load(std::memory_order_relaxed);
-}
-
-void AudioEventQueue::clear()
-{
-  tail_.store(head_.load(std::memory_order_acquire),
-              std::memory_order_release);
-  dropped_.store(0, std::memory_order_relaxed);
-}
-
-} // namespace internal
-} // namespace espusb
+size_t AudioEventQueue::pending() const { Guard guard; return used_; }
+uint32_t AudioEventQueue::dropped() const { Guard guard; return dropped_; }
+void AudioEventQueue::clear() { Guard guard; head_ = tail_ = used_ = 0; dropped_ = 0; }
+} }
