@@ -98,3 +98,11 @@ HID自体の独自化、動的registry/descriptors、残クラスとcore/DCDの�
 既存v3の取消し・reset/end・大きな転送・Vendorの明示コピー終端も含む。
 Device only / Vendor copy / CDC copyのnmで未使用Function固有処理・取消し・TinyUSB CDC/Vendorが残らないことを確認した。
 RXを完全に無効化する送信専用modeの明示と、固定registry/descriptor領域の撤去は次の作業である。
+
+## RXを使わない送信専用構成
+
+`rxMode=EspUsbBulkRxMode::Disabled`、`rxCapacity=0`を指定する。RX callbackは不要で、
+RX ring/packetを確保せず、OUTをarmしない。USB descriptorの必須OUT endpointは残る。
+`available/read`は0、`maxDirectReceive()`は0、`readDirect()`はNotSupportedを返す。
+TXは従来通りcopyまたはborrowedを選べる。借用TXはTX完了callbackが必要。
+これはBorrowed RXの未投稿状態とは異なり、受信操作自体を使わない明示設定である。

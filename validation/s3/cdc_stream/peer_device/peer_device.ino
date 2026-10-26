@@ -14,6 +14,13 @@ alignas(64) uint8_t direct[384];
 EspUsbTransferResult rxResult, txResult;
 std::atomic<unsigned> rxDone{0}, txDone{0};
 unsigned rxTarget = 0, txTarget = 0;
+alignas(64) uint8_t sourceStorage[2][256];
+EspUsbTransferResult sourceResults[2];
+std::atomic<unsigned> sourceDone[2];
+unsigned sourceTargets[2] = {};
+uint64_t sourceIds[2] = {};
+size_t sourceLengths[2] = {};
+bool directSource = false;
 bool borrowed = false, txPosted = false;
 std::atomic<unsigned> codingEvents[2], stateEvents[2];
 
@@ -46,6 +53,55 @@ void loop() {
       Serial.println("COMBINED");
     } else if (command == "key") {
       Serial.printf("KEY_SENT %u\r\n", unsigned(keyboard && keyboard->tapUsage(4)));
+    } else if (command == "tx_only" || command == "tx_only_direct") {
+      EspUsbBulkStreamConfig config;
+      config.rxMode = EspUsbBulkRxMode::Disabled; config.rxCapacity = 0;
+      config.txCapacity = command == "tx_only" ? 128 : 0;
+      config.transferBytes = config.txCapacity;
+      config.streamTermination = EspUsbStreamTermination::EndWithShortPacket;
+      const bool configured = serial0.onDirectRxComplete(nullptr) == ESP_OK &&
+          vendor && vendor->onDirectRxComplete(nullptr) == ESP_OK &&
+          serial0.configure(config) == ESP_OK && vendor->configure(config) == ESP_OK;
+      directSource = command == "tx_only_direct";
+      serial0.onDirectTxComplete([](const EspUsbTransferResult &result) {
+        sourceResults[0] = result; sourceDone[0].fetch_add(1, std::memory_order_release);
+      });
+      vendor->onDirectTxComplete([](const EspUsbTransferResult &result) {
+        sourceResults[1] = result; sourceDone[1].fetch_add(1, std::memory_order_release);
+      });
+      Serial.printf("TX_ONLY %u\r\n", unsigned(configured));
+    } else if (command == "rx_disabled") {
+      uint8_t ignored = 0;
+      const auto a = serial0.readDirect(sourceStorage[0], 64), b = vendor->readDirect(sourceStorage[1], 64);
+      const bool disabled = !serial0.readCapacity() && !vendor->readCapacity() &&
+          !serial0.maxDirectReceive() && !vendor->maxDirectReceive() &&
+          !serial0.available() && !vendor->available() && !serial0.read(&ignored, 1) && !vendor->read(&ignored, 1) &&
+          !a && a.error == EspUsbTransferError::NotSupported && !b && b.error == EspUsbTransferError::NotSupported;
+      Serial.printf("RX_DISABLED %u\r\n", unsigned(disabled));
+    } else if (command.startsWith("source ")) {
+      unsigned port = 0, length = 0;
+      sscanf(command.c_str(), "source %u %u", &port, &length);
+      if ((port != 0 && port != 2) || !length || length > 129) { Serial.println("INVALID_SOURCE"); return; }
+      const unsigned index = port / 2;
+      auto &channel = *channels[port];
+      memset(sourceStorage[index], 0xa5, sizeof(sourceStorage[index]));
+      for (size_t i = 0; i < length; ++i) sourceStorage[index][64 + i] = uint8_t(i * 37 + length);
+      sourceLengths[index] = length;
+      sourceTargets[index] = sourceDone[index].load(std::memory_order_acquire) + 1;
+      if (directSource) {
+        const auto result = channel.writeDirect(sourceStorage[index] + 64, length, EspUsbTransferTermination::EndWithShortPacket);
+        sourceIds[index] = result.id;
+        Serial.printf("SOURCE_POSTED %u\r\n", unsigned(bool(result)));
+      } else Serial.printf("SOURCE_COPIED %u\r\n", unsigned(channel.write(sourceStorage[index] + 64, length)));
+    } else if (command.startsWith("source_result ")) {
+      const unsigned index = command.substring(14).toInt() / 2;
+      const uint32_t deadline = millis() + 3000;
+      while (sourceDone[index].load(std::memory_order_acquire) < sourceTargets[index] && int32_t(deadline - millis()) > 0) delay(1);
+      const auto &result = sourceResults[index];
+      const bool valid = sourceDone[index].load(std::memory_order_acquire) == sourceTargets[index] &&
+          result.id == sourceIds[index] && result.buffer == sourceStorage[index] + 64 &&
+          result.status == EspUsbTransferStatus::Success && result.actualBytesKnown && result.actualBytes == sourceLengths[index];
+      Serial.printf("SOURCE_RESULT %u\r\n", unsigned(valid));
     } else if (command == "borrowed") {
       EspUsbBulkStreamConfig config;
       config.rxMode = EspUsbBulkRxMode::Borrowed;

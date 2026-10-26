@@ -159,3 +159,11 @@ if (!submission) handleSubmissionError(submission.error);
 onDirectCompleteをonDirectTxCompleteへ移す。`if (!vendor.writeDirect(...))`の形はそのまま使える。
 利点は並行操作でも因果関係が明確な診断と、内部RX資源の削減。不利益は明示投稿とbuffer寿命・alignmentの管理である。
 登録されたFunctionを誤ってcopy/moveすると所有権が壊れるため、Functionのcopy/moveも禁止した。
+
+## RXを使わない送信専用構成
+
+`rxMode=EspUsbBulkRxMode::Disabled`、`rxCapacity=0`を指定する。RX callbackは不要で、
+RX ring/packetを確保せず、OUTをarmしない。USB descriptorの必須OUT endpointは残る。
+`available/read`は0、`maxDirectReceive()`は0、`readDirect()`はNotSupportedを返す。
+TXは従来通りcopyまたはborrowedを選べる。借用TXはTX完了callbackが必要。
+これはBorrowed RXの未投稿状態とは異なり、受信操作自体を使わない明示設定である。

@@ -98,13 +98,14 @@ struct EspUsbBulkState {
     tx.owned = !owner.config_.txBuffer;
     rx.data = owner.config_.rxBuffer ? owner.config_.rxBuffer : (rx.capacity ? static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(rx.capacity)) : nullptr);
     tx.data = owner.config_.txBuffer ? owner.config_.txBuffer : (tx.capacity ? static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(tx.capacity)) : nullptr);
-    rxPacket = owner.config_.rxMode == EspUsbBulkRxMode::Borrowed ? nullptr : allocateDma(maxPacket);
+    const bool copiedRx = owner.config_.rxMode == EspUsbBulkRxMode::Stream || owner.config_.rxMode == EspUsbBulkRxMode::Callback;
+    rxPacket = copiedRx ? allocateDma(maxPacket) : nullptr;
     txPacket = tx.capacity ? allocateDma(owner.config_.transferBytes) : nullptr;
-    return (!rx.capacity || rx.data) && (owner.config_.rxMode == EspUsbBulkRxMode::Borrowed || rxPacket) && (!tx.capacity || (tx.data && txPacket));
+    return (!rx.capacity || rx.data) && (!copiedRx || rxPacket) && (!tx.capacity || (tx.data && txPacket));
   }
   // Endpoint operations hold the instance lock. User callbacks never do.
   void receive() {
-    if (owner.config_.rxMode == EspUsbBulkRxMode::Borrowed || stopping || !epOut || rxBusy ||
+    if (owner.config_.rxMode == EspUsbBulkRxMode::Borrowed || owner.config_.rxMode == EspUsbBulkRxMode::Disabled || stopping || !epOut || rxBusy ||
         (owner.config_.rxMode == EspUsbBulkRxMode::Stream && rx.capacity - rx.used < packetSize)) return;
     if (!usbd_edpt_claim(rhport, epOut)) return;
     rxBusy = true;
@@ -271,7 +272,7 @@ struct EspUsbBulkState {
     if (received.buffer && s->owner.directRxCompleteCallback_) s->owner.directRxCompleteCallback_(received);
     if (result == XFER_RESULT_SUCCESS) {
       if (input && copied) s->owner.handleTxComplete(n);
-      else if (!input && s->owner.config_.rxMode != EspUsbBulkRxMode::Borrowed && n <= s->packetSize) s->owner.handleRx(s->owner.config_.rxMode == EspUsbBulkRxMode::Callback ? s->rxPacket : nullptr, n);
+      else if (!input && (s->owner.config_.rxMode == EspUsbBulkRxMode::Stream || s->owner.config_.rxMode == EspUsbBulkRxMode::Callback) && n <= s->packetSize) s->owner.handleRx(s->owner.config_.rxMode == EspUsbBulkRxMode::Callback ? s->rxPacket : nullptr, n);
     }
     if (!input && s->owner.config_.rxMode == EspUsbBulkRxMode::Callback) {
       // Callback borrows the packet only for the call. Re-arm afterwards.
@@ -298,7 +299,7 @@ esp_err_t EspUsbDeviceBulkStream::configure(const EspUsbBulkStreamConfig &c) {
   if (state_) return ESP_ERR_INVALID_STATE;
   if ((c.txCapacity && !c.transferBytes) ||
       (c.rxMode == EspUsbBulkRxMode::Stream ? !c.rxCapacity :
-       (c.rxMode != EspUsbBulkRxMode::Callback && c.rxMode != EspUsbBulkRxMode::Borrowed) || c.rxCapacity != 0) ||
+       (c.rxMode != EspUsbBulkRxMode::Callback && c.rxMode != EspUsbBulkRxMode::Borrowed && c.rxMode != EspUsbBulkRxMode::Disabled) || c.rxCapacity != 0) ||
       c.rxCapacity > SIZE_MAX / 2 || c.txCapacity > SIZE_MAX / 2) return ESP_ERR_INVALID_ARG;
   const uintptr_t rx = reinterpret_cast<uintptr_t>(c.rxBuffer), tx = reinterpret_cast<uintptr_t>(c.txBuffer);
   if ((c.rxBuffer && (!c.rxCapacity || rx > UINTPTR_MAX - c.rxCapacity)) ||
@@ -475,7 +476,7 @@ esp_err_t EspUsbDeviceBulkStream::onDirectRxComplete(DirectCompleteCallback call
 EspUsbTransferSubmission EspUsbDeviceBulkStream::readDirect(void *buffer, size_t capacity) {
   auto error = EspUsbTransferError::None;
   uint64_t id = 0;
-  if (!buffer || !capacity || capacity > UINT16_MAX || capacity % 64 || !directRxCompleteCallback_ ||
+  if (!buffer || !capacity || capacity > UINT16_MAX || capacity % 64 ||
       reinterpret_cast<uintptr_t>(buffer) > UINTPTR_MAX - (capacity - 1)) error = EspUsbTransferError::BadArgument;
   else if (reinterpret_cast<uintptr_t>(buffer) & 63) error = EspUsbTransferError::NotAligned;
   else if (!esp_ptr_dma_capable(buffer) || !esp_ptr_dma_capable(reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(buffer) + capacity - 1)))
@@ -484,6 +485,7 @@ EspUsbTransferSubmission EspUsbDeviceBulkStream::readDirect(void *buffer, size_t
   if (error == EspUsbTransferError::None) {
     if (!state_ || state_->stopping || !state_->epOut) error = EspUsbTransferError::NotMounted;
     else if (config_.rxMode != EspUsbBulkRxMode::Borrowed) error = EspUsbTransferError::NotSupported;
+    else if (!directRxCompleteCallback_) error = EspUsbTransferError::BadArgument;
     else if (capacity % state_->packetSize)
       error = EspUsbTransferError::BadArgument;
     else if (state_->directRxBuffer || state_->rxBusy || !usbd_edpt_claim(state_->rhport, state_->epOut))

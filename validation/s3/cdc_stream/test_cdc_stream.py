@@ -72,6 +72,29 @@ def test_cdc_stream(dut, peers):
         device.expect_exact("KEY_SENT 1\r\n", timeout=5)
         dut.write("key_result")
         dut.expect_exact("KEY_RESULT pressed=1 released=1\r\n", timeout=10)
+        for direct in (False, True):
+            for board in (dut, device):
+                board.write("stop")
+                board.expect_exact("STOPPED\r\n", timeout=30)
+            device.write("tx_only_direct" if direct else "tx_only")
+            device.expect_exact("TX_ONLY 1\r\n", timeout=5)
+            device.write("start")
+            device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
+            dut.write("start 1")
+            dut.expect_exact("HOST_READY 1 ports=1\r\n", timeout=30)
+            device.write("rx_disabled")
+            device.expect_exact("RX_DISABLED 1\r\n", timeout=5)
+            for port in (0, 2):
+                for length in (1, 63, 64, 65, 127, 128):
+                    dut.write(f"arm {port}")
+                    dut.expect_exact("SOURCE_ARMED\r\n", timeout=5)
+                    device.write(f"source {port} {length}")
+                    device.expect_exact("SOURCE_POSTED 1\r\n" if direct else f"SOURCE_COPIED {length}\r\n", timeout=5)
+                    dut.write(f"receive {port} {length}")
+                    dut.expect_exact(f"EXCHANGE port={port} length={length} actual={length} ok=1\r\n", timeout=10)
+                    if direct:
+                        device.write(f"source_result {port}")
+                        device.expect_exact("SOURCE_RESULT 1\r\n", timeout=5)
     finally:
         errors = []
         for name, board in (("host", dut), ("device", device)):

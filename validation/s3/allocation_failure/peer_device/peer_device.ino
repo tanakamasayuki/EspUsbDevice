@@ -56,7 +56,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 6 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 8 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -70,6 +70,11 @@ void loop() {
         }
         if (mode == 4) { second = new EspUsbDeviceVendor(device); points = 12; }
         if (mode == 5) { serialPort = new EspUsbDeviceCdcSerial(device); points = 13; }
+        if (mode >= 6) {
+          config.rxMode = EspUsbBulkRxMode::Disabled; config.rxCapacity = 0;
+          points = 5;
+          if (mode == 7) { config.txCapacity = config.transferBytes = 0; points = 3; }
+        }
         ok &= vendor.configure(config) == ESP_OK;
         for (unsigned point = 1; point <= points && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;

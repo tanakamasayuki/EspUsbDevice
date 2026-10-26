@@ -937,7 +937,7 @@ struct EspUsbTransferSubmission
 
 // Capacities belong to this instance. Configure while stopped; begin allocates
 // the selected resources and end releases them. No TinyUSB class-size flags.
-enum class EspUsbBulkRxMode : uint8_t { Stream, Callback, Borrowed };
+enum class EspUsbBulkRxMode : uint8_t { Stream, Callback, Borrowed, Disabled };
 enum class EspUsbTransferTermination : uint8_t { Continue, EndWithShortPacket };
 
 enum class EspUsbStreamTermination : uint8_t { FunctionDefault, Continue, EndWithShortPacket };

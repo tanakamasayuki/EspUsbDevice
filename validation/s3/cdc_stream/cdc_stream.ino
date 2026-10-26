@@ -46,28 +46,35 @@ void loop() {
     EspUsbHostSerialConfig config; config.baud = baud;
     config.dataBits = 7; config.parity = ESP_USB_HOST_SERIAL_PARITY_EVEN; config.stopBits = ESP_USB_HOST_SERIAL_STOP_BITS_2;
     Serial.printf("LINE_SET %u\r\n", unsigned(host.setSerialConfig(config, address.load(), port)));
-  } else if (command.startsWith("exchange ")) {
+  } else if (command.startsWith("arm ")) {
+    const unsigned port = command.substring(4).toInt();
+    if (port < 2) counts[port].store(0, std::memory_order_release);
+    Serial.println("SOURCE_ARMED");
+  } else if (command.startsWith("exchange ") || command.startsWith("receive ")) {
+    const bool exchange = command.startsWith("exchange ");
     unsigned port = 0, length = 0;
-    sscanf(command.c_str(), "exchange %u %u", &port, &length);
+    sscanf(command.c_str() + (exchange ? 9 : 8), "%u %u", &port, &length);
     if (port > 2 || !length || length > 129) { Serial.println("INVALID_EXCHANGE"); return; }
     uint8_t data[129];
     for (size_t i = 0; i < length; ++i) data[i] = uint8_t(i * 37 + length);
     bool ok = true;
     size_t count = 0;
     if (port < 2) {
-      counts[port].store(0, std::memory_order_release);
-      ok = host.sendSerial(data, length, address.load(), port);
+      if (exchange) {
+        counts[port].store(0, std::memory_order_release);
+        ok = host.sendSerial(data, length, address.load(), port);
+      }
       const uint32_t deadline = millis() + 5000;
       while (ok && counts[port].load(std::memory_order_acquire) < length && int32_t(deadline - millis()) > 0) delay(1);
       count = counts[port].load(std::memory_order_acquire);
       ok &= count == length && memcmp(input[port], data, length) == 0;
     } else {
-      ok = host.vendorWrite(data, length, address.load());
+      if (exchange) ok = host.vendorWrite(data, length, address.load());
       uint8_t response[192];
       const uint32_t deadline = millis() + 5000;
       while (ok && count < length && int32_t(deadline - millis()) > 0) {
         size_t actual = 0;
-        ok = host.vendorReadSync(response + count, length - count, &actual, 3000, address.load());
+        ok = host.vendorReadSync(response + count, length - count + (!exchange && length % 64 == 0 ? 64 : 0), &actual, 3000, address.load());
         count += actual;
       }
       ok &= count == length && memcmp(response, data, length) == 0;

@@ -156,3 +156,11 @@ S3で2 CDCとCDC+Vendor+HIDの構成を分け、容量変更、line coding、借
 最終の標準入口は6 passed、340.68秒。46取得点の失敗/回復とVendorの明示コピー終端も確認。
 3 build probeのnmでFunctionごとのリンク除外と未使用取消し処理の不在を確認した。
 RXを使用しない構成の明示mode、固定registry/descriptor領域の撤去は継続する。
+
+## 採用記録: 明示的なRX Disabled
+
+送信専用構成でRXの確保を避けるためにdummyの借用RX callbackを登録する必要をなくした。
+Disabledを追加し、RX ring/packetを省略、OUTは未arm、受信APIは非対応として扱う。
+modeが一つ増える一方、使わない受信を借用受信と偽って設定しなくてよくなる。
+S3でCDC/Vendorそれぞれcopy/borrowed送信を確認し、RX callbackなしで開始・受信API拒否を検証した。
+追加modeを含む確保失敗は54取得点で回復した。

@@ -214,3 +214,12 @@ Device only / Vendor copy / CDC copyの3 build probeもcompile成功。nmで以�
 
 次の具体的作業は、RXを使わない送信専用modeを明示し、資源0のためにdummy RX callbackを要求しない契約へ整理すること、
 およびFunction registry/descriptor容量の動的化である。未検証のOS/SoCは上記と同じで、v3全体は未完了。
+
+## 送信専用modeの追加
+
+RX Disabledでring/packet/callbackを不要にした。CDC/Vendorの送信専用copy/borrowedを、
+1/63/64/65/127/128 byteで確認。借用TXはZLPの完了まで待って返却する。
+HostのVendor readもMPS倍数時にはZLPを消費する長さで要求するようprobeを修正した。
+`tx-only.xml`はCDC suite 1 passed、42.26秒。確保失敗suiteも追加の8取得点を含む54失敗/54回復を確認した
+（原本`/tmp/pytest-embedded/2026-10-26_05-14-53-103287/test_allocation_failure/`）。
+次は登録/descriptorの固定容量の撤去。
