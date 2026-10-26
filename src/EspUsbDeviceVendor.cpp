@@ -61,21 +61,30 @@ struct EspUsbVendorState {
   size_t directLength = 0;
   void *directRxBuffer = nullptr;
   size_t directRxCapacity = 0;
+  uint64_t txId = 0, rxId = 0;
+  espusb::internal::TinyUsbRuntimeJob cancelJob{nullptr, nullptr};
+  bool cancelTx = false, cancelRx = false, abortedTx = false, abortedRx = false;
+  bool fenceTx = false, fenceRx = false;
+  EspUsbTransferStatus cancelTxStatus = EspUsbTransferStatus::Cancelled;
+  EspUsbTransferStatus cancelRxStatus = EspUsbTransferStatus::Cancelled;
   bool needZlp = false, sendingZlp = false;
   EspUsbTransferResult takeDirect(EspUsbTransferStatus status, size_t actual, bool known) {
     EspUsbTransferResult result{directBuffer, directLength, actual, status, known};
+    result.id = txId; txId = 0;
     directBuffer = nullptr; directLength = 0; needZlp = sendingZlp = false;
     return result;
   }
 
   EspUsbTransferResult takeReceive(EspUsbTransferStatus status, size_t actual, bool known) {
     EspUsbTransferResult result{directRxBuffer, directRxCapacity, actual, status, known};
+    result.id = rxId; rxId = 0;
     directRxBuffer = nullptr; directRxCapacity = 0;
     return result;
   }
 
   explicit EspUsbVendorState(EspUsbDeviceVendor &o) : owner(o) {}
   ~EspUsbVendorState() {
+    espusb::internal::removeTinyUsbRuntimeJob(cancelJob);
     if (rx.owned) free(rx.data);
     if (tx.owned) free(tx.data);
     heap_caps_free(rxPacket); heap_caps_free(txPacket);
@@ -115,13 +124,66 @@ struct EspUsbVendorState {
   void reset() {
     portENTER_CRITICAL(&vendorLock);
     const auto status = stopping ? EspUsbTransferStatus::Stopped : EspUsbTransferStatus::BusReset;
-    const auto result = takeDirect(status, 0, false);
-    const auto received = takeReceive(status, 0, false);
+    EspUsbTransferResult result, received;
+    if (cancelTx && !stopping) { abortedTx = true; cancelTxStatus = status; }
+    else { result = takeDirect(status, 0, false); cancelTx = abortedTx = fenceTx = false; }
+    if (cancelRx && !stopping) { abortedRx = true; cancelRxStatus = status; }
+    else { received = takeReceive(status, 0, false); cancelRx = abortedRx = fenceRx = false; }
     epIn = epOut = 0; txBusy = rxBusy = flushing = false;
     rx.clear(); tx.clear();
     portEXIT_CRITICAL(&vendorLock);
     if (result.buffer && owner.directTxCompleteCallback_) owner.directTxCompleteCallback_(result);
     if (received.buffer && owner.directRxCompleteCallback_) owner.directRxCompleteCallback_(received);
+  }
+  esp_err_t requestCancel(bool input, uint64_t id) {
+    // Caller holds vendorLock: end cannot discard the runtime/state between
+    // checking the loan and posting its allocation-free worker job.
+    if (stopping || (input ? !directBuffer : !directRxBuffer)) return ESP_ERR_INVALID_STATE;
+    if (id && id != (input ? txId : rxId)) return ESP_ERR_INVALID_STATE;
+    if (!usbd_edpt_abort_supported()) return ESP_ERR_NOT_SUPPORTED;
+    bool &pending = input ? cancelTx : cancelRx;
+    if (pending) return ESP_OK;
+    pending = true;
+    (input ? cancelTxStatus : cancelRxStatus) = EspUsbTransferStatus::Cancelled;
+    cancelJob.run = cancelPump; cancelJob.context = this;
+    if (!espusb::internal::postTinyUsbRuntimeJob(cancelJob)) {
+      pending = false;
+      return ESP_ERR_INVALID_STATE;
+    }
+    return ESP_OK;
+  }
+  static void cancelPump(void *context) {
+    auto *s = static_cast<EspUsbVendorState *>(context);
+    portENTER_CRITICAL(&vendorLock);
+    if (!s->stopping) {
+      if (s->cancelTx && !s->abortedTx && s->epIn) s->abortedTx = usbd_edpt_abort(s->rhport, s->epIn);
+      if (s->cancelRx && !s->abortedRx && s->epOut) s->abortedRx = usbd_edpt_abort(s->rhport, s->epOut);
+      // A FIFO fence runs after already-queued completion events. Keep the
+      // loan blocked until then. A full event queue is retried, never dropped.
+      if (s->cancelTx && s->abortedTx && !s->fenceTx) s->fenceTx = usbd_try_defer_func(finishCancelTx, s);
+      if (s->cancelRx && s->abortedRx && !s->fenceRx) s->fenceRx = usbd_try_defer_func(finishCancelRx, s);
+      if ((s->cancelTx && !s->fenceTx) || (s->cancelRx && !s->fenceRx))
+        espusb::internal::postTinyUsbRuntimeJob(s->cancelJob);
+    }
+    portEXIT_CRITICAL(&vendorLock);
+  }
+  static void finishCancelTx(void *context) { finishCancel(static_cast<EspUsbVendorState *>(context), true); }
+  static void finishCancelRx(void *context) { finishCancel(static_cast<EspUsbVendorState *>(context), false); }
+  static void finishCancel(EspUsbVendorState *s, bool input) {
+    EspUsbTransferResult result;
+    portENTER_CRITICAL(&vendorLock);
+    if (input && s->cancelTx) {
+      result = s->takeDirect(s->cancelTxStatus, 0, false);
+      s->cancelTx = s->abortedTx = s->fenceTx = s->txBusy = false;
+    } else if (!input && s->cancelRx) {
+      result = s->takeReceive(s->cancelRxStatus, 0, false);
+      s->cancelRx = s->abortedRx = s->fenceRx = s->rxBusy = false;
+    }
+    portEXIT_CRITICAL(&vendorLock);
+    if (result.buffer) {
+      if (input && s->owner.directTxCompleteCallback_) s->owner.directTxCompleteCallback_(result);
+      else if (!input && s->owner.directRxCompleteCallback_) s->owner.directRxCompleteCallback_(result);
+    }
   }
   static void init() {}
   static void resetAll(uint8_t) { for (auto *s = first; s; s = s->next) s->reset(); }
@@ -167,6 +229,10 @@ struct EspUsbVendorState {
     EspUsbTransferResult completion, received;
     bool copied = false;
     portENTER_CRITICAL(&vendorLock);
+    if ((input && s->cancelTx) || (!input && s->cancelRx)) {
+      portEXIT_CRITICAL(&vendorLock);
+      return true;
+    }
     if (input) {
       s->txBusy = false;
       if (s->directBuffer) {
@@ -366,6 +432,7 @@ esp_err_t EspUsbDeviceVendor::onDirectTxComplete(DirectCompleteCallback callback
 }
 EspUsbTransferSubmission EspUsbDeviceVendor::writeDirect(const void *buffer, size_t n, EspUsbTransferTermination termination) {
   auto error = EspUsbTransferError::None;
+  uint64_t id = 0;
   if (!buffer || !n || n > UINT16_MAX || !directTxCompleteCallback_ ||
       (termination != EspUsbTransferTermination::Continue && termination != EspUsbTransferTermination::EndWithShortPacket))
     error = EspUsbTransferError::BadArgument;
@@ -382,6 +449,8 @@ EspUsbTransferSubmission EspUsbDeviceVendor::writeDirect(const void *buffer, siz
       error = EspUsbTransferError::Busy;
     else {
       state_->directBuffer = buffer; state_->directLength = n;
+      if (++nextTransferId_ == 0) ++nextTransferId_;
+      state_->txId = id = nextTransferId_;
       state_->needZlp = termination == EspUsbTransferTermination::EndWithShortPacket && n % state_->packetSize == 0;
       state_->txBusy = true;
       if (!usbd_edpt_xfer(state_->rhport, state_->epIn, static_cast<uint8_t *>(const_cast<void *>(buffer)), uint16_t(n), false)) {
@@ -393,7 +462,7 @@ EspUsbTransferSubmission EspUsbDeviceVendor::writeDirect(const void *buffer, siz
     }
   }
   portEXIT_CRITICAL(&vendorLock);
-  return {error};
+  return {error, error == EspUsbTransferError::None ? id : 0};
 }
 size_t EspUsbDeviceVendor::maxDirectReceive() const {
   portENTER_CRITICAL(&vendorLock);
@@ -412,6 +481,7 @@ esp_err_t EspUsbDeviceVendor::onDirectRxComplete(DirectCompleteCallback callback
 }
 EspUsbTransferSubmission EspUsbDeviceVendor::readDirect(void *buffer, size_t capacity) {
   auto error = EspUsbTransferError::None;
+  uint64_t id = 0;
   if (!buffer || !capacity || capacity > UINT16_MAX || capacity % 64 || !directRxCompleteCallback_ ||
       reinterpret_cast<uintptr_t>(buffer) > UINTPTR_MAX - (capacity - 1)) error = EspUsbTransferError::BadArgument;
   else if (reinterpret_cast<uintptr_t>(buffer) & 63) error = EspUsbTransferError::NotAligned;
@@ -427,6 +497,8 @@ EspUsbTransferSubmission EspUsbDeviceVendor::readDirect(void *buffer, size_t cap
       error = EspUsbTransferError::Busy;
     else {
       state_->directRxBuffer = buffer; state_->directRxCapacity = capacity; state_->rxBusy = true;
+      if (++nextTransferId_ == 0) ++nextTransferId_;
+      state_->rxId = id = nextTransferId_;
       if (!usbd_edpt_xfer(state_->rhport, state_->epOut, static_cast<uint8_t *>(buffer), uint16_t(capacity), false)) {
         state_->takeReceive(EspUsbTransferStatus::TransferError, 0, false);
         state_->rxBusy = false; usbd_edpt_release(state_->rhport, state_->epOut);
@@ -435,7 +507,19 @@ EspUsbTransferSubmission EspUsbDeviceVendor::readDirect(void *buffer, size_t cap
     }
   }
   portEXIT_CRITICAL(&vendorLock);
-  return {error};
+  return {error, error == EspUsbTransferError::None ? id : 0};
+}
+esp_err_t EspUsbDeviceVendor::cancelDirectTx(uint64_t id) {
+  portENTER_CRITICAL(&vendorLock);
+  const auto error = state_ ? state_->requestCancel(true, id) : ESP_ERR_INVALID_STATE;
+  portEXIT_CRITICAL(&vendorLock);
+  return error;
+}
+esp_err_t EspUsbDeviceVendor::cancelDirectRx(uint64_t id) {
+  portENTER_CRITICAL(&vendorLock);
+  const auto error = state_ ? state_->requestCancel(false, id) : ESP_ERR_INVALID_STATE;
+  portEXIT_CRITICAL(&vendorLock);
+  return error;
 }
 esp_err_t EspUsbDeviceVendor::onRx(RxCallback cb) {
   if (state_) return ESP_ERR_INVALID_STATE;

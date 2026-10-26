@@ -1004,6 +1004,7 @@ enum class EspUsbTransferError : uint8_t
 struct EspUsbTransferSubmission
 {
   EspUsbTransferError error = EspUsbTransferError::None;
+  uint64_t id = 0; // Nonzero only for an accepted loan; survives begin/end.
   explicit operator bool() const { return error == EspUsbTransferError::None; }
 };
 
@@ -1024,7 +1025,7 @@ struct EspUsbVendorConfig
 };
 
 struct EspUsbVendorState;
-enum class EspUsbTransferStatus : uint8_t { Success, BusReset, Stopped, TransferError };
+enum class EspUsbTransferStatus : uint8_t { Success, BusReset, Stopped, TransferError, Cancelled };
 enum class EspUsbTransferTermination : uint8_t { Continue, EndWithShortPacket };
 struct EspUsbTransferResult
 {
@@ -1034,6 +1035,7 @@ struct EspUsbTransferResult
   EspUsbTransferStatus status = EspUsbTransferStatus::Success;
   // On reset/stop the controller may have sent an unknown prefix.
   bool actualBytesKnown = true;
+  uint64_t id = 0;
 };
 class EspUsbDeviceVendor : public EspUsbDeviceClass, public Print
 {
@@ -1089,6 +1091,11 @@ public:
   EspUsbTransferSubmission readDirect(void *buffer, size_t capacity);
   size_t maxDirectReceive() const;
   esp_err_t onDirectRxComplete(DirectCompleteCallback callback);
+  // Request cancellation; the typed completion returns ownership later.
+  // A timeout or successful request alone never permits freeing the buffer.
+  // id=0 selects the current loan. A nonzero id cannot cancel a newer loan.
+  esp_err_t cancelDirectTx(uint64_t id = 0);
+  esp_err_t cancelDirectRx(uint64_t id = 0);
   esp_err_t onTxComplete(TxCompleteCallback callback);
   // Callback RX mode requires rxCapacity=0. Packet data is borrowed only for
   // this callback; copy what must outlive it. Set callbacks while stopped.
@@ -1115,6 +1122,7 @@ private:
   ControlRequestCallback controlRequestCallback_;
   DirectCompleteCallback directTxCompleteCallback_;
   DirectCompleteCallback directRxCompleteCallback_;
+  uint64_t nextTransferId_ = 0;
 };
 
 // CDC-NCM (USB network / "USB Ethernet") device function. Presents the device

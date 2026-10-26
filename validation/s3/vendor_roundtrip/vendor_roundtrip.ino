@@ -43,6 +43,11 @@ void loop() {
     } else {
       Serial.println("HOST_START_FAILED");
     }
+  } else if (command == "prefix") {
+    uint8_t data[64]; size_t actual = 0;
+    bool ok = host.vendorReadSync(data, sizeof(data), &actual, 3000, address.load()) && actual == sizeof(data);
+    for (size_t i = 0; i < actual && i < sizeof(data); ++i) ok &= data[i] == 0x5a;
+    Serial.printf("PREFIX_OK %u\r\n", unsigned(ok));
   } else if (command.startsWith("send ")) {
     unsigned length = 0, zlp = 0;
     sscanf(command.c_str(), "send %u %u", &length, &zlp);

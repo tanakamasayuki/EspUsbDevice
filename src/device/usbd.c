@@ -1530,6 +1530,42 @@ void usbd_defer_func(osal_task_func_t func, void* param, bool in_isr) {
   queue_event(&event, in_isr);
 }
 
+bool usbd_try_defer_func(osal_task_func_t func, void* param) {
+#if CFG_TUSB_OS == OPT_OS_FREERTOS
+  if (_usbd_q == NULL || func == NULL) return false;
+  dcd_event_t event = {.rhport = _usbd_rhport, .event_id = USBD_EVENT_FUNC_CALL};
+  event.func_call.func = func;
+  event.func_call.param = param;
+  return xQueueSendToBack(_usbd_q, &event, 0) == pdTRUE;
+#else
+  (void)func; (void)param;
+  return false;
+#endif
+}
+uint16_t usbd_event_queue_capacity(void) { return CFG_TUD_TASK_QUEUE_SZ; }
+
+TU_ATTR_WEAK bool dcd_edpt_abort_supported(void) { return false; }
+TU_ATTR_WEAK bool dcd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
+  (void)rhport; (void)ep_addr;
+  return false;
+}
+bool usbd_edpt_abort_supported(void) {
+#if CFG_TUSB_OS == OPT_OS_FREERTOS
+  return dcd_edpt_abort_supported();
+#else
+  return false;
+#endif
+}
+bool usbd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
+  if (tu_edpt_number(ep_addr) == 0 || !dcd_edpt_abort(rhport, ep_addr)) return false;
+  const uint8_t epnum = tu_edpt_number(ep_addr), dir = tu_edpt_dir(ep_addr);
+  // Preserve a halt requested by the Host. Normal cancellation does not reset
+  // DATA PID, unlike clear-stall/endpoint re-open.
+  const bool stalled = (_usbd_dev.ep_status[epnum][dir] & TU_EDPT_STATE_STALLED) != 0;
+  _usbd_dev.ep_status[epnum][dir] = stalled ? TU_EDPT_STATE_STALLED | TU_EDPT_STATE_BUSY : 0;
+  return true;
+}
+
 //--------------------------------------------------------------------+
 // USBD Endpoint API
 //--------------------------------------------------------------------+

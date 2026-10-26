@@ -705,6 +705,30 @@ void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr) {
   }
 }
 
+bool dcd_edpt_abort_supported(void) { return true; }
+bool dcd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
+  const uint8_t epnum = tu_edpt_number(ep_addr), dir = tu_edpt_dir(ep_addr);
+  if (epnum == 0 || epnum >= _dwc2_controller[rhport].ep_count) return false;
+  usbd_spin_lock(false);
+  xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, dir);
+  if (xfer->max_size == 0) { usbd_spin_unlock(false); return false; }
+  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  dwc2_dep_t* dep = &dwc2->ep[dir == TUSB_DIR_IN ? 0 : 1][epnum];
+  edpt_disable(rhport, ep_addr, false);
+  // edpt_disable clears active-endpoint. Restore it without resetting PID or
+  // reallocating the FIFO; the next submit will clear NAK and enable DMA.
+  if (dir == TUSB_DIR_IN) dep->diepint = 0xffffffffu;
+  else {
+    dep->doepint = 0xffffffffu;
+    if (xfer->buffer && xfer->total_len) dcd_dcache_invalidate(xfer->buffer, xfer->total_len);
+  }
+  dep->ctl |= EPCTL_USBAEP;
+  xfer->buffer = NULL;
+  xfer->total_len = 0;
+  usbd_spin_unlock(false);
+  return true;
+}
+
 void dcd_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
   uint8_t const epnum = tu_edpt_number(ep_addr);

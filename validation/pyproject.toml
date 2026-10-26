@@ -10,4 +10,4 @@ dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["s3"]
-addopts = "--noconftest"
+addopts = "--noconftest --maxfail=1"

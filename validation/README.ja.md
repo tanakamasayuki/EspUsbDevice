@@ -4,6 +4,7 @@
 読み込み・収集・helperのimport・sketchの流用をしない。両者との整合性を新APIの制約にしない。
 前回作成した独自matrix/結果gateは撤去した。ここにはconftestも独自pytest pluginもない。
 `--noconftest`によりconftest読込みを無効にしている。
+`--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
 ## 実行
 
@@ -26,7 +27,13 @@ Vendor往復を検証する。両側のpayloadと受信長を確認し、終了�
 USB開始・停止はtest本文に見える通常のsketchコマンドで、fixture差替えや自動hookではない。
 Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、容量・送出方式・RX方式を
 同じbinaryで変更する。外部ring、複数instance、borrowed TX、reset/end返却も同じtestで確認する。
-build_opt.hとTinyUSB内部APIをsketchから使わない。APIは[Vendorガイド](../docs/V3_VENDOR_API.ja.md)を参照。
+この公開API試験はbuild_opt.hとTinyUSB内部APIを使わない。APIは[Vendorガイド](../docs/V3_VENDOR_API.ja.md)を参照。
+
+`s3/cancel_fence`は別caseの内部adapter故障注入試験。同じprobe sketchの専用variantで、
+古い完了eventを16件残し、queue満杯でfence予約が失敗する条件を作る。
+取消しcallbackで即再投稿しても旧完了が新しい領域を返さないことを確認する。
+このvariantだけがprivate headerを使う。公開APIの利用例にはしない。
+通常実行は2 testsであり、両caseとも同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -34,9 +41,7 @@ build_opt.hとTinyUSB内部APIをsketchから使わない。APIは[Vendorガイ�
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の結果が`1 passed`であることを確認する。
-- test本文で明示したUSB停止の失敗後、後続の実機caseを進めない標準的なcleanup契約。
-  現在は一本だけなので後続caseはない。複数caseへ増やす前に検討する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`2 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
@@ -54,3 +59,6 @@ arduino-cli compile --profile s3_device --build-path build/s3_device .
 
 対応するtoolchainのnmで`EspUsbDeviceVendor`/`EspUsbVendorState`がないことを確認する。
 他クラスの静的bufferはまだ残るため、ライブラリ全体の未使用コストが解決済みとはしない。
+
+`build_probes/vendor_copy`は普通のcopy writeだけを使うbuild専用sketch。
+同じcompile方法で、未使用の`cancelDirect*`/`cancelPump`/`dcd_edpt_abort`がリンクされないことを確認する。

@@ -2,6 +2,12 @@
 #include <EspUsbDevice.h>
 #include "esp_heap_caps.h"
 #include <atomic>
+#ifdef ESPUSB_CANCEL_FENCE_FAULT
+#include "../../../../src/tusb.h"
+#include "../../../../src/device/usbd_pvt.h"
+#include "../../../../src/device/dcd.h"
+#include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
+#endif
 
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
@@ -29,7 +35,50 @@ size_t rxExpectedBytes = 0, rxCapacity = 0;
 bool rxPending = false;
 alignas(64) uint8_t chainStorage[192];
 std::atomic<bool> chainRequested{false}, chainSubmitted{false}, chainFirstValid{false};
+std::atomic<bool> chainAfterCancel{false};
 unsigned chainTarget = 0;
+uint64_t lastTxId = 0, lastRxId = 0, staleTxId = 0, staleRxId = 0;
+
+#ifdef ESPUSB_CANCEL_FENCE_FAULT
+std::atomic<bool> faultDone{false};
+std::atomic<unsigned> faultEvents{0};
+std::atomic<int> faultTx{-1}, faultRx{-1};
+std::atomic<bool> faultSaturated{false};
+void faultNoop(void *) {}
+void fillFenceQueue(void *) {
+  // Force the first fence enqueue to fail without blocking the USB worker.
+  while (usbd_try_defer_func(faultNoop, nullptr)) {}
+  faultSaturated.store(true);
+}
+espusb::internal::TinyUsbRuntimeJob faultFillJob{fillFenceQueue, nullptr};
+void injectCancelFence(void *) {
+  // Queue old completions on the worker before it can execute the abort job.
+  if (tud_task_event_ready() || CFG_TUD_TASK_EVENTS_PER_RUN == 0 ||
+      usbd_event_queue_capacity() < CFG_TUD_TASK_EVENTS_PER_RUN) { faultDone.store(true); return; }
+  const uint8_t *descriptor = device.configurationDescriptor(0);
+  const unsigned length = descriptor[2] | (unsigned(descriptor[3]) << 8);
+  uint8_t in = 0, out = 0;
+  for (unsigned i = 0; i + 2 <= length && descriptor[i] >= 2; i += descriptor[i]) {
+    if (i + descriptor[i] > length) break;
+    if (descriptor[i + 1] == TUSB_DESC_ENDPOINT && descriptor[i] >= 7) {
+      if (descriptor[i + 2] & 0x80) in = descriptor[i + 2];
+      else out = descriptor[i + 2];
+    }
+  }
+  if (!in || !out) { faultDone.store(true); return; }
+  espusb::internal::postTinyUsbRuntimeJob(faultFillJob);
+  faultTx.store(vendor.cancelDirectTx()); faultRx.store(vendor.cancelDirectRx());
+  if (faultTx.load() == ESP_OK && faultRx.load() == ESP_OK) {
+    // This callback consumes one event of the per-run budget, leaving at
+    // least one old completion queued when the worker first services abort.
+    const auto port = espusb::internal::tinyUsbRuntimeRhport();
+    for (unsigned i = 0; i < usbd_event_queue_capacity(); ++i)
+      dcd_event_xfer_complete(port, i & 1 ? out : in, 0, XFER_RESULT_SUCCESS, false);
+    faultEvents.store(usbd_event_queue_capacity());
+  }
+  faultDone.store(true);
+}
+#endif
 
 void setup() {
   Serial.begin(115200);
@@ -44,8 +93,10 @@ void setup() {
     rxResult = result;
     rxCompletions.fetch_add(1, std::memory_order_release);
     if (chainRequested.exchange(false)) {
-      chainFirstValid.store(result.status == EspUsbTransferStatus::Success && result.actualBytesKnown &&
-          result.actualBytes == 1 && result.buffer == postedStorage + 64 && postedStorage[64] == 1);
+      const bool expected = chainAfterCancel.load()
+          ? result.status == EspUsbTransferStatus::Cancelled && !result.actualBytesKnown
+          : result.status == EspUsbTransferStatus::Success && result.actualBytesKnown && result.actualBytes == 1 && postedStorage[64] == 1;
+      chainFirstValid.store(expected && result.buffer == postedStorage + 64);
       chainSubmitted.store(bool(vendor.readDirect(chainStorage + 64, 64)));
     }
   });
@@ -83,6 +134,7 @@ void loop() {
         rxTarget = rxCompletions.load(std::memory_order_acquire) + 1;
         rxPending = true;
         const auto result = vendor.readDirect(postedStorage + 64, capacity);
+        lastRxId = result.id;
         if (!result) rxPending = false;
         Serial.printf("RX_ARMED %u error=%u\r\n", unsigned(bool(result)), unsigned(result.error));
       }
@@ -91,6 +143,7 @@ void loop() {
       memset(chainStorage, 0xa5, sizeof(chainStorage));
       chainTarget = rxCompletions.load(std::memory_order_acquire) + 2;
       chainFirstValid.store(false); chainSubmitted.store(false); chainRequested.store(true);
+      chainAfterCancel.store(false);
       const auto result = vendor.readDirect(postedStorage + 64, 64);
       Serial.printf("RX_CHAIN_ARMED %u\r\n", unsigned(bool(result)));
     } else if (command == "rx_chain_result") {
@@ -106,6 +159,27 @@ void loop() {
           rxResult.status == EspUsbTransferStatus::Success && rxResult.actualBytesKnown &&
           rxResult.buffer == chainStorage + 64 && rxResult.actualBytes == 63;
       Serial.printf("RX_CHAIN_RESULT %u\r\n", unsigned(result));
+    } else if (command == "cancel_both") {
+      staleTxId = lastTxId; staleRxId = lastRxId;
+      const auto tx = vendor.cancelDirectTx(staleTxId);
+      const auto rx = vendor.cancelDirectRx(staleRxId);
+      Serial.printf("CANCEL_REQUEST tx=%d rx=%d\r\n", int(tx), int(rx));
+    } else if (command == "cancel_stale") {
+      Serial.printf("CANCEL_STALE tx=%d rx=%d\r\n", int(vendor.cancelDirectTx(staleTxId)), int(vendor.cancelDirectRx(staleRxId)));
+    } else if (command == "cancel_empty") {
+      Serial.printf("CANCEL_EMPTY tx=%d rx=%d\r\n", int(vendor.cancelDirectTx()), int(vendor.cancelDirectRx()));
+    } else if (command.startsWith("tx_wait ")) {
+      const unsigned target = command.substring(8).toInt();
+      const uint32_t deadline = millis() + 3000;
+      while (completions.load(std::memory_order_acquire) < target && int32_t(deadline - millis()) > 0) delay(1);
+      Serial.printf("TX_WAIT %u\r\n", completions.load(std::memory_order_acquire));
+    } else if (command.startsWith("tx_post ")) {
+      const unsigned n = command.substring(8).toInt();
+      if (!n || n > sizeof(directBuffer)) { Serial.println("INVALID_TX_COMMAND"); return; }
+      for (size_t i = 0; i < n; ++i) directBuffer[i] = uint8_t(i * 37 + n);
+      const auto submission = vendor.writeDirect(directBuffer, n);
+      lastTxId = submission.id;
+      Serial.printf("TX_POSTED %u error=%u\r\n", unsigned(bool(submission)), unsigned(submission.error));
     } else if (command == "rx_busy") {
       const auto busy = vendor.readDirect(postedStorage + 64, 64);
       Serial.printf("RX_BUSY %u\r\n", unsigned(!busy && busy.error == EspUsbTransferError::Busy));
@@ -135,6 +209,20 @@ void loop() {
           unsigned(rxResult.requestedBytes), unsigned(rxResult.actualBytes), unsigned(rxResult.actualBytesKnown),
           unsigned(rxResult.buffer == postedStorage + 64), unsigned(guards), unsigned(payload));
       if (rxCompletions.load(std::memory_order_acquire) >= rxTarget) rxPending = false;
+#ifdef ESPUSB_CANCEL_FENCE_FAULT
+    } else if (command == "fault_cancel") {
+      memset(chainStorage, 0xa5, sizeof(chainStorage));
+      chainTarget = rxCompletions.load(std::memory_order_acquire) + 2;
+      chainFirstValid.store(false); chainSubmitted.store(false);
+      chainAfterCancel.store(true); chainRequested.store(true);
+      staleTxId = lastTxId; staleRxId = lastRxId;
+      faultDone.store(false); faultEvents.store(0); faultTx.store(-1); faultRx.store(-1); faultSaturated.store(false);
+      Serial.printf("FAULT_REQUESTED %u\r\n", unsigned(usbd_try_defer_func(injectCancelFence, nullptr)));
+    } else if (command == "fault_status") {
+      const uint32_t deadline = millis() + 3000;
+      while ((!faultDone.load() || !faultSaturated.load()) && int32_t(deadline - millis()) > 0) delay(1);
+      Serial.printf("FAULT_STATUS events=%u full=%u tx=%d rx=%d\r\n", faultEvents.load(), unsigned(faultSaturated.load()), faultTx.load(), faultRx.load());
+#endif
     } else if (command == "batch_probe") {
       vendor.flush(); // An empty flush must not arm future writes.
       const uint8_t byte = 1;
@@ -213,8 +301,9 @@ void loop() {
     } else if (command == "hold") {
       memset(directBuffer, 0x5a, sizeof(directBuffer));
       const auto accepted = vendor.writeDirect(directBuffer, 129);
+      lastTxId = accepted.id;
       const auto duplicate = vendor.writeDirect(directBuffer, 1);
-      const bool busy = !duplicate && duplicate.error == EspUsbTransferError::Busy;
+      const bool busy = !duplicate && duplicate.error == EspUsbTransferError::Busy && duplicate.id == 0;
       Serial.printf("HELD %u busy=%u\r\n", unsigned(bool(accepted)), unsigned(busy));
     } else if (command == "end_status") {
       Serial.printf("END_STATUS %u error=%d\r\n", rejectedWorkerEnds.load(), int(device.lastError()));
@@ -223,7 +312,7 @@ void loop() {
       Serial.printf("DIRECT_STATUS %u status=%u requested=%u actual=%u known=%u pointer=%u\r\n",
                     count, unsigned(directResult.status), unsigned(directResult.requestedBytes),
                     unsigned(directResult.actualBytes), unsigned(directResult.actualBytesKnown),
-                    unsigned(directResult.buffer == directBuffer));
+                    unsigned(directResult.buffer == directBuffer && directResult.id != 0));
     } else if (command == "direct_invalid") {
       const unsigned before = completions.load();
       const bool nullRejected = !vendor.writeDirect(nullptr, 1);
@@ -276,6 +365,9 @@ void loop() {
       }
     } else if (command == "stop") {
       if (device.end() != ESP_OK) { Serial.println("STOP_FAILED"); return; }
+#ifdef ESPUSB_CANCEL_FENCE_FAULT
+      espusb::internal::removeTinyUsbRuntimeJob(faultFillJob);
+#endif
       started = false;
       expected = received = 0;
       Serial.println("STOPPED");

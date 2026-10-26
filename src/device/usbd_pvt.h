@@ -110,6 +110,13 @@ void usbd_sof_enable(uint8_t rhport, sof_consumer_t consumer, bool en);
 
 bool usbd_open_edpt_pair(uint8_t rhport, uint8_t const* p_desc, uint8_t ep_count, uint8_t xfer_type, uint8_t* ep_out, uint8_t* ep_in);
 void usbd_defer_func(osal_task_func_t func, void *param, bool in_isr);
+// Nonblocking fence enqueue; false leaves ownership with the caller.
+bool usbd_try_defer_func(osal_task_func_t func, void *param);
+uint16_t usbd_event_queue_capacity(void);
+// Worker only. Old completion events may still be queued after abort; drain
+// through a deferred fence before reusing the endpoint or returning buffers.
+bool usbd_edpt_abort_supported(void);
+bool usbd_edpt_abort(uint8_t rhport, uint8_t ep_addr);
 
 #ifdef __cplusplus
  }

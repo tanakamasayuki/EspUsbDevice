@@ -199,6 +199,52 @@ def test_vendor_roundtrip(dut, peers):
         device.write("cycles")
         result = device.expect(r"CYCLES 1 before=(\d+) after=(\d+)\r\n", timeout=60)
         assert result.group(1) == result.group(2), "heap changed in borrowed-only mode"
+
+        device.write("start")
+        device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
+        dut.write("start")
+        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        for cycle in range(20):
+            device.write("rx_arm 192 64")
+            device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
+            if cycle % 2:
+                dut.write("send 64 0")
+                dut.expect_exact("SENT 64 zlp=0 ok=1\r\n", timeout=10)
+            device.write("hold")
+            device.expect_exact("HELD 1 busy=1\r\n", timeout=5)
+            if cycle % 2:
+                dut.write("prefix")
+                dut.expect_exact("PREFIX_OK 1\r\n", timeout=10)
+            device.write("cancel_both")
+            device.expect_exact("CANCEL_REQUEST tx=0 rx=0\r\n", timeout=5)
+            device.write(f"tx_wait {17 + 2 * cycle}")
+            device.expect_exact(f"TX_WAIT {17 + 2 * cycle}\r\n", timeout=5)
+            device.write("direct_status")
+            device.expect_exact(f"DIRECT_STATUS {17 + 2 * cycle} status=4 requested=129 actual=0 known=0 pointer=1\r\n", timeout=5)
+            device.write("rx_result")
+            device.expect_exact(f"RX_RESULT {16 + 2 * cycle} status=4 requested=192 actual=0 known=0 pointer=1 guards=1 payload=1\r\n", timeout=5)
+            device.write("cancel_empty")
+            device.expect_exact("CANCEL_EMPTY tx=259 rx=259\r\n", timeout=5)
+
+            # Re-use each endpoint without reset/reconfiguration, preserving PID.
+            device.write("rx_arm 64 63")
+            device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
+            device.write("cancel_stale")
+            device.expect_exact("CANCEL_STALE tx=259 rx=259\r\n", timeout=5)
+            dut.write("send 63 0")
+            dut.expect_exact("SENT 63 zlp=0 ok=1\r\n", timeout=10)
+            device.write("rx_result")
+            device.expect_exact(f"RX_RESULT {17 + 2 * cycle} status=0 requested=64 actual=63 known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
+            device.write("tx_post 63")
+            device.expect_exact("TX_POSTED 1 error=0\r\n", timeout=5)
+            device.write("cancel_stale")
+            device.expect_exact("CANCEL_STALE tx=259 rx=259\r\n", timeout=5)
+            dut.write("receive 63")
+            dut.expect_exact("READ_OK 63\r\n", timeout=10)
+            device.write(f"tx_wait {18 + 2 * cycle}")
+            device.expect_exact(f"TX_WAIT {18 + 2 * cycle}\r\n", timeout=5)
+            device.write("direct_status")
+            device.expect_exact(f"DIRECT_STATUS {18 + 2 * cycle} status=0 requested=63 actual=63 known=1 pointer=1\r\n", timeout=5)
     finally:
         # Always attempt both stops, also after an assertion/timeout. No hook
         # changes report outcomes or starts a hidden recovery sequence.

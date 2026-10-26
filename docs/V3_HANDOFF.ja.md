@@ -82,14 +82,14 @@ mainの文書commitもmerge済み（453a26a）。旧test/sampleの整合維持�
 
 `validation/.pytest-results/vendor-end-contract.xml`と同ディレクトリのtranscript/serialコピーを参照。
 serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roundtrip/`。
-結果はv3全体の完了を意味しない。他クラスの固定資源、個別cancel、
+結果はv3全体の完了を意味しない。他クラスの固定資源、cancelとreset/endの競合、
 全取得点の故障注入、P4 cache/HS、S2/S31は未完了。direct上限の成功転送は小さい長さの範囲だけで、
 65472 byteそのもののwire転送は今回の試験には含めていない。
 
 ## 次に進める作業
 
-1. Vendorの個別cancelを、転送世代/遅延eventの試験と一緒に設計・実装する。
-   暫定DCDのstallだけで古い完了を安全に消せると仮定しない。必要ならDCD境界を先に置換する。
+1. 個別cancelとreset/endが競合する場合の返却、再接続、上限長の成功転送を検証する。
+   基本取消し・旧完了event・queue満杯・古い取消しidは下記試験で確認済み。
 2. allocator各取得点での故障注入、callbackからの次転送、部分転送中のresetを新しい試験に追加する。
 3. 共通ring/transfer契約をCDCへ展開し、HIDとの複合で確認する。必要なregistryとdescriptor容量を動的にする。
 4. Audioの最小周期経路と併用し、共通設計を見直してから残クラス・EP0/DCDを置換する。
@@ -109,3 +109,24 @@ copy構成とring/packetを持たないborrowed専用構成それぞれ100回の
 serial原本は`/tmp/pytest-embedded/2026-10-26_03-44-43-979896/test_vendor_roundtrip/`。
 投稿APIは呼出しごとのEspUsbTransferSubmissionを返す。初期v3のlastDirectErrorは廃止し、
 完了callbackをonDirectTxComplete/onDirectRxCompleteへ整理した。現在のAPIはVendorガイドを参照。
+
+## 個別取消しと遅延eventの追加結果
+
+`vendor-cancel-all.xml`、2 passed、0 skipped、108.37秒（2026-10-26）。
+公開API試験に20回のTX/RX同時取消しを追加した。交互に64 byteの部分送受信を行い、
+Cancelledが一度だけ返ること、取消し直後の送受信、canary、古いidの取消し拒否を検証した。
+別caseでは古い完了event 16件とevent queue満杯を注入し、fence予約の再試行後、
+取消しcallbackが再投稿した新RX領域を古い完了が返さないことを確認した。
+両caseのSTOPPEDまで確認。serial原本は`/tmp/pytest-embedded/2026-10-26_04-24-11-658593/`。
+
+取消しはcaller所有のworker jobでDMA停止を依頼し、FIFO fenceで古い完了を処理してからbufferを返す。
+取消しごとのheap確保はない。DWC2のDATA PIDは保持し、STALLによる取消しを行わない。
+投稿と完了の非0 idで古い取消し要求を識別する。公開契約はVendorガイドを参照。
+
+試験設定は標準`--noconftest --maxfail=1`。USB停止失敗もtest失敗にし、次caseを止める。
+独自cleanup hookを追加する必要はなかった。公開probeと内部故障注入variantは分けてある。
+今回の成功で他SoCやcancel/reset/end競合の網羅まで合格したとは扱わない。
+
+copy write専用の新build probeもcompile成功。nmで`EspUsbDeviceVendor::write`の存在と、
+`cancelDirect*`/`cancelPump`/`dcd_edpt_abort`/`vendord_*`の不在を確認した。
+未使用取消しcodeのリンク除外であり、instance内の状態保持や共通runtimeの固定費までゼロという主張ではない。

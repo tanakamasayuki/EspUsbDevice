@@ -14,6 +14,27 @@ TaskHandle_t g_deviceTask = nullptr;
 uint8_t g_rhport = 0xff;
 std::atomic<bool> g_stop{false};
 SemaphoreHandle_t g_taskExited = nullptr;
+using espusb::internal::TinyUsbRuntimeJob;
+TinyUsbRuntimeJob *g_jobs = nullptr, *g_jobsTail = nullptr;
+portMUX_TYPE g_jobsLock = portMUX_INITIALIZER_UNLOCKED;
+
+void runJobs()
+{
+  portENTER_CRITICAL(&g_jobsLock);
+  auto *jobs = g_jobs;
+  g_jobs = g_jobsTail = nullptr;
+  portEXIT_CRITICAL(&g_jobsLock);
+  while (jobs)
+  {
+    portENTER_CRITICAL(&g_jobsLock);
+    auto *next = jobs->next;
+    jobs->next = nullptr;
+    jobs->queued = false;
+    portEXIT_CRITICAL(&g_jobsLock);
+    jobs->run(jobs->context);
+    jobs = next;
+  }
+}
 
 // Frames queued by EspUsbDeviceNet for transmission. Defined in EspUsbDevice.cpp
 // and a no-op when no network function is in use.
@@ -33,6 +54,7 @@ void tinyUsbDeviceTask(void *)
     // tcpip task races the endpoint state and permanently wedges the NCM
     // transmitter (see espUsbDeviceNetTxFrame).
     espUsbDeviceNetDrainTx();
+    runJobs();
   }
   // DMA is stopped before class deinit returns borrowed buffers. Keep those
   // completion callbacks on the USB worker, including the end() path.
@@ -46,6 +68,38 @@ void tinyUsbDeviceTask(void *)
 
 namespace espusb {
 namespace internal {
+
+bool postTinyUsbRuntimeJob(TinyUsbRuntimeJob &job)
+{
+  portENTER_CRITICAL(&g_jobsLock);
+  const bool active = g_deviceTask && !g_stop.load();
+  if (active && !job.queued)
+  {
+    job.next = nullptr;
+    job.queued = true;
+    if (g_jobsTail) g_jobsTail->next = &job;
+    else g_jobs = &job;
+    g_jobsTail = &job;
+  }
+  portEXIT_CRITICAL(&g_jobsLock);
+  return active;
+}
+
+void removeTinyUsbRuntimeJob(TinyUsbRuntimeJob &job)
+{
+  portENTER_CRITICAL(&g_jobsLock);
+  auto **link = &g_jobs;
+  TinyUsbRuntimeJob *previous = nullptr;
+  while (*link && *link != &job) { previous = *link; link = &(*link)->next; }
+  if (*link)
+  {
+    *link = job.next;
+    if (g_jobsTail == &job) g_jobsTail = previous;
+    job.next = nullptr;
+    job.queued = false;
+  }
+  portEXIT_CRITICAL(&g_jobsLock);
+}
 
 esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
 {

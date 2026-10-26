@@ -83,12 +83,24 @@ data転送とZLPの間に次の送信が割り込まない。普通のwriteの�
 | BusReset | reset/unconfigure等で旧転送を破棄。送信済みprefixは不明なのでactualBytesKnown=false |
 | Stopped | endでDMAを停止してから返却。送信済みprefixは不明 |
 | TransferError | 下位転送エラー。判明している範囲だけactualBytesを有効にする |
+| Cancelled | 個別取消し後、DMA停止と旧完了eventの処理を待って返却。転送済みprefixは不明 |
 
 返却は内部lockを解放してUSB workerで一度だけ行う。endもworkerに停止を依頼し、
 DMA停止→返却→worker終了を待つ。callback内では次の準備済みbufferの送信とsignalを行えるが、
 blockやend、構成変更、Function破棄を行わない。endをcallbackから呼ぶとInvalidStateで拒否する。
-個別endpointのcancelは未実装。暫定TinyUSBには古い完了eventを識別するtokenがなく、
-stallだけで安全な取消しを装わず、下位層の世代管理と一緒に実装する。
+`cancelDirectTx(submission.id)` / `cancelDirectRx(submission.id)`で、その借用転送の取消しを要求できる。
+引数省略（id=0）は現在の借用を対象にする。受理時のsubmission.idは非0、拒否時は0で、
+完了result.idにも同じ値を返す。instance内でbegin/endを跨いで更新するので、古いidで新しい転送を取り消さない。
+
+取消しのESP_OKは要求の受理であり、bufferの返却ではない。対応する完了callbackまで領域を保持する。
+対象なし・id不一致はESP_ERR_INVALID_STATE、未対応adapterはESP_ERR_NOT_SUPPORTEDとなる。
+受理済みの同じ転送への再要求はESP_OK。reset/endと競合した場合はBusReset/Stoppedで返却されることもある。
+通常のcopy write/readの取消しはこのAPIの対象外である。
+
+現在のDWC2 adapterはHostのSTALLやDATA PIDを変更せずDMAを停止する。
+USB workerのFIFOへfenceを置き、それ以前の古い完了eventを処理してから返却する。
+event queue満杯では次のworker反復で再試行し、返却まで同方向の新規借用を拒否する。
+取消しごとのheap確保は行わない。callback内から次の転送を投稿できる。
 
 ## 変更の影響と次の検証
 
@@ -102,7 +114,7 @@ stallだけで安全な取消しを装わず、下位層の世代管理と一緒
 S3で容量変更、非power-of-twoの外部ring、callback RX、複数instance、reset/end返却、
 ZLP、100回開始終了を検証する。DeviceだけのbuildではVendor実装がリンクされないことも確認する。
 他クラスの固定資源はまだ残るため、ライブラリ全体の未使用費用が解決済みとはしない。
-P4 DMA/cache、全資源取得点の故障注入、個別cancel、他クラスへの展開を続ける。
+P4 DMA/cache、全資源取得点の故障注入、cancelとreset/endの競合、他クラスへの展開を続ける。
 
 ## 投稿式borrowed RXと呼出しごとの結果
 

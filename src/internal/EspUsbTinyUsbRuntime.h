@@ -25,6 +25,17 @@ struct TinyUsbRuntimeOptions {
   int8_t taskCoreId = -1;
 };
 
+// Caller-owned, one-shot worker jobs. Re-posting during a run schedules the
+// next worker iteration. Remove only after stopping the worker.
+struct TinyUsbRuntimeJob {
+  void (*run)(void *);
+  void *context;
+  TinyUsbRuntimeJob *next = nullptr;
+  bool queued = false;
+};
+bool postTinyUsbRuntimeJob(TinyUsbRuntimeJob &job);
+void removeTinyUsbRuntimeJob(TinyUsbRuntimeJob &job);
+
 esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options);
 bool stopTinyUsbRuntime();
 bool tinyUsbRuntimeInTask();
