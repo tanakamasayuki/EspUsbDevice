@@ -1,4 +1,5 @@
 #include "EspUsbDeviceAppDriver.h"
+#include "EspUsbMemory.h"
 
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
 
@@ -13,9 +14,9 @@ static uint8_t g_appDriverCount = 0;
 bool espUsbDeviceRegisterAppDrivers(const usbd_class_driver_t *drivers, uint8_t count)
 {
   if (!drivers || !count || unsigned(g_appDriverCount) + count > UINT8_MAX) return false;
-  auto *table = static_cast<usbd_class_driver_t *>(malloc((g_appDriverCount + count) * sizeof(usbd_class_driver_t)));
-  auto **sources = static_cast<const usbd_class_driver_t **>(malloc((g_appDriverCount + count) * sizeof(const usbd_class_driver_t *)));
-  if (!table || !sources) { free(table); free(sources); return false; }
+  auto *table = static_cast<usbd_class_driver_t *>(espusb::internal::allocateUsbMemory((g_appDriverCount + count) * sizeof(usbd_class_driver_t)));
+  auto **sources = static_cast<const usbd_class_driver_t **>(espusb::internal::allocateUsbMemory((g_appDriverCount + count) * sizeof(const usbd_class_driver_t *)));
+  if (!table || !sources) { espusb::internal::freeUsbMemory(table); espusb::internal::freeUsbMemory(sources); return false; }
   if (g_appDriverCount) {
     memcpy(table, g_appDrivers, g_appDriverCount * sizeof(*table));
     memcpy(sources, g_sources, g_appDriverCount * sizeof(*sources));
@@ -24,7 +25,7 @@ bool espUsbDeviceRegisterAppDrivers(const usbd_class_driver_t *drivers, uint8_t 
     table[g_appDriverCount + i] = drivers[i];
     sources[g_appDriverCount + i] = &drivers[i];
   }
-  free(g_appDrivers); free(g_sources);
+  espusb::internal::freeUsbMemory(g_appDrivers); espusb::internal::freeUsbMemory(g_sources);
   g_appDrivers = table; g_sources = sources; g_appDriverCount += count;
   return true;
 }
@@ -41,7 +42,7 @@ void espUsbDeviceUnregisterAppDrivers(const usbd_class_driver_t *drivers, uint8_
     }
   }
   if (!g_appDriverCount) {
-    free(g_appDrivers); free(g_sources);
+    espusb::internal::freeUsbMemory(g_appDrivers); espusb::internal::freeUsbMemory(g_sources);
     g_appDrivers = nullptr; g_sources = nullptr;
   }
 }

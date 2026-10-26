@@ -171,3 +171,13 @@ TX上限は暫定adapterの16 bit長から65535 byte、RXはMPS/64単位へ切�
 全serial原本は`/tmp/pytest-embedded/2026-10-26_04-40-58-232822/`。
 JUnit、transcript、serialコピー、初回の失敗ログは`validation/.pytest-results/`に保存した。
 これはS3–S3のVendor経路の結果であり、CDC等の置換やv3全体の完了を意味しない。
+
+## Vendor/registryの確保失敗注入
+
+`vendor-allocation-failure.xml`、1 passed、85.16秒。内部`EspUsbMemory`境界を試験sketchの
+strong定義で差し替え、通常/Callback RX/外部ring/Borrowed専用/2 instanceの計33取得点を
+順に失敗させた。state、ring、DMA packet、driver table/source tableが対象。
+各回でNoMemory、設定保持、capacity=0、全所有領域の解放、再開始成功を確認した。
+33回復後のheap一致・heap integrity・外部ring誤解放なしと、実USBの1/64/129 byte往復も確認。
+通常buildはweak定義のmalloc/aligned DMA確保を使う。公開API・build_opt.h・conftestへの試験設定追加はない。
+Device descriptor、RTOS/PHY、他クラスの全取得点まで検証したものではない。

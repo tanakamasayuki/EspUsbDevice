@@ -1,5 +1,6 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceAppDriver.h"
+#include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
 #include <algorithm>
 #include <limits.h>
@@ -40,8 +41,7 @@ struct Ring {
   void clear() { head = used = 0; }
 };
 uint8_t *allocateDma(size_t n) {
-  return static_cast<uint8_t *>(heap_caps_aligned_alloc(
-      64, (n + 63) & ~size_t(63), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+  return static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(n, 64, true));
 }
 extern const usbd_class_driver_t vendorDriver;
 }
@@ -85,17 +85,17 @@ struct EspUsbVendorState {
   explicit EspUsbVendorState(EspUsbDeviceVendor &o) : owner(o) {}
   ~EspUsbVendorState() {
     espusb::internal::removeTinyUsbRuntimeJob(cancelJob);
-    if (rx.owned) free(rx.data);
-    if (tx.owned) free(tx.data);
-    heap_caps_free(rxPacket); heap_caps_free(txPacket);
+    if (rx.owned) espusb::internal::freeUsbMemory(rx.data);
+    if (tx.owned) espusb::internal::freeUsbMemory(tx.data);
+    espusb::internal::freeUsbMemory(rxPacket); espusb::internal::freeUsbMemory(txPacket);
   }
   bool allocate(uint16_t maxPacket) {
     packetCapacity = maxPacket;
     rx.capacity = owner.config_.rxCapacity; tx.capacity = owner.config_.txCapacity;
     rx.owned = !owner.config_.rxBuffer;
     tx.owned = !owner.config_.txBuffer;
-    rx.data = owner.config_.rxBuffer ? owner.config_.rxBuffer : (rx.capacity ? static_cast<uint8_t *>(malloc(rx.capacity)) : nullptr);
-    tx.data = owner.config_.txBuffer ? owner.config_.txBuffer : (tx.capacity ? static_cast<uint8_t *>(malloc(tx.capacity)) : nullptr);
+    rx.data = owner.config_.rxBuffer ? owner.config_.rxBuffer : (rx.capacity ? static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(rx.capacity)) : nullptr);
+    tx.data = owner.config_.txBuffer ? owner.config_.txBuffer : (tx.capacity ? static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(tx.capacity)) : nullptr);
     rxPacket = owner.config_.rxMode == EspUsbVendorRxMode::Borrowed ? nullptr : allocateDma(maxPacket);
     txPacket = tx.capacity ? allocateDma(owner.config_.transferBytes) : nullptr;
     return (!rx.capacity || rx.data) && (owner.config_.rxMode == EspUsbVendorRxMode::Borrowed || rxPacket) && (!tx.capacity || (tx.data && txPacket));
@@ -313,9 +313,9 @@ bool EspUsbDeviceVendor::begin() {
       (config_.txCapacity && config_.transferBytes < maxPacket)) { startError_ = ESP_ERR_INVALID_SIZE; return false; }
   if (config_.rxMode == EspUsbVendorRxMode::Callback && !rxDataCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
   if (config_.rxMode == EspUsbVendorRxMode::Borrowed && !directRxCompleteCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
-  auto *s = new (std::nothrow) EspUsbVendorState(*this);
-  if (!s || !s->allocate(maxPacket)) { delete s; startError_ = ESP_ERR_NO_MEM; return false; }
-  if (!EspUsbVendorState::first && !espUsbDeviceRegisterAppDrivers(&vendorDriver, 1)) { delete s; startError_ = ESP_ERR_NO_MEM; return false; }
+  auto *s = espusb::internal::newUsbObject<EspUsbVendorState>(*this);
+  if (!s || !s->allocate(maxPacket)) { espusb::internal::deleteUsbObject(s); startError_ = ESP_ERR_NO_MEM; return false; }
+  if (!EspUsbVendorState::first && !espUsbDeviceRegisterAppDrivers(&vendorDriver, 1)) { espusb::internal::deleteUsbObject(s); startError_ = ESP_ERR_NO_MEM; return false; }
   portENTER_CRITICAL(&vendorLock);
   s->next = EspUsbVendorState::first; EspUsbVendorState::first = s; state_ = s;
   portEXIT_CRITICAL(&vendorLock);
@@ -339,7 +339,7 @@ void EspUsbDeviceVendor::end() {
   }
   const bool empty = !EspUsbVendorState::first;
   portEXIT_CRITICAL(&vendorLock);
-  delete state;
+  espusb::internal::deleteUsbObject(state);
   if (empty) espUsbDeviceUnregisterAppDrivers(&vendorDriver, 1);
 }
 uint16_t EspUsbDeviceVendor::configurationDescriptor(uint8_t *dst, uint8_t itf, uint8_t ep, uint16_t ceiling) {

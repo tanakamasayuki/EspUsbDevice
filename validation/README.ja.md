@@ -37,7 +37,8 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
 最新の全実行は`vendor-segmented-all.xml`、4 passed、230.70秒。
-通常実行は4 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
+`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/registryの33取得点を失敗させて回復を確認する。
+通常実行は5 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -45,7 +46,7 @@ payload・境界・末尾終端・分割後の取消しを確認する。
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`4 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`5 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
