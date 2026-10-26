@@ -262,3 +262,14 @@ Input snapshotは既存方針どおり新形式のneutralへ戻す。
 Keyboard helperが形式選択した直後にHostが切り替えた場合も、誤形式を受理せずInvalidSizeで返す。
 通常helperはそのまま使えるが、独自コードが短いboot-capable reportを直接送る場合は修正が必要。
 実験の手順と結果は[HIDガイド](V3_HID_API.ja.md)へ記録する。
+
+
+## 採用記録: MSCのruntime bufferと独立BOT
+
+sector長と転送staging容量を分離し、一つのDMA bufferをcommand/data/statusで共有する。
+Functionごとのgeometry/callback/bufferへ移し、TinyUSB MSCの固定bufferと単一instanceを撤去する。
+read callbackだけでread-onlyを構成でき、media/writableの状態はatomicに更新する。
+callback/inquiry setterは停止中のesp_err_t返却へ揃える。
+利点は容量の再構成・複数instance・不要書込みcallbackの省略。不利益は動的確保と小分けcallback、
+短い/0のI/O戻り値を同期失敗にする移行負担である。通常のRAM/SD/helper attach手順は維持する。
+BOT13ケースとS3での実験・未確認条件は[MSCガイド](V3_MSC_API.ja.md)へ記録した。

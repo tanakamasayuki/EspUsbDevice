@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので12 tests。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので14 tests。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -81,7 +81,7 @@ InputのGET_REPORT、Mouseのboot/report切替、relative値をzeroへ戻したi
 boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新packetの完全性を確認する。
 自動pollを止めるための独自pytest hookやHost library patchは使わない。
 手順・範囲は[専用probe](s3/hid_protocol/README.ja.md)を参照。
-通常実行は12 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
+通常実行は14 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -89,7 +89,7 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`12 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`14 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
@@ -117,3 +117,7 @@ arduino-cli compile --profile s3_device --build-path build/s3_device .
 
 `build_probes/midi_packet`はMIDI helperの送信だけを使い、CDC/Vendor/HID固有処理と未使用取消しを含まないことを確認する。
 MIDI未使用の他3 probeにはEspUsbDeviceMidiもリンクされない。
+
+MSC追加後の通常収集は14件。関連4件はmsc-driver-related.xmlで4 passed（148.36秒）。
+全14件の一括実行と最小build/nmは次の確認項目。
+msc_storage/msc_botの手順・Hostの制約・362取得点の失敗/回復は[MSCガイド](../docs/V3_MSC_API.ja.md)を参照。

@@ -81,7 +81,7 @@
 #undef CFG_TUD_CDC
 #define CFG_TUD_CDC 0
 // The remaining legacy classes are compiled in by default. CDC and Vendor
-// use the independent bulk driver; the footprint figures below describe v2.
+// use independent drivers, as do HID/MIDI/MSC; these figures describe v2.
 // Every legacy class was enabled so that any sketch could use any class
 // without reconfiguring the library, and each one behind #ifndef so a sketch
 // that knows it will never use a class can drop it from build_opt.h and get
@@ -94,7 +94,6 @@
 //   // build_opt.h, for a keyboard that will never be anything else
 //   -DCFG_TUD_NCM=0
 //   -DCFG_TUD_AUDIO=0
-//   -DCFG_TUD_MSC=0
 //
 // Turning off a class the sketch actually uses does NOT fail to build, which
 // is the trap here. The Arduino core ships its own TinyUSB, and its archive is
@@ -106,9 +105,11 @@
 // only what the sketch is certain never to instantiate, and check the device
 // still enumerates as it should. build_opt.h is library-wide and needs
 // `arduino-cli --clean`.
-#ifndef CFG_TUD_MSC
-#define CFG_TUD_MSC 1
+#if defined(CFG_TUD_MSC) && CFG_TUD_MSC != 0
+#error "MSC uses runtime resources; do not enable TinyUSB MSC"
 #endif
+#undef CFG_TUD_MSC
+#define CFG_TUD_MSC 0
 #if defined(CFG_TUD_HID) && CFG_TUD_HID != 0
 #error "HID uses runtime report resources; do not enable TinyUSB HID"
 #endif
@@ -154,10 +155,10 @@
 #define CFG_TUD_DFU_RUNTIME 1
 #endif
 
-// Remaining legacy class buffers. CDC, Vendor, HID and MIDI use independent
+// Remaining legacy class buffers. CDC, Vendor, HID, MIDI and MSC use independent
 // runtime resources; these knobs disappear as the other classes are replaced.
-#ifndef CFG_TUD_MSC_EP_BUFSIZE
-#define CFG_TUD_MSC_EP_BUFSIZE 4096
+#ifdef CFG_TUD_MSC_EP_BUFSIZE
+#error "MSC storage uses EspUsbMscConfig; remove TinyUSB MSC buffer flags"
 #endif
 // One DFU download block, and therefore the wTransferSize EspUsbDeviceDfu puts
 // in its functional descriptor - dfu_device.h requires the two to agree, so the

@@ -431,3 +431,16 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_14-27-21-836610/`、JUnit/transc
 通常の`--combo all`の対象は12件になったが、今回実行したのは関連4件で、全12件実行済みとはしない。
 人工的な旧完了eventとqueue満杯の組合せ、protocol切替とreset/endの同時実行、他SoC/OSは未検証。
 TinyUSB treeは51 file / 15 compiled sourcesで一致、旧tests/examplesはmainと同一。
+
+
+## MSC classの独自化
+
+2026-10-27。MSCをEspUsbDeviceMsc.cppへ分離し、固定4096 byte bufferとglobal instance、
+TinyUSB MSC class/callbackを撤去した。runtime staging容量、外部DMA buffer、複数Function、
+write callbackを省略するread-only、停止中setterを実装した。
+関連4試験はmsc-driver-related.xmlで4 passed、0 skipped、0 unfinished、148.36秒。
+BOT13ケース、不正CBW6条件、正確なCSW/Senseと復帰、独立2 MSC、通常API、
+362取得点の失敗/回復と未登録Functionの拒否を含む。各case両board STOPPED、panicなし。
+API・移行・Host側PID同期の制約・原本は[V3_MSC_API.ja.md](V3_MSC_API.ja.md)を参照。
+次に512 byte以外のsectorとUSB packet境界の不一致を補強し、最小build/nmと全14件を確認する。
+残るAudio/NCM/Video/DFU等、共通EP0/core/DCDの置換は未完である。

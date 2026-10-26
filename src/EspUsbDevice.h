@@ -708,6 +708,7 @@ private:
   friend class EspUsbDeviceNet;
   friend class EspUsbDeviceCcid;
   friend class EspUsbDeviceDfu;
+  friend class EspUsbDeviceMsc;
   friend class EspUsbHidFunction;
   friend struct EspUsbHidState;
   // String descriptor indices 1-3 are manufacturer / product / serial and 4 is
@@ -1820,6 +1821,12 @@ private:
   EspUsbDeviceVideoCommit commit_;
 };
 
+struct EspUsbMscConfig {
+  size_t transferBytes = 512;
+  uint8_t *transferBuffer = nullptr;
+  const char *name = nullptr;
+};
+struct EspUsbMscState;
 class EspUsbDeviceMsc : public EspUsbDeviceClass
 {
 public:
@@ -1828,21 +1835,29 @@ public:
 
   bool begin() override;
   bool begin(uint32_t blockCount, uint16_t blockSize);
+  void prepareToStop() override;
   void end() override;
+  esp_err_t startError() const override { return startError_; }
+  esp_err_t configure(const EspUsbMscConfig &config);
+  const EspUsbMscConfig &configuration() const { return config_; }
+  size_t transferCapacity() const;
+  bool mounted() const;
+  const char *functionName() const override { return config_.name; }
+  void assignFunctionIds(uint8_t, uint8_t index) override { stringIndex_ = index; }
   bool isHid() const override { return false; }
   bool isMsc() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 1; }
 
-  void vendorID(const char *value);
-  void productID(const char *value);
-  void productRevision(const char *value);
+  esp_err_t vendorID(const char *value);
+  esp_err_t productID(const char *value);
+  esp_err_t productRevision(const char *value);
   void mediaPresent(bool value);
   void isWritable(bool value);
-  void onRead(EspUsbDeviceMscReadCallback callback);
-  void onWrite(EspUsbDeviceMscWriteCallback callback);
-  void onStartStop(EspUsbDeviceMscStartStopCallback callback);
+  esp_err_t onRead(EspUsbDeviceMscReadCallback callback);
+  esp_err_t onWrite(EspUsbDeviceMscWriteCallback callback);
+  esp_err_t onStartStop(EspUsbDeviceMscStartStopCallback callback);
 
   uint8_t maxLun() const;
   void inquiry(uint8_t vendor[8], uint8_t product[16], uint8_t revision[4]) const;
@@ -1854,6 +1869,12 @@ public:
   bool writable() const;
 
 private:
+  friend struct EspUsbMscState;
+  EspUsbMscState *state_ = nullptr;
+  EspUsbMscConfig config_;
+  uint8_t interfaceNumber_ = 0;
+  esp_err_t startError_ = ESP_OK;
+  uint8_t stringIndex_ = 0;
   static void copyPadded(uint8_t *dst, size_t size, const char *value);
 
   char vendor_[9] = "ESP32";
@@ -1861,8 +1882,8 @@ private:
   char revision_[5] = "1.0";
   uint32_t blockCount_ = 0;
   uint16_t blockSize_ = 0;
-  bool mediaPresent_ = false;
-  bool writable_ = true;
+  std::atomic<bool> mediaPresent_{false};
+  std::atomic<bool> writable_{true};
   EspUsbDeviceMscReadCallback readCallback_;
   EspUsbDeviceMscWriteCallback writeCallback_;
   EspUsbDeviceMscStartStopCallback startStopCallback_;

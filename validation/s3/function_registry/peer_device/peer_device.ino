@@ -123,6 +123,10 @@ void loop() {
     rejected &= !midi->begin() && midi->startError() == ESP_ERR_INVALID_STATE;
     delete midi;
     rejected &= device.ready();
+    auto *msc = new EspUsbDeviceMsc(device);
+    rejected &= !msc->begin() && msc->startError() == ESP_ERR_INVALID_STATE;
+    delete msc;
+    rejected &= device.ready();
     auto *hid = new PreferredHid(device, 5);
     rejected &= device.lastError() == ESP_ERR_INVALID_STATE;
     rejected &= !hid->begin() && hid->startError() == ESP_ERR_INVALID_STATE && !hid->inputReportCapacity();

@@ -38,6 +38,8 @@ EspUsbDeviceVendor *second = nullptr;
 EspUsbDeviceCdcSerial *serialPort = nullptr;
 EspUsbDeviceHidVendor *hid[2] = {};
 EspUsbDeviceMidi *midi[2] = {};
+EspUsbDeviceMsc *msc[2] = {};
+alignas(64) uint8_t mscBuffer[512];
 EspUsbDeviceMidiPacket midiRx[19], midiTx[21];
 EspUsbDeviceHidCustom *inputOnly = nullptr;
 const uint8_t pushReport[] = {0x06,0x00,0xff,0x09,0x01,0xa1,0x01,0xa4,0x75,0x08,0x95,0x01,0x09,0x01,0x81,0x02,0xb4,0xc0};
@@ -62,7 +64,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 21 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 24 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -87,7 +89,7 @@ void loop() {
         }
         if (mode == 12) { inputOnly = new EspUsbDeviceHidCustom(device, inputReport, sizeof(inputReport), 1); points += 7; }
         if (mode == 13) { inputOnly = new EspUsbDeviceHidCustom(device, pushReport, sizeof(pushReport), 1); points += 8; }
-        if (mode >= 14) {
+        if (mode >= 14 && mode <= 20) {
           midi[0] = new EspUsbDeviceMidi(device);
           EspUsbMidiConfig packets; packets.rxPackets = 1; packets.txPackets = 3; packets.transferPackets = 1;
           unsigned midiPoints = 5;
@@ -103,6 +105,20 @@ void loop() {
           if (mode == 18 || mode == 20) { packets.txPackets = packets.transferPackets = 0; midiPoints -= 2; }
           ok &= midi[0]->configure(packets) == ESP_OK; points += midiPoints;
           if (mode == 19) { midi[1] = new EspUsbDeviceMidi(device); points += 5; }
+        }
+        if (mode >= 21) {
+          msc[0] = new EspUsbDeviceMsc(device);
+          msc[0]->onRead([](uint32_t, uint32_t, void *, uint32_t n) { return int32_t(n); });
+          ok &= msc[0]->begin(8, 512);
+          EspUsbMscConfig storage; storage.transferBytes = 64;
+          if (mode == 22) storage.transferBuffer = mscBuffer;
+          ok &= msc[0]->configure(storage) == ESP_OK;
+          points += mode == 22 ? 3 : 4;
+          if (mode == 23) {
+            msc[1] = new EspUsbDeviceMsc(device);
+            msc[1]->onRead([](uint32_t, uint32_t, void *, uint32_t n) { return int32_t(n); });
+            ok &= msc[1]->begin(8, 512); points += 2;
+          }
         }
         points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.
         EspUsbDeviceConfig identity;
@@ -137,6 +153,7 @@ void loop() {
         for (auto &function : hid) { delete function; function = nullptr; }
         delete inputOnly; inputOnly = nullptr;
         for (auto &function : midi) { delete function; function = nullptr; }
+        for (auto &function : msc) { delete function; function = nullptr; }
       }
       vendor.configure(EspUsbVendorConfig());
       delay(10);
