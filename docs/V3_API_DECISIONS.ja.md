@@ -100,3 +100,12 @@ callback登録時期の制限、暗黙ZLPに依存したHostの移行である�
 S3–S3の新規試験で86往復、batch受信、100回開始終了、外部ring canary、複数instance、
 借用TXの16件の返却（成功14件、reset 1件、end 1件）を確認した。詳細な契約・移行・未実装範囲は[V3_VENDOR_API.ja.md](V3_VENDOR_API.ja.md)。
 P4/S2/S31および上限長の成功転送はこの結果から対応済みとしない。
+
+## 採用記録: 投稿式RXと投稿結果
+
+RX modeにBorrowedを追加し、内部ring/packet bufferを使わずアプリがDMA領域を投稿する。
+MPS/64 byte単位の容量制約と、完了まで領域を専有する負担が増える一方、不要なcopyとbuffer確保を避けられる。
+投稿結果を値で返すEspUsbTransferSubmissionに変更し、別taskやTX/RXがlastErrorを上書きする問題を避けた。
+TXの完了callbackは方向を明示する名前へ変更した。移行方法はVendorガイドに記載。
+S3で成功13、部分reset 1、部分end 1の返却、callback再投稿とcanary、借用専用構成の100回開始終了を確認した。
+P4 cacheと個別cancelは次の検証であり、今回の合格には含めない。

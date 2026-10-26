@@ -59,10 +59,18 @@ struct EspUsbVendorState {
   bool txBusy = false, rxBusy = false, flushing = false, stopping = false;
   const void *directBuffer = nullptr;
   size_t directLength = 0;
+  void *directRxBuffer = nullptr;
+  size_t directRxCapacity = 0;
   bool needZlp = false, sendingZlp = false;
   EspUsbTransferResult takeDirect(EspUsbTransferStatus status, size_t actual, bool known) {
     EspUsbTransferResult result{directBuffer, directLength, actual, status, known};
     directBuffer = nullptr; directLength = 0; needZlp = sendingZlp = false;
+    return result;
+  }
+
+  EspUsbTransferResult takeReceive(EspUsbTransferStatus status, size_t actual, bool known) {
+    EspUsbTransferResult result{directRxBuffer, directRxCapacity, actual, status, known};
+    directRxBuffer = nullptr; directRxCapacity = 0;
     return result;
   }
 
@@ -79,13 +87,13 @@ struct EspUsbVendorState {
     tx.owned = !owner.config_.txBuffer;
     rx.data = owner.config_.rxBuffer ? owner.config_.rxBuffer : (rx.capacity ? static_cast<uint8_t *>(malloc(rx.capacity)) : nullptr);
     tx.data = owner.config_.txBuffer ? owner.config_.txBuffer : (tx.capacity ? static_cast<uint8_t *>(malloc(tx.capacity)) : nullptr);
-    rxPacket = allocateDma(maxPacket);
+    rxPacket = owner.config_.rxMode == EspUsbVendorRxMode::Borrowed ? nullptr : allocateDma(maxPacket);
     txPacket = tx.capacity ? allocateDma(owner.config_.transferBytes) : nullptr;
-    return (!rx.capacity || rx.data) && rxPacket && (!tx.capacity || (tx.data && txPacket));
+    return (!rx.capacity || rx.data) && (owner.config_.rxMode == EspUsbVendorRxMode::Borrowed || rxPacket) && (!tx.capacity || (tx.data && txPacket));
   }
   // Endpoint operations hold the instance lock. User callbacks never do.
   void receive() {
-    if (stopping || !epOut || rxBusy ||
+    if (owner.config_.rxMode == EspUsbVendorRxMode::Borrowed || stopping || !epOut || rxBusy ||
         (owner.config_.rxMode == EspUsbVendorRxMode::Stream && rx.capacity - rx.used < packetSize)) return;
     if (!usbd_edpt_claim(rhport, epOut)) return;
     rxBusy = true;
@@ -106,11 +114,14 @@ struct EspUsbVendorState {
   }
   void reset() {
     portENTER_CRITICAL(&vendorLock);
-    const auto result = takeDirect(stopping ? EspUsbTransferStatus::Stopped : EspUsbTransferStatus::BusReset, 0, false);
+    const auto status = stopping ? EspUsbTransferStatus::Stopped : EspUsbTransferStatus::BusReset;
+    const auto result = takeDirect(status, 0, false);
+    const auto received = takeReceive(status, 0, false);
     epIn = epOut = 0; txBusy = rxBusy = flushing = false;
     rx.clear(); tx.clear();
     portEXIT_CRITICAL(&vendorLock);
-    if (result.buffer && owner.directCompleteCallback_) owner.directCompleteCallback_(result);
+    if (result.buffer && owner.directTxCompleteCallback_) owner.directTxCompleteCallback_(result);
+    if (received.buffer && owner.directRxCompleteCallback_) owner.directRxCompleteCallback_(received);
   }
   static void init() {}
   static void resetAll(uint8_t) { for (auto *s = first; s; s = s->next) s->reset(); }
@@ -129,7 +140,7 @@ struct EspUsbVendorState {
       const uint16_t size = tu_edpt_packet_size(ep);
       if (ep->bLength != sizeof(*ep) || ep->bDescriptorType != TUSB_DESC_ENDPOINT ||
           ep->bmAttributes.xfer != TUSB_XFER_BULK || !size || size > s->packetCapacity ||
-          size > s->owner.config_.transferBytes ||
+          (s->tx.capacity && size > s->owner.config_.transferBytes) ||
           (s->owner.config_.rxMode == EspUsbVendorRxMode::Stream && size > s->rx.capacity) || (mps && mps != size)) return 0;
       if (!usbd_edpt_open(port, ep)) return 0;
       mps = size;
@@ -153,7 +164,7 @@ struct EspUsbVendorState {
     while (s && s->epIn != ep && s->epOut != ep) s = s->next;
     if (!s) return false;
     const bool input = ep == s->epIn;
-    EspUsbTransferResult completion;
+    EspUsbTransferResult completion, received;
     bool copied = false;
     portENTER_CRITICAL(&vendorLock);
     if (input) {
@@ -177,17 +188,22 @@ struct EspUsbVendorState {
       if (!s->txBusy && !s->tx.used) s->flushing = false;
     } else {
       s->rxBusy = false;
-      if (s->owner.config_.rxMode == EspUsbVendorRxMode::Stream) {
+      if (s->owner.config_.rxMode == EspUsbVendorRxMode::Borrowed && s->directRxBuffer) {
+        const bool success = result == XFER_RESULT_SUCCESS && n <= s->directRxCapacity;
+        received = s->takeReceive(success ? EspUsbTransferStatus::Success : EspUsbTransferStatus::TransferError,
+                                  success ? n : 0, success);
+      } else if (s->owner.config_.rxMode == EspUsbVendorRxMode::Stream) {
         if (result == XFER_RESULT_SUCCESS && n <= s->packetSize) s->rx.push(s->rxPacket, n);
         s->receive();
       }
     }
     portEXIT_CRITICAL(&vendorLock);
     // No internal lock is held when ownership is returned to the application.
-    if (completion.buffer && s->owner.directCompleteCallback_) s->owner.directCompleteCallback_(completion);
+    if (completion.buffer && s->owner.directTxCompleteCallback_) s->owner.directTxCompleteCallback_(completion);
+    if (received.buffer && s->owner.directRxCompleteCallback_) s->owner.directRxCompleteCallback_(received);
     if (result == XFER_RESULT_SUCCESS) {
       if (input && copied) s->owner.handleTxComplete(n);
-      else if (!input && n <= s->packetSize) s->owner.handleRx(s->owner.config_.rxMode == EspUsbVendorRxMode::Callback ? s->rxPacket : nullptr, n);
+      else if (!input && s->owner.config_.rxMode != EspUsbVendorRxMode::Borrowed && n <= s->packetSize) s->owner.handleRx(s->owner.config_.rxMode == EspUsbVendorRxMode::Callback ? s->rxPacket : nullptr, n);
     }
     if (!input && s->owner.config_.rxMode == EspUsbVendorRxMode::Callback) {
       // Callback borrows the packet only for the call. Re-arm afterwards.
@@ -211,9 +227,9 @@ EspUsbDeviceVendor::EspUsbDeviceVendor(EspUsbDevice &d, uint16_t mps)
 EspUsbDeviceVendor::~EspUsbDeviceVendor() { end(); }
 esp_err_t EspUsbDeviceVendor::configure(const EspUsbVendorConfig &c) {
   if (state_) return ESP_ERR_INVALID_STATE;
-  if (!c.transferBytes ||
+  if ((c.txCapacity && !c.transferBytes) ||
       (c.rxMode == EspUsbVendorRxMode::Stream ? !c.rxCapacity :
-       c.rxMode != EspUsbVendorRxMode::Callback || c.rxCapacity != 0) ||
+       (c.rxMode != EspUsbVendorRxMode::Callback && c.rxMode != EspUsbVendorRxMode::Borrowed) || c.rxCapacity != 0) ||
       c.rxCapacity > SIZE_MAX / 2 || c.txCapacity > SIZE_MAX / 2) return ESP_ERR_INVALID_ARG;
   const uintptr_t rx = reinterpret_cast<uintptr_t>(c.rxBuffer), tx = reinterpret_cast<uintptr_t>(c.txBuffer);
   if ((c.rxBuffer && (!c.rxCapacity || rx > UINTPTR_MAX - c.rxCapacity)) ||
@@ -229,8 +245,9 @@ bool EspUsbDeviceVendor::begin() {
   if (device_.config().controller != EspUsbController::FullSpeed) maxPacket = 512;
 #endif
   if ((config_.rxMode == EspUsbVendorRxMode::Stream && config_.rxCapacity < maxPacket) ||
-      config_.transferBytes < maxPacket) { startError_ = ESP_ERR_INVALID_SIZE; return false; }
+      (config_.txCapacity && config_.transferBytes < maxPacket)) { startError_ = ESP_ERR_INVALID_SIZE; return false; }
   if (config_.rxMode == EspUsbVendorRxMode::Callback && !rxDataCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
+  if (config_.rxMode == EspUsbVendorRxMode::Borrowed && !directRxCompleteCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
   auto *s = new (std::nothrow) EspUsbVendorState(*this);
   if (!s || !s->allocate(maxPacket)) { delete s; startError_ = ESP_ERR_NO_MEM; return false; }
   if (!EspUsbVendorState::first && !espUsbDeviceRegisterAppDrivers(&vendorDriver, 1)) { delete s; startError_ = ESP_ERR_NO_MEM; return false; }
@@ -342,27 +359,27 @@ size_t EspUsbDeviceVendor::maxDirectTransfer() const {
   portEXIT_CRITICAL(&vendorLock);
   return value;
 }
-esp_err_t EspUsbDeviceVendor::onDirectComplete(DirectCompleteCallback callback) {
+esp_err_t EspUsbDeviceVendor::onDirectTxComplete(DirectCompleteCallback callback) {
   if (state_) return ESP_ERR_INVALID_STATE;
-  directCompleteCallback_ = callback;
+  directTxCompleteCallback_ = callback;
   return ESP_OK;
 }
-bool EspUsbDeviceVendor::writeDirect(const void *buffer, size_t n, EspUsbTransferTermination termination) {
-  auto error = EspUsbDeviceVendorDirectError::None;
-  if (!buffer || !n || n > UINT16_MAX || !directCompleteCallback_ ||
+EspUsbTransferSubmission EspUsbDeviceVendor::writeDirect(const void *buffer, size_t n, EspUsbTransferTermination termination) {
+  auto error = EspUsbTransferError::None;
+  if (!buffer || !n || n > UINT16_MAX || !directTxCompleteCallback_ ||
       (termination != EspUsbTransferTermination::Continue && termination != EspUsbTransferTermination::EndWithShortPacket))
-    error = EspUsbDeviceVendorDirectError::BadArgument;
-  else if (reinterpret_cast<uintptr_t>(buffer) & 63) error = EspUsbDeviceVendorDirectError::NotAligned;
+    error = EspUsbTransferError::BadArgument;
+  else if (reinterpret_cast<uintptr_t>(buffer) & 63) error = EspUsbTransferError::NotAligned;
   else if (reinterpret_cast<uintptr_t>(buffer) > UINTPTR_MAX - (n - 1))
-    error = EspUsbDeviceVendorDirectError::BadArgument;
+    error = EspUsbTransferError::BadArgument;
   else if (!esp_ptr_dma_capable(buffer) || !esp_ptr_dma_capable(reinterpret_cast<const void *>(reinterpret_cast<uintptr_t>(buffer) + n - 1)))
-    error = EspUsbDeviceVendorDirectError::NotDmaCapable;
+    error = EspUsbTransferError::NotDmaCapable;
   portENTER_CRITICAL(&vendorLock);
-  if (error == EspUsbDeviceVendorDirectError::None) {
-    if (!state_ || state_->stopping || !state_->epIn) error = EspUsbDeviceVendorDirectError::NotMounted;
-    else if (n > size_t(state_->packetSize) * 1023) error = EspUsbDeviceVendorDirectError::BadArgument;
+  if (error == EspUsbTransferError::None) {
+    if (!state_ || state_->stopping || !state_->epIn) error = EspUsbTransferError::NotMounted;
+    else if (n > size_t(state_->packetSize) * 1023) error = EspUsbTransferError::BadArgument;
     else if (state_->directBuffer || state_->txBusy || state_->tx.used || !usbd_edpt_claim(state_->rhport, state_->epIn))
-      error = EspUsbDeviceVendorDirectError::Busy;
+      error = EspUsbTransferError::Busy;
     else {
       state_->directBuffer = buffer; state_->directLength = n;
       state_->needZlp = termination == EspUsbTransferTermination::EndWithShortPacket && n % state_->packetSize == 0;
@@ -371,17 +388,54 @@ bool EspUsbDeviceVendor::writeDirect(const void *buffer, size_t n, EspUsbTransfe
         state_->takeDirect(EspUsbTransferStatus::TransferError, 0, false);
         state_->txBusy = false;
         usbd_edpt_release(state_->rhport, state_->epIn);
-        error = EspUsbDeviceVendorDirectError::TransferFailed;
+        error = EspUsbTransferError::TransferFailed;
       }
     }
   }
-  lastDirectError_ = error;
   portEXIT_CRITICAL(&vendorLock);
-  return error == EspUsbDeviceVendorDirectError::None;
+  return {error};
 }
-const char *EspUsbDeviceVendor::lastDirectErrorName() const {
-  static const char *const names[] = {"None", "NotSupported", "NotMounted", "BadArgument", "NotAligned", "NotDmaCapable", "Busy", "TransferFailed"};
-  return names[static_cast<unsigned>(lastDirectError_.load())];
+size_t EspUsbDeviceVendor::maxDirectReceive() const {
+  portENTER_CRITICAL(&vendorLock);
+  size_t value = 0;
+  if (state_ && !state_->stopping && state_->epOut && config_.rxMode == EspUsbVendorRxMode::Borrowed) {
+    value = std::min(size_t(UINT16_MAX), size_t(state_->packetSize) * 1023);
+    value -= value % std::max(size_t(state_->packetSize), size_t(64));
+  }
+  portEXIT_CRITICAL(&vendorLock);
+  return value;
+}
+esp_err_t EspUsbDeviceVendor::onDirectRxComplete(DirectCompleteCallback callback) {
+  if (state_) return ESP_ERR_INVALID_STATE;
+  directRxCompleteCallback_ = callback;
+  return ESP_OK;
+}
+EspUsbTransferSubmission EspUsbDeviceVendor::readDirect(void *buffer, size_t capacity) {
+  auto error = EspUsbTransferError::None;
+  if (!buffer || !capacity || capacity > UINT16_MAX || capacity % 64 || !directRxCompleteCallback_ ||
+      reinterpret_cast<uintptr_t>(buffer) > UINTPTR_MAX - (capacity - 1)) error = EspUsbTransferError::BadArgument;
+  else if (reinterpret_cast<uintptr_t>(buffer) & 63) error = EspUsbTransferError::NotAligned;
+  else if (!esp_ptr_dma_capable(buffer) || !esp_ptr_dma_capable(reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(buffer) + capacity - 1)))
+    error = EspUsbTransferError::NotDmaCapable;
+  portENTER_CRITICAL(&vendorLock);
+  if (error == EspUsbTransferError::None) {
+    if (!state_ || state_->stopping || !state_->epOut) error = EspUsbTransferError::NotMounted;
+    else if (config_.rxMode != EspUsbVendorRxMode::Borrowed) error = EspUsbTransferError::NotSupported;
+    else if (capacity % state_->packetSize || capacity > size_t(state_->packetSize) * 1023)
+      error = EspUsbTransferError::BadArgument;
+    else if (state_->directRxBuffer || state_->rxBusy || !usbd_edpt_claim(state_->rhport, state_->epOut))
+      error = EspUsbTransferError::Busy;
+    else {
+      state_->directRxBuffer = buffer; state_->directRxCapacity = capacity; state_->rxBusy = true;
+      if (!usbd_edpt_xfer(state_->rhport, state_->epOut, static_cast<uint8_t *>(buffer), uint16_t(capacity), false)) {
+        state_->takeReceive(EspUsbTransferStatus::TransferError, 0, false);
+        state_->rxBusy = false; usbd_edpt_release(state_->rhport, state_->epOut);
+        error = EspUsbTransferError::TransferFailed;
+      }
+    }
+  }
+  portEXIT_CRITICAL(&vendorLock);
+  return {error};
 }
 esp_err_t EspUsbDeviceVendor::onRx(RxCallback cb) {
   if (state_) return ESP_ERR_INVALID_STATE;

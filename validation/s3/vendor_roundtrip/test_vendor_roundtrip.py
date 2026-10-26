@@ -127,6 +127,78 @@ def test_vendor_roundtrip(dut, peers):
             dut.write(f"exchange {length}")
             dut.expect_exact(f"ROUNDTRIP_OK {length}\r\n", timeout=10)
             device.expect_exact(f"ECHOED {length}\r\n", timeout=10)
+        for board in (dut, device):
+            board.write("stop")
+            board.expect_exact("STOPPED\r\n", timeout=30)
+        device.write("rx_mode")
+        device.expect_exact("RX_MODE\r\n", timeout=5)
+        device.write("start")
+        device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
+        dut.write("start")
+        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        device.write("capacities")
+        device.expect_exact("CAPACITIES 0 0\r\n", timeout=5)
+        device.write("rx_invalid")
+        device.expect_exact("RX_INVALID 1 max=65472\r\n", timeout=5)
+        count = 0
+        for capacity, length, zlp in ((64, 0, 1), (64, 1, 0), (64, 63, 0), (64, 64, 0),
+                                      (128, 65, 0), (128, 127, 0), (128, 128, 0),
+                                      (192, 129, 0), (192, 64, 1), (192, 128, 1)):
+            device.write(f"rx_arm {capacity} {length}")
+            device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
+            device.write("rx_busy")
+            device.expect_exact("RX_BUSY 1\r\n", timeout=5)
+            dut.write(f"send {length} {zlp}")
+            dut.expect_exact(f"SENT {length} zlp={zlp} ok=1\r\n", timeout=10)
+            count += 1
+            device.write("rx_result")
+            device.expect_exact(f"RX_RESULT {count} status=0 requested={capacity} actual={length} known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
+
+        # A full packet alone does not finish a larger posted receive.
+        device.write("rx_arm 192 64")
+        device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
+        dut.write("send 64 0")
+        dut.expect_exact("SENT 64 zlp=0 ok=1\r\n", timeout=10)
+        device.write("rx_count")
+        device.expect_exact(f"RX_COUNT {count}\r\n", timeout=5)
+        device.write("rx_busy")
+        device.expect_exact("RX_BUSY 1\r\n", timeout=5)
+        dut.write("send 0 1")
+        dut.expect_exact("SENT 0 zlp=1 ok=1\r\n", timeout=10)
+        count += 1
+        device.write("rx_result")
+        device.expect_exact(f"RX_RESULT {count} status=0 requested=192 actual=64 known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
+
+        device.write("rx_chain")
+        device.expect_exact("RX_CHAIN_ARMED 1\r\n", timeout=5)
+        for length in (1, 63):
+            dut.write(f"send {length} 0")
+            dut.expect_exact(f"SENT {length} zlp=0 ok=1\r\n", timeout=10)
+        device.write("rx_chain_result")
+        device.expect_exact("RX_CHAIN_RESULT 1\r\n", timeout=5)
+        count += 2
+
+        for status in (1, 2):
+            device.write("rx_arm 192 64")
+            device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
+            dut.write("send 64 0")
+            dut.expect_exact("SENT 64 zlp=0 ok=1\r\n", timeout=10)
+            if status == 1:
+                dut.write("stop")
+                dut.expect_exact("STOPPED\r\n", timeout=30)
+                dut.write("start")
+                dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+            else:
+                device.write("stop")
+                device.expect_exact("STOPPED\r\n", timeout=30)
+            count += 1
+            device.write("rx_result")
+            device.expect_exact(f"RX_RESULT {count} status={status} requested=192 actual=0 known=0 pointer=1 guards=1 payload=1\r\n", timeout=5)
+        dut.write("stop")
+        dut.expect_exact("STOPPED\r\n", timeout=30)
+        device.write("cycles")
+        result = device.expect(r"CYCLES 1 before=(\d+) after=(\d+)\r\n", timeout=60)
+        assert result.group(1) == result.group(2), "heap changed in borrowed-only mode"
     finally:
         # Always attempt both stops, also after an assertion/timeout. No hook
         # changes report outcomes or starts a hidden recovery sequence.

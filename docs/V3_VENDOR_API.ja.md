@@ -32,7 +32,7 @@ callback設定も停止中に行い、各`on*()`の戻り値を確認する。
 | rxBuffer / txBuffer | 任意の外部ring領域。nullなら自動確保。非DMA・非alignment領域も可。指定領域はbeginからendまで保持 |
 | transferBytes | copy TXの一回のarm量の上限。実効MPS以上が必要。下位のpacket数上限でさらに分割 |
 | autoFlush | trueが標準。短いwriteも送出を進める。falseは明示flushでdrainを開始 |
-| rxMode | Streamはavailable/read、CallbackはonRxData。CallbackではrxCapacity=0としRX ringを作らない |
+| rxMode | Streamはavailable/read、CallbackはonRxData。Callback/BorrowedではrxCapacity=0としRX ringを作らない |
 
 TX容量0ではcopy用ringとTX stagingを作らず、borrowed送信だけを使える。
 外部ringはライブラリでfreeしない。領域の大きさと寿命は利用者の責務で、RX/TXの重複領域は拒否する。
@@ -61,12 +61,12 @@ callbackを事前登録しない場合、Busy、不適合buffer、長さ上限�
 
 ```cpp
 // Before begin; callback only records ownership and signals another task.
-vendor.onDirectComplete([](const EspUsbTransferResult &result) {
+vendor.onDirectTxComplete([](const EspUsbTransferResult &result) {
   returnBufferToProducer(result.buffer, result.status,
                          result.actualBytes, result.actualBytesKnown);
 });
 // After begin/configuration; context must be ready before the call.
-bool accepted = vendor.writeDirect(buffer, length,
+auto submission = vendor.writeDirect(buffer, length,
     EspUsbTransferTermination::EndWithShortPacket);
 ```
 
@@ -87,14 +87,14 @@ data転送とZLPの間に次の送信が割り込まない。普通のwriteの�
 返却は内部lockを解放してUSB workerで一度だけ行う。endもworkerに停止を依頼し、
 DMA停止→返却→worker終了を待つ。callback内では次の準備済みbufferの送信とsignalを行えるが、
 blockやend、構成変更、Function破棄を行わない。endをcallbackから呼ぶとInvalidStateで拒否する。
-個別endpointのcancelと投稿式borrowed RXは未実装。暫定TinyUSBには古い完了eventを識別するtokenがなく、
+個別endpointのcancelは未実装。暫定TinyUSBには古い完了eventを識別するtokenがなく、
 stallだけで安全な取消しを装わず、下位層の世代管理と一緒に実装する。
 
 ## 変更の影響と次の検証
 
 - build_opt.hのVendor容量・buffered/direct指定は不要。`CFG_TUD_VENDOR`を再有効化しない。
 - static容量取得はinstance呼出しへ。起動前にはconfigurationから要求値を読む。
-- 旧onTxCompleteはcopy送出通知。借用bufferの返却はstatus付きonDirectCompleteへ移す。
+- 旧onTxCompleteはcopy送出通知。借用bufferの返却はstatus付きonDirectTxCompleteへ移す。
 - Device::endはesp_err_tを返す。bufferやFunctionを破棄する前にESP_OKを確認する。
 - callbackの登録/変更は開始前へ移す。稼働中設定を無言で無視しない。
 - 旧flushや暗黙ZLPへの依存はwireの終端条件を見直す。自動送出と明示batchを選べる。
@@ -102,4 +102,42 @@ stallだけで安全な取消しを装わず、下位層の世代管理と一緒
 S3で容量変更、非power-of-twoの外部ring、callback RX、複数instance、reset/end返却、
 ZLP、100回開始終了を検証する。DeviceだけのbuildではVendor実装がリンクされないことも確認する。
 他クラスの固定資源はまだ残るため、ライブラリ全体の未使用費用が解決済みとはしない。
-P4 DMA/cache、全資源取得点の故障注入、個別cancel、投稿式RX、他クラスへの展開を続ける。
+P4 DMA/cache、全資源取得点の故障注入、個別cancel、他クラスへの展開を続ける。
+
+## 投稿式borrowed RXと呼出しごとの結果
+
+`rxMode=Borrowed`と`rxCapacity=0`を指定し、開始前に`onDirectRxComplete()`を登録する。
+`readDirect(buffer, capacity)`は受信領域を一つ投稿する。満杯またはshort packet/ZLPで返却され、
+次の受信は明示的に再投稿する。未投稿ではOUTをarmせずbackpressureをかける。
+callbackから別の準備済みbufferを投稿できる。reset/endでも同じ返却経路を一度だけ通る。
+
+容量は実効MPSと64の両方の倍数、開始addressは64 byte alignment、全領域がDMA可能RAMであることを要求する。
+領域をDMA専有にすることでP4等のcache invalidateが外側の変数を巻き込む条件を避ける。
+S3でcanaryを確認した段階であり、P4 cache実機合格の代用にはしない。
+`maxDirectReceive()`で現在の上限を照会し、返却のactualBytesだけを受信dataとして扱う。
+Borrowed RXでは内部packet bufferを作らず、copy TXも無効ならtransferBytes=0でよい。
+
+TX/RXの投稿は`EspUsbTransferSubmission`を返す。`if (submission)`で受理を確認し、
+`submission.error`にその呼出しの拒否理由が残る。後続のTX/RXによる診断値の上書きを避けるため、
+instanceのlastDirectErrorは廃止した。完了通知は別の`EspUsbTransferResult`である。
+TX callbackも方向を明示して`onDirectTxComplete()`へ整理した。
+
+```cpp
+EspUsbVendorConfig config;
+config.rxMode = EspUsbVendorRxMode::Borrowed;
+config.rxCapacity = config.txCapacity = 0;
+config.transferBytes = 0;
+vendor.configure(config);
+vendor.onDirectRxComplete([](const EspUsbTransferResult &done) {
+  // DMA no longer owns the buffer. Process actual bytes, or recycle on reset.
+  returnReceivedBuffer(done);
+});
+device.begin();
+auto submission = vendor.readDirect(buffer, capacity);
+if (!submission) handleSubmissionError(submission.error);
+```
+
+初期v3 APIからの変更は、bool代入を`auto`へ、lastDirectError参照を戻り値のerrorへ、
+onDirectCompleteをonDirectTxCompleteへ移す。`if (!vendor.writeDirect(...))`の形はそのまま使える。
+利点は並行操作でも因果関係が明確な診断と、内部RX資源の削減。不利益は明示投稿とbuffer寿命・alignmentの管理である。
+登録されたFunctionを誤ってcopy/moveすると所有権が壊れるため、Functionのcopy/moveも禁止した。

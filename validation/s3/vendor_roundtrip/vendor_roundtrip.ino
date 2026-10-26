@@ -43,6 +43,15 @@ void loop() {
     } else {
       Serial.println("HOST_START_FAILED");
     }
+  } else if (command.startsWith("send ")) {
+    unsigned length = 0, zlp = 0;
+    sscanf(command.c_str(), "send %u %u", &length, &zlp);
+    uint8_t data[129];
+    if (!opened || length > sizeof(data)) { Serial.println("INVALID_SEND"); return; }
+    for (size_t i = 0; i < length; ++i) data[i] = uint8_t(i * 37 + length);
+    bool ok = !length || host.vendorWrite(data, length, address.load());
+    if (ok && zlp) ok = host.vendorWriteZlp(address.load());
+    Serial.printf("SENT %u zlp=%u ok=%u\r\n", length, zlp, unsigned(ok));
   } else if (command.startsWith("exchange ") || command.startsWith("receive ")) {
     const bool exchange = command.startsWith("exchange ");
     unsigned requested = 0, terminate = 0;

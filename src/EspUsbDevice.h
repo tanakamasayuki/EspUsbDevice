@@ -823,6 +823,10 @@ private:
 class EspUsbDeviceClass
 {
 public:
+  EspUsbDeviceClass(const EspUsbDeviceClass &) = delete;
+  EspUsbDeviceClass &operator=(const EspUsbDeviceClass &) = delete;
+  EspUsbDeviceClass(EspUsbDeviceClass &&) = delete;
+  EspUsbDeviceClass &operator=(EspUsbDeviceClass &&) = delete;
   virtual ~EspUsbDeviceClass();
   virtual bool begin() { return true; }
   virtual bool afterDeviceStarted() { return true; }
@@ -977,13 +981,11 @@ private:
   RxCallback rxCallback_;
 };
 
-// Why a writeDirect() call was refused. Reported by
-// EspUsbDeviceVendor::lastDirectError(), so a stream that keeps its own
-// in-flight bookkeeping can tell a contract mistake from ordinary backpressure.
-enum class EspUsbDeviceVendorDirectError : uint8_t
+// Per-call submission error. Rejection never borrows a buffer or notifies.
+enum class EspUsbTransferError : uint8_t
 {
   None = 0,
-  // The selected transport does not implement borrowed transfers yet.
+  // The selected receive mode or transport does not support this operation.
   NotSupported,
   // No device, or this interface's endpoints are not open yet.
   NotMounted,
@@ -999,9 +1001,15 @@ enum class EspUsbDeviceVendorDirectError : uint8_t
   TransferFailed,
 };
 
+struct EspUsbTransferSubmission
+{
+  EspUsbTransferError error = EspUsbTransferError::None;
+  explicit operator bool() const { return error == EspUsbTransferError::None; }
+};
+
 // Capacities belong to this instance. Configure while stopped; begin allocates
 // the selected resources and end releases them. No CFG_TUD_VENDOR_* overrides.
-enum class EspUsbVendorRxMode : uint8_t { Stream, Callback };
+enum class EspUsbVendorRxMode : uint8_t { Stream, Callback, Borrowed };
 struct EspUsbVendorConfig
 {
   size_t rxCapacity = 512;
@@ -1073,11 +1081,14 @@ public:
   // it may submit another prepared buffer but must not block or call end().
   static bool directWriteSupported();
   size_t maxDirectTransfer() const;
-  bool writeDirect(const void *buffer, size_t length,
+  EspUsbTransferSubmission writeDirect(const void *buffer, size_t length,
                    EspUsbTransferTermination termination = EspUsbTransferTermination::Continue);
-  esp_err_t onDirectComplete(DirectCompleteCallback callback);
-  EspUsbDeviceVendorDirectError lastDirectError() const { return lastDirectError_.load(); }
-  const char *lastDirectErrorName() const;
+  esp_err_t onDirectTxComplete(DirectCompleteCallback callback);
+  // Borrowed RX mode: capacity is a multiple of MPS and 64, the entire region
+  // is exclusively DMA-owned until completion. Short/ZLP may return less data.
+  EspUsbTransferSubmission readDirect(void *buffer, size_t capacity);
+  size_t maxDirectReceive() const;
+  esp_err_t onDirectRxComplete(DirectCompleteCallback callback);
   esp_err_t onTxComplete(TxCompleteCallback callback);
   // Callback RX mode requires rxCapacity=0. Packet data is borrowed only for
   // this callback; copy what must outlive it. Set callbacks while stopped.
@@ -1102,8 +1113,8 @@ private:
   RxDataCallback rxDataCallback_;
   TxCompleteCallback txCompleteCallback_;
   ControlRequestCallback controlRequestCallback_;
-  DirectCompleteCallback directCompleteCallback_;
-  std::atomic<EspUsbDeviceVendorDirectError> lastDirectError_ = EspUsbDeviceVendorDirectError::None;
+  DirectCompleteCallback directTxCompleteCallback_;
+  DirectCompleteCallback directRxCompleteCallback_;
 };
 
 // CDC-NCM (USB network / "USB Ethernet") device function. Presents the device

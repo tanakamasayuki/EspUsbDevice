@@ -82,13 +82,13 @@ mainの文書commitもmerge済み（453a26a）。旧test/sampleの整合維持�
 
 `validation/.pytest-results/vendor-end-contract.xml`と同ディレクトリのtranscript/serialコピーを参照。
 serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roundtrip/`。
-結果はv3全体の完了を意味しない。他クラスの固定資源、個別cancel、投稿式borrowed RX、
+結果はv3全体の完了を意味しない。他クラスの固定資源、個別cancel、
 全取得点の故障注入、P4 cache/HS、S2/S31は未完了。direct上限の成功転送は小さい長さの範囲だけで、
 65472 byteそのもののwire転送は今回の試験には含めていない。
 
 ## 次に進める作業
 
-1. Vendorの投稿式RXと個別cancelを、転送世代/遅延eventの試験と一緒に設計・実装する。
+1. Vendorの個別cancelを、転送世代/遅延eventの試験と一緒に設計・実装する。
    暫定DCDのstallだけで古い完了を安全に消せると仮定しない。必要ならDCD境界を先に置換する。
 2. allocator各取得点での故障注入、callbackからの次転送、部分転送中のresetを新しい試験に追加する。
 3. 共通ring/transfer契約をCDCへ展開し、HIDとの複合で確認する。必要なregistryとdescriptor容量を動的にする。
@@ -98,3 +98,14 @@ Sol Mediumを基本とし、競合・EP0/DCD等の難所だけHighを検討す�
 API変更ごとに利点・不利益、既存利用への影響、移行例、実験結果を更新する。
 P4/S2/S31は内部adapter/能力表で拡張し、S3のprofileやMPSを公開APIの定数に埋め込まない。
 新試験は`validation/`だけで、conftestや独自pytest hookを追加しない。
+
+## 投稿式RXの追加結果
+
+`vendor-posted-rx.xml`、1 passed、56.21秒。従来の86往復等に加え、borrowed RXの
+成功13件（callback再投稿2件を含む）、部分受信reset 1件、部分受信end 1件を確認した。
+容量、実受信量、pointer、payload、境界canary、Busy/不正容量を検証した。
+満杯、short/ZLP、MPS倍数dataの後に別途ZLPを送る場合を区別している。
+copy構成とring/packetを持たないborrowed専用構成それぞれ100回の開始終了で、heapは318124→318124 byte。
+serial原本は`/tmp/pytest-embedded/2026-10-26_03-44-43-979896/test_vendor_roundtrip/`。
+投稿APIは呼出しごとのEspUsbTransferSubmissionを返す。初期v3のlastDirectErrorは廃止し、
+完了callbackをonDirectTxComplete/onDirectRxCompleteへ整理した。現在のAPIはVendorガイドを参照。
