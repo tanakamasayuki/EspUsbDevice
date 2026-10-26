@@ -14,7 +14,7 @@ S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・�
 cd /home/mt/dev/EspUsbDevice-v3/validation
 uv sync --locked
 uv run --env-file .env pytest --collect-only -q
-uv run --env-file .env pytest -q -rs --junitxml=.pytest-results/s3-vendor.xml
+uv run --env-file .env pytest -q -rs --junitxml=.pytest-results/vendor-dynamic.xml
 ```
 
 profileはHostとDeviceに一つずつ。複数profileを除外するためのhookは不要。
@@ -24,8 +24,9 @@ profileはHostとDeviceに一つずつ。複数profileを除外するためのho
 `s3/vendor_roundtrip`は新規sketchと普通のtest関数一本で、1/63/64/65/127/128/129 byteの
 Vendor往復を検証する。両側のpayloadと受信長を確認し、終了時は両boardを停止する。
 USB開始・停止はtest本文に見える通常のsketchコマンドで、fixture差替えや自動hookではない。
-現在は製品コードがv2なので短い送信に`flush()`を使う。この一行を不要にする変更の
-利点・不利益から検討する。build_opt.hとTinyUSB内部APIは使わない。
+Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、容量・送出方式・RX方式を
+同じbinaryで変更する。外部ring、複数instance、borrowed TX、reset/end返却も同じtestで確認する。
+build_opt.hとTinyUSB内部APIをsketchから使わない。APIは[Vendorガイド](../docs/V3_VENDOR_API.ja.md)を参照。
 
 ## plugin側で解決する候補
 
@@ -41,3 +42,15 @@ conftestを別helperや別pluginへ隠して持ち込まない。
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
 機材不足のskipは未検証であり、通信不一致・接続失敗をskipへ変えない。
 API判断は[変更方針](../docs/V3_API_DECISIONS.ja.md)、次の作業は[引き渡し](../docs/V3_HANDOFF.ja.md)を参照。
+
+## リンク確認
+
+`build_probes/device_only`は未使用Vendorのリンク除外を調べる新規build専用sketchで、pytestではuploadしない。
+
+```sh
+cd build_probes/device_only
+arduino-cli compile --profile s3_device --build-path build/s3_device .
+```
+
+対応するtoolchainのnmで`EspUsbDeviceVendor`/`EspUsbVendorState`がないことを確認する。
+他クラスの静的bufferはまだ残るため、ライブラリ全体の未使用コストが解決済みとはしない。

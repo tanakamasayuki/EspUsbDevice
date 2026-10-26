@@ -574,7 +574,9 @@ public:
   // being pulled - so a host-side test can reproduce disconnection without
   // anyone touching the hardware. The EspUsbHost suite drives exactly this
   // from its peer to test replugging a camera mid-stream.
-  void end();
+  // Success means the worker and DMA have stopped and borrowed buffers were
+  // returned. A call from a USB callback is rejected with INVALID_STATE.
+  esp_err_t end();
   void task();
   bool ready() const;
 
@@ -676,6 +678,7 @@ public:
   void handleHidSetProtocol(uint8_t instance, uint8_t protocol);
   void handleBusAttached();
   void handleBusDetached();
+  bool handleVendorControlRequest(uint8_t rhport, uint8_t stage, const void *request);
   // Report one control request to the observer, if a sketch installed one.
   void notifyControlRequest(const EspUsbDeviceControlRequestInfo &info);
   bool hasControlObserver() const { return static_cast<bool>(controlObserver_); }
@@ -823,7 +826,9 @@ public:
   virtual ~EspUsbDeviceClass();
   virtual bool begin() { return true; }
   virtual bool afterDeviceStarted() { return true; }
+  virtual esp_err_t startError() const { return ESP_FAIL; }
   virtual void end() {}
+  virtual void prepareToStop() {}
   virtual bool isHid() const { return true; }
   virtual bool isCdc() const { return false; }
   virtual bool isMidi() const { return false; }
@@ -891,6 +896,7 @@ public:
   // LEDs, so clearing there is correct either way.
   virtual void onBusAttached() {}
   virtual void onBusDetached() {}
+  virtual bool onVendorControlRequest(uint8_t, uint8_t, const void *) { return false; }
 
 protected:
   friend class EspUsbDevice;
@@ -977,11 +983,11 @@ private:
 enum class EspUsbDeviceVendorDirectError : uint8_t
 {
   None = 0,
-  // The build is buffered. Direct transfers need -DCFG_TUD_VENDOR_TXRX_BUFFERED=0.
+  // The selected transport does not implement borrowed transfers yet.
   NotSupported,
   // No device, or this interface's endpoints are not open yet.
   NotMounted,
-  // Null buffer, zero length, or more than 65535 bytes.
+  // Null buffer, zero length, or beyond maxDirectTransfer().
   BadArgument,
   // The buffer's address is not 64-byte aligned. Its *length* need not be.
   NotAligned,
@@ -993,178 +999,111 @@ enum class EspUsbDeviceVendorDirectError : uint8_t
   TransferFailed,
 };
 
+// Capacities belong to this instance. Configure while stopped; begin allocates
+// the selected resources and end releases them. No CFG_TUD_VENDOR_* overrides.
+enum class EspUsbVendorRxMode : uint8_t { Stream, Callback };
+struct EspUsbVendorConfig
+{
+  size_t rxCapacity = 512;
+  size_t txCapacity = 512;
+  // Optional non-DMA ring storage. Capacities describe the provided regions;
+  // keep them alive from begin through end. Null selects automatic allocation.
+  uint8_t *rxBuffer = nullptr;
+  uint8_t *txBuffer = nullptr;
+  uint16_t transferBytes = 512;
+  bool autoFlush = true;
+  EspUsbVendorRxMode rxMode = EspUsbVendorRxMode::Stream;
+};
+
+struct EspUsbVendorState;
+enum class EspUsbTransferStatus : uint8_t { Success, BusReset, Stopped, TransferError };
+enum class EspUsbTransferTermination : uint8_t { Continue, EndWithShortPacket };
+struct EspUsbTransferResult
+{
+  const void *buffer = nullptr;
+  size_t requestedBytes = 0;
+  size_t actualBytes = 0;
+  EspUsbTransferStatus status = EspUsbTransferStatus::Success;
+  // On reset/stop the controller may have sent an unknown prefix.
+  bool actualBytesKnown = true;
+};
 class EspUsbDeviceVendor : public EspUsbDeviceClass, public Print
 {
 public:
   using RxCallback = std::function<void(size_t)>;
-  // callback(sentBytes): a transmit on the bulk IN endpoint has completed.
   using TxCompleteCallback = std::function<void(size_t)>;
-  // callback(data, length): a bulk OUT packet arrived, handed over from the
-  // controller's own buffer. Direct builds only - see directWriteSupported().
   using RxDataCallback = std::function<void(const uint8_t *, size_t)>;
   using ControlRequestCallback = std::function<bool(const EspUsbDeviceVendorControlRequest &)>;
+  using DirectCompleteCallback = std::function<void(const EspUsbTransferResult &)>;
 
   explicit EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize = 64);
   ~EspUsbDeviceVendor() override;
-
+  esp_err_t configure(const EspUsbVendorConfig &config);
+  const EspUsbVendorConfig &configuration() const { return config_; }
   bool begin() override;
   void end() override;
   bool isHid() const override { return false; }
   bool isVendor() const override { return true; }
+  void prepareToStop() override;
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
   uint8_t endpointCount() const override { return 1; }
+  bool onVendorControlRequest(uint8_t rhport, uint8_t stage, const void *request) override;
 
   bool mounted() const;
   int available();
   int read();
   size_t read(uint8_t *buffer, size_t size);
+  using Print::write;
   size_t write(uint8_t data) override;
+  // Copies accepted bytes. Automatic dispatch by default, never a completion wait.
   size_t write(const uint8_t *buffer, size_t size) override;
-  // Room left in the transmit FIFO right now. write() never accepts more than
-  // this and returns 0 once it reaches zero, so a sketch that wants to know how
-  // much it may hand over before that happens asks here.
   size_t writeAvailable() const;
-  // Size of the transmit FIFO, i.e. the largest value writeAvailable() can ever
-  // return. Compile-time (CFG_TUD_VENDOR_TX_BUFSIZE); raise it from build_opt.h.
-  static size_t writeCapacity();
-  // Block the calling task until the transmit FIFO has room for `bytes`, or the
-  // timeout expires. Returns true when the room is there.
-  //
-  // The alternative a sketch has otherwise is to spin: write() returns 0, the
-  // sketch yields, and tries again - about 30,000 times per 4 MiB on an ESP32-P4
-  // high-speed bulk IN. That is harmless when the CPU has nothing else to do and
-  // expensive when it does, because the spinning task competes with whatever
-  // produces the data. Here the task is descheduled instead and woken from the
-  // transmit-complete callback.
-  //
-  // `bytes` is clamped to writeCapacity(): waiting for more than the FIFO can
-  // ever hold would only ever time out. timeoutMs == 0 polls once without
-  // blocking. Returns false if the device is not mounted, since nothing will
-  // drain the FIFO then.
-  //
-  // Flushes before it waits. TinyUSB only arms a transfer once the FIFO holds a
-  // whole packet, so a remainder shorter than wMaxPacketSize would otherwise
-  // sit there with nothing to push it out - and a caller waiting for room is by
-  // definition not about to add more.
+  // Effective allocated capacities; zero before begin and after end.
+  size_t writeCapacity() const;
+  size_t readCapacity() const;
   bool waitWritable(size_t bytes, uint32_t timeoutMs = 100);
-  // Request transmission of pending copied bytes. write() already does this,
-  // including for short replies. This does not wait for wire completion and
-  // does not establish a message boundary on the byte stream.
+  // Starts draining pending copied data, also when autoFlush is disabled.
   void flush();
 
-  // --- Direct transfer path -----------------------------------------------
-  //
-  // Opt-in and off by default. Put
-  //
-  //     -DCFG_TUD_VENDOR_TXRX_BUFFERED=0
-  //
-  // in the sketch's build_opt.h and compile with `arduino-cli compile --clean`.
-  // The --clean is not optional: without it the sketch is rebuilt and the
-  // library is not, so the sketch sees the macro and the library does not, and
-  // everything here silently keeps the buffered behaviour. Two builds differing
-  // in this flag must differ in size; identical sizes mean it did not take.
-  //
-  // What the build costs: the class transmit and receive FIFOs are gone, so
-  // available() and read() return 0 and flush() does nothing. Received data
-  // arrives through onRxData() instead. write() still works - it copies into
-  // the controller's endpoint buffer, one endpoint buffer per call - but must
-  // not be mixed with writeDirect() on the same interface, because both claim
-  // the same endpoint. The bulk IN transmit FIFO doubling
-  // (EspUsbBulkInBuffering) is unaffected and stays on by default.
-  //
-  // Why a build flag and not a runtime choice: in a buffered build the vendor
-  // class arms a zero-length packet of its own after any transfer whose length
-  // is a multiple of wMaxPacketSize, and that ZLP takes the endpoint claim.
-  // Measured on an ESP32-P4 high-speed link, 27,136-byte stages: armed from the
-  // completion callback the application wins the claim and the stream runs;
-  // armed from any other task the ZLP wins, the next writeDirect() is refused
-  // and the stream stops dead after one transfer. The direct build does not
-  // compile that ZLP path at all and does not care which task arms the next
-  // transfer. Like for like against the same host with 8 reads in flight, the
-  // direct path moves 42.6 MB/s at 65,024-byte stages where the buffered one
-  // moves 33.9.
+  // Strict borrowed TX: no hidden copy, 64-byte aligned DMA memory, bounded by
+  // maxDirectTransfer() on the negotiated link. Keep it unchanged until the
+  // typed completion, including BusReset/Stopped. Rejection borrows nothing.
+  // Register the completion callback while stopped. Runs on the USB worker;
+  // it may submit another prepared buffer but must not block or call end().
   static bool directWriteSupported();
-
-  // Hand `buffer` to the controller instead of copying it through the class
-  // transmit FIFO: claim the bulk IN endpoint and arm one transfer of `length`
-  // bytes on the caller's own memory.
-  //
-  // The caller's contract:
-  //  - `buffer` stays untouched and alive until the completion callback reports
-  //    it. Ownership is the caller's until then.
-  //  - `buffer`'s address is 64-byte aligned and in DMA-capable memory. Both
-  //    are checked and a buffer failing either is refused, never quietly
-  //    copied - an API that exists to avoid the copy should say so when it
-  //    cannot. PSRAM has to be staged through an internal bounce buffer by the
-  //    caller.
-  //  - Cache maintenance is **not** your job. TinyUSB cleans the buffer when it
-  //    arms the transfer (dcd_dwc2.c, DMA builds), and on ESP32-P4 the L1 data
-  //    cache is shared between the two cores - there is one
-  //    CACHE_L1_DCACHE_* control register, unlike the per-core instruction
-  //    caches - so that clean covers data produced on either core. An
-  //    esp_cache_msync(..., C2M) of your own is redundant, and a per-transfer
-  //    one is not free. S2/S3 reach internal SRAM without a data cache at all.
-  //
-  // `length` is capped at 65535 by usbd_edpt_xfer() and **need not be aligned
-  // or a multiple of wMaxPacketSize**: a short final stage or a status line is
-  // a normal thing to send, and it simply ends the host's transfer with a short
-  // packet.
-  //
-  // Returns false and sets lastDirectError() on refusal;
-  // EspUsbDeviceVendorDirectError::Busy means a transfer is still in flight,
-  // which is ordinary backpressure rather than a mistake.
-  bool writeDirect(const void *buffer, size_t length);
-  EspUsbDeviceVendorDirectError lastDirectError() const;
+  size_t maxDirectTransfer() const;
+  bool writeDirect(const void *buffer, size_t length,
+                   EspUsbTransferTermination termination = EspUsbTransferTermination::Continue);
+  esp_err_t onDirectComplete(DirectCompleteCallback callback);
+  EspUsbDeviceVendorDirectError lastDirectError() const { return lastDirectError_.load(); }
   const char *lastDirectErrorName() const;
-
-  // A transmit completed; `sentBytes` is what went out. Runs **on the usbd
-  // task**: keep it non-blocking, and do nothing in it beyond bookkeeping,
-  // arming the next transfer, and signalling another task. Arming the next
-  // writeDirect() here is what keeps a stream gapless - there is no rule that
-  // it must happen here, and arming from another task works too, but then the
-  // endpoint sits idle for the scheduling gap.
-  //
-  // Hand it a buffer that is **already full**. Filling one here, between a
-  // transfer completing and the next being armed, is time the endpoint spends
-  // idle: measured on an ESP32-P4 high-speed link with 27,136-byte stages,
-  // 22.8 MB/s filling inside the callback against 27.4 MB/s when the callback
-  // only arms. Produce into one buffer while the other is in flight.
-  void onTxComplete(TxCompleteCallback callback);
-
-  // Received data, straight from the controller's endpoint buffer. Direct
-  // builds only: on a buffered build the payload goes to the receive FIFO and
-  // this never fires, so use onRx() with available()/read() there. **The
-  // pointer is valid only for the duration of the call** - copy what you need.
-  // Runs on the usbd task, with the same rules as onTxComplete().
-  void onRxData(RxDataCallback callback);
-  // ------------------------------------------------------------------------
-
-  void onRx(RxCallback callback);
-  void onControlRequest(ControlRequestCallback callback);
+  esp_err_t onTxComplete(TxCompleteCallback callback);
+  // Callback RX mode requires rxCapacity=0. Packet data is borrowed only for
+  // this callback; copy what must outlive it. Set callbacks while stopped.
+  esp_err_t onRxData(RxDataCallback callback);
+  esp_err_t onRx(RxCallback callback);
+  esp_err_t onControlRequest(ControlRequestCallback callback);
   bool sendControlResponse(const EspUsbDeviceVendorControlRequest &request, const void *data = nullptr, size_t length = 0);
-  uint16_t endpointSize() const;
-
+  uint16_t endpointSize() const { return endpointSize_; }
   void handleRx(const uint8_t *data, size_t length);
-  bool handleControlRequest(uint8_t rhport, uint8_t stage, const void *request);
-  // Called from tud_vendor_tx_cb() on the usbd task when a transmit completes,
-  // i.e. when the FIFO has just given room back.
   void handleTxComplete(size_t sentBytes);
+  bool handleControlRequest(uint8_t rhport, uint8_t stage, const void *request);
 
 private:
+  friend struct EspUsbVendorState;
+  esp_err_t startError() const override { return startError_; }
+  esp_err_t startError_ = ESP_OK;
+  EspUsbVendorConfig config_;
+  EspUsbVendorState *state_ = nullptr;
   uint16_t endpointSize_ = 64;
-  // The endpoint number the device handed this interface, learned while the
-  // configuration descriptor is built. writeDirect() needs it to address the
-  // bulk IN endpoint; 0 means "not built yet".
-  uint8_t endpointNumber_ = 0;
+  uint8_t interfaceNumber_ = 0;
   RxCallback rxCallback_;
   RxDataCallback rxDataCallback_;
   TxCompleteCallback txCompleteCallback_;
   ControlRequestCallback controlRequestCallback_;
-  EspUsbDeviceVendorDirectError lastDirectError_ = EspUsbDeviceVendorDirectError::None;
-  // Created on the first waitWritable() and destroyed in end(). A sketch that
-  // only ever spins on write() never pays for it.
-  void *writableSignal_ = nullptr;
+  DirectCompleteCallback directCompleteCallback_;
+  std::atomic<EspUsbDeviceVendorDirectError> lastDirectError_ = EspUsbDeviceVendorDirectError::None;
 };
 
 // CDC-NCM (USB network / "USB Ethernet") device function. Presents the device

@@ -31,7 +31,6 @@
 #include "class/cdc/cdc_device.h"
 #include "class/midi/midi_device.h"
 #include "class/msc/msc_device.h"
-#include "class/vendor/vendor_device.h"
 // usbd_edpt_claim() / usbd_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
 #include "device/usbd_pvt.h"
 #if __has_include("esp_memory_utils.h")
@@ -189,7 +188,6 @@ static EspUsbDevice *g_activeDevice = nullptr;
 static EspUsbDeviceCdcSerial *g_cdcSerials[ESP_USB_DEVICE_CDC_PORTS] = {};
 static EspUsbDeviceMidi *g_activeMidi = nullptr;
 static EspUsbDeviceMsc *g_activeMsc = nullptr;
-static EspUsbDeviceVendor *g_activeVendor = nullptr;
 static EspUsbDeviceNet *g_activeNet = nullptr;
 static EspUsbDeviceDfu *g_activeDfu = nullptr;
 // The active Audio function registry lives in EspUsbAudio.cpp.
@@ -723,41 +721,7 @@ bool tud_msc_is_writable_cb(uint8_t lun)
   return g_activeMsc ? g_activeMsc->writable() : false;
 }
 
-// The signature MUST match the arduino-esp32 TinyUSB prototype exactly
-// (class/vendor/vendor_device.h): `void tud_vendor_rx_cb(uint8_t idx,
-// const uint8_t *buffer, uint32_t bufsize)`. That declaration is inside the
-// header's `extern "C"` block, so defining a matching signature here gives this
-// function C linkage and overrides TinyUSB's weak default. Using a mismatched
-// signature (e.g. a single `uint8_t` argument) does NOT conflict at compile time
-// — instead the compiler emits a *C++-mangled* symbol that silently fails to
-// override the weak C default, so vendord_xfer_cb keeps calling the empty stub
-// and onRx() never fires (data still reaches the RX FIFO, which is why polling
-// "works" — but the callback is dead). In buffered mode (CFG_TUD_VENDOR_TXRX_BUFFERED,
-// the default) buffer/bufsize are NULL/0 and the payload is in the RX FIFO, which
-// handleRx() drains via available()/read().
-void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize)
-{
-  (void)idx;
-  if (g_activeVendor)
-  {
-    // buffer/bufsize are NULL/0 in a buffered build and the real payload in a
-    // direct one; handleRx() is what knows the difference.
-    g_activeVendor->handleRx(buffer, static_cast<size_t>(bufsize));
-  }
-}
 
-// Room has just come back in the transmit FIFO. Same signature rule as
-// tud_vendor_rx_cb above - this must match class/vendor/vendor_device.h exactly
-// or it silently stops overriding TinyUSB's weak default and
-// EspUsbDeviceVendor::waitWritable() waits out its full timeout every call.
-void tud_vendor_tx_cb(uint8_t idx, uint32_t sent_bytes)
-{
-  (void)idx;
-  if (g_activeVendor)
-  {
-    g_activeVendor->handleTxComplete(static_cast<size_t>(sent_bytes));
-  }
-}
 
 // The vendor-request handling itself. `observation`, when not null, collects
 // what this decided so the caller can report it.
@@ -830,7 +794,7 @@ static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
         g_activeDevice->microsoftOs20DescriptorLength());
   }
   const bool handled =
-      g_activeVendor ? g_activeVendor->handleControlRequest(rhport, stage, request) : false;
+      g_activeDevice ? g_activeDevice->handleVendorControlRequest(rhport, stage, request) : false;
   if (observation)
   {
     observation->handled = handled;
@@ -870,7 +834,7 @@ extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_c
 
 // TinyUSB net (CDC-NCM) callbacks. Signatures must match class/net/net_device.h
 // (included above) so they get C linkage and override TinyUSB's weak defaults —
-// see the tud_vendor_rx_cb note above for why a mismatch silently fails.
+// The callback signature must match the class header to override its weak stub.
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
 {
   // Return true = we took ownership of this frame and TinyUSB may reuse its
@@ -947,7 +911,14 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
 {
   if (running_)
   {
-    return true;
+    setLastError(ESP_ERR_INVALID_STATE);
+    return false;
+  }
+  // Driver registration must not rebuild a table retained by a running stack.
+  if (g_activeDevice && g_activeDevice != this)
+  {
+    setLastError(ESP_ERR_INVALID_STATE);
+    return false;
   }
   config_ = config;
   // Checked before the descriptors are built: the registry property writes a
@@ -996,13 +967,14 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
   {
     if (classes_[i] && !classes_[i]->begin())
     {
+      const esp_err_t error = classes_[i]->startError();
       classes_[i]->end();
       while (begunClassCount > 0)
       {
         --begunClassCount;
         classes_[begunClassCount]->end();
       }
-      setLastError(ESP_FAIL);
+      setLastError(error);
       return false;
     }
     ++begunClassCount;
@@ -1086,12 +1058,27 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
   return true;
 }
 
-void EspUsbDevice::end()
+esp_err_t EspUsbDevice::end()
 {
+#if ESP_USB_DEVICE_HAS_TINYUSB
+  if (espusb::internal::tinyUsbRuntimeInTask())
+  {
+    setLastError(ESP_ERR_INVALID_STATE);
+    return ESP_ERR_INVALID_STATE;
+  }
+#endif
+  for (size_t i = 0; i < classCount_; ++i)
+  {
+    if (classes_[i]) classes_[i]->prepareToStop();
+  }
 #if ESP_USB_DEVICE_HAS_TINYUSB
   if (tinyusbStarted_)
   {
-    espusb::internal::stopTinyUsbRuntime();
+    if (!espusb::internal::stopTinyUsbRuntime())
+    {
+      setLastError(ESP_FAIL);
+      return ESP_FAIL;
+    }
     tinyusbStarted_ = false;
   }
 #endif
@@ -1111,6 +1098,17 @@ void EspUsbDevice::end()
   }
   running_ = false;
   ready_ = false;
+  setLastError(ESP_OK);
+  return ESP_OK;
+}
+
+bool EspUsbDevice::handleVendorControlRequest(uint8_t rhport, uint8_t stage, const void *request)
+{
+  for (size_t i = 0; i < classCount_; ++i)
+  {
+    if (classes_[i] && classes_[i]->onVendorControlRequest(rhport, stage, request)) return true;
+  }
+  return false;
 }
 
 void EspUsbDevice::task()
@@ -1158,6 +1156,10 @@ const char *EspUsbDevice::lastErrorName() const
     return "ESP_FAIL";
   case ESP_ERR_INVALID_STATE:
     return "ESP_ERR_INVALID_STATE";
+  case ESP_ERR_INVALID_ARG:
+    return "ESP_ERR_INVALID_ARG";
+  case ESP_ERR_NO_MEM:
+    return "ESP_ERR_NO_MEM";
   case ESP_ERR_INVALID_SIZE:
     return "ESP_ERR_INVALID_SIZE";
   case ESP_ERR_NOT_SUPPORTED:
@@ -3102,472 +3104,6 @@ void EspUsbDeviceCdcSerial::handleRx()
   {
     rxCallback_(available());
   }
-}
-
-EspUsbDeviceVendor::EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize) : EspUsbDeviceClass(device)
-{
-  endpointSize_ = endpointSize == 0 ? 64 : endpointSize;
-}
-
-EspUsbDeviceVendor::~EspUsbDeviceVendor()
-{
-  end();
-}
-
-void EspUsbDeviceVendor::end()
-{
-  if (g_activeVendor == this)
-  {
-    g_activeVendor = nullptr;
-  }
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (writableSignal_)
-  {
-    vSemaphoreDelete(static_cast<SemaphoreHandle_t>(writableSignal_));
-    writableSignal_ = nullptr;
-  }
-#endif
-}
-
-bool EspUsbDeviceVendor::begin()
-{
-  if (g_activeVendor && g_activeVendor != this)
-  {
-    return false;
-  }
-  g_activeVendor = this;
-  return true;
-}
-
-uint16_t EspUsbDeviceVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
-{
-  // endpointSize is the per-speed ceiling the caller has already worked out:
-  // configurationDescriptorForSpeed() passes 64 while building the full-speed
-  // configuration and 512 for high speed. Ignoring it and writing the
-  // constructor's value into both is how OTHER_SPEED_CONFIGURATION came to
-  // advertise wMaxPacketSize = 512 on a bulk endpoint, which USB 2.0 caps at 64
-  // at full speed. The constructor still decides how small the endpoint may be;
-  // the speed decides how large.
-  uint16_t maxPacket = endpointSize_;
-  if (endpointSize != 0 && maxPacket > endpointSize)
-  {
-    maxPacket = endpointSize;
-  }
-  const uint8_t epOut = endpointNumber;
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
-  // writeDirect() addresses the IN endpoint itself, and this is the only place
-  // the number is known.
-  endpointNumber_ = endpointNumber;
-  uint8_t descriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 2, USB_CLASS_VENDOR_SPECIFIC, 0x00, 0x00, 0,
-      7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(maxPacket & 0xff), static_cast<uint8_t>((maxPacket >> 8) & 0xff), 0,
-      7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_BULK, static_cast<uint8_t>(maxPacket & 0xff), static_cast<uint8_t>((maxPacket >> 8) & 0xff), 0,
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
-}
-
-bool EspUsbDeviceVendor::mounted() const
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  return tud_vendor_n_mounted(0);
-#else
-  return false;
-#endif
-}
-
-int EspUsbDeviceVendor::available()
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB && CFG_TUD_VENDOR_TXRX_BUFFERED
-  return static_cast<int>(tud_vendor_n_available(0));
-#else
-  // Non-buffered builds have no RX FIFO to count: TinyUSB hands the payload to
-  // tud_vendor_rx_cb() instead and there is nothing to poll.
-  return 0;
-#endif
-}
-
-int EspUsbDeviceVendor::read()
-{
-  uint8_t data = 0;
-  return read(&data, 1) == 1 ? data : -1;
-}
-
-size_t EspUsbDeviceVendor::read(uint8_t *buffer, size_t size)
-{
-  if (!buffer || size == 0)
-  {
-    return 0;
-  }
-#if ESP_USB_DEVICE_HAS_TINYUSB && CFG_TUD_VENDOR_TXRX_BUFFERED
-  return tud_vendor_n_read(0, buffer, static_cast<uint32_t>(size));
-#else
-  (void)buffer;
-  (void)size;
-  return 0;
-#endif
-}
-
-size_t EspUsbDeviceVendor::write(uint8_t data)
-{
-  return write(&data, 1);
-}
-
-size_t EspUsbDeviceVendor::write(const uint8_t *buffer, size_t size)
-{
-  if (!buffer || size == 0)
-  {
-    return 0;
-  }
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (!mounted())
-  {
-    return 0;
-  }
-  const uint32_t available = tud_vendor_n_write_available(0);
-  if (size > available)
-  {
-    size = available;
-  }
-  const size_t written = size ? tud_vendor_n_write(0, buffer, static_cast<uint32_t>(size)) : 0;
-#if CFG_TUD_VENDOR_TXRX_BUFFERED
-  // A normal write must also progress a short reply, just as CDC write does.
-  // This schedules pending bytes; it does not wait for wire completion.
-  if (written)
-  {
-    tud_vendor_n_write_flush(0);
-  }
-#endif
-  return written;
-#else
-  return 0;
-#endif
-}
-
-size_t EspUsbDeviceVendor::writeAvailable() const
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  return static_cast<size_t>(tud_vendor_n_write_available(0));
-#else
-  return 0;
-#endif
-}
-
-size_t EspUsbDeviceVendor::writeCapacity()
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  return CFG_TUD_VENDOR_TX_BUFSIZE;
-#else
-  return 0;
-#endif
-}
-
-bool EspUsbDeviceVendor::waitWritable(size_t bytes, uint32_t timeoutMs)
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (bytes == 0)
-  {
-    return true;
-  }
-  if (bytes > writeCapacity())
-  {
-    bytes = writeCapacity();
-  }
-  if (writeAvailable() >= bytes)
-  {
-    return true;
-  }
-  if (timeoutMs == 0 || !mounted())
-  {
-    return false;
-  }
-  // TinyUSB only arms a transfer once the FIFO holds a whole packet, so a
-  // remainder shorter than wMaxPacketSize sits there until something flushes
-  // it. Nothing here would: the caller is blocked precisely because it has no
-  // more data to push in behind it, which is how this wait used to hang
-  // forever on the last fragment of a stream. Flushing before waiting costs a
-  // short packet only in the case where the alternative was never finishing.
-  flush();
-  if (!writableSignal_)
-  {
-    // Binary rather than counting: the wait re-reads the FIFO after every wake,
-    // so a give that arrives while the task is already running is not a lost
-    // wake-up, it is a redundant one.
-    writableSignal_ = xSemaphoreCreateBinary();
-    if (!writableSignal_)
-    {
-      return false;
-    }
-  }
-  const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeoutMs);
-  for (;;)
-  {
-    const TickType_t now = xTaskGetTickCount();
-    // Signed compare so the subtraction survives the tick counter wrapping.
-    const TickType_t remaining =
-        static_cast<int32_t>(deadline - now) > 0 ? deadline - now : 0;
-    if (remaining == 0)
-    {
-      return writeAvailable() >= bytes;
-    }
-    // Bounded even without a transmit completion: an unplug stops the callbacks
-    // for good, and this is what lets the loop notice that mounted() went false.
-    // Short, because a slice is also what a missed wake-up costs, and never zero
-    // - a zero timeout would turn this into the spin it exists to replace.
-    TickType_t slice = remaining > pdMS_TO_TICKS(2) ? pdMS_TO_TICKS(2) : remaining;
-    if (slice == 0)
-    {
-      slice = 1;
-    }
-    xSemaphoreTake(static_cast<SemaphoreHandle_t>(writableSignal_), slice);
-    if (writeAvailable() >= bytes)
-    {
-      return true;
-    }
-    if (!mounted())
-    {
-      return false;
-    }
-  }
-#else
-  (void)bytes;
-  (void)timeoutMs;
-  return false;
-#endif
-}
-
-void EspUsbDeviceVendor::flush()
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB && CFG_TUD_VENDOR_TXRX_BUFFERED
-  tud_vendor_n_write_flush(0);
-#endif
-}
-
-bool EspUsbDeviceVendor::directWriteSupported()
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB && !CFG_TUD_VENDOR_TXRX_BUFFERED
-  return true;
-#else
-  return false;
-#endif
-}
-
-bool EspUsbDeviceVendor::writeDirect(const void *buffer, size_t length)
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB && !CFG_TUD_VENDOR_TXRX_BUFFERED
-  // usbd_edpt_xfer() takes a uint16_t length. There is no partial-write
-  // contract here, so an oversized request is refused rather than truncated.
-  if (!buffer || length == 0 || length > 0xffffu)
-  {
-    lastDirectError_ = EspUsbDeviceVendorDirectError::BadArgument;
-    return false;
-  }
-  // The address has to be cache-line aligned. The *length* deliberately does
-  // not: a run's final stage and a status line are both short and odd, and a
-  // partial-line writeback is safe for a transfer the device only reads out of.
-  if ((reinterpret_cast<uintptr_t>(buffer) & 63u) != 0)
-  {
-    lastDirectError_ = EspUsbDeviceVendorDirectError::NotAligned;
-    return false;
-  }
-#if ESP_USB_DEVICE_HAS_DMA_CAPABLE_CHECK
-  if (!esp_ptr_dma_capable(buffer))
-  {
-    lastDirectError_ = EspUsbDeviceVendorDirectError::NotDmaCapable;
-    return false;
-  }
-#endif
-  if (endpointNumber_ == 0 || !mounted())
-  {
-    lastDirectError_ = EspUsbDeviceVendorDirectError::NotMounted;
-    return false;
-  }
-  const uint8_t rhport = espusb::internal::tinyUsbRuntimeRhport();
-  if (rhport == 0xff)
-  {
-    lastDirectError_ = EspUsbDeviceVendorDirectError::NotMounted;
-    return false;
-  }
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber_);
-  // The same claim the vendor class itself takes, so a transfer already in
-  // flight makes this fail rather than corrupt it. This is the one refusal a
-  // streaming caller should expect: it is backpressure, not a mistake.
-  if (!usbd_edpt_claim(rhport, epIn))
-  {
-    lastDirectError_ = EspUsbDeviceVendorDirectError::Busy;
-    return false;
-  }
-  if (!usbd_edpt_xfer(rhport, epIn,
-                      static_cast<uint8_t *>(const_cast<void *>(buffer)),
-                      static_cast<uint16_t>(length), false))
-  {
-    usbd_edpt_release(rhport, epIn);
-    lastDirectError_ = EspUsbDeviceVendorDirectError::TransferFailed;
-    return false;
-  }
-  lastDirectError_ = EspUsbDeviceVendorDirectError::None;
-  return true;
-#else
-  (void)buffer;
-  (void)length;
-  lastDirectError_ = EspUsbDeviceVendorDirectError::NotSupported;
-  return false;
-#endif
-}
-
-EspUsbDeviceVendorDirectError EspUsbDeviceVendor::lastDirectError() const
-{
-  return lastDirectError_;
-}
-
-const char *EspUsbDeviceVendor::lastDirectErrorName() const
-{
-  switch (lastDirectError_)
-  {
-  case EspUsbDeviceVendorDirectError::None:
-    return "None";
-  case EspUsbDeviceVendorDirectError::NotSupported:
-    return "NotSupported";
-  case EspUsbDeviceVendorDirectError::NotMounted:
-    return "NotMounted";
-  case EspUsbDeviceVendorDirectError::BadArgument:
-    return "BadArgument";
-  case EspUsbDeviceVendorDirectError::NotAligned:
-    return "NotAligned";
-  case EspUsbDeviceVendorDirectError::NotDmaCapable:
-    return "NotDmaCapable";
-  case EspUsbDeviceVendorDirectError::Busy:
-    return "Busy";
-  case EspUsbDeviceVendorDirectError::TransferFailed:
-    return "TransferFailed";
-  }
-  return "Unknown";
-}
-
-void EspUsbDeviceVendor::onTxComplete(TxCompleteCallback callback)
-{
-  txCompleteCallback_ = callback;
-}
-
-void EspUsbDeviceVendor::onRxData(RxDataCallback callback)
-{
-  rxDataCallback_ = callback;
-}
-
-void EspUsbDeviceVendor::onRx(RxCallback callback)
-{
-  rxCallback_ = callback;
-}
-
-void EspUsbDeviceVendor::onControlRequest(ControlRequestCallback callback)
-{
-  controlRequestCallback_ = callback;
-}
-
-bool EspUsbDeviceVendor::sendControlResponse(const EspUsbDeviceVendorControlRequest &request, const void *data, size_t length)
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  const tusb_control_request_t *raw = static_cast<const tusb_control_request_t *>(request.rawRequest);
-  if (!raw)
-  {
-    return false;
-  }
-  if (!data || length == 0)
-  {
-    return tud_control_status(request.rhport, raw);
-  }
-  return tud_control_xfer(request.rhport, raw, const_cast<void *>(data), static_cast<uint16_t>(length));
-#else
-  (void)request;
-  (void)data;
-  (void)length;
-  return false;
-#endif
-}
-
-uint16_t EspUsbDeviceVendor::endpointSize() const
-{
-  return endpointSize_;
-}
-
-void EspUsbDeviceVendor::handleRx(const uint8_t *data, size_t length)
-{
-  // Direct builds get the controller's buffer here and have no RX FIFO behind
-  // it, so this is the only chance to look at the payload.
-  if (data && length > 0 && rxDataCallback_)
-  {
-    rxDataCallback_(data, length);
-  }
-  if (rxCallback_)
-  {
-    rxCallback_(available());
-  }
-}
-
-void EspUsbDeviceVendor::handleTxComplete(size_t sentBytes)
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  // First, and deliberately. This runs inside vendord_xfer_cb before the class
-  // refills the endpoint from its FIFO, so a callback that arms the next
-  // writeDirect() here takes usbd_edpt_claim() ahead of that refill - and,
-  // in a buffered build, ahead of the ZLP the class would otherwise arm after
-  // a transfer whose length is a multiple of wMaxPacketSize. Arming from any
-  // other task loses that race. See docs/CHANGE_REQUESTS.ja.md (F1).
-  if (txCompleteCallback_)
-  {
-    txCompleteCallback_(sentBytes);
-  }
-  if (!writableSignal_)
-  {
-    return;
-  }
-  // Order matters here, and getting it wrong costs an order of magnitude.
-  //
-  // TinyUSB calls this from vendord_xfer_cb *before* it refills the endpoint
-  // from the transmit FIFO, so at this instant the room a waiter is waiting for
-  // does not exist yet - the completed transfer's bytes left the FIFO when it
-  // was armed, and the FIFO still holds whatever the sketch queued behind it.
-  // Waking a waiter now has it find nothing and block again, and on a
-  // dual-core part the waiter really does run that check before the usbd task
-  // reaches its own refill a few instructions later. Measured on ESP32-P4: a
-  // 4 MiB stream fell from 21 MB/s to 1.8, every wait costing a full timeout
-  // slice because the wake-up that mattered had already been spent.
-  //
-  // Draining here makes the room real before the wake-up. TinyUSB's refill, one
-  // line later, then finds the FIFO empty and does nothing.
-#if CFG_TUD_VENDOR_TXRX_BUFFERED
-  tud_vendor_n_write_flush(0);
-#endif
-  xSemaphoreGive(static_cast<SemaphoreHandle_t>(writableSignal_));
-#else
-  (void)sentBytes;
-#endif
-}
-
-bool EspUsbDeviceVendor::handleControlRequest(uint8_t rhport, uint8_t stage, const void *request)
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  const tusb_control_request_t *raw = static_cast<const tusb_control_request_t *>(request);
-  if (!raw || !controlRequestCallback_)
-  {
-    return false;
-  }
-  EspUsbDeviceVendorControlRequest event;
-  event.rhport = rhport;
-  event.stage = stage;
-  event.bmRequestType = raw->bmRequestType;
-  event.bRequest = raw->bRequest;
-  event.wValue = raw->wValue;
-  event.wIndex = raw->wIndex;
-  event.wLength = raw->wLength;
-  event.rawRequest = raw;
-  return controlRequestCallback_(event);
-#else
-  (void)rhport;
-  (void)stage;
-  (void)request;
-  return false;
-#endif
 }
 
 #if ESP_USB_DEVICE_HAS_TINYUSB

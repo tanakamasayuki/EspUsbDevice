@@ -3,6 +3,8 @@
 #include "esp_private/usb_phy.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
+#include <atomic>
 #include "tusb.h"
 
 namespace {
@@ -10,6 +12,8 @@ namespace {
 usb_phy_handle_t g_phy = nullptr;
 TaskHandle_t g_deviceTask = nullptr;
 uint8_t g_rhport = 0xff;
+std::atomic<bool> g_stop{false};
+SemaphoreHandle_t g_taskExited = nullptr;
 
 // Frames queued by EspUsbDeviceNet for transmission. Defined in EspUsbDevice.cpp
 // and a no-op when no network function is in use.
@@ -17,7 +21,7 @@ extern "C" void espUsbDeviceNetDrainTx(void);
 
 void tinyUsbDeviceTask(void *)
 {
-  while (true)
+  while (!g_stop.load())
   {
     // tud_task() would block until the next USB event, which is not good enough:
     // frames queued while the bus is quiet have to reach TinyUSB too. A 1 ms
@@ -30,6 +34,12 @@ void tinyUsbDeviceTask(void *)
     // transmitter (see espUsbDeviceNetTxFrame).
     espUsbDeviceNetDrainTx();
   }
+  // DMA is stopped before class deinit returns borrowed buffers. Keep those
+  // completion callbacks on the USB worker, including the end() path.
+  tusb_deinit(g_rhport);
+  g_rhport = 0xff;
+  xSemaphoreGive(g_taskExited);
+  vTaskDelete(nullptr);
 }
 
 } // namespace
@@ -101,6 +111,16 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
     return ESP_FAIL;
   }
 
+  g_taskExited = xSemaphoreCreateBinary();
+  if (!g_taskExited)
+  {
+    tusb_deinit(g_rhport);
+    usb_del_phy(g_phy);
+    g_phy = nullptr;
+    g_rhport = 0xff;
+    return ESP_ERR_NO_MEM;
+  }
+  g_stop.store(false);
   const UBaseType_t priority =
       options.taskPriority == 0 ? configMAX_PRIORITIES - 1 : options.taskPriority;
   // xTaskCreate() leaves the task unpinned, which on a dual-core ESP32 means it
@@ -118,6 +138,8 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
                                     static_cast<BaseType_t>(options.taskCoreId));
   if (created != pdPASS)
   {
+    vSemaphoreDelete(g_taskExited);
+    g_taskExited = nullptr;
     tusb_deinit(g_rhport);
     usb_del_phy(g_phy);
     g_phy = nullptr;
@@ -127,12 +149,23 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   return ESP_OK;
 }
 
-void stopTinyUsbRuntime()
+bool tinyUsbRuntimeInTask()
 {
+  return g_deviceTask && xTaskGetCurrentTaskHandle() == g_deviceTask;
+}
+
+bool stopTinyUsbRuntime()
+{
+  if (tinyUsbRuntimeInTask()) return false;
   if (g_deviceTask)
   {
-    vTaskDelete(g_deviceTask);
+    // Finish the current event/callback before deinitializing endpoints or
+    // releasing class buffers. Deleting a running task can abandon a lock.
+    g_stop.store(true);
+    xSemaphoreTake(g_taskExited, portMAX_DELAY);
     g_deviceTask = nullptr;
+    vSemaphoreDelete(g_taskExited);
+    g_taskExited = nullptr;
   }
   if (g_rhport != 0xff)
   {
@@ -144,6 +177,7 @@ void stopTinyUsbRuntime()
     usb_del_phy(g_phy);
     g_phy = nullptr;
   }
+  return true;
 }
 
 bool tinyUsbRuntimeStarted()

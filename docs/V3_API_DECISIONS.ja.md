@@ -87,3 +87,16 @@ S3–S3新規probeで1/63/64/65/127/128/129 byteを明示flushなしで往復し
 writeの戻り値・buffer寿命・callback contextは維持し、flushは完了待ちには変えていない。
 短いwriteごとの転送予約が増える可能性は残る。まとめ書き専用APIは必要性を実測してから追加する。
 現時点の試験は転送速度やP4/S2/S31の動作を証明するものではない。
+
+## 採用記録: instance資源と借用転送
+
+Vendorクラスdriverを独自実装へ切り替え、容量・外部ring・autoFlush・RX modeをinstance configへ移した。
+copy TX容量0やcallback RXでは未使用ring/stagingを確保しない。通常のPrint操作は維持した。
+直接送信は同じbinaryで使え、status付き完了でbufferを返す。既存のbyte数だけの通知を返却保証には使わない。
+設定とcallbackの稼働中変更、二度目のbeginは明示拒否し、設定値を保持する。
+利点は再build不要、資源削減、寿命の明確化。不利益は開始時の確保失敗とbuffer寿命管理、
+callback登録時期の制限、暗黙ZLPに依存したHostの移行である。
+
+S3–S3の新規試験で86往復、batch受信、100回開始終了、外部ring canary、複数instance、
+借用TXの16件の返却（成功14件、reset 1件、end 1件）を確認した。詳細な契約・移行・未実装範囲は[V3_VENDOR_API.ja.md](V3_VENDOR_API.ja.md)。
+P4/S2/S31および上限長の成功転送はこの結果から対応済みとしない。

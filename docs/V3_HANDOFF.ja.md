@@ -2,7 +2,7 @@
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
-旧testへの整合維持を最初の目的にしない。製品の公開APIとスタック本体はまだ変更していない。
+旧testへの整合維持を最初の目的にしない。Vendorの公開APIとクラス処理を更新した。共通EP0/DCDと他クラスはまだ暫定TinyUSBを使う。
 
 ## 作業場所と優先順位
 
@@ -31,7 +31,7 @@ plugin標準のprofile/port、device lock、dut/peers、build/upload、JUnitを�
 別helperや独自pluginへhookを移して同じ仕組みを維持することもしない。
 現在の追加依頼候補は新試験READMEに記載。外部への依頼やpluginへの変更はまだ行っていない。
 
-## 新規S3–S3試験の結果
+## 初期S3–S3 probeの記録
 
 | 項目 | 条件・結果 |
 | --- | --- |
@@ -49,7 +49,7 @@ plugin標準のprofile/port、device lock、dut/peers、build/upload、JUnitを�
 
 開始・停止はtest本文から普通のsketchコマンドで明示する。自動fixtureやhookではない。
 新probeは現行公開APIだけを使い、build_opt.h、TinyUSB内部API、旧test helperを使わない。
-現在の製品コードには短いVendor返信にflushが必要なので、その操作を明記している。
+初期probeでは短いVendor返信にflushが必要だった。現在は自動送出へ移行した。
 この成功は動的bufferや新direct APIの実装完了を意味しない。P4/S2/S31は今回実行していない。
 
 ```sh
@@ -62,24 +62,39 @@ uv run --env-file .env pytest -q -rs --junitxml=.pytest-results/s3-vendor.xml
 終了値0だけでは全件skipを合格と区別できない。現時点では今回の結果が1 passedであることを確認する。
 この標準機能の追加はpluginへの依頼候補とし、独自gateを再実装しない。
 
-## Solの次の作業
+## 現在の実装と検証
 
-1. **短いwriteを自然にする。** 現Vendorの手動flushとCDCの自動送出の違いを確認し、
-   Vendor自動送出と明示batchの候補を新probeで比較する。write受理とwire完了を混同しない。
-2. **容量とmodeをinstance設定へ。** 再ビルドなしで小→大→小の設定変更を実装する。
-   必要なregistry・allocator・lifecycleをこの縦の経路と一緒に作る。失敗rollbackと未使用費用を確認する。
-3. **copy/borrowedの選択と返却。** directをbuild flagから解放し、切断/reset/cancelで一度だけ返す。
-   通常writeに不要なticket操作を持ち込まず、高度な転送の寿命を明示できる形を比較する。
-4. **CDCと複合へ展開。** 複数instance、CDC、HID、最小Audioで共通契約を確認する。
-   旧sampleを合わせる作業ではなく、新契約から新規sketchと試験を書く。
+Vendorを`src/EspUsbDeviceVendor.cpp`へ切り出し、TinyUSB Vendor driverを無効化した。
+instanceごとの容量、外部ring、自動送出/明示flush、callback RX、copyなしTXをAPIで選べる。
+借用TXは成功/reset/endでstatus付き返却を行う。実装中のAPIと移行は[V3_VENDOR_API.ja.md](V3_VENDOR_API.ja.md)。
+mainの文書commitもmerge済み（453a26a）。旧test/sampleの整合維持を開発gateにしていない。
+
+2026-10-26の最終確認: `vendor-end-contract.xml`、1 passed、0 skipped、52.30秒。
+新規S3–S3の一つのtest内で86往復、明示batchの1受信を確認した。
+
+- 小→大→小の容量変更、非power-of-twoの外部ring、範囲外canary、設定拒否と確保失敗後のrollback。
+- 100回begin/endで内部heapが318836→318836 byte。終了後の実効capacityは0。
+- borrowed TXの14成功、resetによる1返却、endによる1返却。pointer、status、既知/不明の実送信量、通知数を検証。
+- endの成功/拒否を結果で識別。USB workerからの16回の再入終了要求を拒否し、正常終了後のerror=0を確認。
+- MPS倍数のZLP終端とContinue、Busy・alignment・長さ・packet数制限の拒否、稼働中callback変更の拒否。
+- 2 Vendor instanceの独立容量とinterface選択、RX ringなしのcallback RX。
+- DeviceだけのbuildではVendor実装がリンクされない。Vendor使用時もvendord/TinyUSB Vendor配列は残らない。
+
+`validation/.pytest-results/vendor-end-contract.xml`と同ディレクトリのtranscript/serialコピーを参照。
+serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roundtrip/`。
+結果はv3全体の完了を意味しない。他クラスの固定資源、個別cancel、投稿式borrowed RX、
+全取得点の故障注入、P4 cache/HS、S2/S31は未完了。direct上限の成功転送は小さい長さの範囲だけで、
+65472 byteそのもののwire転送は今回の試験には含めていない。
+
+## 次に進める作業
+
+1. Vendorの投稿式RXと個別cancelを、転送世代/遅延eventの試験と一緒に設計・実装する。
+   暫定DCDのstallだけで古い完了を安全に消せると仮定しない。必要ならDCD境界を先に置換する。
+2. allocator各取得点での故障注入、callbackからの次転送、部分転送中のresetを新しい試験に追加する。
+3. 共通ring/transfer契約をCDCへ展開し、HIDとの複合で確認する。必要なregistryとdescriptor容量を動的にする。
+4. Audioの最小周期経路と併用し、共通設計を見直してから残クラス・EP0/DCDを置換する。
 
 Sol Mediumを基本とし、競合・EP0/DCD等の難所だけHighを検討する。
-各単位はbefore/after、利点・不利益、実験結果、採用理由をAPI判断文書へ更新して完了する。
-P4 cache/HS、S2/S31、五台ベンチは後段に残し、初期S3の作業を機材待ちにしない。
-
-そのまま渡せる依頼:
-
-> v3 worktreeでV3_API_DECISIONSとvalidation/READMEを読み、Vendorの短いwriteが
-> 明示flushなしに送出される案を実装・実測する。streamのまとめ書きへの影響も確認し、
-> 利点と不利益、既存利用への影響を記録して採用を判断する。試験は新規S3–S3のみ。
-> 旧tests/examplesを使わず、conftestや独自pytest hookを追加しない。
+API変更ごとに利点・不利益、既存利用への影響、移行例、実験結果を更新する。
+P4/S2/S31は内部adapter/能力表で拡張し、S3のprofileやMPSを公開APIの定数に埋め込まない。
+新試験は`validation/`だけで、conftestや独自pytest hookを追加しない。

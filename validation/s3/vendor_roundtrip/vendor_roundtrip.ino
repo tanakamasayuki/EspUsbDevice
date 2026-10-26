@@ -29,11 +29,13 @@ void loop() {
   }
   String command = Serial.readStringUntil('\n');
   command.trim();
-  if (command == "start") {
+  if (command == "start" || command.startsWith("start ")) {
+    unsigned interfaceNumber = 0xff;
+    if (command.startsWith("start ")) interfaceNumber = command.substring(6).toInt();
     started = host.begin();
     const uint32_t deadline = millis() + 10000;
     while (started && !address.load() && int32_t(deadline - millis()) > 0) delay(1);
-    opened = started && address.load() && host.vendorOpen(address.load());
+    opened = started && address.load() && host.vendorOpen(address.load(), interfaceNumber, ESP_USB_HOST_VENDOR_READ_ON_DEMAND);
     if (opened) {
       Serial.printf("HOST_READY mps_in=%u mps_out=%u\r\n",
                     host.vendorInPacketSize(address.load()),
@@ -41,26 +43,31 @@ void loop() {
     } else {
       Serial.println("HOST_START_FAILED");
     }
-  } else if (command.startsWith("exchange ")) {
-    const size_t length = command.substring(9).toInt();
-    uint8_t sent[129], received[129];
+  } else if (command.startsWith("exchange ") || command.startsWith("receive ")) {
+    const bool exchange = command.startsWith("exchange ");
+    unsigned requested = 0, terminate = 0;
+    sscanf(command.c_str() + (exchange ? 9 : 8), "%u %u", &requested, &terminate);
+    const size_t length = requested;
+    uint8_t sent[129], received[256];
     if (!opened || length == 0 || length > sizeof(sent)) {
       Serial.println("INVALID_EXCHANGE");
       return;
     }
     for (size_t i = 0; i < length; ++i) sent[i] = uint8_t(i * 37 + length);
-    if (!host.vendorWrite(sent, length, address.load())) {
+    if (exchange && !host.vendorWrite(sent, length, address.load())) {
       Serial.println("WRITE_FAILED");
       return;
     }
     size_t count = 0;
     const uint32_t deadline = millis() + 3000;
     while (count < length && int32_t(deadline - millis()) > 0) {
-      count += host.vendorRead(received + count, length - count, address.load());
+      size_t actual = 0;
+      if (!host.vendorReadSync(received + count, length - count + (terminate ? 64 : 0), &actual, 3000, address.load())) break;
+      count += actual;
       delay(1);
     }
     if (count == length && memcmp(sent, received, length) == 0) {
-      Serial.printf("ROUNDTRIP_OK %u\r\n", unsigned(length));
+      Serial.printf("%s %u\r\n", exchange ? "ROUNDTRIP_OK" : "READ_OK", unsigned(length));
     } else {
       Serial.printf("ROUNDTRIP_FAILED expected=%u actual=%u\r\n",
                     unsigned(length), unsigned(count));

@@ -238,13 +238,17 @@ bool espUsbCcidDriverAttach()
   {
     return false;
   }
-  espUsbDeviceRegisterAppDrivers(espUsbDeviceCcidDriverTable, 1);
+  if (!espUsbDeviceRegisterAppDrivers(espUsbDeviceCcidDriverTable, 1))
+  {
+    ccidFreeBuffers();
+    return false;
+  }
   return true;
 }
 
 void espUsbCcidDriverDetach()
 {
-  espUsbDeviceRegisterAppDrivers(nullptr, 0);
+  espUsbDeviceUnregisterAppDrivers(espUsbDeviceCcidDriverTable, 1);
   g_driver = CcidDriverState();
   ccidFreeBuffers();
 }

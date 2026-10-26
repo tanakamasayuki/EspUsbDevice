@@ -88,7 +88,9 @@
 #define CFG_TUD_CDC 2
 #endif
 #endif
-// Every class is compiled in by default so that any sketch can use any class
+// The remaining legacy classes are compiled in by default. Vendor has moved
+// to its independent driver; the footprint figures below describe v2.
+// Every legacy class was enabled so that any sketch could use any class
 // without reconfiguring the library, and each one behind #ifndef so a sketch
 // that knows it will never use a class can drop it from build_opt.h and get
 // the RAM back. TinyUSB allocates each class's buffers statically at file
@@ -125,7 +127,10 @@
 #define CFG_TUD_AUDIO 1
 #endif
 #ifndef CFG_TUD_VENDOR
-#define CFG_TUD_VENDOR 1
+#define CFG_TUD_VENDOR 0
+#endif
+#if CFG_TUD_VENDOR
+#error "v3 Vendor uses instance configuration, not the TinyUSB Vendor driver"
 #endif
 #ifndef CFG_TUD_NCM
 #define CFG_TUD_NCM 1
@@ -221,63 +226,8 @@
 #ifndef CFG_TUD_MIDI_TX_BUFSIZE
 #define CFG_TUD_MIDI_TX_BUFSIZE 512
 #endif
-#ifndef CFG_TUD_VENDOR_RX_BUFSIZE
-#define CFG_TUD_VENDOR_RX_BUFSIZE 512
-#endif
-// Vendor transmit path. Two numbers decide it, and only one of them is the one
-// people reach for.
-//
-// CFG_TUD_VENDOR_TX_BUFSIZE is the FIFO: how much a sketch may queue before
-// write() starts returning 0. CFG_TUD_VENDOR_TX_EPSIZE is how much of that FIFO
-// one armed transfer carries, and TinyUSB defaults it to a single bulk packet.
-// That second default is what actually caps a high-speed stream: the vendor
-// class submits one transfer per endpoint and re-arms from the completion
-// callback, so at 512 bytes per transfer every packet costs a completion
-// interrupt, an event-queue hop and a usbd task turn - about 52 us of turnaround
-// for 46 us of wire time, which is why a device measured only ~2.4 transactions
-// per microframe out of the 13 high speed allows. DWC2 is happy to send several
-// packets per transfer; nothing but this default was stopping it.
-//
-// Measured on ESP32-P4 rev 1.3 over usbip, 4 MiB per run, median of 9, pattern
-// verified on the host, with the sending task pinned to core 0:
-//
-//   FIFO   transfer   MB/s    global RAM
-//    512       512     9.83   (8.33-10.21, and 4-53 ZLP-terminated host URBs)
-//   8192       512    10.76   (10.50-11.06, 0)
-//   8192      1024    14.87
-//   8192      2048    18.64
-//   8192      4096    20.99
-//   8192      8192    22.81
-//   8192     16384    22.78   <- saturated
-//   4096      4096    21.12   81,176 bytes
-//   8192      8192    22.81   89,368 bytes
-//   16384     8192    23.28
-//   32768     8192    23.34
-//
-// So P4 defaults to 4096/4096: it roughly doubles what the previous default did
-// (10.76 -> 21.12 MB/s) while using 512 bytes *less* RAM than that default, and
-// the 8% more that 8192/8192 buys costs another 8 KB. A sketch that wants the
-// last 8% raises both from build_opt.h.
-//
-// S2/S3 keep 512 and TinyUSB's own transfer size. A full-speed bulk endpoint is
-// 64 bytes and tops out near 1.5 MB/s, so eight packets of FIFO is already more
-// than that bus drains, and the turnaround this fixes is not what limits it.
-#ifndef CFG_TUD_VENDOR_TX_BUFSIZE
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-#define CFG_TUD_VENDOR_TX_BUFSIZE 4096
-#else
-#define CFG_TUD_VENDOR_TX_BUFSIZE 512
-#endif
-#endif
-#ifndef CFG_TUD_VENDOR_TX_EPSIZE
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-#define CFG_TUD_VENDOR_TX_EPSIZE 4096
-#endif
-#endif
-
 #if CFG_TUD_CDC_RX_BUFSIZE > 32768 || CFG_TUD_CDC_TX_BUFSIZE > 32768 ||       \
-    CFG_TUD_MIDI_RX_BUFSIZE > 32768 || CFG_TUD_MIDI_TX_BUFSIZE > 32768 ||     \
-    CFG_TUD_VENDOR_RX_BUFSIZE > 32768 || CFG_TUD_VENDOR_TX_BUFSIZE > 32768
+    CFG_TUD_MIDI_RX_BUFSIZE > 32768 || CFG_TUD_MIDI_TX_BUFSIZE > 32768
 #error "tu_fifo indices are uint16_t over [0, 2*depth): class FIFOs cannot exceed 32768 bytes"
 #endif
 

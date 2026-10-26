@@ -4,6 +4,7 @@
 
 2026-10-26更新: 開発用試験は既存test/sampleから独立した`validation/`へ変更した。
 初期実機はS3–S3だけ。conftestによる独自制御は行わない。
+Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在の契約は[Vendor API](V3_VENDOR_API.ja.md)。
 [引き渡し](V3_HANDOFF.ja.md)、[API変更の判断](V3_API_DECISIONS.ja.md)、
 [所有権の出発案](V3_ARCHITECTURE.ja.md)、[実験台帳](V3_EXPERIMENTS.ja.md)を参照。
 

@@ -26,7 +26,8 @@ struct TinyUsbRuntimeOptions {
 };
 
 esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options);
-void stopTinyUsbRuntime();
+bool stopTinyUsbRuntime();
+bool tinyUsbRuntimeInTask();
 bool tinyUsbRuntimeStarted();
 uint8_t tinyUsbRuntimeRhport();
 
