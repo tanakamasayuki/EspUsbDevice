@@ -85,7 +85,8 @@ Host libraryやpytestへのpatch/conftestは追加しない。
 関連4試験はmsc-driver-related.xmlで4 passed、0 skipped、0 unfinished、148.36秒。
 362取得点の確保失敗/回復と、未登録MSCの拒否後の既存HID通信も含む。
 全caseで両board STOPPED、panicなし。serial原本は/tmp/pytest-embedded/2026-10-26_14-59-54-646464/、コピーとJUnit/transcriptはvalidation/.pytest-results/。
-今回のBOT matrixは512 byte sectorでの確認であり、任意sector長でのpacket境界、
+初回BOT matrixは512 byte sectorで確認し、下記で511 byte sectorのpacket境界も補強した。
+その他のsector長、
 queue満杯と人工的な旧完了eventの注入、OSの実disk/mount、SD/OTA媒体、P4/S2/S31とHSは未検証。
 
 利点は再ビルドなしの容量変更、複数MSC、read-onlyの自然な構成と未使用固有処理のリンク除外。
@@ -93,3 +94,24 @@ queue満杯と人工的な旧完了eventの注入、OSの実disk/mount、SD/OTA�
 
 規格参照: [USB MSC BOT 1.0](https://www.usb.org/sites/default/files/usbmassbulk_10.pdf)、
 [SCSI command field参考のUSB UFI 1.0](https://www.usb.org/sites/default/files/usbmass-ufi10.pdf)。
+
+
+## USB packet境界とsector境界
+
+最終OUTのhardware armはbus packet分の領域を確保し、storage callbackへはSCSIで要求された分だけ渡す。
+Hostの過剰な最終packetの残りを次sectorへ書かず、CSW residueにも処理済みstorage byteだけを数える。
+512の倍数ではないsectorにも対応するための処理であり、sector長をUSB MPSへ暗黙に切り上げない。
+511 byte sectorを加えたBOT13ケースと、既存512 byte sectorを実通信で確認した。
+msc-packet-boundaries.xmlは2 passed、0 skipped、0 unfinished、93.48秒。
+最終の過剰byteを隣のsectorへ書かないことも、全14件の実行で直接確認した。
+
+5最小build（Deviceのみ/Vendor/CDC/MIDI/MSC）とnm確認も成功した。
+MSC未使用の4件にEspUsbDeviceMsc/EspUsbMscStateはなく、全5件にTinyUSB CDC/Vendor/HID/MIDI/MSCはない。
+MSCのみのbuildには他の独自Functionや共通bulk streamを含まず、未使用の借用取消しもリンクしない。
+MSC自身のBOT resetに必要なhardware abortはMSC使用時だけリンクする。
+
+
+最終の標準`--combo all`はruntime-msc-all.xmlで**14 passed、0 skipped、0 unfinished、772.40秒**。
+362取得点の失敗/回復、511/512 byte sectorの各BOT13ケースと隣接sectorのguard、
+独立2 MSCと既存CDC/Vendor/HID/MIDIの回帰を含む。全caseで両board STOPPED、panicなし。
+serial原本は/tmp/pytest-embedded/2026-10-26_17-57-02-044220/、コピーとJUnit/transcriptはvalidation/.pytest-results/runtime-msc-all*。

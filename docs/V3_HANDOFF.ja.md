@@ -442,5 +442,18 @@ write callbackを省略するread-only、停止中setterを実装した。
 BOT13ケース、不正CBW6条件、正確なCSW/Senseと復帰、独立2 MSC、通常API、
 362取得点の失敗/回復と未登録Functionの拒否を含む。各case両board STOPPED、panicなし。
 API・移行・Host側PID同期の制約・原本は[V3_MSC_API.ja.md](V3_MSC_API.ja.md)を参照。
-次に512 byte以外のsectorとUSB packet境界の不一致を補強し、最小build/nmと全14件を確認する。
+512 byte以外のsector境界、最小build/nmと全14件は下記で補強した。
 残るAudio/NCM/Video/DFU等、共通EP0/core/DCDの置換は未完である。
+
+
+MSCの最終OUTをMPS単位でarmし、処理するbyte数をSCSI payloadまでに制限した。
+511/512 byte sectorのBOT13ケースと通常APIはmsc-packet-boundaries.xmlで2 passed（93.48秒）。
+5最小build/nmも成功し、未使用MSCとTinyUSB MSCの不在を確認した。
+隣接sectorのguardを加えたruntime-msc-all.xmlは**14 passed、0 skipped、0 unfinished、772.40秒**。
+362取得点の失敗/回復を含み、全caseで両board STOPPED、panicなし。
+serial原本は/tmp/pytest-embedded/2026-10-26_17-57-02-044220/、コピーとJUnit/transcriptはvalidation/.pytest-results/runtime-msc-all*。
+5最小build/nmも全件成功し、旧tests/examplesはmainと同一、TinyUSB tree照合は51 file / 15 compiled sourcesで一致。
+
+次の実装はAudioの最小周期経路とruntime容量・callback所有権を調べ、残るclassを独自化すること。
+MSCのOS/media試験、人工的な旧完了eventとqueue満杯の組合せ、reset/endの同時条件は未検証として残す。
+共通EP0/core/DCDとP4/S2/S31の実機対応は未完であり、最終目標の達成とはしない。

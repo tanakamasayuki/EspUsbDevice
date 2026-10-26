@@ -26,6 +26,7 @@ struct EspUsbMscState {
   enum class Stage { Command, DataIn, DataOut, Status, StatusSent, NeedReset, Recovery } stage = Stage::Command;
   uint8_t port = 0, interface = 255, in = 0, out = 0, maxLun = 0;
   uint8_t key = 0, asc = 0, ascq = 0, status = 0, command[16] = {};
+  uint16_t packetSize = 0;
   uint32_t tag = 0, hostBytes = 0, deviceBytes = 0, done = 0, limit = 0, lba = 0, armed = 0;
   bool hostIn = false, deviceIn = false, blockIo = false;
   uint32_t resetEpoch = 0, fenceEpoch = 0;
@@ -73,7 +74,10 @@ struct EspUsbMscState {
       if (read != int32_t(n)) { sense(3, 0x11); finishData(); return; }
     }
     stage = deviceIn ? Stage::DataIn : Stage::DataOut;
-    arm(deviceIn ? in : out, n);
+    // OUT hardware must have room for the complete final bus packet, even
+    // when the SCSI payload ends partway through it (BOT case 11).
+    const uint32_t busBytes = deviceIn ? n : ((n + packetSize - 1) / packetSize) * packetSize;
+    arm(deviceIn ? in : out, busBytes);
   }
   void decode() {
     deviceBytes = 0; deviceIn = true; blockIo = false;
@@ -169,14 +173,16 @@ struct EspUsbMscState {
     auto *s = first;
     while (s && s->owner.interfaceNumber_ != itf->bInterfaceNumber) s = s->next;
     if (!s) return 0;
-    uint8_t in = 0, out = 0;
+    uint8_t in = 0, out = 0; uint16_t packetSize = 0;
     for (unsigned i = 0; i < 2; ++i) {
       const auto *ep = reinterpret_cast<const tusb_desc_endpoint_t *>(reinterpret_cast<const uint8_t *>(itf) + 9 + 7 * i);
       if (ep->bLength != 7 || ep->bDescriptorType != 5 || ep->bmAttributes.xfer != TUSB_XFER_BULK || !tu_edpt_packet_size(ep) || tu_edpt_packet_size(ep) > s->owner.config_.transferBytes || !usbd_edpt_open(port, ep)) return 0;
+      if (packetSize && packetSize != tu_edpt_packet_size(ep)) return 0;
+      packetSize = tu_edpt_packet_size(ep);
       if (ep->bEndpointAddress & 0x80) in = ep->bEndpointAddress; else out = ep->bEndpointAddress;
     }
     if (!in || !out) return 0;
-    s->port = port; s->interface = itf->bInterfaceNumber; s->in = in; s->out = out;
+    s->port = port; s->interface = itf->bInterfaceNumber; s->in = in; s->out = out; s->packetSize = packetSize;
     s->commandReady(); return 23;
   }
   static bool control(uint8_t port, uint8_t phase, const tusb_control_request_t *r) {
@@ -217,7 +223,13 @@ struct EspUsbMscState {
     else if (s->stage == Stage::StatusSent && ep == s->in) {
       if (s->status == 2) s->needReset(); else s->commandReady();
     } else if ((s->stage == Stage::DataIn && ep == s->in) || (s->stage == Stage::DataOut && ep == s->out)) {
-      if (bytes != s->armed) { s->status = 2; s->finishData(); return true; }
+      const uint32_t wanted = std::min(uint32_t(s->owner.config_.transferBytes), s->limit - s->done);
+      if (bytes < wanted || bytes > s->armed || (s->deviceIn && bytes != wanted)) {
+        s->status = 2; s->finishData(); return true;
+      }
+      // Bytes beyond the device payload are transport padding/excess, not
+      // storage data. CSW residue counts processed bytes only.
+      bytes = wanted;
       if (!s->deviceIn && s->blockIo) {
         const uint32_t block = s->owner.blockSize_;
         if (s->status != 2 && s->owner.write10(s->lba + s->done / block, s->done % block, s->buffer, bytes) != int32_t(bytes)) {

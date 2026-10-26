@@ -11,16 +11,17 @@ std::atomic<bool> ioFail{false}, offsets{true};
 EspUsbDeviceCdcSerial *serialPort = nullptr;
 EspUsbDeviceMsc *second = nullptr;
 bool readOnly = false;
+unsigned sectorBytes = 512;
 void callbacks(bool readonly) {
   disk.onRead([](uint32_t lba, uint32_t offset, void *buffer, uint32_t bytes) -> int32_t {
-    ++reads; offsets.store(offsets.load() && offset < 512 && lba < 32 && bytes <= sizeof(storage) - (lba * 512 + offset));
-    if (ioFail.load() || lba >= 32 || offset >= 512 || bytes > sizeof(storage) - (lba * 512 + offset)) return -1;
-    memcpy(buffer, storage + lba * 512 + offset, bytes); return bytes;
+    ++reads; offsets.store(offsets.load() && offset < sectorBytes && lba < 32 && bytes <= sizeof(storage) - (lba * sectorBytes + offset));
+    if (ioFail.load() || lba >= 32 || offset >= sectorBytes || bytes > sizeof(storage) - (lba * sectorBytes + offset)) return -1;
+    memcpy(buffer, storage + lba * sectorBytes + offset, bytes); return bytes;
   });
   disk.onWrite(readonly ? EspUsbDeviceMscWriteCallback{} : EspUsbDeviceMscWriteCallback{[](uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t bytes) -> int32_t {
-    ++writes; offsets.store(offsets.load() && offset < 512 && lba < 32 && bytes <= sizeof(storage) - (lba * 512 + offset));
-    if (ioFail.load() || lba >= 32 || offset >= 512 || bytes > sizeof(storage) - (lba * 512 + offset)) return -1;
-    memcpy(storage + lba * 512 + offset, buffer, bytes); return bytes;
+    ++writes; offsets.store(offsets.load() && offset < sectorBytes && lba < 32 && bytes <= sizeof(storage) - (lba * sectorBytes + offset));
+    if (ioFail.load() || lba >= 32 || offset >= sectorBytes || bytes > sizeof(storage) - (lba * sectorBytes + offset)) return -1;
+    memcpy(storage + lba * sectorBytes + offset, buffer, bytes); return bytes;
   }});
   disk.onStartStop([](uint8_t, bool, bool) { ++stops; return true; });
 }
@@ -53,7 +54,9 @@ void loop() {
     ok &= metadata(); size_t after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     Serial.printf("METADATA ok=%u before=%u after=%u\r\n", unsigned(ok), unsigned(before), unsigned(after));
   } else if (command.startsWith("start ")) {
-    unsigned bytes = 0, mode = 0; sscanf(command.c_str(), "start %u %u", &bytes, &mode);
+    unsigned bytes = 0, mode = 0; sectorBytes = 512;
+    sscanf(command.c_str(), "start %u %u %u", &bytes, &mode, &sectorBytes);
+    if (!sectorBytes || sectorBytes > 512) { Serial.println("INVALID_GEOMETRY"); return; }
     delete serialPort; serialPort = nullptr; delete second; second = nullptr;
     reads.store(0); writes.store(0); stops.store(0); offsets.store(true); ioFail.store(false);
     memset(storage, 0, sizeof(storage)); memset(external, 0x5a, sizeof(external));
@@ -62,7 +65,7 @@ void loop() {
     disk.mediaPresent(true); disk.isWritable(!readOnly);
     EspUsbMscConfig config; config.transferBytes = bytes; config.name = "Runtime storage";
     if (mode == 1) config.transferBuffer = external + 64;
-    bool ok = disk.configure(config) == ESP_OK && disk.begin(32, 512);
+    bool ok = disk.configure(config) == ESP_OK && disk.begin(32, sectorBytes);
     if (mode == 3) serialPort = new EspUsbDeviceCdcSerial(device);
     if (mode == 4) {
       second = new EspUsbDeviceMsc(device);

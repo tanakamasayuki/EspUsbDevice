@@ -49,19 +49,13 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
-直近の関連4件は`hid-protocol-related.xml`で4 passed、0 skipped、0 unfinished、171.86秒。
-新規protocol切替と既存HID/313取得点の失敗回復を含み、全caseで両board STOPPED、panicなし。
-全12件の一括実行はまだ行っていない。
-最新の全実行はplugin 1.10.0の`--combo all`による`runtime-midi-all.xml`、
-11 passed、0 skipped、0 unfinished、586.92秒。最後のMIDI修正後の関連3試験も
-`midi-stream-final.xml`で3 passed、0 skipped、0 unfinished、192.03秒。
-両実行とも全caseで両board STOPPED、panicなし。
-serial原本は全11件が`/tmp/pytest-embedded/2026-10-26_13-53-51-584234/`、
-最終3件が`/tmp/pytest-embedded/2026-10-26_14-12-20-431884/`。
-コピーとtranscriptは`.pytest-results/`内の同じartifact名で保存した。
-`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/descriptor/registryの313取得点を失敗させて回復を確認する。
+最新の全実行はplugin 1.10.0の標準`--combo all`による`runtime-msc-all.xml`。
+**14 passed、0 skipped、0 unfinished、772.40秒**。全caseで両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-26_17-57-02-044220/`、コピーとtranscriptは
+`.pytest-results/runtime-msc-all-serial/`と`runtime-msc-all-transcript.txt`へ保存した。
+`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/descriptor/registryの362取得点を失敗させて回復を確認する。
 文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
-MIDIのqueue/callback/外部ring/片方向/複数instanceも含む。
+MIDIのqueue/callback/外部ring/片方向/複数instance、MSCの内部/外部DMA bufferと複数instanceも含む。
 `s3/midi_stream`はevent容量1から、外部ring、callback、片方向、2 MIDI、CDC+Keyboard併用、
 manual flush、IN16/OUT1、全helperとSysEx/realtime、誤event除外、並行200 event、送信中endと停止後設定を確認する。
 [MIDI API](../docs/V3_MIDI_API.ja.md)を参照。
@@ -81,6 +75,9 @@ InputのGET_REPORT、Mouseのboot/report切替、relative値をzeroへ戻したi
 boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新packetの完全性を確認する。
 自動pollを止めるための独自pytest hookやHost library patchは使わない。
 手順・範囲は[専用probe](s3/hid_protocol/README.ja.md)を参照。
+`s3/msc_storage`はruntime staging容量、外部buffer、read-only、CDC併用、media/SenseとI/O拒否を確認する。
+`s3/msc_bot`は手動Hostで511/512 byte sectorの各BOT13ケース、不正CBW、reset/Sense/回復、
+隣接sectorのguardと独立2 MSCを確認する。HostのPID同期は公開IDF APIでinterfaceを再取得して行う。
 通常実行は14 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
@@ -112,12 +109,16 @@ arduino-cli compile --profile s3_device --build-path build/s3_device .
 同じcompile方法で、未使用の`cancelDirect*`/`cancelPump`/`dcd_edpt_abort`がリンクされないことを確認する。
 
 `build_probes/cdc_copy`はCDCのコピー送信だけを使う。Vendor copyと相互に固有処理が
-リンクされず、どちらも未使用取消しとTinyUSB CDC/Vendor/HID/MIDIを含まないことをnmで確認する。
-4 probeともHID未使用なので、独自EspUsbHidFunction/EspUsbHidStateもリンクされない。
+リンクされず、どちらも未使用取消しとTinyUSB CDC/Vendor/HID/MIDI/MSCを含まないことをnmで確認する。
+5 probeともHID未使用なので、独自EspUsbHidFunction/EspUsbHidStateもリンクされない。
 
 `build_probes/midi_packet`はMIDI helperの送信だけを使い、CDC/Vendor/HID固有処理と未使用取消しを含まないことを確認する。
-MIDI未使用の他3 probeにはEspUsbDeviceMidiもリンクされない。
+MIDI未使用の他4 probeにはEspUsbDeviceMidiもリンクされない。
 
 MSC追加後の通常収集は14件。関連4件はmsc-driver-related.xmlで4 passed（148.36秒）。
-全14件の一括実行と最小build/nmは次の確認項目。
+全14件の一括実行と5最小build/nmも成功した。
 msc_storage/msc_botの手順・Hostの制約・362取得点の失敗/回復は[MSCガイド](../docs/V3_MSC_API.ja.md)を参照。
+
+`build_probes/msc_only`はread-only MSCのみのbuild専用sketch。5最小build/nmで
+未使用MSCとTinyUSB MSCの不在、MSCのみのbuildに他の独自Functionがないことを確認した。
+結果は`.pytest-results/*-msc-nm.txt`へ保存した。

@@ -82,6 +82,7 @@ bool stop() {
 }
 
 uint32_t tag = 100;
+uint16_t sectorBytes = 512;
 uint32_t readLe(const uint8_t *p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
 void putLe(uint8_t *p, uint32_t n) { for (unsigned i = 0; i < 4; ++i) p[i] = uint8_t(n >> (8 * i)); }
 uint32_t actual = 0;
@@ -120,12 +121,12 @@ bool reset() {
   Serial.printf("RESET r=%u in=%u out=%u\r\n", unsigned(r), unsigned(i), unsigned(o));
   return r && i && o && reclaim();
 }
-bool cbw(uint8_t opcode, bool in, uint32_t bytes, unsigned blocks = 1) {
+bool cbw(uint8_t opcode, bool in, uint32_t bytes, unsigned blocks = 1, unsigned lba = 1) {
   memset(output->data_buffer, 0, 31); putLe(output->data_buffer, 0x43425355);
   putLe(output->data_buffer + 4, ++tag); putLe(output->data_buffer + 8, bytes);
   output->data_buffer[12] = in ? 0x80 : 0; output->data_buffer[14] = opcode < 0x20 ? 6 : 10;
   output->data_buffer[15] = opcode;
-  if (opcode == 0x28 || opcode == 0x2a) { output->data_buffer[20] = 1; output->data_buffer[23] = blocks; }
+  if (opcode == 0x28 || opcode == 0x2a) { output->data_buffer[20] = lba; output->data_buffer[23] = blocks; }
   if (opcode == 3) output->data_buffer[19] = 18;
   return bulk(false, 31) && actual == 31;
 }
@@ -137,18 +138,18 @@ bool csw(unsigned expectedStatus, uint32_t residue) {
   return ok;
 }
 bool matrixCase(unsigned n) {
-  static const uint16_t hostLength[] = {0,0,0,0,64,1024,512,64,512,64,512,1024,512,64};
+  const uint16_t hostLength[] = {0,0,0,0,64,uint16_t(2 * sectorBytes),sectorBytes,64,sectorBytes,64,sectorBytes,uint16_t(2 * sectorBytes),sectorBytes,64};
   static const uint8_t op[] = {0,0,0x28,0x2a,0,0x28,0x28,0x28,0x2a,0,0x28,0x2a,0x2a,0x2a};
   const bool in = n >= 4 && n <= 8;
   const unsigned length = hostLength[n];
   const bool stall = n == 4 || n == 5 || n == 8 || n == 9 || n == 10 || n == 11;
   const unsigned status = n == 2 || n == 3 || n == 7 || n == 8 || n == 10 || n == 13 ? 2 : 0;
-  const unsigned processed = n == 5 || n == 6 || n == 11 || n == 12 ? 512 : n == 7 || n == 13 ? 64 : 0;
+  const unsigned processed = n == 5 || n == 6 || n == 11 || n == 12 ? sectorBytes : n == 7 || n == 13 ? 64 : 0;
   bool ok = cbw(op[n], in, length);
   if (length) {
     memset(output->data_buffer, 0x6a, length);
     const bool completed = bulk(in, length);
-    ok &= stall ? !completed && lastStatus == USB_TRANSFER_STATUS_STALL : completed && actual == length;
+    ok &= stall ? ((!completed && lastStatus == USB_TRANSFER_STATUS_STALL) || (n == 5 && completed && actual == sectorBytes)) : completed && actual == length;
     if (stall) ok &= clear(endpoint) && clear(outEndpoint) && reclaim();
   }
   ok &= csw(status, length - processed);
@@ -225,6 +226,16 @@ bool isolated(bool second) {
   ok &= csw(0, 0); return ok;
 }
 
+bool sectorGuard() {
+  bool ok = reset();
+  for (unsigned lba : {1u, 2u}) {
+    ok &= cbw(0x28, true, sectorBytes, 1, lba) && bulk(true, sectorBytes) && actual == sectorBytes;
+    for (unsigned i = 0; i < sectorBytes; ++i) ok &= input->data_buffer[i] == (lba == 1 ? 0x6a : 0);
+    ok &= csw(0, 0);
+  }
+  return ok;
+}
+
 void setup() { Serial.begin(115200); Serial.setTimeout(100); }
 void loop() {
   if (client) usb_host_client_handle_events(client, 0);
@@ -252,6 +263,8 @@ void loop() {
     if (ok) ok = usb_host_transfer_alloc(72, 0, &control) == ESP_OK && usb_host_transfer_alloc(4096, 0, &input) == ESP_OK && usb_host_transfer_alloc(4096, 0, &output) == ESP_OK;
     controlDone.store(true);
     Serial.printf("HOST_READY %u\r\n", unsigned(ok));
+  } else if (command.startsWith("sector ")) {
+    sectorBytes = command.substring(7).toInt(); Serial.println("GEOMETRY_SET");
   } else if (command.startsWith("case ")) {
     unsigned n = command.substring(5).toInt();
     Serial.printf("CASE %u ok=%u\r\n", n, unsigned(n >= 1 && n <= 13 && matrixCase(n)));
@@ -262,6 +275,8 @@ void loop() {
     Serial.printf("ERROR_SENSE %u\r\n", unsigned(errorSense(command == "protected")));
   } else if (command == "check") {
     Serial.printf("READ_RECOVERED %u\r\n", unsigned(checkRead()));
+  } else if (command == "guard") {
+    Serial.printf("SECTOR_GUARD %u\r\n", unsigned(sectorGuard()));
   } else if (command == "primary" || command == "second") {
     Serial.printf("ISOLATED %u\r\n", unsigned(isolated(command == "second")));
   } else if (command == "sense") {

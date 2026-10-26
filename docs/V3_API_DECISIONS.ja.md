@@ -273,3 +273,9 @@ callback/inquiry setterは停止中のesp_err_t返却へ揃える。
 利点は容量の再構成・複数instance・不要書込みcallbackの省略。不利益は動的確保と小分けcallback、
 短い/0のI/O戻り値を同期失敗にする移行負担である。通常のRAM/SD/helper attach手順は維持する。
 BOT13ケースとS3での実験・未確認条件は[MSCガイド](V3_MSC_API.ja.md)へ記録した。
+
+
+MSCの最終OUTはMPS単位でarmし、storageへ渡す量とCSW residueをSCSIの処理済みbyteで管理する。
+sector長をMPSへ切り上げず、Hostが最終packetに余分なbyteを含めても次sectorへ書かない。
+511/512 byte sectorの各BOT13ケースと隣接sectorの保持を実測し、追加bufferなしの方式を採用した。
+5最小build/nmと標準全14試験（772.40秒）が成功した。

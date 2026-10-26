@@ -33,6 +33,20 @@ def test_msc_bot(dut, peers):
         for board in (dut, device):
             board.write("stop")
             board.expect_exact("STOPPED\r\n", timeout=30)
+        device.write("start 64 0 511")
+        device.expect_exact("STARTED 1 capacity=64\r\n", timeout=30)
+        dut.write("start")
+        dut.expect_exact("HOST_READY 1\r\n", timeout=30)
+        dut.write("sector 511")
+        dut.expect_exact("GEOMETRY_SET\r\n", timeout=5)
+        for case in range(1, 14):
+            dut.write(f"case {case}")
+            dut.expect_exact(f"CASE {case} ok=1\r\n", timeout=15)
+        dut.write("guard")
+        dut.expect_exact("SECTOR_GUARD 1\r\n", timeout=15)
+        for board in (dut, device):
+            board.write("stop")
+            board.expect_exact("STOPPED\r\n", timeout=30)
         device.write("start 64 4")
         device.expect_exact("STARTED 1 capacity=64\r\n", timeout=30)
         for interface, command in ((1, "second"), (0, "primary")):
