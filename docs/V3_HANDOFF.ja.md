@@ -278,3 +278,23 @@ P4/S2/S31の実機やWindowsのMS OS動作は今回の結果に含めていな�
 VendorのFSサイズ指定がHSでも64に残らないよう、HSは512を出力する従来挙動をwriterへ移した。
 Device only / Vendor copy / CDC copyの3 buildとnmも成功し、未使用クラス・取消し処理は残らない。
 TinyUSB vendor treeの照合も51 file / 15 compiled sourcesで一致。
+
+## plugin 1.10.0と結線済みcombo
+
+descriptor変更commit `fc059b0`の区切りでpluginの新版を再確認した。
+local sourceは1.9.0だったが、配布版とremoteのv1.10.0 tag
+`698bb295182fc685efb3a55cd8c995c68fc3fe84`を確認し、release guideの`--combo`を採用した。
+plugin自身の作業ツリーは変更せず、validationの依存下限とlockを1.10.0へ更新した。
+
+`validation/pyproject.toml`の`arduino_combos`は`s3: primary=s3_host,device=s3_device`の一組。
+標準入口は`uv run --locked --env-file .env pytest --combo all -q -rs`。
+単独選択は`--combo s3`。どちらも同じ8 testを収集した。
+旧test/sampleやconftestは使わず、test本文・sketch・結線・port名は変更していない。
+将来は対応profileと結線済みcomboを増やし、直積や独自の除外hookを使わない。
+詳細と再実行コマンドは[validation README](../validation/README.ja.md)を参照する。
+
+実機全実行`combo-all.xml`は**8 passed、0 skipped、0 unfinished、416.75秒**。
+全caseで両board STOPPED、panicなし。serial原本は
+`/tmp/pytest-embedded/2026-10-26_08-58-48-522209/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/combo-all*`。
+今回の変更は試験環境と計画・記録のみ。製品API、sketch、旧test/sampleには変更を加えていない。

@@ -176,18 +176,21 @@ Host側の不具合は再現条件を分離し、Device側の非準拠なworkaro
 ```sh
 cd validation
 uv sync --locked
-uv run --env-file .env pytest --collect-only -q
-uv run --env-file .env pytest -q -rs --junitxml=.pytest-results/s3-vendor.xml
+uv run --locked --env-file .env pytest --combo all --collect-only -q
+uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-results/v3-all.xml
 ```
 
 初期profileはS3 HostとS3 Deviceに一つずつ。P4やlocal複製を増やしてskipする仕組みは作らない。
-将来機材を増やしたとき、標準のprofile候補選択と`all`の範囲で結線を表現できるかを確認する。
+plugin 1.10.0の`arduino_combos`に結線済みの組を列挙し、`--combo all`を標準入口とする。
+現時点は`s3: primary=s3_host,device=s3_device`だけ。単独選択は`--combo s3`。
+将来は対応sketchのprofileと成立する結線のcomboを増やす。USB結線を直積や独自skip hookで表現しない。
 必要な機能が不足するなら、再現例・必要な結果・受入条件をまとめてplugin側への追加依頼を優先する。
 conftestは標準化できない必要性が実証された場合の最後の手段とし、別ファイルへ移した独自hookで代替しない。
 
-plugin 1.9.0の最新ローカルguideのprofile組合せ、peer、conftestの章を参照した。
+plugin 1.10.0のrelease guideのprofile組合せ、`--combo`、peerの章を再確認した。
+`--combo all`は対応profileのない組を展開せず、適合する組がないtestは`combo=none`でskipする。
 port未設定によるskipは未検証、設定済みportへの接続やbuild/upload失敗はerror、通信不一致はfailed。
-全件skipを失敗にする標準optionは追加候補として記録し、現在は今回の結果が1 passedであることを確認する。
+全件skipを失敗にする標準optionは追加候補として記録し、現在は今回の結果が8 passedであることを確認する。
 終了値0だけを合格としない。旧`--usb-require`の独自監査は撤去した。
 試験は逐次実行し、compile省略時もuploadは行うというpluginの通常動作に従う。
 

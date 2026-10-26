@@ -29,9 +29,11 @@ profile / 実機 / negotiated speed:
 
 - `validation/`でconftestなし、旧test/helperなし、新規Host/Device sketchのみを収集する。
 - S3–S3のVendor往復を1/63/64/65/127/128/129 byteで確認する。開始・停止はtest本文で明示する。
-- plugin標準のprofile・port・lock・dut/peersだけを使用。通信assertionをretry/skipで隠さない。
-- 現在は1ケースだけなので、今回1 passedであることとJUnitを確認する。終了値0だけでは全件skipを区別できない。
-- 必須case監査、cleanup失敗後の停止、serial監査が必要になったらpluginへの追加候補として整理する。
+- plugin 1.10.0の標準`arduino_combos`・port・lock・dut/peersを使用し、`--combo all`で実行する。
+  現在はS3–S3一組だけ。通信assertionをretry/skipで隠さない。
+- 現在は8ケースなので、今回8 passedであることとJUnitを確認する。終了値0だけでは全件skipを区別できない。
+- pluginは組合せ単位のログ・結果とcleanup失敗後の中断を提供する。
+  必須case監査・serial監査など不足が必要になったらpluginへの追加候補として整理する。
   独自conftestを別のファイルへ移して使い続けない。
 - 新APIの優先実験は[V3_API_DECISIONS.ja.md](V3_API_DECISIONS.ja.md)の短いwriteと容量/mode変更。
   E1/E2の基盤は、その実装に必要な分だけ作る。
@@ -172,7 +174,7 @@ OEPへ実際に変更を加えることは本ライブラリの準備作業に�
 | 3 | P4 HS Host→S31 Device | HS negotiatedの記録、CDC/Vendor、両端停止 |
 | 4 | 三台を固定しP4 HS/FSを交互に各20回 | 未使用controller停止、VBUS干渉なし、再upload後も同じ結線で再開 |
 | 5 | S31 Host→P4 HS Device | Host対応成立後に実施。それまではPC HS等の別試験として記録 |
-| 6 | 全profileをallへ追加 | 実配線の組だけ実行、必須集合をS2/P4 HSへ拡大、未設置は理由付き未検証 |
+| 6 | 結線済みの組をarduino_combosへ追加し--combo allで実行 | 実配線の組だけ実行、必須集合をS2/P4 HSへ拡大、未設置は理由付き未検証 |
 
 S2/S31の具体的board・connector・VBUS switchは未確定。購入候補の回路図とCore対応を確認し、
 独立制御UART/JTAGと試験OTGを分ける。USB-Cの役割設定とVBUS sourceを役割交代ごとに表へ記録する。
