@@ -217,11 +217,11 @@ uint16_t EspUsbAudioFunction::configurationDescriptorForSpeed(
     uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
     uint8_t endpointNumber, bool highSpeed)
 {
-  if (!dst || !buildGraph(interfaceNumber, endpointNumber))
+  if (!buildGraph(interfaceNumber, endpointNumber))
   {
     return 0;
   }
-  espusb::internal::DescriptorBuffer buffer(dst, capacity);
+  espusb::internal::DescriptorBuffer buffer(dst, dst ? capacity : 0);
   espusb::internal::DescriptorBuildContext context(
       highSpeed ? espusb::internal::UsbSpeed::High
                 : espusb::internal::UsbSpeed::Full,

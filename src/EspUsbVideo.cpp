@@ -278,11 +278,13 @@ uint16_t EspUsbDeviceVideo::configurationDescriptorForSpeed(
     uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
     uint8_t endpointNumber, bool highSpeed)
 {
-  if (!dst || endpointNumber == 0 || endpointNumber > 15 ||
-      descriptorLength(highSpeed) > capacity)
+  if (endpointNumber == 0 || endpointNumber > 15 ||
+      (dst && descriptorLength(highSpeed) > capacity))
   {
     return 0;
   }
+
+  if (!dst) return descriptorLength(highSpeed);
 
   const uint8_t vcInterface = interfaceNumber;
   const uint8_t vsInterface = static_cast<uint8_t>(interfaceNumber + 1);

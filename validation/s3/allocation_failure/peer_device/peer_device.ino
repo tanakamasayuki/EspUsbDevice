@@ -75,7 +75,7 @@ void loop() {
           points = 5;
           if (mode == 7) { config.txCapacity = config.transferBytes = 0; points = 3; }
         }
-        ++points; // Begin-time Function index, sized to the registered list.
+        points += 4; // Function index + exact FS, MS OS, and BOS descriptors.
         ok &= vendor.configure(config) == ESP_OK;
         for (unsigned point = 1; point <= points && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;
@@ -86,7 +86,9 @@ void loop() {
           if (!ok) { Serial.printf("FAULT_FAILED mode=%u point=%u calls=%u live=%u rejected=%u hit=%u\r\n", mode, point, calls, outstanding, unsigned(rejected), unsigned(failureReached)); break; }
           ++failures;
           calls = 0;
-          ok &= device.begin() && calls == points;
+          const bool recovered = device.begin();
+          if (!recovered || calls != points) Serial.printf("RECOVERY_FAILED mode=%u point=%u expected=%u calls=%u error=%d\r\n", mode, point, points, calls, int(device.lastError()));
+          ok &= recovered && calls == points;
           ok &= vendor.configuration().rxCapacity == config.rxCapacity && vendor.configuration().txCapacity == config.txCapacity;
           ok &= device.end() == ESP_OK && outstanding == 0;
           delay(10);

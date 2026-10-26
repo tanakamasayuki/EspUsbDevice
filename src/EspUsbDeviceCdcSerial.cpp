@@ -39,12 +39,12 @@ esp_err_t EspUsbDeviceCdcSerial::setName(const char *name) {
   name_ = name; return ESP_OK;
 }
 uint16_t EspUsbDeviceCdcSerial::configurationDescriptor(uint8_t *dst, uint8_t itf, uint8_t ep, uint16_t ceiling) {
-  if (!dst || !ep || ep > 14) return 0;
+  if (!ep || ep > 14) return 0;
   interfaceNumber_ = itf;
   const uint16_t packet = ceiling < endpointSize_ ? ceiling : endpointSize_;
   const uint8_t bytes[] = { TUD_CDC_DESCRIPTOR(itf, stringIndex_, uint8_t(0x80 | ep), 8,
       uint8_t(ep + 1), uint8_t(0x80 | (ep + 1)), packet) };
-  memcpy(dst, bytes, sizeof(bytes)); dst[7] = stringIndex_;
+  if (dst) { memcpy(dst, bytes, sizeof(bytes)); dst[7] = stringIndex_; }
   return sizeof(bytes);
 }
 uint16_t EspUsbDeviceCdcSerial::openBulkInterface(uint8_t port, const uint8_t *d, uint16_t length,

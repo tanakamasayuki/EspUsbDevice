@@ -88,8 +88,8 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 ## 次に進める作業
 
-1. descriptor writerのサイズ照会を導入し、configuration/HID report/BOS/MS OSの固定領域を撤去する。
-   Function registryの固定上限は下記で撤去済み。
+1. 文字列/URL応答と残る固定scratchを整理する。
+   Function registry、configuration/HID report/BOS/MS OSの固定領域は下記で撤去済み。
 2. CDCのcontrol要求、通知、reset/endと借用取消しの組合せを必要範囲で拡張する。
    Vendor/CDCの共通転送と基本controlは下記で実装・検証済みだが、全OS/control要求の網羅ではない。
 3. Audioの最小周期経路と併用して共通設計を見直し、HIDと残クラスを独自化する。
@@ -250,3 +250,31 @@ configuration/HID report/BOS/MS OSの固定領域はまだ残っており、次�
 最後のfocused実行には、未登録HIDの送信拒否とその破棄後の通信継続も含む。
 `python3 tools/verify_tinyusb_vendor.py`は51 file / 15 compiled sourcesで一致。
 次はFunction descriptorのサイズ照会契約と、固定descriptor領域の撤去を進める。
+
+## descriptor領域の動的化
+
+Function writerにnull照会とcapacityの契約を追加し、全既存writerを対応させた。
+configurationを計数後に実数分だけ確保し、FS/HSはそれぞれのwriterで出力する。
+S3では通常HS/OtherSpeedを確保せず、HSの明示照会はPHYを始めない場合だけ行える。
+複合HID report、BOS/MS OSも使う構成だけで実数分を確保し、end/失敗で解放する。
+USB GET_DESCRIPTORとFIFO検証は完成したsnapshotを読み、再計数/確保を行わない。
+
+MS OS setの固定二対象とrevision offsets配列も撤去し、全WinUSB対象をinterface順に構築する。
+複数対象にFlatを強制する場合はInvalidArgumentで拒否する。
+移行と限界は[V3_DESCRIPTOR_STORAGE.ja.md](V3_DESCRIPTOR_STORAGE.ja.md)。
+
+`descriptor-storage.xml`は新probe+registryの2 passed、123.89秒。
+FS/HS writer44条件、長さ超過/不安定な照会の拒否、heap回復、
+configuration846 / MS516 / HID report366 byteの実USB列挙・通信を確認した。
+`dynamic-descriptors-all.xml`の標準入口では**8 passed、0 skipped、390.92秒**。
+全caseで両board STOPPED、panicなし。原本は`/tmp/pytest-embedded/2026-10-26_08-24-05-667930/`、
+JUnit/transcript/serialコピーは`.pytest-results/`へ保存した。確保失敗は86取得点で回復した。
+
+文字列scratch/URL応答やlegacy class/coreの固定資源はまだ残る。
+P4/S2/S31の実機やWindowsのMS OS動作は今回の結果に含めていない。
+
+最終のdescriptor focused実行は1 passed、28.45秒。BOS単独/併用、誤GUID拒否、
+速度ごとに異なる長さ（FS18/HS27）、全bulk writerのHS packet 512を追加確認した。
+VendorのFSサイズ指定がHSでも64に残らないよう、HSは512を出力する従来挙動をwriterへ移した。
+Device only / Vendor copy / CDC copyの3 buildとnmも成功し、未使用クラス・取消し処理は残らない。
+TinyUSB vendor treeの照合も51 file / 15 compiled sourcesで一致。

@@ -23,16 +23,15 @@ static uint8_t popcount16(uint16_t value)
 DescriptorBuffer::DescriptorBuffer(uint8_t *storage, size_t capacity)
     : storage_(storage), capacity_(capacity)
 {
-  if (storage_ == nullptr || capacity_ == 0)
-  {
-    error_ = DescriptorError::InvalidArgument;
-  }
+  measuring_ = storage == nullptr && capacity == 0;
+  if (measuring_) capacity_ = UINT16_MAX;
+  else if (storage_ == nullptr || capacity_ == 0) error_ = DescriptorError::InvalidArgument;
 }
 
 void DescriptorBuffer::reset()
 {
   size_ = 0;
-  error_ = (storage_ == nullptr || capacity_ == 0)
+  error_ = (!measuring_ && (storage_ == nullptr || capacity_ == 0))
                ? DescriptorError::InvalidArgument
                : DescriptorError::None;
 }
@@ -63,7 +62,7 @@ bool DescriptorBuffer::append(const void *data, size_t length)
   }
   if (length != 0)
   {
-    memcpy(storage_ + size_, data, length);
+    if (!measuring_) memcpy(storage_ + size_, data, length);
     size_ += length;
   }
   return true;
@@ -93,7 +92,7 @@ bool DescriptorBuffer::patchU8(size_t offset, uint8_t value)
     }
     return false;
   }
-  storage_[offset] = value;
+  if (!measuring_) storage_[offset] = value;
   return true;
 }
 
@@ -107,8 +106,10 @@ bool DescriptorBuffer::patchU16(size_t offset, uint16_t value)
     }
     return false;
   }
-  storage_[offset] = static_cast<uint8_t>(value & 0xffU);
-  storage_[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffU);
+  if (!measuring_) {
+    storage_[offset] = static_cast<uint8_t>(value & 0xffU);
+    storage_[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffU);
+  }
   return true;
 }
 

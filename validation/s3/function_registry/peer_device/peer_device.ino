@@ -14,10 +14,10 @@ public:
   void assignFunctionIds(uint8_t, uint8_t string) override { string_ = string; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t itf, uint8_t, uint16_t) override {
     const uint8_t bytes[] = {9, 4, itf, 0, 0, 0xff, 0, 0, string_};
-    memcpy(dst, bytes, sizeof(bytes)); return sizeof(bytes);
+    if (dst) memcpy(dst, bytes, sizeof(bytes)); return sizeof(bytes);
   }
   uint16_t configurationDescriptorForSpeed(uint8_t *dst, size_t capacity, uint8_t itf, uint8_t ep, bool) override {
-    return capacity >= 9 ? configurationDescriptor(dst, itf, ep, 64) : 0;
+    return !dst || capacity >= 9 ? configurationDescriptor(dst, itf, ep, 64) : 0;
   }
   bool checkString(EspUsbDevice &device) const {
     const auto *text = device.stringDescriptor(string_, 0x409);

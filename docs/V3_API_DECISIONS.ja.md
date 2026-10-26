@@ -180,3 +180,16 @@ configuration descriptor自体の固定容量は残っており、今回の変�
 未登録のHIDからの送信は無効なruntime identityで拒否する。
 登録拒否時に初期値slot 0から別Functionとして送ってしまう経路を残さない。
 拒否されたCDC/Vendorの破棄がDevice全体を停止する問題も、所有する転送状態の有無で判定して修正した。
+
+## 採用記録: descriptorの実数分の確保
+
+固定configuration 704 / 複合HID report 256 / BOS・MS OS領域を撤去した。
+Functionのサイズ照会→実数分の確保→容量付き出力に統一し、FS/HSも独立して構築する。
+通常のDevice/Print利用は変えず、独自writerのnull照会契約だけは移行が必要となる。
+利点は未使用領域の省略、長い複合構成、FS専用時のHS領域省略。
+不利益はbegin時の計数・確保点と、独自writerへの対応である。
+
+三つ以上のVendorでもMS OS setに全interfaceを含める。複数対象のFlat明示は拒否し、Autoではsubsetsへ進む。
+S3で846 byteのconfiguration、516 byteのMS set、366 byteのHID reportを実際に列挙・通信した。
+FS/HSのwriter44条件と86取得点の確保失敗/回復も含む標準全8試験が成功（390.92秒）。
+契約・移行・残存固定領域は[V3_DESCRIPTOR_STORAGE.ja.md](V3_DESCRIPTOR_STORAGE.ja.md)に記録した。

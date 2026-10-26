@@ -16,13 +16,14 @@ uint16_t EspUsbDeviceVendor::openBulkInterface(uint8_t port, const uint8_t *desc
 
 uint16_t EspUsbDeviceVendor::configurationDescriptor(uint8_t *dst, uint8_t itf, uint8_t ep, uint16_t ceiling) {
   interfaceNumber_ = itf;
-  const uint16_t packet = ceiling ? std::min(endpointSize_, ceiling) : endpointSize_;
+  // HS bulk endpoints use 512 bytes; endpointSize_ selects the FS size.
+  const uint16_t packet = ceiling > 64 ? 512 : ceiling ? std::min(endpointSize_, ceiling) : endpointSize_;
   const uint8_t descriptor[] = {
       9, TUSB_DESC_INTERFACE, itf, 0, 2, TUSB_CLASS_VENDOR_SPECIFIC, 0, 0, 0,
       7, TUSB_DESC_ENDPOINT, ep, TUSB_XFER_BULK, uint8_t(packet), uint8_t(packet >> 8), 0,
       7, TUSB_DESC_ENDPOINT, uint8_t(0x80 | ep), TUSB_XFER_BULK, uint8_t(packet), uint8_t(packet >> 8), 0,
   };
-  memcpy(dst, descriptor, sizeof(descriptor)); return sizeof(descriptor);
+  if (dst) memcpy(dst, descriptor, sizeof(descriptor)); return sizeof(descriptor);
 }
 
 esp_err_t EspUsbDeviceVendor::onControlRequest(ControlRequestCallback cb) {

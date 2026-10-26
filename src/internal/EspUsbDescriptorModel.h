@@ -41,6 +41,7 @@ struct DuplexEndpoint {
 
 class DescriptorBuffer {
 public:
+  // nullptr/0 measures a USB descriptor up to the protocol uint16_t length.
   DescriptorBuffer(uint8_t *storage, size_t capacity);
 
   void reset();
@@ -66,6 +67,7 @@ private:
   size_t capacity_ = 0;
   size_t size_ = 0;
   DescriptorError error_ = DescriptorError::None;
+  bool measuring_ = false;
 };
 
 class DescriptorLayout {

@@ -704,34 +704,13 @@ private:
   // String descriptor indices 1-3 are manufacturer / product / serial and 4 is
   // the CDC-NCM MAC address. Per-function names start after those.
   static constexpr uint8_t FIRST_FUNCTION_STRING_INDEX = 5;
-  // Sized for the largest descriptor the library can emit: a 16-cable MIDI
-  // function is 572 bytes on its own (34 head + 30 * 16 jacks + 29 * 2
-  // endpoints), plus the 9-byte configuration header and room for one more
-  // small function alongside it. Anything larger returns a clean build failure
-  // from configurationDescriptorForSpeed() rather than overrunning. Three
-  // buffers of this size are held per device, on the heap - see the members.
-  static constexpr size_t MAX_CONFIG_DESCRIPTOR = 704;
-  static constexpr size_t MAX_HID_REPORT_DESCRIPTOR = 256;
   static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
-  static constexpr size_t MAX_BOS_DESCRIPTOR = 57;
-  // Largest descriptor set this builds. One WinUSB function costs 8 (function
-  // subset header) + 20 (compatible ID) + 132 (the DeviceInterfaceGUIDs
-  // registry property); two of them plus 10 (set header) and 8 (configuration
-  // subset) is 330. A single flat function - the non-composite case - is 162
-  // and stops short in the same buffer.
-  //
-  // Two is the ceiling because only two of this library's classes ask Windows
-  // for WinUSB: the vendor interface and DFU.
-  // Plus 6 bytes per function for the vendor revision descriptor, which sits in
-  // every function subset (or once under the set header when flat).
-  // Plus 4 for the CCGP feature descriptor when a device asks to be composite.
-  static constexpr size_t MAX_MS_OS_20_DESCRIPTOR = 346;
-
   bool buildDescriptors();
-  // Allocates the three configuration descriptor buffers on first use. False (and
-  // ESP_ERR_NO_MEM) when the allocation fails, which leaves them null.
-  bool allocateDescriptorBuffers();
-  void buildWebUsbDescriptors();
+  void releaseDescriptors();
+  bool buildConfigurationDescriptor(bool highSpeed);
+  bool buildMergedHidReport();
+  bool needsHighSpeedDescriptors() const;
+  bool buildWebUsbDescriptors();
   // Resolves config_.msOs20Layout for the configuration currently in
   // configDescriptor_. Only meaningful after the configuration is assembled.
   bool microsoftOs20SubsetLayout() const;
@@ -788,25 +767,18 @@ private:
   bool tinyusbStarted_ = false;
   esp_err_t lastError_ = ESP_OK;
   uint8_t deviceDescriptor_[18] = {};
-  // One allocation split three ways, made on the first buildDescriptors() and
-  // released by the destructor. These are by far the largest members, and keeping
-  // them out of the object matters because sketches and tests do put an
-  // EspUsbDevice on the stack - several at once, in the case of
-  // tests/unit/descriptor - where 2 KB of buffers per instance overflows the
-  // Arduino loop task.
+  // Exact-sized, independently selected descriptor storage.
   uint8_t *configDescriptor_ = nullptr;
   uint8_t *configDescriptorHighSpeed_ = nullptr;
   uint8_t *otherSpeedDescriptor_ = nullptr;
   uint8_t deviceQualifierDescriptor_[10] = {};
-  uint8_t bosDescriptor_[MAX_BOS_DESCRIPTOR] = {};
-  uint8_t microsoftOs20Descriptor_[MAX_MS_OS_20_DESCRIPTOR] = {};
-  uint8_t hidReportDescriptor_[MAX_HID_REPORT_DESCRIPTOR] = {};
-  uint16_t configDescriptorLength_ = 0;
+  uint8_t *bosDescriptor_ = nullptr;
+  uint8_t *microsoftOs20Descriptor_ = nullptr;
+  uint8_t *hidReportDescriptor_ = nullptr;
+  uint16_t configDescriptorLength_ = 0, highSpeedDescriptorLength_ = 0;
   uint16_t bosDescriptorLength_ = 0;
   uint16_t microsoftOs20DescriptorLength_ = 0;
   uint16_t microsoftOs20VendorRevision_ = 0;
-  uint8_t vendorInterfaceNumber_ = 0xff;
-  uint8_t dfuInterfaceNumber_ = 0xff;
   uint16_t bulkInDoubleBuffered_ = 0;
   uint16_t hidInterfacesLength_ = 0;
   uint8_t hidInterfaceCount_ = 0;
@@ -841,15 +813,13 @@ public:
   virtual bool isVideo() const { return false; }
   virtual bool isNet() const { return false; }
   virtual bool isDfu() const { return false; }
+  // Required v3 writer contract: nullptr measures the required byte count;
+  // it must not write. The size must stay stable until configuration changes.
   virtual uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) = 0;
+  // nullptr/0 queries the size; non-null writers must respect capacity.
   virtual uint16_t configurationDescriptorForSpeed(
       uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
-      uint8_t endpointNumber, bool highSpeed)
-  {
-    (void)capacity;
-    return configurationDescriptor(dst, interfaceNumber, endpointNumber,
-                                   highSpeed ? 512 : 64);
-  }
+      uint8_t endpointNumber, bool highSpeed);
   virtual uint8_t interfaceCount() const = 0;
   virtual uint8_t endpointCount() const = 0;
   // Name to publish for this function, or null for none. A composite device
@@ -914,7 +884,7 @@ protected:
   uint8_t hidInstance_ = UINT8_MAX;
   EspUsbDeviceClass *nextRegistered_ = nullptr;
   bool registered_ = false, registrationRejected_ = false;
-  uint8_t assignedReportId_ = 0;
+  uint8_t assignedReportId_ = 0, descriptorInterfaceNumber_ = 0xff;
 };
 
 // Per-call submission error. Rejection never borrows a buffer or notifies.

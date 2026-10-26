@@ -3,6 +3,7 @@
 #include "internal/EspUsbTinyUsbRuntime.h"
 #include "internal/EspUsbMemory.h"
 #include <memory>
+#include <algorithm>
 
 #include <ctype.h>
 #include <new>
@@ -269,13 +270,14 @@ static uint16_t writeHidConfigurationDescriptor(uint8_t *dst,
   using espusb::internal::UsbSpeed;
   using espusb::internal::writeHidFunction;
 
-  if (dst == nullptr || endpointNumber == 0 || endpointNumber > 15 ||
+  if (endpointNumber == 0 || endpointNumber > 15 ||
       endpointSize == 0 || reportDescriptorLength == 0)
   {
     return 0;
   }
 
   const size_t capacity = hasOutEndpoint ? 32U : 25U;
+  if (!dst) return uint16_t(capacity);
   espusb::internal::DescriptorBuffer buffer(dst, capacity);
   DescriptorBuildContext context(UsbSpeed::Full, buffer);
   HidFunctionLayout layout;
@@ -830,33 +832,29 @@ EspUsbDevice::EspUsbDevice()
 {
 }
 
-EspUsbDevice::~EspUsbDevice()
+EspUsbDevice::~EspUsbDevice() { end(); }
+
+void EspUsbDevice::releaseDescriptors()
 {
-  end();
-  // configDescriptor_ is the base of the single allocation the three buffers are
-  // carved out of.
-  free(configDescriptor_);
-  configDescriptor_ = nullptr;
-  configDescriptorHighSpeed_ = nullptr;
-  otherSpeedDescriptor_ = nullptr;
+  for (auto *pointer : {configDescriptor_, configDescriptorHighSpeed_, otherSpeedDescriptor_,
+       bosDescriptor_, microsoftOs20Descriptor_, hidReportDescriptor_}) espusb::internal::freeUsbMemory(pointer);
+  configDescriptor_ = configDescriptorHighSpeed_ = otherSpeedDescriptor_ = nullptr;
+  bosDescriptor_ = microsoftOs20Descriptor_ = hidReportDescriptor_ = nullptr;
+  configDescriptorLength_ = highSpeedDescriptorLength_ = 0;
+  bosDescriptorLength_ = microsoftOs20DescriptorLength_ = hidReportDescriptorLength_ = 0;
+  microsoftOs20VendorRevision_ = 0; hidInterfacesLength_ = 0; hidInterfaceCount_ = 0;
+  for (auto *function = firstClass_; function; function = function->nextRegistered_) {
+    function->assignedReportId_ = 0; function->descriptorInterfaceNumber_ = 0xff;
+  }
 }
 
-bool EspUsbDevice::allocateDescriptorBuffers()
+bool EspUsbDevice::needsHighSpeedDescriptors() const
 {
-  if (configDescriptor_)
-  {
-    return true;
-  }
-  uint8_t *storage = static_cast<uint8_t *>(calloc(3, MAX_CONFIG_DESCRIPTOR));
-  if (!storage)
-  {
-    setLastError(ESP_ERR_NO_MEM);
-    return false;
-  }
-  configDescriptor_ = storage;
-  configDescriptorHighSpeed_ = storage + MAX_CONFIG_DESCRIPTOR;
-  otherSpeedDescriptor_ = storage + 2 * MAX_CONFIG_DESCRIPTOR;
-  return true;
+#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
+  return config_.controller != EspUsbController::FullSpeed;
+#else
+  return false;
+#endif
 }
 
 namespace
@@ -869,7 +867,7 @@ bool isDeviceInterfaceGuid(const char *guid);
 struct EspUsbDevice::RegistrationTransaction {
   EspUsbDevice &device;
   bool keep = false;
-  ~RegistrationTransaction() { if (!keep) device.releaseClassRegistry(); }
+  ~RegistrationTransaction() { if (!keep) { device.releaseDescriptors(); device.releaseClassRegistry(); } }
 };
 
 bool EspUsbDevice::begin()
@@ -1077,7 +1075,7 @@ esp_err_t EspUsbDevice::end()
   }
   running_ = false;
   ready_ = false;
-  for (auto *function = firstClass_; function; function = function->nextRegistered_) function->assignedReportId_ = 0;
+  releaseDescriptors();
   releaseClassRegistry();
   setLastError(ESP_OK);
   return ESP_OK;
@@ -1289,6 +1287,12 @@ const uint8_t *EspUsbDevice::configurationDescriptorForSpeed(uint8_t index, bool
   {
     return nullptr;
   }
+  if (highSpeed && !configDescriptorHighSpeed_) {
+    // On FS-only hardware this is an explicit detached inspection, never a
+    // USB worker allocation. Dual-speed controllers prepare both at begin.
+    if (tinyusbStarted_) { setLastError(ESP_ERR_NOT_SUPPORTED); return nullptr; }
+    if (!buildConfigurationDescriptor(true)) return nullptr;
+  }
   return highSpeed ? configDescriptorHighSpeed_ : configDescriptor_;
 }
 
@@ -1315,7 +1319,8 @@ const uint8_t *EspUsbDevice::otherSpeedConfigurationDescriptor(uint8_t index, bo
   }
   const uint8_t *source =
       currentHighSpeed ? configDescriptor_ : configDescriptorHighSpeed_;
-  memcpy(otherSpeedDescriptor_, source, configDescriptorLength_);
+  const uint16_t length = uint16_t(source[2] | (uint16_t(source[3]) << 8));
+  memcpy(otherSpeedDescriptor_, source, length);
   otherSpeedDescriptor_[1] = 0x07;
   return otherSpeedDescriptor_;
 #else
@@ -1596,24 +1601,135 @@ void EspUsbDevice::handleBusDetached()
   }
 }
 
-bool EspUsbDevice::buildDescriptors()
+namespace {
+bool mergeHidReport(uint8_t *dst, size_t capacity, const uint8_t *source, size_t length,
+    uint8_t reportId, size_t &written)
 {
-  // Published descriptors are immutable while running. USB GET_DESCRIPTOR
-  // must never rebuild tables or allocate temporary Function state.
-  if ((running_ || g_activeDevice == this) && configDescriptorLength_) return true;
-  if (rejectedClassCount_) { setLastError(ESP_ERR_INVALID_STATE); return false; }
-  if (classCount_ > size_t(UINT8_MAX) - FIRST_FUNCTION_STRING_INDEX + 1) {
+  written = 0;
+  bool inserted = false, skipExistingId = false;
+  if (!source || length < 6 || !reportId) return false;
+  for (size_t offset = 0; offset < length;) {
+    const size_t bytes = hidItemLength(source + offset, length - offset);
+    if (!bytes) return false;
+    const uint8_t prefix = source[offset];
+    if (skipExistingId && (prefix & 0xfc) == HID_ITEM_REPORT_ID) {
+      skipExistingId = false; offset += bytes; continue;
+    }
+    skipExistingId = false;
+    if (written + bytes > UINT16_MAX || (dst && written + bytes > capacity)) return false;
+    if (dst) memcpy(dst + written, source + offset, bytes);
+    written += bytes;
+    if (!inserted && (prefix & 0xfc) == HID_ITEM_COLLECTION) {
+      if (written + 2 > UINT16_MAX || (dst && written + 2 > capacity)) return false;
+      if (dst) { dst[written] = 0x85; dst[written + 1] = reportId; }
+      written += 2; inserted = skipExistingId = true;
+    }
+    offset += bytes;
+  }
+  return inserted;
+}
+}
+
+bool EspUsbDevice::buildMergedHidReport()
+{
+  if (!compositeHid()) return true;
+  size_t total = 0;
+  for (size_t i = 0; i < classCount_; ++i) {
+    auto *function = classAt(i);
+    if (!function->isHid()) continue;
+    size_t bytes = 0;
+    if (!mergeHidReport(nullptr, 0, function->hidReportDescriptor(), function->hidReportDescriptorLength(),
+          function->assignedReportId_, bytes) || bytes > UINT16_MAX - total) {
+      setLastError(ESP_ERR_INVALID_SIZE); return false;
+    }
+    total += bytes;
+  }
+  hidReportDescriptor_ = static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(total));
+  if (!hidReportDescriptor_) { setLastError(ESP_ERR_NO_MEM); return false; }
+  size_t offset = 0;
+  for (size_t i = 0; i < classCount_; ++i) {
+    auto *function = classAt(i);
+    if (!function->isHid()) continue;
+    size_t bytes = 0;
+    if (!mergeHidReport(hidReportDescriptor_ + offset, total - offset,
+        function->hidReportDescriptor(), function->hidReportDescriptorLength(), function->assignedReportId_, bytes)) {
+      setLastError(ESP_ERR_INVALID_SIZE); return false;
+    }
+    offset += bytes;
+  }
+  if (offset != total) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+  hidReportDescriptorLength_ = uint16_t(total);
+  return true;
+}
+
+bool EspUsbDevice::buildConfigurationDescriptor(bool highSpeed)
+{
+  const bool composite = compositeHid();
+  uint16_t compositePacket = 16;
+  if (composite) {
+    for (size_t i = 0; i < classCount_; ++i) if (classAt(i)->isHid()) {
+      const uint16_t hint = classAt(i)->hidInEndpointSize();
+      if (hint > compositePacket) compositePacket = hint;
+      const uint16_t hsHint = highSpeed ? classAt(i)->hidHighSpeedEndpointSize() : 0;
+      if (hsHint > compositePacket) compositePacket = hsHint;
+    }
+    if (compositePacket > (highSpeed ? 1024 : 64)) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+  }
+  auto encode = [&](uint8_t *dst, size_t capacity, size_t &total, unsigned &interfaces) -> bool {
+    if (dst && capacity < 9) return false;
+    size_t offset = 9;
+    unsigned itf = 0, ep = 1;
+    if (composite) {
+      const uint16_t bytes = writeHidConfigurationDescriptor(nullptr, 0, 1, compositePacket, 0, 0, hidReportDescriptorLength_, true);
+      if (!bytes || (dst && bytes > capacity - offset) || (dst && writeHidConfigurationDescriptor(dst + offset, 0, 1, compositePacket, 0, 0, hidReportDescriptorLength_, true) != bytes)) return false;
+      offset += bytes; itf = 1; ep = 2;
+      for (size_t i = 0; i < classCount_; ++i) if (classAt(i)->isHid() && !highSpeed) classAt(i)->descriptorInterfaceNumber_ = 0;
+    }
+    for (unsigned group = 0; group < 2; ++group) {
+      for (size_t i = 0; i < classCount_; ++i) {
+        auto *function = classAt(i);
+        if (function->isHid() != (group == 0) || (composite && function->isHid())) continue;
+        const unsigned count = function->interfaceCount(), endpoints = function->endpointCount();
+        if (count > UINT8_MAX - itf || (endpoints && (ep > 15 || endpoints - 1 > 15 - ep))) return false;
+        const uint16_t bytes = function->configurationDescriptorForSpeed(nullptr, 0, uint8_t(itf), uint8_t(ep), highSpeed);
+        if (!bytes || bytes > UINT16_MAX - offset || (dst && bytes > capacity - offset)) return false;
+        if (dst && function->configurationDescriptorForSpeed(dst + offset, bytes, uint8_t(itf), uint8_t(ep), highSpeed) != bytes) return false;
+        if (!highSpeed) function->descriptorInterfaceNumber_ = uint8_t(itf);
+        offset += bytes; itf += count; ep += endpoints;
+      }
+      if (!highSpeed && dst && group == 0) { hidInterfacesLength_ = uint16_t(offset - 9); hidInterfaceCount_ = uint8_t(itf); }
+    }
+    total = offset; interfaces = itf;
+    return true;
+  };
+  size_t required = 0; unsigned interfaces = 0;
+  if (!encode(nullptr, 0, required, interfaces)) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+  std::unique_ptr<uint8_t, decltype(&espusb::internal::freeUsbMemory)> buffer(
+      static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(required)), espusb::internal::freeUsbMemory);
+  if (!buffer) { setLastError(ESP_ERR_NO_MEM); return false; }
+  size_t written = 0; unsigned emittedInterfaces = 0;
+  if (!encode(buffer.get(), required, written, emittedInterfaces) || written != required || emittedInterfaces != interfaces) {
     setLastError(ESP_ERR_INVALID_SIZE); return false;
   }
-  // Descriptor-only inspection before begin uses the same exact-sized index.
-  if (classCount_ && !classes_ && !allocateClassRegistry()) return false;
-  if (!allocateDescriptorBuffers())
-  {
-    return false;
-  }
-  vendorInterfaceNumber_ = 0xff;
-  dfuInterfaceNumber_ = 0xff;
+  uint8_t *bytes = buffer.get();
+  bytes[0] = 9; bytes[1] = USB_DESC_CONFIGURATION; put16(bytes + 2, uint16_t(required));
+  bytes[4] = uint8_t(interfaces); bytes[5] = 1; bytes[6] = 0;
+  bytes[7] = uint8_t(0x80 | (config_.selfPowered ? 0x40 : 0)); bytes[8] = powerToDescriptor(config_.maxPowerMilliamps);
+  if (!highSpeed && !validateControllerEndpoints(bytes, uint16_t(required))) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+  if (highSpeed) { configDescriptorHighSpeed_ = buffer.release(); highSpeedDescriptorLength_ = uint16_t(required); }
+  else { configDescriptor_ = buffer.release(); configDescriptorLength_ = uint16_t(required); }
+  return true;
+}
 
+bool EspUsbDevice::buildDescriptors()
+{
+  if ((running_ || g_activeDevice == this) && configDescriptorLength_) return true;
+  if (rejectedClassCount_) { setLastError(ESP_ERR_INVALID_STATE); return false; }
+  if (classCount_ > size_t(UINT8_MAX) - FIRST_FUNCTION_STRING_INDEX + 1) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+  if (config_.deviceInterfaceGuid && !isDeviceInterfaceGuid(config_.deviceInterfaceGuid)) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+  RegistrationTransaction descriptorGuard{*this};
+  if (classCount_ && !classes_ && !allocateClassRegistry()) return false;
+  releaseDescriptors();
   // Hand every function its identity before any descriptor bytes are written.
   // CDC port() is a logical index in descriptor order. Its independent bulk
   // driver dispatches by interface number, without TinyUSB CDC instance slots.
@@ -1661,438 +1777,35 @@ bool EspUsbDevice::buildDescriptors()
       if (!function->assignedReportId_) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
     }
   }
-  uint8_t interfaceCount = composite ? 1 : 0;
-  if (!composite)
-  {
-    for (size_t i = 0; i < classCount_; i++)
-    {
-      if (classAt(i) && classAt(i)->isHid())
-      {
-        interfaceCount += classAt(i)->interfaceCount();
-      }
-    }
+  if (!buildMergedHidReport() || !buildConfigurationDescriptor(false)) return false;
+  if (needsHighSpeedDescriptors()) {
+    if (!buildConfigurationDescriptor(true)) return false;
+    const size_t otherBytes = std::max(size_t(configDescriptorLength_), size_t(highSpeedDescriptorLength_));
+    otherSpeedDescriptor_ = static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(otherBytes));
+    if (!otherSpeedDescriptor_) { setLastError(ESP_ERR_NO_MEM); return false; }
   }
-  for (size_t i = 0; i < classCount_; i++)
-  {
-    if (classAt(i) && !classAt(i)->isHid())
-    {
-      interfaceCount += classAt(i)->interfaceCount();
-    }
-  }
-
   memset(deviceDescriptor_, 0, sizeof(deviceDescriptor_));
-  deviceDescriptor_[0] = 18;
-  deviceDescriptor_[1] = USB_DESC_DEVICE;
-  // Raised to 0x0201 below if this configuration ends up publishing a BOS.
-  put16(&deviceDescriptor_[2], 0x0200);
-  deviceDescriptor_[4] = 0x00;
-  deviceDescriptor_[5] = 0x00;
-  deviceDescriptor_[6] = 0x00;
-  deviceDescriptor_[7] = 64;
-  put16(&deviceDescriptor_[8], config_.vid);
-  put16(&deviceDescriptor_[10], config_.pid);
-  put16(&deviceDescriptor_[12], config_.deviceVersion);
-  deviceDescriptor_[14] = config_.manufacturer ? 1 : 0;
-  deviceDescriptor_[15] = config_.product ? 2 : 0;
-  deviceDescriptor_[16] = config_.serialNumber ? 3 : 0;
-  deviceDescriptor_[17] = 1;
-
-  memset(configDescriptor_, 0, MAX_CONFIG_DESCRIPTOR);
-  memset(hidReportDescriptor_, 0, sizeof(hidReportDescriptor_));
-  hidReportDescriptorLength_ = 0;
-  configDescriptor_[0] = 9;
-  configDescriptor_[1] = USB_DESC_CONFIGURATION;
-  configDescriptor_[4] = interfaceCount;
-  configDescriptor_[5] = 1;
-  configDescriptor_[6] = 0;
-  configDescriptor_[7] = static_cast<uint8_t>(0x80 | (config_.selfPowered ? 0x40 : 0x00));
-  configDescriptor_[8] = powerToDescriptor(config_.maxPowerMilliamps);
-
-  uint16_t offset = 9;
-  uint8_t interfaceNumber = 0;
-  uint8_t endpointNumber = 1;
-  uint16_t endpointSize = composite ? 16 : hidEndpointSize();
-  // HID functions whose interrupt endpoints are larger in the high-speed
-  // configuration than in the full-speed one, as byte ranges of the descriptor.
-  // The high-speed copy is made by patching the full-speed bytes below, and
-  // patching per function rather than per descriptor type is what keeps a
-  // keyboard's 8-byte endpoint at 8 while a vendor HID function next to it goes
-  // to 512.
-  struct HidSpeedFixup
-  {
-    uint16_t offset;
-    uint16_t length;
-    uint16_t highSpeedPacketSize;
-  };
-  size_t hidFixupCapacity = 0;
-  for (size_t i = 0; i < classCount_; ++i) if (classAt(i)->isHid()) ++hidFixupCapacity;
-  if (composite) hidFixupCapacity = 1;
-  std::unique_ptr<HidSpeedFixup, decltype(&espusb::internal::freeUsbMemory)> fixupStorage(
-      hidFixupCapacity ? static_cast<HidSpeedFixup *>(espusb::internal::allocateUsbMemory(hidFixupCapacity * sizeof(HidSpeedFixup))) : nullptr,
-      espusb::internal::freeUsbMemory);
-  if (hidFixupCapacity && !fixupStorage) { setLastError(ESP_ERR_NO_MEM); return false; }
-  auto *hidSpeedFixups = fixupStorage.get();
-  size_t hidSpeedFixupCount = 0;
-  if (composite)
-  {
-    // Raise the shared HID endpoint if any merged class needs more room (e.g. an
-    // NKRO keyboard's bitmap report). Bounded by CFG_TUD_HID_EP_BUFSIZE (64).
-    for (size_t i = 0; i < classCount_; i++)
-    {
-      if (classAt(i) && classAt(i)->isHid())
-      {
-        const uint16_t hint = classAt(i)->hidInEndpointSize();
-        if (hint > endpointSize)
-        {
-          endpointSize = hint;
-        }
-      }
+  deviceDescriptor_[0] = 18; deviceDescriptor_[1] = USB_DESC_DEVICE; put16(deviceDescriptor_ + 2, 0x0200);
+  deviceDescriptor_[7] = 64; put16(deviceDescriptor_ + 8, config_.vid); put16(deviceDescriptor_ + 10, config_.pid);
+  put16(deviceDescriptor_ + 12, config_.deviceVersion);
+  deviceDescriptor_[14] = config_.manufacturer ? 1 : 0; deviceDescriptor_[15] = config_.product ? 2 : 0;
+  deviceDescriptor_[16] = config_.serialNumber ? 3 : 0; deviceDescriptor_[17] = 1;
+  for (size_t offset = 9; offset < configDescriptorLength_;) {
+    const uint8_t length = configDescriptor_[offset];
+    if (length < 2 || length > configDescriptorLength_ - offset) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+    if (configDescriptor_[offset + 1] == USB_DESC_INTERFACE_ASSOCIATION) {
+      deviceDescriptor_[4] = 0xef; deviceDescriptor_[5] = 2; deviceDescriptor_[6] = 1;
     }
-    for (size_t i = 0; i < classCount_; i++)
-    {
-      if (!classAt(i) || !classAt(i)->isHid())
-      {
-        continue;
-      }
-      const uint8_t *src = classAt(i)->hidReportDescriptor();
-      const uint16_t srcLen = classAt(i)->hidReportDescriptorLength();
-      if (!src || srcLen < 6 || hidReportDescriptorLength_ + srcLen + 2 > MAX_HID_REPORT_DESCRIPTOR)
-      {
-        setLastError(ESP_FAIL);
-        return false;
-      }
-      // Merging means giving each class its own Report ID, which has to go
-      // immediately after that class's Collection (Application) item.
-      //
-      // Finding that point by walking items is not pedantry. The obvious
-      // shortcut - copy six bytes, insert the ID, copy the rest - holds only
-      // for a descriptor that opens with a one-byte Usage Page, a one-byte
-      // Usage and the Collection. EspUsbDeviceHidVendor opens with a
-      // vendor-defined Usage Page, which is a three-byte item, so cutting at
-      // six landed inside the Collection item and the merged descriptor was
-      // nonsense from there on: the host read 0xA1 0x85 as "Collection
-      // (vendor)" and every later item shifted by one.
-      //
-      // A class that already declares a Report ID of its own (gamepad,
-      // consumer control, system control, vendor HID) has it replaced rather
-      // than duplicated, since the composite device is the one deciding IDs.
-      size_t sourceOffset = 0;
-      bool reportIdWritten = false;
-      bool justInsertedId = false;
-      while (sourceOffset < srcLen)
-      {
-        const size_t itemLength = hidItemLength(&src[sourceOffset], srcLen - sourceOffset);
-        if (itemLength == 0)
-        {
-          setLastError(ESP_FAIL);
-          return false;
-        }
-        const uint8_t prefix = src[sourceOffset];
-        if (justInsertedId && (prefix & 0xfc) == HID_ITEM_REPORT_ID)
-        {
-          justInsertedId = false;
-          sourceOffset += itemLength;
-          continue;
-        }
-        justInsertedId = false;
-        if (hidReportDescriptorLength_ + itemLength > MAX_HID_REPORT_DESCRIPTOR)
-        {
-          setLastError(ESP_FAIL);
-          return false;
-        }
-        memcpy(&hidReportDescriptor_[hidReportDescriptorLength_], &src[sourceOffset], itemLength);
-        hidReportDescriptorLength_ = static_cast<uint16_t>(hidReportDescriptorLength_ + itemLength);
-        sourceOffset += itemLength;
-        if (!reportIdWritten && (prefix & 0xfc) == HID_ITEM_COLLECTION)
-        {
-          if (hidReportDescriptorLength_ + 2 > MAX_HID_REPORT_DESCRIPTOR)
-          {
-            setLastError(ESP_FAIL);
-            return false;
-          }
-          hidReportDescriptor_[hidReportDescriptorLength_++] = 0x85;
-          hidReportDescriptor_[hidReportDescriptorLength_++] =
-              classReportId(static_cast<uint8_t>(i));
-          reportIdWritten = true;
-          justInsertedId = true;
-        }
-      }
-      if (!reportIdWritten)
-      {
-        // No Collection to hang a Report ID on, so this class cannot be merged
-        // with another. Failing here beats shipping a descriptor whose reports
-        // are indistinguishable on the wire.
-        setLastError(ESP_FAIL);
-        return false;
-      }
-    }
-
-    // Single duplex endpoint on EP1 (OUT=0x01 / IN=0x81).
-    const uint16_t written = writeHidConfigurationDescriptor(
-        &configDescriptor_[offset],
-        interfaceNumber,
-        endpointNumber,
-        endpointSize,
-        0,
-        0,
-        hidReportDescriptorLength_,
-        true);
-    if (written == 0)
-    {
-      setLastError(ESP_FAIL);
-      return false;
-    }
-    uint16_t compositeHighSpeedSize = 0;
-    for (size_t i = 0; i < classCount_; i++)
-    {
-      if (!classAt(i) || !classAt(i)->isHid())
-      {
-        continue;
-      }
-      const uint16_t hint = classAt(i)->hidHighSpeedEndpointSize();
-      if (hint > compositeHighSpeedSize)
-      {
-        compositeHighSpeedSize = hint;
-      }
-    }
-    if (compositeHighSpeedSize > endpointSize)
-    {
-      hidSpeedFixups[hidSpeedFixupCount++] = {offset, written, compositeHighSpeedSize};
-    }
-    offset += written;
-    interfaceNumber += 1;
-    endpointNumber += 1;
+    offset += length;
   }
-  else
-  {
-    for (size_t i = 0; i < classCount_; i++)
-    {
-      if (!classAt(i) || !classAt(i)->isHid())
-      {
-        continue;
-      }
-      uint16_t written = classAt(i)->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, endpointSize);
-      const uint16_t highSpeedSize = classAt(i)->hidHighSpeedEndpointSize();
-      if (written > 0 && highSpeedSize > 0)
-      {
-        hidSpeedFixups[hidSpeedFixupCount++] = {offset, written, highSpeedSize};
-      }
-      offset += written;
-      interfaceNumber += classAt(i)->interfaceCount();
-      endpointNumber += classAt(i)->endpointCount();
-      if (offset > MAX_CONFIG_DESCRIPTOR)
-      {
-        setLastError(ESP_FAIL);
-        return false;
-      }
-    }
-  }
-  // Everything written so far is HID; keep the extent for descriptor tests and
-  // report-instance bookkeeping.
-  hidInterfacesLength_ = static_cast<uint16_t>(offset - 9);
-  hidInterfaceCount_ = interfaceNumber;
-  // Classes whose high-speed descriptor differs by more than a packet size in
-  // an endpoint descriptor have to be asked again for the high-speed
-  // configuration rather than patched. Audio and video both size isochronous
-  // endpoints from the speed, so the offsets they were written at are kept.
-  EspUsbDeviceClass *audioClass = nullptr;
-  uint16_t audioOffset = 0;
-  uint16_t audioLength = 0;
-  uint8_t audioInterfaceNumber = 0;
-  uint8_t audioEndpointNumber = 0;
-  EspUsbDeviceClass *videoClass = nullptr;
-  uint16_t videoOffset = 0;
-  uint16_t videoLength = 0;
-  uint8_t videoInterfaceNumber = 0;
-  uint8_t videoEndpointNumber = 0;
-  for (size_t i = 0; i < classCount_; i++)
-  {
-    if (!classAt(i) || classAt(i)->isHid())
-    {
-      continue;
-    }
-    const uint16_t classOffset = offset;
-    const uint8_t classInterface = interfaceNumber;
-    const uint8_t classEndpoint = endpointNumber;
-    uint16_t written = classAt(i)->configurationDescriptorForSpeed(
-        &configDescriptor_[offset], MAX_CONFIG_DESCRIPTOR - offset,
-        interfaceNumber, endpointNumber, false);
-    if (written == 0)
-    {
-      setLastError(ESP_FAIL);
-      return false;
-    }
-    offset += written;
-    if (classAt(i)->isAudio())
-    {
-      audioClass = classAt(i);
-      audioOffset = classOffset;
-      audioLength = written;
-      audioInterfaceNumber = classInterface;
-      audioEndpointNumber = classEndpoint;
-    }
-    if (classAt(i)->isVideo())
-    {
-      videoClass = classAt(i);
-      videoOffset = classOffset;
-      videoLength = written;
-      videoInterfaceNumber = classInterface;
-      videoEndpointNumber = classEndpoint;
-    }
-    if (classAt(i)->isVendor())
-    {
-      vendorInterfaceNumber_ = classInterface;
-    }
-    if (classAt(i)->isDfu())
-    {
-      dfuInterfaceNumber_ = classInterface;
-    }
-    interfaceNumber += classAt(i)->interfaceCount();
-    endpointNumber += classAt(i)->endpointCount();
-    if (offset > MAX_CONFIG_DESCRIPTOR)
-    {
-      setLastError(ESP_FAIL);
-      return false;
-    }
-  }
-  configDescriptorLength_ = offset;
-  put16(&configDescriptor_[2], configDescriptorLength_);
-  if (!validateControllerEndpoints(configDescriptor_,
-                                   configDescriptorLength_))
-  {
-    setLastError(ESP_ERR_INVALID_SIZE);
-    return false;
-  }
-
-  // A configuration that groups interfaces with Interface Association
-  // Descriptors must say so at the device level: the IAD ECN reserves
-  // 0xEF/0x02/0x01 (Miscellaneous / Common Class / Interface Association) for
-  // exactly that, and it is what tells Windows to load usbccgp.sys as the
-  // parent and then bind a driver per function instead of per interface.
-  // Without it a device with two CDC functions is a coin flip - the host may
-  // bind one driver across all four interfaces and expose a single broken
-  // port. Devices that emit no IAD (HID, MSC, MIDI, bulk Vendor) keep 0x00,
-  // where the class lives entirely in the interface descriptors.
-  for (uint16_t descriptorOffset = 9;
-       descriptorOffset + 2 <= configDescriptorLength_;)
-  {
-    const uint8_t descriptorLength = configDescriptor_[descriptorOffset];
-    if (descriptorLength < 2)
-    {
-      break;
-    }
-    if (configDescriptor_[descriptorOffset + 1] ==
-        USB_DESC_INTERFACE_ASSOCIATION)
-    {
-      deviceDescriptor_[4] = 0xef;
-      deviceDescriptor_[5] = 0x02;
-      deviceDescriptor_[6] = 0x01;
-      break;
-    }
-    descriptorOffset = static_cast<uint16_t>(descriptorOffset + descriptorLength);
-  }
-
-  memcpy(configDescriptorHighSpeed_, configDescriptor_, configDescriptorLength_);
-  for (uint16_t descriptorOffset = 0;
-       descriptorOffset + 1 < configDescriptorLength_;)
-  {
-    const uint8_t descriptorLength =
-        configDescriptorHighSpeed_[descriptorOffset];
-    if (descriptorLength < 2 ||
-        descriptorOffset + descriptorLength > configDescriptorLength_)
-    {
-      setLastError(ESP_FAIL);
-      return false;
-    }
-    if (configDescriptorHighSpeed_[descriptorOffset + 1] == USB_DESC_ENDPOINT &&
-        descriptorLength >= 7 &&
-        (configDescriptorHighSpeed_[descriptorOffset + 3] & 0x03) ==
-            USB_ENDPOINT_ATTR_BULK)
-    {
-      put16(&configDescriptorHighSpeed_[descriptorOffset + 4], 512);
-    }
-    descriptorOffset = static_cast<uint16_t>(descriptorOffset + descriptorLength);
-  }
-  for (size_t fixup = 0; fixup < hidSpeedFixupCount; fixup++)
-  {
-    const HidSpeedFixup &range = hidSpeedFixups[fixup];
-    for (uint16_t descriptorOffset = range.offset;
-         descriptorOffset + 1 < range.offset + range.length;)
-    {
-      const uint8_t descriptorLength =
-          configDescriptorHighSpeed_[descriptorOffset];
-      if (descriptorLength < 2 ||
-          descriptorOffset + descriptorLength > range.offset + range.length)
-      {
-        setLastError(ESP_FAIL);
-        return false;
-      }
-      if (configDescriptorHighSpeed_[descriptorOffset + 1] == USB_DESC_ENDPOINT &&
-          descriptorLength >= 7 &&
-          (configDescriptorHighSpeed_[descriptorOffset + 3] & 0x03) ==
-              USB_ENDPOINT_ATTR_INTERRUPT)
-      {
-        put16(&configDescriptorHighSpeed_[descriptorOffset + 4],
-              range.highSpeedPacketSize);
-      }
-      descriptorOffset = static_cast<uint16_t>(descriptorOffset + descriptorLength);
-    }
-  }
-  if (audioClass)
-  {
-    const uint16_t highSpeedAudioLength =
-        audioClass->configurationDescriptorForSpeed(
-            &configDescriptorHighSpeed_[audioOffset],
-            MAX_CONFIG_DESCRIPTOR - audioOffset, audioInterfaceNumber,
-            audioEndpointNumber, true);
-    if (highSpeedAudioLength != audioLength)
-    {
-      setLastError(ESP_FAIL);
-      return false;
-    }
-  }
-  if (videoClass)
-  {
-    // Only the isochronous wMaxPacketSize differs between the two speeds, so
-    // the lengths must match; a mismatch would mean the rest of the
-    // configuration had shifted underneath the copy.
-    const uint16_t highSpeedVideoLength =
-        videoClass->configurationDescriptorForSpeed(
-            &configDescriptorHighSpeed_[videoOffset],
-            MAX_CONFIG_DESCRIPTOR - videoOffset, videoInterfaceNumber,
-            videoEndpointNumber, true);
-    if (highSpeedVideoLength != videoLength)
-    {
-      setLastError(ESP_FAIL);
-      return false;
-    }
-  }
-
   memset(deviceQualifierDescriptor_, 0, sizeof(deviceQualifierDescriptor_));
-  deviceQualifierDescriptor_[0] = sizeof(deviceQualifierDescriptor_);
-  deviceQualifierDescriptor_[1] = 0x06;
-  put16(&deviceQualifierDescriptor_[2], 0x0200);
-  deviceQualifierDescriptor_[4] = deviceDescriptor_[4];
-  deviceQualifierDescriptor_[5] = deviceDescriptor_[5];
-  deviceQualifierDescriptor_[6] = deviceDescriptor_[6];
-  deviceQualifierDescriptor_[7] = deviceDescriptor_[7];
-  deviceQualifierDescriptor_[8] = 1;
-  buildWebUsbDescriptors();
-
-  // bcdUSB has to say 0x0201 or later or a host does not ask for the BOS at
-  // all, and the BOS is where both the WebUSB and the Microsoft OS 2.0
-  // capabilities live. 0x0201 rather than 0x0210 on purpose: it is the exact
-  // threshold at which hosts read the BOS (Linux and Windows both), and
-  // claiming 2.10 would assert a level of USB 2.1 compliance this device does
-  // not implement. Measured to bind WinUSB on Windows 11 either way.
-  //
-  // Tied to whether a BOS was actually built rather than to config_.webusbEnabled:
-  // a DFU-only device publishes a Microsoft capability and no WebUSB one.
-  if (bosDescriptorLength_ > 0)
-  {
-    put16(&deviceDescriptor_[2], 0x0201);
-    put16(&deviceQualifierDescriptor_[2], 0x0201);
-  }
+  deviceQualifierDescriptor_[0] = 10; deviceQualifierDescriptor_[1] = 6;
+  put16(deviceQualifierDescriptor_ + 2, 0x0200);
+  deviceQualifierDescriptor_[4] = deviceDescriptor_[4]; deviceQualifierDescriptor_[5] = deviceDescriptor_[5];
+  deviceQualifierDescriptor_[6] = deviceDescriptor_[6]; deviceQualifierDescriptor_[7] = 64; deviceQualifierDescriptor_[8] = 1;
+  if (!buildWebUsbDescriptors()) return false;
+  if (bosDescriptorLength_) { put16(deviceDescriptor_ + 2, 0x0201); put16(deviceQualifierDescriptor_ + 2, 0x0201); }
+  descriptorGuard.keep = true;
   setLastError(ESP_OK);
   return true;
 }
@@ -2187,57 +1900,30 @@ uint16_t descriptorSetRevision(const uint8_t *data, size_t length)
 }
 } // namespace
 
-void EspUsbDevice::buildWebUsbDescriptors()
+bool EspUsbDevice::buildWebUsbDescriptors()
 {
-  memset(bosDescriptor_, 0, sizeof(bosDescriptor_));
-  memset(microsoftOs20Descriptor_, 0, sizeof(microsoftOs20Descriptor_));
-  bosDescriptorLength_ = 0;
-  microsoftOs20DescriptorLength_ = 0;
-
-  // Which interfaces want Windows to bind WinUSB to them. Both of these are
-  // classes no in-box driver claims by its class code, so without this a
-  // Windows user is sent to Zadig - which is not "driverless" and cannot be
-  // shipped to anyone.
-  //
-  // Deliberately independent of config_.webusbEnabled. WebUSB is about a
-  // browser reaching the device; WinUSB is about the device being reachable at
-  // all. A DFU function needs the second and not the first.
-  uint8_t winUsbInterfaces[2];
-  bool winUsbRegistryProperty[2];
-  uint8_t winUsbCount = 0;
-  if (vendorInterfaceNumber_ != 0xff)
-  {
-    winUsbRegistryProperty[winUsbCount] = true;
-    winUsbInterfaces[winUsbCount++] = vendorInterfaceNumber_;
+  size_t winUsbCount = 0, registryProperties = 0;
+  for (size_t i = 0; i < classCount_; ++i) {
+    const auto *function = classAt(i);
+    if (function->isHid() || function->descriptorInterfaceNumber_ == 0xff || (!function->isVendor() && !function->isDfu())) continue;
+    ++winUsbCount;
+    if (function->isVendor()) ++registryProperties;
   }
-  if (dfuInterfaceNumber_ != 0xff)
-  {
-    // No DeviceInterfaceGUIDs for DFU: libusb - and therefore dfu-util - finds
-    // a WinUSB device through the USB device interface class, not through a
-    // per-function GUID, so the 132 bytes would buy nothing. The compatible ID
-    // is the part that binds the driver.
-    winUsbRegistryProperty[winUsbCount] = false;
-    winUsbInterfaces[winUsbCount++] = dfuInterfaceNumber_;
+  if (!config_.webusbEnabled && !winUsbCount) return true;
+  const bool useSubsets = microsoftOs20SubsetLayout();
+  if (winUsbCount > 1 && !useSubsets) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+  const size_t msBytes = winUsbCount ? 10 + (config_.msOs20CcgpDevice ? 4 : 0) +
+      (useSubsets ? 8 : 6) + winUsbCount * (20 + (useSubsets ? 14 : 0)) + registryProperties * 132 : 0;
+  const size_t bosBytes = 5 + (config_.webusbEnabled ? 24 : 0) + (winUsbCount ? 28 : 0);
+  if (msBytes > UINT16_MAX) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+  if (msBytes) {
+    microsoftOs20Descriptor_ = static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(msBytes));
+    if (!microsoftOs20Descriptor_) { setLastError(ESP_ERR_NO_MEM); return false; }
+    memset(microsoftOs20Descriptor_, 0, msBytes);
   }
-  // Ascending bFirstInterface. The specification does not require the subsets
-  // to be ordered, but every set Microsoft publishes is, and a host walking
-  // them in one pass is the obvious implementation to write - so emitting them
-  // out of order is a risk taken for nothing. Two entries, so a swap is the
-  // whole sort.
-  if (winUsbCount == 2 && winUsbInterfaces[0] > winUsbInterfaces[1])
-  {
-    const uint8_t interfaceNumber = winUsbInterfaces[0];
-    const bool property = winUsbRegistryProperty[0];
-    winUsbInterfaces[0] = winUsbInterfaces[1];
-    winUsbRegistryProperty[0] = winUsbRegistryProperty[1];
-    winUsbInterfaces[1] = interfaceNumber;
-    winUsbRegistryProperty[1] = property;
-  }
-
-  if (!config_.webusbEnabled && winUsbCount == 0)
-  {
-    return;
-  }
+  bosDescriptor_ = static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(bosBytes));
+  if (!bosDescriptor_) { setLastError(ESP_ERR_NO_MEM); return false; }
+  memset(bosDescriptor_, 0, bosBytes);
 
   static constexpr uint8_t webUsbUuid[] = {
       0x38, 0xb6, 0x08, 0x34, 0xa9, 0x09, 0xa0, 0x47,
@@ -2253,7 +1939,6 @@ void EspUsbDevice::buildWebUsbDescriptors()
   // functions are named and whether the subsets are there at all.
   if (winUsbCount > 0)
   {
-    const bool useSubsets = microsoftOs20SubsetLayout();
     uint8_t *const set = microsoftOs20Descriptor_;
     size_t offset = 0;
 
@@ -2267,12 +1952,6 @@ void EspUsbDevice::buildWebUsbDescriptors()
     offset += 4;
     const size_t setLengthOffset = offset;
     offset += 2;
-
-    // Where each wVendorRevision goes, filled in once the set is complete: the
-    // value is a checksum of the finished bytes, so it cannot be written while
-    // they are still being produced.
-    size_t revisionOffsets[3];
-    uint8_t revisionCount = 0;
 
     // Device scope, so it goes under the set header ahead of any subset: it is
     // what makes usbccgp load in the first place.
@@ -2293,7 +1972,6 @@ void EspUsbDevice::buildWebUsbDescriptors()
       offset += 2;
       put16(&set[offset], 8); // MS_OS_20_FEATURE_VENDOR_REVISION
       offset += 2;
-      revisionOffsets[revisionCount++] = offset;
       put16(&set[offset], 0);
       offset += 2;
     }
@@ -2314,8 +1992,12 @@ void EspUsbDevice::buildWebUsbDescriptors()
     }
 
     bool built = true;
-    for (uint8_t i = 0; i < winUsbCount; i++)
+    // Non-HID Functions are emitted in registration order, hence ascending
+    // interface order. Visit every selected Function, not just one per type.
+    for (size_t i = 0; i < classCount_; ++i)
     {
+      const auto *function = classAt(i);
+      if (function->isHid() || function->descriptorInterfaceNumber_ == 0xff || (!function->isVendor() && !function->isDfu())) continue;
       size_t functionLengthOffset = 0;
       const size_t functionOffset = offset;
       if (useSubsets)
@@ -2324,7 +2006,7 @@ void EspUsbDevice::buildWebUsbDescriptors()
         offset += 2;
         put16(&set[offset], 2); // MS_OS_20_SUBSET_HEADER_FUNCTION
         offset += 2;
-        set[offset++] = winUsbInterfaces[i];
+        set[offset++] = function->descriptorInterfaceNumber_;
         set[offset++] = 0; // bReserved
         functionLengthOffset = offset;
         offset += 2;
@@ -2333,10 +2015,6 @@ void EspUsbDevice::buildWebUsbDescriptors()
         offset += 2;
         put16(&set[offset], 8); // MS_OS_20_FEATURE_VENDOR_REVISION
         offset += 2;
-        if (revisionCount < (sizeof(revisionOffsets) / sizeof(revisionOffsets[0])))
-        {
-          revisionOffsets[revisionCount++] = offset;
-        }
         put16(&set[offset], 0);
         offset += 2;
       }
@@ -2352,7 +2030,7 @@ void EspUsbDevice::buildWebUsbDescriptors()
       memcpy(&set[offset], winUsbId, sizeof(winUsbId));
       offset += sizeof(winUsbId);
 
-      if (winUsbRegistryProperty[i])
+      if (function->isVendor())
       {
         const size_t propertyOffset = offset;
         put16(&set[offset], 132);
@@ -2377,7 +2055,7 @@ void EspUsbDevice::buildWebUsbDescriptors()
         }
       }
 
-      if (offset > sizeof(microsoftOs20Descriptor_))
+      if (offset > msBytes)
       {
         built = false;
         break;
@@ -2388,7 +2066,7 @@ void EspUsbDevice::buildWebUsbDescriptors()
       }
     }
 
-    if (built && offset <= sizeof(microsoftOs20Descriptor_))
+    if (built && offset <= msBytes)
     {
       put16(&set[setLengthOffset], static_cast<uint16_t>(offset));
       if (useSubsets)
@@ -2405,21 +2083,19 @@ void EspUsbDevice::buildWebUsbDescriptors()
           config_.msOs20VendorRevision != 0
               ? config_.msOs20VendorRevision
               : descriptorSetRevision(set, offset);
-      for (uint8_t i = 0; i < revisionCount; i++)
-      {
-        put16(&set[revisionOffsets[i]], revision);
+      // Walk the completed descriptors to patch revision fields, avoiding a
+      // fixed-size offsets array and one more allocation per MS feature.
+      for (size_t position = 10; position + 4 <= offset;) {
+        const uint16_t length = uint16_t(set[position] | (uint16_t(set[position + 1]) << 8));
+        const uint16_t type = uint16_t(set[position + 2] | (uint16_t(set[position + 3]) << 8));
+        if (length < 4 || length > offset - position) { built = false; break; }
+        if (type == 8 && length == 6) put16(set + position + 4, revision);
+        position += length;
       }
       microsoftOs20VendorRevision_ = revision;
       microsoftOs20DescriptorLength_ = static_cast<uint16_t>(offset);
     }
-    else
-    {
-      // Keep whatever else the BOS carries usable rather than advertising a
-      // malformed Microsoft capability.
-      memset(microsoftOs20Descriptor_, 0, sizeof(microsoftOs20Descriptor_));
-      microsoftOs20DescriptorLength_ = 0;
-      microsoftOs20VendorRevision_ = 0;
-    }
+    if (!built || offset != msBytes) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
   }
 
   uint8_t capabilities = 0;
@@ -2459,14 +2135,16 @@ void EspUsbDevice::buildWebUsbDescriptors()
 
   if (capabilities == 0)
   {
-    return;
+    return true;
   }
 
   bosDescriptor_[0] = 5;
   bosDescriptor_[1] = USB_DESC_BOS;
   put16(&bosDescriptor_[2], static_cast<uint16_t>(bosOffset));
   bosDescriptor_[4] = capabilities;
+  if (bosOffset != bosBytes) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
   bosDescriptorLength_ = static_cast<uint16_t>(bosOffset);
+  return true;
 }
 
 uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
@@ -2510,8 +2188,9 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
     return static_cast<uint16_t>((packet + 3) / 4);
   };
 
-  const uint8_t *descriptor =
-      const_cast<EspUsbDevice *>(this)->configurationDescriptorForSpeed(0, highSpeed);
+  // begin has already built the selected speed. Inspect that immutable
+  // snapshot instead of re-entering the public detached descriptor builder.
+  const uint8_t *descriptor = highSpeed ? configDescriptorHighSpeed_ : configDescriptor_;
   if (!descriptor)
   {
     if (fits)
@@ -2598,8 +2277,9 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
 // and video both do; everything else in the library does not.
 bool EspUsbDevice::hasIsochronousInEndpoint(bool highSpeed) const
 {
-  const uint8_t *descriptor =
-      const_cast<EspUsbDevice *>(this)->configurationDescriptorForSpeed(0, highSpeed);
+  // begin has already built the selected speed. Inspect that immutable
+  // snapshot instead of re-entering the public detached descriptor builder.
+  const uint8_t *descriptor = highSpeed ? configDescriptorHighSpeed_ : configDescriptor_;
   if (!descriptor)
   {
     return false;
@@ -2638,8 +2318,9 @@ bool EspUsbDevice::transmitFifoFits(bool highSpeed) const
 
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || \
     defined(CONFIG_IDF_TARGET_ESP32P4)
-  const uint8_t *descriptor =
-      const_cast<EspUsbDevice *>(this)->configurationDescriptorForSpeed(0, highSpeed);
+  // begin has already built the selected speed. Inspect that immutable
+  // snapshot instead of re-entering the public detached descriptor builder.
+  const uint8_t *descriptor = highSpeed ? configDescriptorHighSpeed_ : configDescriptor_;
   if (!descriptor)
   {
     return true;
@@ -2920,6 +2601,27 @@ void EspUsbDevice::setLastError(esp_err_t error)
   lastError_ = error;
 }
 
+uint16_t EspUsbDeviceClass::configurationDescriptorForSpeed(uint8_t *dst, size_t capacity,
+    uint8_t interfaceNumber, uint8_t endpointNumber, bool highSpeed)
+{
+  const uint16_t packet = isHid() ? 8 : highSpeed ? 512 : 64;
+  const uint16_t required = configurationDescriptor(nullptr, interfaceNumber, endpointNumber, packet);
+  if (!dst) return required;
+  if (!required || capacity < required) return 0;
+  if (configurationDescriptor(dst, interfaceNumber, endpointNumber, packet) != required) return 0;
+  const uint16_t hidPacket = highSpeed && isHid() ? hidHighSpeedEndpointSize() : 0;
+  if (hidPacket) {
+    for (size_t offset = 0; offset < required;) {
+      const uint8_t length = dst[offset];
+      if (length < 2 || offset + length > required) return 0;
+      if (dst[offset + 1] == USB_DESC_ENDPOINT && length >= 7 && (dst[offset + 3] & 3) == 3)
+        put16(dst + offset + 4, hidPacket);
+      offset += length;
+    }
+  }
+  return required;
+}
+
 EspUsbDeviceClass::EspUsbDeviceClass(EspUsbDevice &device) : device_(device)
 {
   device_.addClass(this);
@@ -3145,10 +2847,11 @@ void EspUsbDeviceNet::end()
 
 uint16_t EspUsbDeviceNet::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  if (!dst || endpointNumber == 0 || endpointNumber > 14)
+  if (endpointNumber == 0 || endpointNumber > 14)
   {
     return 0;
   }
+  if (!dst) return TUD_CDC_NCM_DESC_LEN;
 #if ESP_USB_DEVICE_HAS_ESP_MAC
   if (!g_netMacUserSet)
   {
@@ -3571,10 +3274,11 @@ uint16_t EspUsbDeviceMidi::descriptorLength() const
 // Embedded MIDI IN Jacks. Hence inCableCount_ pairs with JACKID_OUT_EMB below.
 uint16_t EspUsbDeviceMidi::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  if (!dst || endpointNumber == 0)
+  if (endpointNumber == 0)
   {
     return 0;
   }
+  if (!dst) return descriptorLength();
   const uint8_t inCables = inCableCount_;
   const uint8_t outCables = outCableCount_;
   const uint8_t both = inCables < outCables ? inCables : outCables;
@@ -3645,6 +3349,7 @@ uint16_t EspUsbDeviceMidi::configurationDescriptorForSpeed(
     uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
     uint8_t endpointNumber, bool highSpeed)
 {
+  if (!dst) return configurationDescriptor(nullptr, interfaceNumber, endpointNumber, highSpeed ? 512 : 64);
   // A 16-cable descriptor is 572 bytes, so unlike the fixed-size functions this
   // one can genuinely outgrow the buffer. Fail before writing rather than after.
   if (descriptorLength() > capacity)
@@ -3813,10 +3518,11 @@ void EspUsbDeviceMsc::end()
 
 uint16_t EspUsbDeviceMsc::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  if (!dst || endpointNumber == 0)
+  if (endpointNumber == 0)
   {
     return 0;
   }
+  if (!dst) return TUD_MSC_DESC_LEN;
   const uint8_t epOut = endpointNumber;
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint8_t descriptor[] = {
@@ -5957,10 +5663,6 @@ uint16_t EspUsbDeviceDfu::configurationDescriptor(uint8_t *dst, uint8_t interfac
 {
   (void)endpointNumber;
   (void)endpointSize;
-  if (!dst)
-  {
-    return 0;
-  }
 #if ESP_USB_DEVICE_HAS_TINYUSB
   if (mode_ == EspUsbDeviceDfuMode::Runtime)
   {
@@ -5973,7 +5675,7 @@ uint16_t EspUsbDeviceDfu::configurationDescriptor(uint8_t *dst, uint8_t interfac
                               DFU_ATTR_CAN_DOWNLOAD | DFU_ATTR_WILL_DETACH,
                               1000, transferSize()),
     };
-    memcpy(dst, descriptor, sizeof(descriptor));
+    if (dst) memcpy(dst, descriptor, sizeof(descriptor));
     return sizeof(descriptor);
   }
 
@@ -5984,7 +5686,7 @@ uint16_t EspUsbDeviceDfu::configurationDescriptor(uint8_t *dst, uint8_t interfac
       TUD_DFU_DESCRIPTOR(interfaceNumber, 1, stringIndex_,
                          DFU_ATTR_CAN_DOWNLOAD, 1000, transferSize()),
   };
-  memcpy(dst, descriptor, sizeof(descriptor));
+  if (dst) memcpy(dst, descriptor, sizeof(descriptor));
   return sizeof(descriptor);
 #else
   (void)interfaceNumber;
@@ -6936,10 +6638,9 @@ void EspUsbDeviceHidVendor::onFeatureReport(ReportCallback callback)
 
 uint16_t EspUsbDeviceHidVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
 {
-  // This writes the full-speed configuration, where 64 is the hard ceiling.
-  // buildDescriptors() raises the high-speed copy to hidHighSpeedEndpointSize()
-  // afterwards; a report larger than one full-speed packet is still delivered
-  // there, just split over several packets of the same transfer.
+  // This legacy primitive uses the full-speed ceiling. The capacity-aware
+  // speed wrapper applies hidHighSpeedEndpointSize() for HS. A larger report
+  // at FS is still split over several packets of the same transfer.
   uint16_t mps = static_cast<uint16_t>(reportSize_ + 1);
   if (mps < endpointSize)
   {

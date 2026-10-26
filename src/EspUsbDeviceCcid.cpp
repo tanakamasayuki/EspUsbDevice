@@ -543,11 +543,12 @@ void EspUsbDeviceCcid::end()
 uint16_t EspUsbDeviceCcid::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber,
                                                    uint8_t endpointNumber, uint16_t endpointSize)
 {
-  (void)endpointSize;
-  if (!dst || endpointNumber == 0 || endpointNumber > 14)
+  if (endpointNumber == 0 || endpointNumber > 14)
   {
     return 0;
   }
+  if (!dst) return 9 + 54 + 3 * 7;
+  const uint16_t packet = endpointSize > 64 ? 512 : CCID_BULK_ENDPOINT_SIZE;
   const uint8_t epOut = endpointNumber;
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
   const uint8_t epNotify = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
@@ -591,11 +592,11 @@ uint16_t EspUsbDeviceCcid::configurationDescriptor(uint8_t *dst, uint8_t interfa
 
   const uint8_t endpoints[] = {
       7, USB_DESC_ENDPOINT, epOut, USB_ENDPOINT_ATTR_BULK,
-      static_cast<uint8_t>(CCID_BULK_ENDPOINT_SIZE & 0xff),
-      static_cast<uint8_t>((CCID_BULK_ENDPOINT_SIZE >> 8) & 0xff), 0,
+      static_cast<uint8_t>(packet & 0xff),
+      static_cast<uint8_t>((packet >> 8) & 0xff), 0,
       7, USB_DESC_ENDPOINT, epIn, USB_ENDPOINT_ATTR_BULK,
-      static_cast<uint8_t>(CCID_BULK_ENDPOINT_SIZE & 0xff),
-      static_cast<uint8_t>((CCID_BULK_ENDPOINT_SIZE >> 8) & 0xff), 0,
+      static_cast<uint8_t>(packet & 0xff),
+      static_cast<uint8_t>((packet >> 8) & 0xff), 0,
       7, USB_DESC_ENDPOINT, epNotify, USB_ENDPOINT_ATTR_INTERRUPT,
       static_cast<uint8_t>(CCID_INTERRUPT_ENDPOINT_SIZE & 0xff),
       static_cast<uint8_t>((CCID_INTERRUPT_ENDPOINT_SIZE >> 8) & 0xff),

@@ -35,9 +35,9 @@ constructor内の確保失敗でFunctionが黙って脱落する形にはしな�
 その内側でもUSB interface/report IDとcontroller endpoint/FIFOの予算を検証する。
 S3の非制御IN endpointは4本であり、2 CDCとCDC+Vendor+HIDは別構成になる。
 
-configuration descriptorの固定704 byte、merged HID reportの256 byte、BOS/MS OS等の固定領域は
-まだ撤去していない。一覧の動的化だけでそれらの制約を解決したとは扱わない。
-HIDの速度補正用の一時領域はHIDがある時だけ確保し、固定6個のstack配列を使わない。
+configuration、merged HID report、BOS/MS OSの固定領域はその後の実装で撤去した。
+現在のサイズ照会契約と領域の寿命は[V3_DESCRIPTOR_STORAGE.ja.md](V3_DESCRIPTOR_STORAGE.ja.md)を参照。
+HIDの速度別descriptorも直接出力するため、速度補正用の一時配列は使わない。
 
 ## HIDの複合identity
 
