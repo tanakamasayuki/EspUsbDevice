@@ -49,15 +49,19 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
-最新の全実行はplugin 1.10.0の`--combo all`による`combo-all.xml`、
-8 passed、0 skipped、0 unfinished、416.75秒。全caseで両board STOPPED、panicなし。
-構成IDを含むserial原本は`/tmp/pytest-embedded/2026-10-26_08-58-48-522209/`、
-コピーとtranscriptは`.pytest-results/combo-all-serial/`と`combo-all-transcript.txt`へ保存した。
-`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/descriptor/registryの86取得点を失敗させて回復を確認する。
+最新の全実行はplugin 1.10.0の`--combo all`による`immutable-text-all.xml`、
+8 passed、0 skipped、0 unfinished、408.43秒。全caseで両board STOPPED、panicなし。
+構成IDを含むserial原本は`/tmp/pytest-embedded/2026-10-26_11-47-05-819133/`、
+コピーとtranscriptは`.pytest-results/immutable-text-all-serial/`と`immutable-text-all-transcript.txt`へ保存した。
+`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/descriptor/registryの118取得点を失敗させて回復を確認する。
+文字列なしでの確保省略と、WebUSB URLの確保も含む。
 `s3/cdc_stream`は2 CDCのruntime容量・line coding・borrowedと、CDC+Vendor+HIDの構成を検証する。
 `s3/function_registry`は7/8 Function、登録変更、名前、identity、heap回復と7 HID reportの実通信を確認する。
+251 Functionの長い名前とstring index 255、252 Functionの拒否もdescriptor-onlyで確認する。
 `s3/descriptor_storage`はFS/HSのwriter44条件、optional領域、長さ超過/不安定なサイズ申告と、
 846 byte configuration / 516 byte MS set / 366 byte HID reportの実列挙・通信を確認する。
+UTF-8の日本語/絵文字、長さ境界と不正入力、254 byte文字列/255 byte URL、
+入力配列の変更後も同じ応答を返すことと、不正なcontrol要求後の復帰を実USBで確認する。
 通常実行は8 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補

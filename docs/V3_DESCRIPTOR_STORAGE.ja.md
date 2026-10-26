@@ -14,6 +14,8 @@
 | 複合HID report | HIDを複合する場合のみ。単体HIDはFunctionの既存descriptorを参照 |
 | MS OS 2.0 set | WinUSB対象Functionがある場合のみ |
 | BOS | WebUSBまたはMS OS capabilityを使う場合のみ |
+| USB文字列 | 提供した文字列のUTF-16とindexまでのoffset表。全てnullなら確保なし |
+| WebUSB URL | WebUSB有効かつURLありの場合のみ。prefix除去後の実byte数+3 |
 
 USBのwTotalLength/wDescriptorLengthが16 bitである制約は残る。これはTinyUSBの転送buffer定数ではない。
 FS/HSの長さが違うFunctionも、速度ごとに照会・出力する。以前のFS全体をHSへコピーして
@@ -85,8 +87,9 @@ Vendorを三つ使えば三つのfunction subset、GUID property、revisionを�
 最終の標準入口は`dynamic-descriptors-all.xml`、8 passed、390.92秒。
 HS byte列の検証をS3上で行った結果であり、P4/S2/S31のPHY・DMA/cacheやWindowsのWinUSB動作を検証したものではない。
 
-文字列応答用scratch、WebUSB URL応答、legacy class/core内の固定資源は残っている。
-それらの整理と、残クラス・EP0/DCDの独自化は継続する。今回だけでTinyUSB全置換の完了とはしない。
+文字列応答用scratchとWebUSB URLの固定領域も、その後の実装で撤去した。
+UTF-8入力、寿命、長さ制限の移行は[V3_TEXT_DESCRIPTORS.ja.md](V3_TEXT_DESCRIPTORS.ja.md)を参照する。
+legacy class/core内の固定資源、残クラス・EP0/DCDの独自化は継続する。
 
 追加のfocused実行は`descriptor-storage-final.xml`、1 passed、28.45秒。
 WebUSBのみのBOS 29 byte、MS OS併用57 byte、誤ったGUIDの拒否、

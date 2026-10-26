@@ -193,3 +193,15 @@ Functionのサイズ照会→実数分の確保→容量付き出力に統一し
 S3で846 byteのconfiguration、516 byteのMS set、366 byteのHID reportを実際に列挙・通信した。
 FS/HSのwriter44条件と86取得点の確保失敗/回復も含む標準全8試験が成功（390.92秒）。
 契約・移行・残存固定領域は[V3_DESCRIPTOR_STORAGE.ja.md](V3_DESCRIPTOR_STORAGE.ja.md)に記録した。
+
+## 採用記録: UTF-8文字列とURLの構成時snapshot
+
+既存のconfigとFunction名の入力を維持し、開始時にUTF-16文字列を必要量だけ保存する。
+63 byteの切り詰めとUTF-8のbyte単位の拡張を廃止し、規格上の126 UTF-16 unitまで受け付ける。
+WebUSB URLも有効時だけ実数分を保持する。元配列の変更で稼働中のdescriptorが変わらなくなる。
+
+変換・確保がbeginへ増える一方、利用者はビルド定数やUSB要求中の文字列寿命を管理しなくてよい。
+不正UTF-8と長さ超過は明示的な開始エラーとするため、切り詰めや文字化けを前提とした設定は修正が必要。
+WebUSBのprefixなしURLを暗黙のhttpsへ変えず、scheme 255で全文を保持する。httpsが必要なら明記する。
+URLなしでWebUSBを有効にした場合はlanding pageなしとし、存在しないindexを広告しない。
+契約と実験は[V3_TEXT_DESCRIPTORS.ja.md](V3_TEXT_DESCRIPTORS.ja.md)を参照する。

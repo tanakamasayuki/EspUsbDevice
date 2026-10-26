@@ -88,8 +88,8 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 ## 次に進める作業
 
-1. 文字列/URL応答と残る固定scratchを整理する。
-   Function registry、configuration/HID report/BOS/MS OSの固定領域は下記で撤去済み。
+1. legacy classの固定資源とruntime/APIの制限を整理する。
+   Function registry、configuration/HID report/BOS/MS OSと文字列/URLの固定領域は下記で撤去済み。
 2. CDCのcontrol要求、通知、reset/endと借用取消しの組合せを必要範囲で拡張する。
    Vendor/CDCの共通転送と基本controlは下記で実装・検証済みだが、全OS/control要求の網羅ではない。
 3. Audioの最小周期経路と併用して共通設計を見直し、HIDと残クラスを独自化する。
@@ -298,3 +298,27 @@ plugin自身の作業ツリーは変更せず、validationの依存下限とlock
 `/tmp/pytest-embedded/2026-10-26_08-58-48-522209/`、
 JUnit/transcript/serialコピーは`validation/.pytest-results/combo-all*`。
 今回の変更は試験環境と計画・記録のみ。製品API、sketch、旧test/sampleには変更を加えていない。
+
+## USB文字列とWebUSB URLのsnapshot
+
+63 byteの切り詰め/byte単位の拡張を廃止し、UTF-8からUTF-16へ変換する。
+文字列はoffset表と実際のUTF-16を一つの領域に確保し、全て省略時は確保しない。
+Function registry内の借用名前pointer一覧も撤去し、登録検索pointerだけにした。
+WebUSB URLは有効かつ指定時だけ実数分を確保し、GET_URLは構築済みbyte列を参照する。
+両者ともbegin時のsnapshotで、end/開始失敗で解放する。
+
+長さ超過・不正UTF-8は明示エラー。URLなしのWebUSBはiLandingPage=0とし、
+GET_URLのindex/方向/recipientを検証する。prefixなしURLはscheme 255として全文を保持する。
+変更の利点/不利益、既存利用の移行、寿命は[V3_TEXT_DESCRIPTORS.ja.md](V3_TEXT_DESCRIPTORS.ja.md)。
+focused試験`text-descriptors.xml`は2 passed、89.45秒。
+日本語/絵文字、最大長、入力変更後のwire応答固定、不正要求後のEP0復帰とheap回復を確認した。
+
+Device only / Vendor copy / CDC copyの3 build/nmは成功。
+未使用クラス・取消し・TinyUSB CDC/Vendorの不在を維持し、TinyUSB tree照合も51 file / 15 sourcesで一致。
+文字列/URL以外のlegacy class/core固定資源と、残クラス・EP0/DCDの置換は未完了。
+
+最終の標準`--combo all`は`immutable-text-all.xml`、**8 passed、0 skipped、0 unfinished、408.43秒**。
+全caseで両board STOPPED、panicなし。118取得点の失敗/回復と文字列なしの確保省略、
+251 Functionの長い名前/string index 255も確認した。serial原本は
+`/tmp/pytest-embedded/2026-10-26_11-47-05-819133/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/immutable-text-all*`。

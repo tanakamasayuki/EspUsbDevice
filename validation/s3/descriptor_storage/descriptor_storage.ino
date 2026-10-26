@@ -1,10 +1,42 @@
 #include <Arduino.h>
 #include <EspUsbHost.h>
 #include <atomic>
+#include "text_vectors.h"
 EspUsbHost host;
 std::atomic<uint8_t> address{0};
 std::atomic<unsigned> reports{0}, invalid{0};
 bool started = false;
+bool wireText() {
+  uint8_t data[260]; size_t actual = 0;
+  const auto getString = [&](uint8_t index, uint16_t language = 0x409) {
+    memset(data, 0xa5, sizeof(data)); actual = 0;
+    return host.vendorControlTransfer(0x80, 6, 0x0300 | index, language, data, 256, &actual, address.load(), 1000);
+  };
+  bool ok = getString(0, 0) && actual == 4 && data[0] == 4 && data[2] == 9 && data[3] == 4;
+  ok &= getString(1) && actual == 14 && data[0] == 14 && data[1] == 3 && memcmp(data + 2, text_probe::manufacturer, 12) == 0;
+  ok &= getString(3) && actual == 254 && data[0] == 254 && data[1] == 3 && data[254] == 0xa5;
+  for (unsigned i = 0; i < 126; ++i) ok &= data[2 + 2 * i] == 's' && data[3 + 2 * i] == 0;
+  ok &= getString(5) && actual == 6 && data[0] == 6 && memcmp(data + 2, text_probe::name, 4) == 0;
+  ok &= !getString(255) && getString(1);
+  ok &= !getString(1, 0x411) && getString(1);
+  actual = 0;
+  ok &= host.vendorControlTransfer(0x80, 6, 0x0303, 0x409, data, 2, &actual, address.load(), 1000) && actual == 2 && data[0] == 254;
+  char url[261]; text_probe::makeUrl(url);
+  const auto getUrl = [&]() {
+    memset(data, 0xa5, sizeof(data)); actual = 0;
+    return host.vendorControlIn(1, 1, 2, data, 256, &actual, address.load(), 1000) &&
+        actual == 255 && data[0] == 255 && data[1] == 3 && data[2] == 1 &&
+        memcmp(data + 3, url + 8, 252) == 0 && data[255] == 0xa5;
+  };
+  ok &= getUrl();
+  ok &= !host.vendorControlIn(1, 2, 2, data, 256, &actual, address.load(), 1000) && getUrl();
+  ok &= !host.vendorControlIn(1, 1, 1, data, 256, &actual, address.load(), 1000) && getUrl();
+  ok &= !host.vendorControlTransfer(0xc1, 1, 1, 2, data, 256, &actual, address.load(), 1000) && getUrl();
+  ok &= !host.vendorControlOut(1, 1, 2, nullptr, 0, address.load(), 1000) && getUrl();
+  actual = 0;
+  ok &= host.vendorControlIn(1, 1, 2, data, 3, &actual, address.load(), 1000) && actual == 3 && data[0] == 255;
+  return ok;
+}
 void setup() {
   Serial.begin(115200); Serial.setTimeout(100);
   host.onDeviceConnected([](const EspUsbHostDeviceInfo &info) {
@@ -18,13 +50,15 @@ void setup() {
 void loop() {
   if (!Serial.available()) { delay(1); return; }
   String command = Serial.readStringUntil('\n'); command.trim();
-  if (command == "vendor" || command == "hid") {
+  if (command == "vendor" || command == "hid" || command == "text") {
     address.store(0); reports.store(0); invalid.store(0);
     started = host.begin();
     const uint32_t deadline = millis() + 10000;
     while (started && !address.load() && int32_t(deadline - millis()) > 0) delay(1);
     const bool ready = started && address.load() && (command == "hid" || host.vendorOpen(address.load(), 0, ESP_USB_HOST_VENDOR_READ_ON_DEMAND));
     Serial.printf("HOST_READY %u\r\n", unsigned(ready));
+  } else if (command == "read_text") {
+    Serial.printf("TEXT_WIRE %u\r\n", unsigned(wireText()));
   } else if (command.startsWith("exchange ")) {
     const unsigned length = command.substring(9).toInt();
     uint8_t data[129], response[129]; size_t count = 0;

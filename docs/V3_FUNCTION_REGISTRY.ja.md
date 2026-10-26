@@ -1,8 +1,10 @@
 # v3 Function登録と構成の寿命
 
 2026-10-26。Function一覧を固定6 slotから、Function自身の登録リンクとbegin時の動的一覧へ変更した。
-constructorで一覧用heapを確保しない。beginで実際のFunction数だけ検索用pointerと名前の一覧を確保し、
+constructorで一覧用heapを確保しない。beginで実際のFunction数だけ検索用pointerを確保し、
 endまたは開始失敗で解放する。descriptorをbegin前に明示照会した場合も、同じサイズの一覧を必要時に作る。
+名前は[文字列descriptor](V3_TEXT_DESCRIPTORS.ja.md)として別途実数分だけ変換・保存する。
+元の名前を借用するpointer一覧は持たない。
 
 ## 通常の使い方
 

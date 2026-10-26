@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EspUsbDevice.h>
 #include "esp_heap_caps.h"
+#include "../text_vectors.h"
 
 bool writer(const char *label, EspUsbDeviceClass &function, unsigned &cases) {
   for (bool hs : {false, true}) {
@@ -139,6 +140,88 @@ bool detached() {
   return ok;
 }
 
+bool textMetadata() {
+  EspUsbDevice device;
+  EspUsbDeviceConfig config; config.startTinyUsb = false;
+  config.manufacturer = config.product = config.serialNumber = nullptr;
+  bool ok = device.begin(config) && !device.stringDescriptor(1, 0x409) &&
+      !device.webUsbUrlDescriptor() && !device.bosDescriptor();
+  const auto *language = device.stringDescriptor(0, 0);
+  ok &= language && language[0] == 0x0304 && language[1] == 0x409;
+  ok &= device.end() == ESP_OK;
+  char ascii[128]; memset(ascii, 'a', 126); ascii[126] = 0;
+  char functionName[] = "計測";
+  EspUsbDeviceCdcSerial serial(device, functionName);
+  config.manufacturer = ascii; config.product = ""; config.serialNumber = "日本語 🧪";
+  ok &= device.begin(config);
+  const auto *longString = device.stringDescriptor(1, 0x409);
+  const auto *unicode = device.stringDescriptor(3, 0x409);
+  const auto *name = device.stringDescriptor(5, 0x409);
+  ok &= longString && longString[0] == 0x03fe && longString[126] == 'a';
+  ok &= unicode && unicode[0] == 0x030e && memcmp(unicode + 1, text_probe::manufacturer, 12) == 0;
+  ok &= name && name[0] == 0x0306 && memcmp(name + 1, text_probe::name, 4) == 0;
+  ok &= device.stringDescriptor(2, 0)[0] == 0x0302;
+  ok &= !device.stringDescriptor(4, 0) && !device.stringDescriptor(255, 0) && !device.stringDescriptor(1, 0x411);
+  memset(ascii, '?', 126); memset(functionName, '?', sizeof(functionName) - 1);
+  ok &= device.stringDescriptor(1, 0) == longString && longString[126] == 'a';
+  ok &= device.stringDescriptor(3, 0) == unicode && unicode[1] == 0x65e5;
+  ok &= device.stringDescriptor(5, 0) == name && name[1] == 0x8a08;
+  ok &= device.end() == ESP_OK;
+  serial.setName(nullptr);
+  config = EspUsbDeviceConfig(); config.startTinyUsb = false;
+  memset(ascii, 'a', 127); ascii[127] = 0; config.manufacturer = ascii;
+  ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_SIZE;
+  // The limit is UTF-16 units, not UTF-8 bytes or Unicode scalar count.
+  char multibyte[385];
+  for (unsigned i = 0; i < 126; ++i) memcpy(multibyte + 3 * i, "計", 3);
+  multibyte[378] = 0; config.manufacturer = multibyte;
+  ok &= device.begin(config) && device.stringDescriptor(1, 0)[0] == 0x03fe;
+  ok &= device.end() == ESP_OK;
+  for (unsigned i = 0; i < 64; ++i) memcpy(multibyte + 4 * i, "🧪", 4);
+  multibyte[252] = 0;
+  ok &= device.begin(config) && device.stringDescriptor(1, 0)[126] == 0xddea;
+  ok &= device.end() == ESP_OK;
+  memcpy(multibyte + 252, "🧪", 5);
+  ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_SIZE;
+  const char *bad[] = {"\x80", "\xc0\xaf", "\xe0\x80\xaf", "\xf0\x80\x80\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xf5\x80\x80\x80", "\xe3\x81", "\xf0\x9f\xa7"};
+  for (const auto *value : bad) {
+    config.manufacturer = value;
+    ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_ARG;
+    config.manufacturer = "valid"; serial.setName(value);
+    ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_ARG;
+    serial.setName(nullptr); config.webusbEnabled = true; config.webusbUrl = value;
+    ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_ARG;
+    config.webusbEnabled = false;
+    ok &= device.begin(config) && !device.webUsbUrlDescriptor();
+    ok &= device.end() == ESP_OK;
+  }
+  config.manufacturer = "valid"; config.webusbEnabled = true; config.webusbUrl = nullptr;
+  ok &= device.begin(config) && !device.webUsbUrlDescriptor() && device.bosDescriptor()[28] == 0;
+  ok &= device.end() == ESP_OK;
+  for (const char *value : {"http://example.test", "https://example.test", "ftp://example.test", "example.test", "https://日本語.test"}) {
+    config.webusbUrl = value;
+    const unsigned scheme = strncmp(value, "http://", 7) == 0 ? 0 : strncmp(value, "https://", 8) == 0 ? 1 : 255;
+    const char *payload = value + (scheme == 0 ? 7 : scheme == 1 ? 8 : 0);
+    ok &= device.begin(config);
+    const auto *url = device.webUsbUrlDescriptor();
+    ok &= url && url[0] == 3 + strlen(payload) && url[1] == 3 && url[2] == scheme && memcmp(url + 3, payload, strlen(payload)) == 0;
+    ok &= device.bosDescriptor()[28] == 1 && device.end() == ESP_OK && !device.webUsbUrlDescriptor();
+  }
+  char url[262]; text_probe::makeUrl(url); config.webusbUrl = url;
+  ok &= device.begin(config);
+  const auto *descriptor = device.webUsbUrlDescriptor();
+  ok &= descriptor && descriptor[0] == 255 && descriptor[2] == 1 && memcmp(descriptor + 3, url + 8, 252) == 0;
+  memset(url, '?', 260);
+  ok &= device.webUsbUrlDescriptor() == descriptor && descriptor[3] == 'e' && device.end() == ESP_OK;
+  text_probe::makeUrl(url); url[260] = 'x'; url[261] = 0;
+  ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_SIZE;
+  for (const char *empty : {"", "https://", "http://"}) {
+    config.webusbUrl = empty;
+    ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_ARG;
+  }
+  return ok && device.end() == ESP_OK;
+}
+
 EspUsbDevice device;
 // A legal vendor Function with opaque class-specific padding. Its own driver
 // accounts for that padding before opening the standard bulk endpoints.
@@ -161,6 +244,21 @@ protected:
     return openBulkPair(port, d + 777, in, out, mps) ? 791 : 0;
   }
 };
+char wireManufacturer[32], wireSerial[127], wireName[16], wireUrl[261];
+class NamedVendor : public EspUsbDeviceVendor {
+public:
+  using EspUsbDeviceVendor::EspUsbDeviceVendor;
+  const char *functionName() const override { return wireName; }
+  void assignFunctionIds(uint8_t, uint8_t index) override { nameIndex_ = index; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t itf, uint8_t ep, uint16_t packet) override {
+    const auto bytes = EspUsbDeviceVendor::configurationDescriptor(dst, itf, ep, packet);
+    if (dst && bytes) dst[8] = nameIndex_;
+    return bytes;
+  }
+private:
+  uint8_t nameIndex_ = 0;
+};
+NamedVendor *named = nullptr;
 PaddedVendor *padded = nullptr;
 EspUsbDeviceVendor *other[2] = {};
 EspUsbDeviceHidCustom *hid[2] = {};
@@ -178,6 +276,28 @@ void loop() {
       for (unsigned i = 0; i < 20 && ok; ++i) ok &= badSizes() && detached();
       const size_t after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
       Serial.printf("WRITERS ok=%u cases=%u before=%u after=%u\r\n", unsigned(ok), cases, unsigned(before), unsigned(after));
+    } else if (command == "text_metadata") {
+      const bool warmed = textMetadata();
+      const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+      bool ok = warmed;
+      for (unsigned i = 0; i < 10 && ok; ++i) ok &= textMetadata();
+      const size_t after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+      Serial.printf("TEXTS ok=%u before=%u after=%u\r\n", unsigned(ok), unsigned(before), unsigned(after));
+    } else if (command == "text") {
+      for (auto &function : hid) { delete function; function = nullptr; }
+      named = new NamedVendor(device);
+      strcpy(wireManufacturer, "日本語 🧪"); strcpy(wireName, "計測");
+      memset(wireSerial, 's', 126); wireSerial[126] = 0;
+      text_probe::makeUrl(wireUrl);
+      EspUsbDeviceConfig config; config.product = "v3 descriptor storage";
+      config.manufacturer = wireManufacturer; config.serialNumber = wireSerial;
+      config.webusbEnabled = true; config.webusbUrl = wireUrl;
+      started = device.begin(config);
+      Serial.printf("TEXT_STARTED %u\r\n", unsigned(started));
+    } else if (command == "mutate_text") {
+      memset(wireManufacturer, '?', strlen(wireManufacturer)); memset(wireName, '?', strlen(wireName));
+      memset(wireSerial, '?', 126); memset(wireUrl, '?', 260);
+      Serial.println("TEXT_MUTATED");
     } else if (command == "vendor") {
       padded = new PaddedVendor(device);
       for (auto &function : other) function = new EspUsbDeviceVendor(device);

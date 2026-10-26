@@ -41,7 +41,7 @@ configureとcallback登録は停止中だけ成功する。容量はinstance単�
 | connected | mountedかつDTR。writeはDTRを強制条件にしない |
 | lineCoding / lineState | workerとの競合を避ける値のsnapshot。呼び直して最新値を取得 |
 | onLineCoding / onLineState / onBreak | 停止中に登録。USB workerで通知し、block/end/構成変更を行わない |
-| setName | 停止中に設定。文字列領域は使用期間中保持する |
+| setName | 停止中にUTF-8を設定。各beginが戻るまで入力を保持し、descriptorはその時点のcopyを使う |
 | port | beginで割り当てるCDC descriptor順のindex。TinyUSBのslotではない |
 
 `EspUsbVendorConfig` / `EspUsbVendorRxMode`は共通型のaliasとして残す。

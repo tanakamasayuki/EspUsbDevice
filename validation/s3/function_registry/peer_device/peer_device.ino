@@ -65,9 +65,17 @@ bool metadataChecks() {
   {
     EspUsbDevice bounded;
     NamedControl *many[252];
-    for (auto &item : many) item = new NamedControl(bounded, "x");
+    char longest[127]; memset(longest, 'x', 126); longest[126] = 0;
+    for (auto &item : many) item = new NamedControl(bounded, longest);
     ok &= !bounded.deviceDescriptor() && bounded.lastError() == ESP_ERR_INVALID_SIZE;
     ok &= !bounded.begin(config) && bounded.lastError() == ESP_ERR_INVALID_SIZE;
+    delete many[251]; many[251] = nullptr;
+    ok &= bounded.begin(config);
+    const auto *last = bounded.stringDescriptor(255, 0x409);
+    const auto *first = bounded.stringDescriptor(5, 0x409);
+    ok &= last && first && last != first && last[0] == 0x03fe && last[126] == 'x';
+    ok &= first && first[0] == 0x03fe && first[126] == 'x';
+    ok &= bounded.end() == ESP_OK;
     for (auto *item : many) delete item;
   }
   return ok;

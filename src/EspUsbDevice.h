@@ -113,6 +113,9 @@ enum EspUsbDeviceMsOs20Layout : uint8_t
 
 struct EspUsbDeviceConfig
 {
+  // UTF-8 text, copied to immutable USB descriptors during begin(). Each
+  // string may use at most 126 UTF-16 code units; invalid/long text is rejected.
+  // config() retains the supplied pointer values, not ownership of the sources.
   const char *manufacturer = "EspUsbDevice";
   const char *product = "EspUsbDevice";
   const char *serialNumber = nullptr;
@@ -131,6 +134,8 @@ struct EspUsbDeviceConfig
   bool selfPowered = false;
   uint16_t maxPowerMilliamps = 100;
   bool webusbEnabled = false;
+  // nullptr advertises WebUSB without a landing page. When enabled, a URL
+  // must be valid UTF-8 and fit 252 bytes after removing http(s)://.
   const char *webusbUrl = nullptr;
   EspUsbDeviceMsOs20Layout msOs20Layout = ESP_USB_DEVICE_MS_OS_20_AUTO;
   // The GUID Windows records as this interface's DeviceInterfaceGUIDs, which is
@@ -650,6 +655,8 @@ public:
   uint16_t hidInterfacesLength() const;
   uint8_t hidInterfaceCount() const;
   const uint16_t *stringDescriptor(uint8_t index, uint16_t langid);
+  // Cached WebUSB URL #1, or nullptr when no landing page is configured.
+  const uint8_t *webUsbUrlDescriptor() const;
   const uint8_t *hidReportDescriptor(uint8_t instance);
   // Length of what hidReportDescriptor(instance) returns. For a composite HID
   // that is the merged descriptor, which is not any one class's own length.
@@ -704,8 +711,9 @@ private:
   // String descriptor indices 1-3 are manufacturer / product / serial and 4 is
   // the CDC-NCM MAC address. Per-function names start after those.
   static constexpr uint8_t FIRST_FUNCTION_STRING_INDEX = 5;
-  static constexpr size_t MAX_STRING_DESCRIPTOR = 64;
   bool buildDescriptors();
+  bool buildStringDescriptors();
+  bool buildWebUsbUrlDescriptor();
   void releaseDescriptors();
   bool buildConfigurationDescriptor(bool highSpeed);
   bool buildMergedHidReport();
@@ -753,10 +761,6 @@ private:
   // only during a build/run and is released on end or failed begin.
   EspUsbDeviceClass *firstClass_ = nullptr, *lastClass_ = nullptr;
   EspUsbDeviceClass **classes_ = nullptr;
-  // Function name per class slot, published at string index
-  // FIRST_FUNCTION_STRING_INDEX + slot. Filled by buildDescriptors() from
-  // EspUsbDeviceClass::functionName(); null slots have no string.
-  const char **functionStrings_ = nullptr;
   size_t classCount_ = 0, rejectedClassCount_ = 0;
   struct RegistrationTransaction;
   bool allocateClassRegistry();
@@ -783,7 +787,10 @@ private:
   uint16_t hidInterfacesLength_ = 0;
   uint8_t hidInterfaceCount_ = 0;
   uint16_t hidReportDescriptorLength_ = 0;
-  uint16_t stringDescriptor_[MAX_STRING_DESCRIPTOR] = {};
+  // One exact-sized block: word offsets followed by immutable UTF-16 strings.
+  uint16_t *stringDescriptors_ = nullptr;
+  uint16_t stringDescriptorSlots_ = 0;
+  uint8_t *webUsbUrlDescriptor_ = nullptr;
   ControlRequestObserver controlObserver_;
   uint8_t controlResponseRequest_ = 0;
   uint16_t controlResponseValue_ = 0;
@@ -824,7 +831,8 @@ public:
   virtual uint8_t endpointCount() const = 0;
   // Name to publish for this function, or null for none. A composite device
   // that repeats one class needs it: without a string the host has nothing to
-  // tell two identical functions apart. Returned pointer must outlive begin().
+  // tell two identical functions apart. UTF-8 is copied during begin(); the
+  // returned pointer must remain valid until begin() returns.
   virtual const char *functionName() const { return nullptr; }
   // Called by buildDescriptors() before asking for the descriptor, so a class
   // can emit and address itself correctly.

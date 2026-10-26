@@ -56,7 +56,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 8 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 10 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -70,23 +70,26 @@ void loop() {
         }
         if (mode == 4) { second = new EspUsbDeviceVendor(device); points = 12; }
         if (mode == 5) { serialPort = new EspUsbDeviceCdcSerial(device); points = 13; }
-        if (mode >= 6) {
+        if (mode == 6 || mode == 7) {
           config.rxMode = EspUsbBulkRxMode::Disabled; config.rxCapacity = 0;
           points = 5;
           if (mode == 7) { config.txCapacity = config.transferBytes = 0; points = 3; }
         }
-        points += 4; // Function index + exact FS, MS OS, and BOS descriptors.
+        points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.
+        EspUsbDeviceConfig identity;
+        if (mode == 8) { identity.webusbEnabled = true; identity.webusbUrl = "https://example.test/日本語"; ++points; }
+        if (mode == 9) { identity.manufacturer = identity.product = nullptr; --points; }
         ok &= vendor.configure(config) == ESP_OK;
         for (unsigned point = 1; point <= points && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;
-          const bool rejected = !device.begin() && device.lastError() == ESP_ERR_NO_MEM;
+          const bool rejected = !device.begin(identity) && device.lastError() == ESP_ERR_NO_MEM;
           failAt = 0;
           ok &= rejected && failureReached && device.end() == ESP_OK && outstanding == 0 &&
               !vendor.readCapacity() && !vendor.writeCapacity() && !badFree && !overflow;
           if (!ok) { Serial.printf("FAULT_FAILED mode=%u point=%u calls=%u live=%u rejected=%u hit=%u\r\n", mode, point, calls, outstanding, unsigned(rejected), unsigned(failureReached)); break; }
           ++failures;
           calls = 0;
-          const bool recovered = device.begin();
+          const bool recovered = device.begin(identity);
           if (!recovered || calls != points) Serial.printf("RECOVERY_FAILED mode=%u point=%u expected=%u calls=%u error=%d\r\n", mode, point, points, calls, int(device.lastError()));
           ok &= recovered && calls == points;
           ok &= vendor.configuration().rxCapacity == config.rxCapacity && vendor.configuration().txCapacity == config.txCapacity;

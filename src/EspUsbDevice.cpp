@@ -470,7 +470,6 @@ static constexpr uint8_t SYSTEM_CONTROL_REPORT_DESCRIPTOR[] = {
 uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6a, 0x96, 0x00};
 static bool g_netMacUserSet = false;
 static char g_netMacString[13] = {};
-static uint8_t g_webUsbUrlDescriptor[128] = {};
 
 static constexpr uint8_t WEBUSB_VENDOR_CODE = 0x01;
 static constexpr uint8_t MICROSOFT_OS_20_VENDOR_CODE = 0x02;
@@ -703,42 +702,15 @@ static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
     {
       return true;
     }
-    const char *url = g_activeDevice->config().webusbUrl;
-    if (!url)
-    {
-      return false;
-    }
-    uint8_t scheme = 0xff;
-    if (strncmp(url, "https://", 8) == 0)
-    {
-      scheme = 1;
-      url += 8;
-    }
-    else if (strncmp(url, "http://", 7) == 0)
-    {
-      scheme = 0;
-      url += 7;
-    }
-    else
-    {
-      scheme = 1;
-    }
-    size_t length = strlen(url);
-    if (length > sizeof(g_webUsbUrlDescriptor) - 3)
-    {
-      length = sizeof(g_webUsbUrlDescriptor) - 3;
-    }
-    g_webUsbUrlDescriptor[0] = static_cast<uint8_t>(length + 3);
-    g_webUsbUrlDescriptor[1] = 0x03;
-    g_webUsbUrlDescriptor[2] = scheme;
-    memcpy(&g_webUsbUrlDescriptor[3], url, length);
+    const uint8_t *url = g_activeDevice->webUsbUrlDescriptor();
+    if (request->bmRequestType != 0xc0 || request->wIndex != 2 ||
+        request->wValue != 1 || !url) return false;
     if (observation)
     {
-      observation->responseLength = g_webUsbUrlDescriptor[0];
+      observation->responseLength = url[0];
       observation->handled = true;
     }
-    return tud_control_xfer(rhport, request, g_webUsbUrlDescriptor,
-                            g_webUsbUrlDescriptor[0]);
+    return tud_control_xfer(rhport, request, const_cast<uint8_t *>(url), url[0]);
   }
   if (g_activeDevice && request &&
       request->bRequest == MICROSOFT_OS_20_VENDOR_CODE &&
@@ -838,6 +810,10 @@ void EspUsbDevice::releaseDescriptors()
 {
   for (auto *pointer : {configDescriptor_, configDescriptorHighSpeed_, otherSpeedDescriptor_,
        bosDescriptor_, microsoftOs20Descriptor_, hidReportDescriptor_}) espusb::internal::freeUsbMemory(pointer);
+  espusb::internal::freeUsbMemory(stringDescriptors_);
+  espusb::internal::freeUsbMemory(webUsbUrlDescriptor_);
+  stringDescriptors_ = nullptr; stringDescriptorSlots_ = 0;
+  webUsbUrlDescriptor_ = nullptr;
   configDescriptor_ = configDescriptorHighSpeed_ = otherSpeedDescriptor_ = nullptr;
   bosDescriptor_ = microsoftOs20Descriptor_ = hidReportDescriptor_ = nullptr;
   configDescriptorLength_ = highSpeedDescriptorLength_ = 0;
@@ -1160,20 +1136,18 @@ EspUsbDeviceClass *EspUsbDevice::classAt(size_t index) const
 void EspUsbDevice::releaseClassRegistry()
 {
   espusb::internal::freeUsbMemory(classes_);
-  classes_ = nullptr; functionStrings_ = nullptr;
+  classes_ = nullptr;
 }
 
 bool EspUsbDevice::allocateClassRegistry()
 {
   releaseClassRegistry();
   if (!classCount_) return true;
-  const size_t bytes = classCount_ * (sizeof(*classes_) + sizeof(*functionStrings_));
+  const size_t bytes = classCount_ * sizeof(*classes_);
   classes_ = static_cast<EspUsbDeviceClass **>(espusb::internal::allocateUsbMemory(bytes));
   if (!classes_) { setLastError(ESP_ERR_NO_MEM); return false; }
-  functionStrings_ = static_cast<const char **>(static_cast<void *>(classes_ + classCount_));
   auto *function = firstClass_;
   for (size_t i = 0; i < classCount_; ++i, function = function->nextRegistered_) classes_[i] = function;
-  memset(functionStrings_, 0, classCount_ * sizeof(*functionStrings_));
   return true;
 }
 
@@ -1365,55 +1339,131 @@ uint8_t EspUsbDevice::hidInterfaceCount() const
   return hidInterfaceCount_;
 }
 
+namespace
+{
+// Reject overlong encodings, surrogate code points, truncated sequences and
+// values above Unicode's scalar range. No read crosses a terminating NUL.
+bool nextUtf8Scalar(const char *&text, uint32_t &scalar)
+{
+  const uint8_t lead = static_cast<uint8_t>(*text++);
+  unsigned continuation = 0;
+  uint32_t minimum = 0;
+  if (lead < 0x80) { scalar = lead; return true; }
+  if (lead >= 0xc2 && lead <= 0xdf) { scalar = lead & 0x1f; continuation = 1; minimum = 0x80; }
+  else if (lead >= 0xe0 && lead <= 0xef) { scalar = lead & 0x0f; continuation = 2; minimum = 0x800; }
+  else if (lead >= 0xf0 && lead <= 0xf4) { scalar = lead & 7; continuation = 3; minimum = 0x10000; }
+  else return false;
+  while (continuation--) {
+    const uint8_t next = static_cast<uint8_t>(*text);
+    if ((next & 0xc0) != 0x80) return false;
+    ++text; scalar = (scalar << 6) | (next & 0x3f);
+  }
+  return scalar >= minimum && scalar <= 0x10ffff && !(scalar >= 0xd800 && scalar <= 0xdfff);
+}
+
+esp_err_t encodeUsbString(const char *text, uint16_t *output, size_t capacity, size_t &units)
+{
+  units = 0;
+  while (*text) {
+    uint32_t scalar;
+    if (!nextUtf8Scalar(text, scalar)) return ESP_ERR_INVALID_ARG;
+    const size_t needed = scalar > 0xffff ? 2 : 1;
+    if (needed > capacity - units) return ESP_ERR_INVALID_SIZE;
+    if (output) {
+      if (needed == 1) output[units] = uint16_t(scalar);
+      else {
+        scalar -= 0x10000;
+        output[units] = uint16_t(0xd800 | (scalar >> 10));
+        output[units + 1] = uint16_t(0xdc00 | (scalar & 0x3ff));
+      }
+    }
+    units += needed;
+  }
+  return ESP_OK;
+}
+} // namespace
+
+bool EspUsbDevice::buildStringDescriptors()
+{
+  bool network = false;
+  for (size_t i = 0; i < classCount_; ++i) network |= classAt(i)->isNet();
+  const auto source = [&](size_t index) -> const char * {
+    if (index == 1) return config_.manufacturer;
+    if (index == 2) return config_.product;
+    if (index == 3) return config_.serialNumber;
+    if (index == 4) return network ? g_netMacString : nullptr;
+    const char *name = classAt(index - FIRST_FUNCTION_STRING_INDEX)->functionName();
+    return name && *name ? name : nullptr;
+  };
+  size_t slots = 0, words = 0;
+  for (size_t i = 1; i < FIRST_FUNCTION_STRING_INDEX + classCount_; ++i) {
+    const char *value = source(i);
+    if (!value) continue;
+    size_t units;
+    const esp_err_t error = encodeUsbString(value, nullptr, 126, units);
+    if (error != ESP_OK) { setLastError(error); return false; }
+    words += 1 + units; slots = i + 1;
+  }
+  if (!slots) return true;
+  words += slots;
+  stringDescriptors_ = static_cast<uint16_t *>(espusb::internal::allocateUsbMemory(words * sizeof(uint16_t)));
+  if (!stringDescriptors_) { setLastError(ESP_ERR_NO_MEM); return false; }
+  memset(stringDescriptors_, 0, slots * sizeof(uint16_t));
+  size_t offset = slots;
+  for (size_t i = 1; i < slots; ++i) {
+    const char *value = source(i);
+    if (!value) continue;
+    if (offset >= words) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+    size_t units;
+    const esp_err_t error = encodeUsbString(value, stringDescriptors_ + offset + 1,
+        std::min(size_t(126), words - offset - 1), units);
+    if (error != ESP_OK) { setLastError(error); return false; }
+    stringDescriptors_[i] = uint16_t(offset);
+    stringDescriptors_[offset] = uint16_t((USB_DESC_STRING << 8) | (2 + units * 2));
+    offset += 1 + units;
+  }
+  if (offset != words) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+  stringDescriptorSlots_ = uint16_t(slots);
+  return true;
+}
+
+bool EspUsbDevice::buildWebUsbUrlDescriptor()
+{
+  if (!config_.webusbEnabled || !config_.webusbUrl) return true;
+  const char *url = config_.webusbUrl;
+  uint8_t scheme = 0xff;
+  if (strncmp(url, "https://", 8) == 0) { scheme = 1; url += 8; }
+  else if (strncmp(url, "http://", 7) == 0) { scheme = 0; url += 7; }
+  if (!*url) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+  size_t length = 0;
+  for (const char *text = url; *text;) {
+    uint32_t scalar;
+    if (!nextUtf8Scalar(text, scalar)) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+    length = size_t(text - url);
+    if (length > 252) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+  }
+  webUsbUrlDescriptor_ = static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(length + 3));
+  if (!webUsbUrlDescriptor_) { setLastError(ESP_ERR_NO_MEM); return false; }
+  webUsbUrlDescriptor_[0] = uint8_t(length + 3);
+  webUsbUrlDescriptor_[1] = 3; webUsbUrlDescriptor_[2] = scheme;
+  memcpy(webUsbUrlDescriptor_ + 3, url, length);
+  return true;
+}
+
 const uint16_t *EspUsbDevice::stringDescriptor(uint8_t index, uint16_t langid)
 {
-  (void)langid;
-  memset(stringDescriptor_, 0, sizeof(stringDescriptor_));
-  if (index == 0)
-  {
-    stringDescriptor_[0] = (USB_DESC_STRING << 8) | 4;
-    stringDescriptor_[1] = 0x0409;
-    return stringDescriptor_;
-  }
+  if (!buildDescriptors()) return nullptr;
+  static constexpr uint16_t language[] = {(USB_DESC_STRING << 8) | 4, 0x0409};
+  if (!index) return language;
+  // Keep langid=0 as a convenient alias for direct descriptor inspection.
+  if ((langid && langid != 0x0409) || index >= stringDescriptorSlots_ ||
+      !stringDescriptors_ || !stringDescriptors_[index]) return nullptr;
+  return stringDescriptors_ + stringDescriptors_[index];
+}
 
-  const char *value = nullptr;
-  if (index == 1)
-  {
-    value = config_.manufacturer;
-  }
-  else if (index == 2)
-  {
-    value = config_.product;
-  }
-  else if (index == 3)
-  {
-    value = config_.serialNumber;
-  }
-  else if (index == 4 && g_activeNet)
-  {
-    value = g_netMacString;
-  }
-  else if (index >= FIRST_FUNCTION_STRING_INDEX &&
-           functionStrings_ && size_t(index - FIRST_FUNCTION_STRING_INDEX) < classCount_)
-  {
-    value = functionStrings_[index - FIRST_FUNCTION_STRING_INDEX];
-  }
-  if (!value)
-  {
-    return nullptr;
-  }
-
-  size_t length = strlen(value);
-  if (length > MAX_STRING_DESCRIPTOR - 1)
-  {
-    length = MAX_STRING_DESCRIPTOR - 1;
-  }
-  stringDescriptor_[0] = static_cast<uint16_t>((USB_DESC_STRING << 8) | (2 + length * 2));
-  for (size_t i = 0; i < length; i++)
-  {
-    stringDescriptor_[1 + i] = static_cast<uint8_t>(value[i]);
-  }
-  return stringDescriptor_;
+const uint8_t *EspUsbDevice::webUsbUrlDescriptor() const
+{
+  return webUsbUrlDescriptor_;
 }
 
 // The class behind TinyUSB HID instance `instance` when the HID is not merged.
@@ -1735,7 +1785,6 @@ bool EspUsbDevice::buildDescriptors()
   // driver dispatches by interface number, without TinyUSB CDC instance slots.
   // HID functions are emitted first, but are never counted as CDC ports.
   uint8_t cdcInstance = 0;
-  if (classCount_) memset(functionStrings_, 0, classCount_ * sizeof(*functionStrings_));
   for (size_t i = 0; i < classCount_; i++)
   {
     if (!classAt(i))
@@ -1747,7 +1796,6 @@ bool EspUsbDevice::buildDescriptors()
     if (name && name[0] != '\0')
     {
       stringIndex = static_cast<uint8_t>(FIRST_FUNCTION_STRING_INDEX + i);
-      functionStrings_[i] = name;
     }
     classAt(i)->assignFunctionIds(classAt(i)->isCdc() ? cdcInstance++ : 0,
                                    stringIndex);
@@ -1803,7 +1851,7 @@ bool EspUsbDevice::buildDescriptors()
   put16(deviceQualifierDescriptor_ + 2, 0x0200);
   deviceQualifierDescriptor_[4] = deviceDescriptor_[4]; deviceQualifierDescriptor_[5] = deviceDescriptor_[5];
   deviceQualifierDescriptor_[6] = deviceDescriptor_[6]; deviceQualifierDescriptor_[7] = 64; deviceQualifierDescriptor_[8] = 1;
-  if (!buildWebUsbDescriptors()) return false;
+  if (!buildStringDescriptors() || !buildWebUsbUrlDescriptor() || !buildWebUsbDescriptors()) return false;
   if (bosDescriptorLength_) { put16(deviceDescriptor_ + 2, 0x0201); put16(deviceQualifierDescriptor_ + 2, 0x0201); }
   descriptorGuard.keep = true;
   setLastError(ESP_OK);
@@ -2111,7 +2159,7 @@ bool EspUsbDevice::buildWebUsbDescriptors()
     put16(&bosDescriptor_[bosOffset], 0x0100);
     bosOffset += 2;
     bosDescriptor_[bosOffset++] = WEBUSB_VENDOR_CODE;
-    bosDescriptor_[bosOffset++] = 1;
+    bosDescriptor_[bosOffset++] = webUsbUrlDescriptor_ ? 1 : 0;
     capabilities++;
   }
 
