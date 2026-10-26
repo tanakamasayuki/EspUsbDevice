@@ -19,12 +19,20 @@
     {
       "before": "\n  queue_event(&event, in_isr);\n}\n\n//--------------------------------------------------------------------+\n// USBD Endpoint API\n//--------------------------------------------------------------------+\n\n",
       "after": "\n  queue_event(&event, in_isr);\n}\n\nbool usbd_try_defer_func(osal_task_func_t func, void* param) {\n#if CFG_TUSB_OS == OPT_OS_FREERTOS\n  if (_usbd_q == NULL || func == NULL) return false;\n  dcd_event_t event = {.rhport = _usbd_rhport, .event_id = USBD_EVENT_FUNC_CALL};\n  event.func_call.func = func;\n  event.func_call.param = param;\n  return xQueueSendToBack(_usbd_q, &event, 0) == pdTRUE;\n#else\n  (void)func; (void)param;\n  return false;\n#endif\n}\nuint16_t usbd_event_queue_capacity(void) { return CFG_TUD_TASK_QUEUE_SZ; }\n\nTU_ATTR_WEAK bool dcd_edpt_abort_supported(void) { return false; }\nTU_ATTR_WEAK bool dcd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {\n  (void)rhport; (void)ep_addr;\n  return false;\n}\nbool usbd_edpt_abort_supported(void) {\n#if CFG_TUSB_OS == OPT_OS_FREERTOS\n  return dcd_edpt_abort_supported();\n#else\n  return false;\n#endif\n}\nbool usbd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {\n  if (tu_edpt_number(ep_addr) == 0 || !dcd_edpt_abort(rhport, ep_addr)) return false;\n  const uint8_t epnum = tu_edpt_number(ep_addr), dir = tu_edpt_dir(ep_addr);\n  // Preserve a halt requested by the Host. Normal cancellation does not reset\n  // DATA PID, unlike clear-stall/endpoint re-open.\n  const bool stalled = (_usbd_dev.ep_status[epnum][dir] & TU_EDPT_STATE_STALLED) != 0;\n  _usbd_dev.ep_status[epnum][dir] = stalled ? TU_EDPT_STATE_STALLED | TU_EDPT_STATE_BUSY : 0;\n  return true;\n}\n\n//--------------------------------------------------------------------+\n// USBD Endpoint API\n//--------------------------------------------------------------------+\n\n"
+    },
+    {
+      "before": "// Status phase\nbool tud_control_status",
+      "after": "// EspUsb interim adapter: validate an OUT data stage before acknowledging it.\nuint16_t usbd_control_received_bytes(void) {\n  return _usbd_dev.ctrl_xfer.total_xferred;\n}\n\n// Status phase\nbool tud_control_status"
     }
   ],
   "device/usbd_pvt.h": [
     {
       "before": "void usbd_sof_enable(uint8_t rhport, sof_consumer_t consumer, bool en);\n\nbool usbd_open_edpt_pair(uint8_t rhport, uint8_t const* p_desc, uint8_t ep_count, uint8_t xfer_type, uint8_t* ep_out, uint8_t* ep_in);\nvoid usbd_defer_func(osal_task_func_t func, void *param, bool in_isr);\n\n#ifdef __cplusplus\n }\n#endif\n",
       "after": "void usbd_sof_enable(uint8_t rhport, sof_consumer_t consumer, bool en);\n\nbool usbd_open_edpt_pair(uint8_t rhport, uint8_t const* p_desc, uint8_t ep_count, uint8_t xfer_type, uint8_t* ep_out, uint8_t* ep_in);\nvoid usbd_defer_func(osal_task_func_t func, void *param, bool in_isr);\n// Nonblocking fence enqueue; false leaves ownership with the caller.\nbool usbd_try_defer_func(osal_task_func_t func, void *param);\nuint16_t usbd_event_queue_capacity(void);\n// Worker only. Old completion events may still be queued after abort; drain\n// through a deferred fence before reusing the endpoint or returning buffers.\nbool usbd_edpt_abort_supported(void);\nbool usbd_edpt_abort(uint8_t rhport, uint8_t ep_addr);\n\n#ifdef __cplusplus\n }\n#endif\n"
+    },
+    {
+      "before": "// Invoked when initializing device stack to get additional class drivers.",
+      "after": "// EspUsb interim adapter: actual data-stage bytes, valid in DATA/ACK callbacks.\nuint16_t usbd_control_received_bytes(void);\n\n// Invoked when initializing device stack to get additional class drivers."
     }
   ],
   "portable/synopsys/dwc2/dcd_dwc2.c": [

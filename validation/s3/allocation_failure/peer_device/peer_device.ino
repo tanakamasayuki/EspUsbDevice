@@ -36,6 +36,10 @@ EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 EspUsbDeviceVendor *second = nullptr;
 EspUsbDeviceCdcSerial *serialPort = nullptr;
+EspUsbDeviceHidVendor *hid[2] = {};
+EspUsbDeviceHidCustom *inputOnly = nullptr;
+const uint8_t pushReport[] = {0x06,0x00,0xff,0x09,0x01,0xa1,0x01,0xa4,0x75,0x08,0x95,0x01,0x09,0x01,0x81,0x02,0xb4,0xc0};
+const uint8_t inputReport[] = {0x06,0x00,0xff,0x09,0x01,0xa1,0x01,0x75,0x08,0x95,0x01,0x09,0x01,0x81,0x02,0xc0};
 uint8_t echo[129];
 size_t wanted = 0, received = 0;
 
@@ -56,7 +60,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 10 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 14 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -75,6 +79,12 @@ void loop() {
           points = 5;
           if (mode == 7) { config.txCapacity = config.transferBytes = 0; points = 3; }
         }
+        if (mode == 10 || mode == 11) {
+          hid[0] = new EspUsbDeviceHidVendor(device, 257); points += 8;
+          if (mode == 11) { hid[1] = new EspUsbDeviceHidVendor(device, 63); ++points; }
+        }
+        if (mode == 12) { inputOnly = new EspUsbDeviceHidCustom(device, inputReport, sizeof(inputReport), 1); points += 5; }
+        if (mode == 13) { inputOnly = new EspUsbDeviceHidCustom(device, pushReport, sizeof(pushReport), 1); points += 6; }
         points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.
         EspUsbDeviceConfig identity;
         if (mode == 8) { identity.webusbEnabled = true; identity.webusbUrl = "https://example.test/日本語"; ++points; }
@@ -99,6 +109,8 @@ void loop() {
         }
         delete second; second = nullptr;
         delete serialPort; serialPort = nullptr;
+        for (auto &function : hid) { delete function; function = nullptr; }
+        delete inputOnly; inputOnly = nullptr;
       }
       vendor.configure(EspUsbVendorConfig());
       delay(10);

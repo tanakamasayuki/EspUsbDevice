@@ -109,9 +109,11 @@
 #ifndef CFG_TUD_MSC
 #define CFG_TUD_MSC 1
 #endif
-#ifndef CFG_TUD_HID
-#define CFG_TUD_HID 1
+#if defined(CFG_TUD_HID) && CFG_TUD_HID != 0
+#error "HID uses runtime report resources; do not enable TinyUSB HID"
 #endif
+#undef CFG_TUD_HID
+#define CFG_TUD_HID 0
 #ifndef CFG_TUD_MIDI
 #define CFG_TUD_MIDI 1
 #endif
@@ -181,30 +183,8 @@
 #ifndef CFG_TUD_DFU_XFER_BUFSIZE
 #define CFG_TUD_DFU_XFER_BUFSIZE 1024
 #endif
-// HID interrupt endpoint buffer, which is also the ceiling on a single HID
-// report: tud_hid_n_report() writes the report ID into byte 0 and copies the
-// payload behind it, so the largest report a class may declare is
-// CFG_TUD_HID_EP_BUFSIZE - 1.
-//
-// High speed moves the interesting limit. A full-speed interrupt endpoint tops
-// out at 64 bytes per packet, but a high-speed one carries up to 1024 every 125
-// us, so the 64 that used to be hard-coded here capped ESP32-P4 HID at 0.5 MB/s
-// when the bus could carry eight times that. 512 is the default on P4 for that
-// reason and because 1024 has been measured not to enumerate against every host
-// (the host's periodic FIFO budget, not this device). The cost is 3 * (512 - 64)
-// = 1344 bytes of RAM on P4 whether or not a sketch uses HID, since hid_device.c
-// defines its control, IN and OUT buffers statically.
-//
-// Only EspUsbDeviceHidVendor asks for packets this large. Keyboards, mice,
-// gamepads and the composite HID interface size their endpoint from the report
-// they actually send (8 or 16 bytes), so raising this changes no descriptor
-// they emit.
-#ifndef CFG_TUD_HID_EP_BUFSIZE
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-#define CFG_TUD_HID_EP_BUFSIZE 512
-#else
-#define CFG_TUD_HID_EP_BUFSIZE 64
-#endif
+#if defined(CFG_TUD_HID_EP_BUFSIZE) || defined(CFG_TUD_HID_BUFSIZE)
+#error "HID storage is derived from report descriptors; remove TinyUSB HID build flags"
 #endif
 #ifndef CFG_TUD_MIDI_RX_BUFSIZE
 #define CFG_TUD_MIDI_RX_BUFSIZE 512

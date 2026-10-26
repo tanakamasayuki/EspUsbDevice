@@ -90,9 +90,10 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 1. legacy classの固定資源とruntime/APIの制限を整理する。
    Function registry、configuration/HID report/BOS/MS OSと文字列/URLの固定領域は下記で撤去済み。
+   HID classも独自化した。GET_REPORT snapshot、idle自動再送、callback/configの停止中契約は継続する。
 2. CDCのcontrol要求、通知、reset/endと借用取消しの組合せを必要範囲で拡張する。
    Vendor/CDCの共通転送と基本controlは下記で実装・検証済みだが、全OS/control要求の網羅ではない。
-3. Audioの最小周期経路と併用して共通設計を見直し、HIDと残クラスを独自化する。
+3. Audioの最小周期経路と併用して共通設計を見直し、HIDの残制御と残クラスを独自化する。
 4. EP0/device state/DCDを置換し、TinyUSB依存を除去する。
    16 bitの投稿長も暫定adapterの制約であり、v3の最終上限として固定しない。
 
@@ -322,3 +323,35 @@ Device only / Vendor copy / CDC copyの3 build/nmは成功。
 251 Functionの長い名前/string index 255も確認した。serial原本は
 `/tmp/pytest-embedded/2026-10-26_11-47-05-819133/`、
 JUnit/transcript/serialコピーは`validation/.pytest-results/immutable-text-all*`。
+
+## HID classの独自化
+
+`EspUsbHidFunction`を共通基底にし、TinyUSB HID classをCFG_TUD_HID=0で無効化した。
+Report Size/Count/IDとglobal Push/Popから実数分のreport表と転送容量を求める。
+複合HIDは一つのstateを共有し、INだけならOUT/controlのbufferを持たない。
+独自HIDは新基底へ移行する。通常のKeyboard/Mouse等と自動IDは維持する。
+Vendorの長すぎるsendInputを切り詰めず拒否し、サイズをビルド定数へ結び付けない。
+HID driver自身も未使用時にはリンクされないことを3最小buildのnmで確認した。
+
+新規`validation/s3/hid_transport`でpayload 1〜1023 byteの12条件をS3 FSで送受信した。
+INの複数packet、interrupt OUT組立、control Outputのprefix有無とFeature、
+無効要求後の復帰、idle値、NKRO/boot切替、LEDを検証した。
+65535 byteの領域はdescriptor-onlyで確保/反復回収したが、その長さのwire試験ではない。
+不正item、Push/Pop、混在IDや途中begin失敗の回収も確認する。
+
+`usbd_control_received_bytes()`を暫定core adapterへ追加し、SET_REPORTの実受信量をDATA時に検証する。
+patch manifest/provenanceへ記録し、tree照合は51 file / 15 compiled sourcesで一致。
+契約と移行は[V3_HID_API.ja.md](V3_HID_API.ja.md)。GET_REPORT snapshotとidle自動再送は未実装。
+
+標準の`runtime-hid-all.xml`は**9 passed、0 skipped、0 unfinished、474.47秒**。
+この時点の確保失敗は176取得点。全caseで両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-26_12-18-47-546432/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/runtime-hid-all*`。
+
+その後、標準HIDクラスのdestructor先頭でendを呼び、callback/reportメンバーより先にworkerを止める順序へ補強。
+`hid-transport-final.xml`は2 passed、91.43秒。稼働中のVendor HID/Keyboard破棄とprotocol callback、
+解析stackの故障を含む194取得点の失敗/回復、両board STOPPED、panicなしを確認した。
+原本は`/tmp/pytest-embedded/2026-10-26_12-28-54-078282/`、コピーは`.pytest-results/hid-transport-final*`。
+開始成功時のstartError=ESP_OKを確認する最終HID focusedも1 passed、53.04秒。
+未登録HIDがbeginで共有stateへ参加しないことと、拒否/破棄後の既存7 HID通信を
+`hid-registration-final.xml`の1 passed、44.01秒で確認した。これらのserial/JUnitも`.pytest-results/`へ保存済み。

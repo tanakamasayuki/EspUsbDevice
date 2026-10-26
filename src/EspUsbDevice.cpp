@@ -135,14 +135,6 @@
 #define ESP_USB_DEVICE_HAS_PHY_SEL_EFUSE 0
 #endif
 
-// The HID interrupt endpoint buffer this build compiled, which is what bounds a
-// single report. Mirrored here so the code below also compiles on a target
-// without TinyUSB, where nothing defines it.
-#if ESP_USB_DEVICE_HAS_TINYUSB
-static constexpr uint16_t ESP_USB_DEVICE_HID_EP_BUFSIZE = CFG_TUD_HID_EP_BUFSIZE;
-#else
-static constexpr uint16_t ESP_USB_DEVICE_HID_EP_BUFSIZE = 64;
-#endif
 // Full speed caps an interrupt endpoint at 64 bytes (USB 2.0 table 9-13).
 static constexpr uint16_t ESP_USB_DEVICE_FS_INTERRUPT_MAX_PACKET = 64;
 // What EspUsbController::Auto resolves to. Only the P4 has a high-speed
@@ -570,36 +562,7 @@ extern "C" void dcd_edpt0_status_complete(uint8_t rhport, const tusb_control_req
   g_activeDevice->notifyControlRequest(info);
 }
 
-uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
-{
-  return g_activeDevice ? g_activeDevice->hidReportDescriptor(instance) : nullptr;
-}
 
-uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t reportId, hid_report_type_t reportType, uint8_t *buffer, uint16_t reqlen)
-{
-  (void)instance;
-  (void)reportId;
-  (void)reportType;
-  (void)buffer;
-  (void)reqlen;
-  return 0;
-}
-
-void tud_hid_set_report_cb(uint8_t instance, uint8_t reportId, hid_report_type_t reportType, const uint8_t *buffer, uint16_t bufsize)
-{
-  if (g_activeDevice)
-  {
-    g_activeDevice->handleHidSetReport(instance, reportId, static_cast<uint8_t>(reportType), buffer, bufsize);
-  }
-}
-
-void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol)
-{
-  if (g_activeDevice)
-  {
-    g_activeDevice->handleHidSetProtocol(instance, protocol);
-  }
-}
 
 void tud_mount_cb(void)
 {
@@ -1195,50 +1158,12 @@ void EspUsbDevice::removeClass(EspUsbDeviceClass *function)
 
 bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs)
 {
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (!tinyusbStarted_)
-  {
-    setLastError(ESP_ERR_INVALID_STATE);
-    return false;
+  if (!tinyusbStarted_) { setLastError(ESP_ERR_INVALID_STATE); return false; }
+  if (instance != 0 || !data || !length) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+  for (size_t i = 0; i < classCount_; ++i) {
+    if (classAt(i)->isHid()) return classAt(i)->sendHidInput(reportId, data, length, timeoutMs);
   }
-  if (!data || length == 0)
-  {
-    setLastError(ESP_FAIL);
-    return false;
-  }
-  if (instance >= CFG_TUD_HID)
-  {
-    setLastError(ESP_ERR_INVALID_ARG);
-    return false;
-  }
-  const uint32_t startedAt = millis();
-  while (!tud_hid_n_ready(instance))
-  {
-    if (!tinyusbStarted_ || !tud_ready())
-    {
-      setLastError(ESP_ERR_INVALID_STATE);
-      return false;
-    }
-    if (millis() - startedAt >= timeoutMs)
-    {
-      setLastError(ESP_ERR_TIMEOUT);
-      return false;
-    }
-    // The library's USB task processes completion; let it run while waiting.
-    delay(1);
-  }
-  const bool ok = tud_hid_n_report(instance, reportId, data, length);
-  setLastError(ok ? ESP_OK : ESP_FAIL);
-  return ok;
-#else
-  (void)timeoutMs;
-  (void)instance;
-  (void)reportId;
-  (void)data;
-  (void)length;
-  setLastError(ESP_ERR_NOT_SUPPORTED);
-  return false;
-#endif
+  setLastError(ESP_ERR_INVALID_STATE); return false;
 }
 
 const uint8_t *EspUsbDevice::deviceDescriptor()
@@ -1466,21 +1391,8 @@ const uint8_t *EspUsbDevice::webUsbUrlDescriptor() const
   return webUsbUrlDescriptor_;
 }
 
-// The class behind TinyUSB HID instance `instance` when the HID is not merged.
-//
-// `instance` is TinyUSB's slot number, not a position in classes_. This build
-// drives one HID interface (CFG_TUD_HID == 1), so the slot is always 0 and the
-// class behind it is whichever one HID class was registered - wherever it sits
-// in registration order. Indexing classes_ with the slot number used to work
-// only while the HID class happened to be registered first: a vendor, CDC or
-// MSC class registered before it made the lookup land on that class, fail the
-// isHid() test and return nullptr. TinyUSB then armed no data stage for
-// GET_DESCRIPTOR(Report) and sent no STALL either (tu_memcpy_s refuses a null
-// source and hid_device.c ignores the result), so the host waited out its
-// control-transfer timeout. Measured on Windows 11: HidUsb failed to start
-// with Code 10 about 6 s after arrival, and because usbccgp starts a composite
-// device's children in order, a WinUSB function next to it was held behind the
-// failure and never enabled its device interface.
+// Physical HID interface 0 represents either one Function or their merged
+// report descriptor. Logical registration order is a separate identity.
 EspUsbDeviceClass *EspUsbDevice::hidClassForInstance(uint8_t instance) const
 {
   if (instance != 0 || compositeHid())
@@ -1521,32 +1433,6 @@ void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_
 {
   if (compositeHid())
   {
-    // A report that arrived on the interrupt OUT endpoint has no report ID yet.
-    // TinyUSB's HID driver does not parse report descriptors, so it passes 0
-    // and leaves the payload untouched (hid_device.c); only the control
-    // SET_REPORT path knows the ID, from wValue. A merged descriptor declares
-    // report IDs, so the host prefixes every report with one and the first byte
-    // is it - without this, a composite HID device silently dropped everything
-    // its host sent to the OUT endpoint, while the same device received control
-    // SET_REPORTs fine.
-    //
-    // Only consumed when it actually names one of the merged classes, so a
-    // device whose classes somehow declare no IDs is left alone rather than
-    // having its first payload byte eaten.
-    if (reportId == 0 && length > 0)
-    {
-      for (size_t i = 0; i < classCount_; i++)
-      {
-        if (classAt(i) && classAt(i)->isHid() &&
-            classReportId(static_cast<uint8_t>(i)) == data[0])
-        {
-          reportId = data[0];
-          data++;
-          length--;
-          break;
-        }
-      }
-    }
     for (size_t i = 0; i < classCount_; i++)
     {
       if (!classAt(i) || !classAt(i)->isHid())
@@ -2631,13 +2517,8 @@ uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
   return compositeHid() && classInstance < classCount_ ? classAt(classInstance)->assignedReportId_ : 0;
 }
 
-// The TinyUSB HID instance a class's reports go out on. There is one HID
-// interface in this build whether the HID is a single class or a merged
-// composite, so it is slot 0 either way; `classInstance` is the class's
-// position in classes_ and says nothing about the slot. Returning it used to
-// send a HID class registered after a non-HID one to tud_hid_n_report() with an
-// instance that does not exist - see hidClassForInstance() for the symptom the
-// same mistake produced on the descriptor side.
+// Registered HID Functions share physical interface 0, independently of
+// their positions in the complete Function registry.
 uint8_t EspUsbDevice::classRuntimeInstance(uint8_t classInstance) const
 {
   // An unregistered HID must never send using another Function's slot 0.
@@ -5980,7 +5861,7 @@ extern "C" void tud_dfu_abort_cb(uint8_t alt)
 }
 #endif
 
-EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbDeviceClass(device)
+EspUsbDeviceHidKeyboard::EspUsbDeviceHidKeyboard(EspUsbDevice &device) : EspUsbHidFunction(device)
 {
 }
 
@@ -5990,7 +5871,7 @@ bool EspUsbDeviceHidKeyboard::begin()
   report_ = EspUsbDeviceBootKeyboardReport();
   ledsRaw_.store(0, std::memory_order_relaxed);
   busChangePending_.store(false, std::memory_order_relaxed);
-  return true;
+  return EspUsbHidFunction::begin();
 }
 
 bool EspUsbDeviceHidKeyboard::sendReport(const EspUsbDeviceBootKeyboardReport &report, uint32_t timeoutMs)
@@ -6200,7 +6081,7 @@ uint16_t EspUsbDeviceHidKeyboard::hidReportDescriptorLength() const
 uint16_t EspUsbDeviceHidKeyboard::hidInEndpointSize() const
 {
   // 1 modifier byte + 28 bitmap bytes = 29 (+1 report-ID byte in composite mode).
-  // Round up to 32; well within CFG_TUD_HID_EP_BUFSIZE (64).
+  // Round up to 32 bus bytes; report storage is measured independently.
   return nkroEnabled_ ? 32 : 0;
 }
 
@@ -6459,13 +6340,13 @@ bool EspUsbDeviceHidKeyboard::asciiToUsage(char key, uint8_t &usage, uint8_t &mo
   return espUsbDeviceAsciiToUsage(key, layout_, usage, modifiers);
 }
 
-EspUsbDeviceHidMouse::EspUsbDeviceHidMouse(EspUsbDevice &device) : EspUsbDeviceClass(device)
+EspUsbDeviceHidMouse::EspUsbDeviceHidMouse(EspUsbDevice &device) : EspUsbHidFunction(device)
 {
 }
 
 bool EspUsbDeviceHidMouse::begin()
 {
-  return true;
+  return EspUsbHidFunction::begin();
 }
 
 bool EspUsbDeviceHidMouse::sendReport(const EspUsbDeviceBootMouseReport &report, uint32_t timeoutMs)
@@ -6552,13 +6433,15 @@ uint16_t EspUsbDeviceHidMouse::hidReportDescriptorLength() const
 }
 
 EspUsbDeviceHidCustom::EspUsbDeviceHidCustom(EspUsbDevice &device, const uint8_t *reportDescriptor, uint16_t reportDescriptorLength, uint16_t inputReportSize)
-    : EspUsbDeviceClass(device), reportDescriptor_(reportDescriptor), reportDescriptorLength_(reportDescriptorLength), inputReportSize_(inputReportSize)
+    : EspUsbHidFunction(device), reportDescriptor_(reportDescriptor), reportDescriptorLength_(reportDescriptorLength), inputReportSize_(inputReportSize)
 {
 }
 
 bool EspUsbDeviceHidCustom::begin()
 {
-  return reportDescriptor_ && reportDescriptorLength_ > 0 && inputReportSize_ > 0;
+  if (!reportDescriptor_ || !reportDescriptorLength_ || !inputReportSize_)
+    return failHidBegin(ESP_ERR_INVALID_ARG);
+  return EspUsbHidFunction::begin();
 }
 
 bool EspUsbDeviceHidCustom::sendReport(const void *data, size_t length, uint8_t reportId, uint32_t timeoutMs)
@@ -6599,16 +6482,16 @@ uint16_t EspUsbDeviceHidCustom::hidReportDescriptorLength() const
 }
 
 EspUsbDeviceHidVendor::EspUsbDeviceHidVendor(EspUsbDevice &device, uint16_t reportSize)
-    : EspUsbDeviceClass(device), reportSize_(reportSize)
+    : EspUsbHidFunction(device), reportSize_(reportSize)
 {
   buildReportDescriptor();
 }
 
 uint16_t EspUsbDeviceHidVendor::maxReportSize()
 {
-  // tud_hid_n_report() puts the report ID in byte 0 of the endpoint buffer and
-  // copies the payload behind it, so one byte of the packet is never payload.
-  return static_cast<uint16_t>(ESP_USB_DEVICE_HID_EP_BUFSIZE - 1);
+  // The interim core carries a uint16_t complete transfer length, including
+  // the report ID. Packet size and available runtime memory are separate.
+  return UINT16_MAX - 1;
 }
 
 void EspUsbDeviceHidVendor::buildReportDescriptor()
@@ -6654,11 +6537,9 @@ void EspUsbDeviceHidVendor::buildReportDescriptor()
 
 bool EspUsbDeviceHidVendor::begin()
 {
-  // The old ceiling was a literal 63, which is maxReportSize() for a 64-byte
-  // endpoint buffer and nothing more: at high speed the endpoint may be up to
-  // 1024 bytes, and refusing anything past 63 there capped the class at an
-  // eighth of what the bus carries for no reason on the device side.
-  return reportSize_ > 0 && reportSize_ <= maxReportSize();
+  if (!reportSize_) return failHidBegin(ESP_ERR_INVALID_ARG);
+  if (reportSize_ > maxReportSize()) return failHidBegin(ESP_ERR_INVALID_SIZE);
+  return EspUsbHidFunction::begin();
 }
 
 bool EspUsbDeviceHidVendor::sendInput(const void *data, size_t length, uint32_t timeoutMs)
@@ -6667,10 +6548,7 @@ bool EspUsbDeviceHidVendor::sendInput(const void *data, size_t length, uint32_t 
   {
     return false;
   }
-  if (length > reportSize_)
-  {
-    length = reportSize_;
-  }
+  if (length > reportSize_) return false;
   return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), data, length, timeoutMs);
 }
 
@@ -6725,7 +6603,7 @@ uint16_t EspUsbDeviceHidVendor::hidHighSpeedEndpointSize() const
   {
     return 0; // one full-speed packet is already enough; both speeds agree
   }
-  return wanted > ESP_USB_DEVICE_HID_EP_BUFSIZE ? ESP_USB_DEVICE_HID_EP_BUFSIZE : wanted;
+  return std::min(uint16_t(1024), wanted);
 }
 
 void EspUsbDeviceHidVendor::onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
@@ -6745,13 +6623,13 @@ void EspUsbDeviceHidVendor::onHidSetReport(uint8_t reportId, uint8_t reportType,
   }
 }
 
-EspUsbDeviceHidGamepad::EspUsbDeviceHidGamepad(EspUsbDevice &device) : EspUsbDeviceClass(device)
+EspUsbDeviceHidGamepad::EspUsbDeviceHidGamepad(EspUsbDevice &device) : EspUsbHidFunction(device)
 {
 }
 
 bool EspUsbDeviceHidGamepad::begin()
 {
-  return true;
+  return EspUsbHidFunction::begin();
 }
 
 bool EspUsbDeviceHidGamepad::sendReport(const EspUsbDeviceGamepadReport &report, uint32_t timeoutMs)
@@ -6823,13 +6701,13 @@ uint16_t EspUsbDeviceHidGamepad::hidReportDescriptorLength() const
   return sizeof(GAMEPAD_REPORT_DESCRIPTOR);
 }
 
-EspUsbDeviceHidConsumerControl::EspUsbDeviceHidConsumerControl(EspUsbDevice &device) : EspUsbDeviceClass(device)
+EspUsbDeviceHidConsumerControl::EspUsbDeviceHidConsumerControl(EspUsbDevice &device) : EspUsbHidFunction(device)
 {
 }
 
 bool EspUsbDeviceHidConsumerControl::begin()
 {
-  return true;
+  return EspUsbHidFunction::begin();
 }
 
 bool EspUsbDeviceHidConsumerControl::sendUsage(uint16_t usage, uint32_t timeoutMs)
@@ -6889,13 +6767,13 @@ uint16_t EspUsbDeviceHidConsumerControl::hidReportDescriptorLength() const
   return sizeof(CONSUMER_CONTROL_REPORT_DESCRIPTOR);
 }
 
-EspUsbDeviceHidSystemControl::EspUsbDeviceHidSystemControl(EspUsbDevice &device) : EspUsbDeviceClass(device)
+EspUsbDeviceHidSystemControl::EspUsbDeviceHidSystemControl(EspUsbDevice &device) : EspUsbHidFunction(device)
 {
 }
 
 bool EspUsbDeviceHidSystemControl::begin()
 {
-  return true;
+  return EspUsbHidFunction::begin();
 }
 
 bool EspUsbDeviceHidSystemControl::sendUsage(uint8_t usage, uint32_t timeoutMs)

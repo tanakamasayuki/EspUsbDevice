@@ -205,3 +205,15 @@ WebUSB URLも有効時だけ実数分を保持する。元配列の変更で稼�
 WebUSBのprefixなしURLを暗黙のhttpsへ変えず、scheme 255で全文を保持する。httpsが必要なら明記する。
 URLなしでWebUSBを有効にした場合はlanding pageなしとし、存在しないindexを広告しない。
 契約と実験は[V3_TEXT_DESCRIPTORS.ja.md](V3_TEXT_DESCRIPTORS.ja.md)を参照する。
+
+## 採用記録: HID classの独自化とdescriptor由来の容量
+
+TinyUSB HID classと三つの固定bufferを外し、選択したHIDだけの独自driverへ変更した。
+Report Size/Count/IDを解析してInput/Output/Featureの実効容量を決め、INのみならOUT/controlを省略する。
+複合HIDは一つのstateを共有し、通常のKeyboard/Mouse等の送信方法と自動ID割当を維持する。
+
+HidVendorのサイズをビルド定数へ結び付けず、FSの複数packetでも長いreportを送受信する。
+長すぎるsendInputは黙って切らず拒否する。独自HIDの基底はEspUsbHidFunctionへ移行する必要がある。
+開始時の解析・確保は増えるが、未使用時の固定領域とHID driver自体のリンクを避けられる。
+S3の12サイズの実送受信とboot/NKROを確認した。GET_REPORT snapshotとidle自動再送は後続課題。
+契約・移行・検証範囲は[V3_HID_API.ja.md](V3_HID_API.ja.md)に記録した。

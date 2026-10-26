@@ -119,6 +119,7 @@ void loop() {
     rejected &= device.ready();
     auto *hid = new PreferredHid(device, 5);
     rejected &= device.lastError() == ESP_ERR_INVALID_STATE;
+    rejected &= !hid->begin() && hid->startError() == ESP_ERR_INVALID_STATE && !hid->inputReportCapacity();
     const uint8_t data = 0xab;
     rejected &= !hid->sendReport(&data, 1);
     delete hid;

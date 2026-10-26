@@ -708,6 +708,8 @@ private:
   friend class EspUsbDeviceNet;
   friend class EspUsbDeviceCcid;
   friend class EspUsbDeviceDfu;
+  friend class EspUsbHidFunction;
+  friend struct EspUsbHidState;
   // String descriptor indices 1-3 are manufacturer / product / serial and 4 is
   // the CDC-NCM MAC address. Per-function names start after those.
   static constexpr uint8_t FIRST_FUNCTION_STRING_INDEX = 5;
@@ -855,9 +857,11 @@ public:
   uint8_t compositeReportId() const { return assignedReportId_; }
   virtual const uint8_t *hidReportDescriptor() const { return nullptr; }
   virtual uint16_t hidReportDescriptorLength() const { return 0; }
+  virtual bool sendHidInput(uint8_t, const void *, size_t, uint32_t) { return false; }
   // Preferred IN endpoint wMaxPacketSize for this HID class, or 0 for "no
   // preference" (use the default). NKRO keyboards return a larger size so their
-  // multi-byte bitmap report fits one packet. Bounded by CFG_TUD_HID_EP_BUFSIZE.
+  // multi-byte bitmap report fits one packet. This is a bus packet preference,
+  // independent of the complete report's runtime storage.
   virtual uint16_t hidInEndpointSize() const { return 0; }
   // wMaxPacketSize this HID function wants for its interrupt endpoints in the
   // high-speed configuration, or 0 to keep the full-speed value there too.
@@ -893,6 +897,30 @@ protected:
   EspUsbDeviceClass *nextRegistered_ = nullptr;
   bool registered_ = false, registrationRejected_ = false;
   uint8_t assignedReportId_ = 0, descriptorInterfaceNumber_ = 0xff;
+};
+
+struct EspUsbHidState;
+// Common runtime for HID Functions. A Device's merged HID shares one transport;
+// report descriptor sizes select storage, without TinyUSB class buffers.
+class EspUsbHidFunction : public EspUsbDeviceClass
+{
+public:
+  explicit EspUsbHidFunction(EspUsbDevice &device);
+  ~EspUsbHidFunction() override;
+  bool begin() override;
+  void prepareToStop() override;
+  void end() override;
+  esp_err_t startError() const override { return hidStartError_; }
+  bool sendHidInput(uint8_t reportId, const void *, size_t, uint32_t timeoutMs) override;
+  // Shared interface capacities, including a report ID byte when declared.
+  size_t inputReportCapacity() const;
+  size_t outputReportCapacity() const;
+  size_t featureReportCapacity() const;
+protected:
+  bool failHidBegin(esp_err_t error) { hidStartError_ = error; return false; }
+private:
+  EspUsbHidState *hidState_ = nullptr;
+  esp_err_t hidStartError_ = ESP_OK;
 };
 
 // Per-call submission error. Rejection never borrows a buffer or notifies.
@@ -2254,13 +2282,14 @@ private:
   ErrorCallback errorCallback_;
 };
 
-class EspUsbDeviceHidKeyboard : public EspUsbDeviceClass
+class EspUsbDeviceHidKeyboard : public EspUsbHidFunction
 {
 public:
   using OutputReportCallback = std::function<void(const EspUsbDeviceHidKeyboardOutputReport &)>;
   using ProtocolCallback = std::function<void(const EspUsbDeviceHidProtocolEvent &)>;
 
   explicit EspUsbDeviceHidKeyboard(EspUsbDevice &device);
+  ~EspUsbDeviceHidKeyboard() override { end(); }
 
   bool begin() override;
   bool sendReport(const EspUsbDeviceBootKeyboardReport &report, uint32_t timeoutMs = 100);
@@ -2360,10 +2389,11 @@ private:
   ProtocolCallback protocolCallback_;
 };
 
-class EspUsbDeviceHidMouse : public EspUsbDeviceClass
+class EspUsbDeviceHidMouse : public EspUsbHidFunction
 {
 public:
   explicit EspUsbDeviceHidMouse(EspUsbDevice &device);
+  ~EspUsbDeviceHidMouse() override { end(); }
 
   bool begin() override;
   bool sendReport(const EspUsbDeviceBootMouseReport &report, uint32_t timeoutMs = 100);
@@ -2387,10 +2417,11 @@ private:
   uint8_t buttons_ = 0;
 };
 
-class EspUsbDeviceHidCustom : public EspUsbDeviceClass
+class EspUsbDeviceHidCustom : public EspUsbHidFunction
 {
 public:
   EspUsbDeviceHidCustom(EspUsbDevice &device, const uint8_t *reportDescriptor, uint16_t reportDescriptorLength, uint16_t inputReportSize = 64);
+  ~EspUsbDeviceHidCustom() override { end(); }
 
   bool begin() override;
   bool sendReport(const void *data, size_t length, uint8_t reportId = 0, uint32_t timeoutMs = 100);
@@ -2410,22 +2441,17 @@ private:
 // Raw byte pipe over a HID interrupt endpoint. The one class here that needs no
 // host-side driver on any OS, which is why it is worth making fast.
 //
-// reportSize is the payload of one report, and the largest value it may take is
-// CFG_TUD_HID_EP_BUFSIZE - 1 (the report ID takes the first byte of the packet).
-// That ceiling is 511 on ESP32-P4 and 63 elsewhere; raise or lower it from
-// build_opt.h with -DCFG_TUD_HID_EP_BUFSIZE=<n>. A size larger than 63 is only
-// carried in one packet when the device enumerates at high speed - full speed
-// caps an interrupt endpoint at 64 bytes, and the report is then split across
-// packets of the one transfer rather than refused.
-//
-// Reports go out once per microframe at high speed (about 8,000/s), so 511 bytes
-// is roughly 4 MB/s of reserved, driverless bandwidth against 0.5 MB/s at 63.
-class EspUsbDeviceHidVendor : public EspUsbDeviceClass
+// reportSize selects runtime storage from the report descriptor. Large reports
+// may span bus packets; no build flags are needed. The interim core's transfer
+// length is uint16_t, leaving at most 65534 payload bytes plus the report ID.
+// Available memory and the host's report support remain practical bounds.
+class EspUsbDeviceHidVendor : public EspUsbHidFunction
 {
 public:
   using ReportCallback = std::function<void(const EspUsbDeviceHidReport &)>;
 
   explicit EspUsbDeviceHidVendor(EspUsbDevice &device, uint16_t reportSize = 63);
+  ~EspUsbDeviceHidVendor() override { end(); }
 
   bool begin() override;
   bool sendInput(const void *data, size_t length, uint32_t timeoutMs = 100);
@@ -2434,7 +2460,7 @@ public:
 
   // Payload bytes per report, as the report descriptor declares it.
   uint16_t reportSize() const { return reportSize_; }
-  // Largest reportSize this build accepts (CFG_TUD_HID_EP_BUFSIZE - 1).
+  // Interim transfer-length limit, independent of bus packet size/build flags.
   static uint16_t maxReportSize();
 
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
@@ -2461,10 +2487,11 @@ private:
   uint8_t reportDescriptorLength_ = 0;
 };
 
-class EspUsbDeviceHidGamepad : public EspUsbDeviceClass
+class EspUsbDeviceHidGamepad : public EspUsbHidFunction
 {
 public:
   explicit EspUsbDeviceHidGamepad(EspUsbDevice &device);
+  ~EspUsbDeviceHidGamepad() override { end(); }
 
   bool begin() override;
   bool sendReport(const EspUsbDeviceGamepadReport &report, uint32_t timeoutMs = 100);
@@ -2490,10 +2517,11 @@ private:
   EspUsbDeviceGamepadReport report_;
 };
 
-class EspUsbDeviceHidConsumerControl : public EspUsbDeviceClass
+class EspUsbDeviceHidConsumerControl : public EspUsbHidFunction
 {
 public:
   explicit EspUsbDeviceHidConsumerControl(EspUsbDevice &device);
+  ~EspUsbDeviceHidConsumerControl() override { end(); }
 
   bool begin() override;
   bool press(uint16_t usage, uint32_t timeoutMs = 100);
@@ -2513,10 +2541,11 @@ private:
   uint16_t usage_ = 0;
 };
 
-class EspUsbDeviceHidSystemControl : public EspUsbDeviceClass
+class EspUsbDeviceHidSystemControl : public EspUsbHidFunction
 {
 public:
   explicit EspUsbDeviceHidSystemControl(EspUsbDevice &device);
+  ~EspUsbDeviceHidSystemControl() override { end(); }
 
   bool begin() override;
   bool press(uint8_t usage, uint32_t timeoutMs = 100);

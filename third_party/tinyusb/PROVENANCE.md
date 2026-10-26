@@ -80,6 +80,9 @@ recorded local patches. `src/tusb_config.h` and
   ten. Intermediate arms produce no completion event; only full completion or
   an OUT short/ZLP returns the transfer. Segmentation, cancellation, and selected
   reset/end races are tested on S3–S3; P4/S2/S31 remain unverified.
+- `device/usbd.c` / `device/usbd_pvt.h`: expose the actual control data-stage
+  byte count to DATA/ACK callbacks so the independent HID adapter can reject
+  incomplete SET_REPORT data before a successful status stage.
 - An upstream pin change must review these replacements. The scripts fail if
   a replacement no longer matches exactly once; remove it when the new upstream
   already includes the fix.

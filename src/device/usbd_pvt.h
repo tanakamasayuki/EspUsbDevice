@@ -42,6 +42,9 @@ typedef struct {
   void     (* sof              ) (uint8_t rhport, uint32_t frame_count); // optional
 } usbd_class_driver_t;
 
+// EspUsb interim adapter: actual data-stage bytes, valid in DATA/ACK callbacks.
+uint16_t usbd_control_received_bytes(void);
+
 // Invoked when initializing device stack to get additional class drivers.
 // Can be implemented by application to extend/overwrite class driver support.
 // Note: The drivers array must be accessible at all time when stack is active

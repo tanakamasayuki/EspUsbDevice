@@ -846,6 +846,11 @@ static bool data_stage_xact(uint8_t rhport) {
   return usbd_edpt_xfer(rhport, ep_addr, xact_len ? _ctrl_epbuf.buf : NULL, xact_len, false);
 }
 
+// EspUsb interim adapter: validate an OUT data stage before acknowledging it.
+uint16_t usbd_control_received_bytes(void) {
+  return _usbd_dev.ctrl_xfer.total_xferred;
+}
+
 // Status phase
 bool tud_control_status(uint8_t rhport, const tusb_control_request_t* request) {
   // _usbd_dev.ctrl_xfer fields are pre-initialized at process_setup_received entry
