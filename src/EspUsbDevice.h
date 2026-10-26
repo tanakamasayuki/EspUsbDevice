@@ -650,10 +650,6 @@ public:
   uint16_t hidInterfacesLength() const;
   uint8_t hidInterfaceCount() const;
   const uint16_t *stringDescriptor(uint8_t index, uint16_t langid);
-  // Number of EspUsbDeviceCdcSerial functions this build can drive. A compile-
-  // time property of the SoC's endpoint budget, not of the device: registering
-  // more than this makes begin() fail.
-  static uint8_t maxCdcPorts();
   const uint8_t *hidReportDescriptor(uint8_t instance);
   // Length of what hidReportDescriptor(instance) returns. For a composite HID
   // that is the merged descriptor, which is not any one class's own length.
@@ -692,6 +688,7 @@ public:
 private:
   friend class EspUsbDeviceClass;
   friend class EspUsbDeviceCdcSerial;
+  friend class EspUsbDeviceBulkStream;
   friend class EspUsbDeviceHidKeyboard;
   friend class EspUsbDeviceHidMouse;
   friend class EspUsbDeviceHidCustom;
@@ -860,10 +857,9 @@ public:
   // Called by buildDescriptors() before asking for the descriptor, so a class
   // can emit and address itself correctly.
   //
-  // instance is this function's index among functions of the same class, in
-  // descriptor order. TinyUSB numbers its class instances by interface claim
-  // order, which follows descriptor order, so this is exactly the index the
-  // tud_<class>_n() API expects.
+  // instance is this function's logical index among functions of the same
+  // class in descriptor order. Legacy adapters may map it to their stack slot;
+  // independent functions dispatch their endpoints by interface identity.
   //
   // stringIndex is the string descriptor index reserved for functionName(), or
   // 0 when the class did not ask for a name.
@@ -912,75 +908,6 @@ protected:
   uint8_t hidInstance_ = 0;
 };
 
-class EspUsbDeviceCdcSerial : public EspUsbDeviceClass, public Print
-{
-public:
-  using LineCodingCallback = std::function<void(const EspUsbDeviceCdcLineCoding &)>;
-  using LineStateCallback = std::function<void(const EspUsbDeviceCdcLineState &)>;
-  using RxCallback = std::function<void(size_t)>;
-
-  // name is published as the function's iFunction / iInterface string. Give
-  // every port of a multi-port device a distinct one: it is what lets a host
-  // (and its user) tell the ports apart, since the ports are otherwise
-  // identical ACM functions. Optional for a single-port device.
-  explicit EspUsbDeviceCdcSerial(EspUsbDevice &device, const char *name = nullptr);
-  ~EspUsbDeviceCdcSerial() override;
-
-  bool begin() override;
-  bool afterDeviceStarted() override;
-  void end() override;
-  bool isHid() const override { return false; }
-  bool isCdc() const override { return true; }
-  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
-  uint8_t interfaceCount() const override { return 2; }
-  uint8_t endpointCount() const override { return 2; }
-  const char *functionName() const override { return name_; }
-  void assignFunctionIds(uint8_t instance, uint8_t stringIndex) override;
-
-  // Port index among the CDC functions of this device, in the order they appear
-  // in the configuration descriptor. Also the TinyUSB CDC instance this object
-  // drives. Valid after begin().
-  uint8_t port() const { return instance_; }
-  // Alternative to the constructor argument. Only read while the descriptor is
-  // built, so it must be set before EspUsbDevice::begin().
-  void setName(const char *name) { name_ = name; }
-
-  int available();
-  int read();
-  size_t read(uint8_t *buffer, size_t size);
-  size_t write(uint8_t data) override;
-  size_t write(const uint8_t *buffer, size_t size) override;
-  void flush();
-  bool connected() const;
-  const EspUsbDeviceCdcLineCoding &lineCoding() const;
-  const EspUsbDeviceCdcLineState &lineState() const;
-  void onLineCoding(LineCodingCallback callback);
-  void onLineState(LineStateCallback callback);
-  void onRx(RxCallback callback);
-
-  void handleLineCoding(uint32_t baud, uint8_t stopBits, uint8_t parity, uint8_t dataBits);
-  void handleLineState(bool dtr, bool rts);
-  void handleRx();
-
-private:
-  friend class EspUsbDevice;
-
-  // Whether instance_ addresses a CDC instance this build actually compiled.
-  // Checked before every tud_cdc_n_*() call, so a device that registered more
-  // ports than the build can hold degrades to a silent port rather than
-  // corrupting another one's state.
-  bool instanceValid() const;
-
-  const char *name_ = nullptr;
-  uint8_t instance_ = 0;
-  uint8_t stringIndex_ = 0;
-  EspUsbDeviceCdcLineCoding lineCoding_;
-  EspUsbDeviceCdcLineState lineState_;
-  LineCodingCallback lineCodingCallback_;
-  LineStateCallback lineStateCallback_;
-  RxCallback rxCallback_;
-};
-
 // Per-call submission error. Rejection never borrows a buffer or notifies.
 enum class EspUsbTransferError : uint8_t
 {
@@ -1009,9 +936,13 @@ struct EspUsbTransferSubmission
 };
 
 // Capacities belong to this instance. Configure while stopped; begin allocates
-// the selected resources and end releases them. No CFG_TUD_VENDOR_* overrides.
-enum class EspUsbVendorRxMode : uint8_t { Stream, Callback, Borrowed };
-struct EspUsbVendorConfig
+// the selected resources and end releases them. No TinyUSB class-size flags.
+enum class EspUsbBulkRxMode : uint8_t { Stream, Callback, Borrowed };
+enum class EspUsbTransferTermination : uint8_t { Continue, EndWithShortPacket };
+
+enum class EspUsbStreamTermination : uint8_t { FunctionDefault, Continue, EndWithShortPacket };
+
+struct EspUsbBulkStreamConfig
 {
   size_t rxCapacity = 512;
   size_t txCapacity = 512;
@@ -1021,12 +952,15 @@ struct EspUsbVendorConfig
   uint8_t *txBuffer = nullptr;
   uint16_t transferBytes = 512;
   bool autoFlush = true;
-  EspUsbVendorRxMode rxMode = EspUsbVendorRxMode::Stream;
+  EspUsbStreamTermination streamTermination = EspUsbStreamTermination::FunctionDefault;
+  EspUsbBulkRxMode rxMode = EspUsbBulkRxMode::Stream;
 };
 
-struct EspUsbVendorState;
+using EspUsbVendorConfig = EspUsbBulkStreamConfig;
+using EspUsbVendorRxMode = EspUsbBulkRxMode;
+struct EspUsbBulkState;
 enum class EspUsbTransferStatus : uint8_t { Success, BusReset, Stopped, TransferError, Cancelled };
-enum class EspUsbTransferTermination : uint8_t { Continue, EndWithShortPacket };
+
 struct EspUsbTransferResult
 {
   const void *buffer = nullptr;
@@ -1037,28 +971,21 @@ struct EspUsbTransferResult
   bool actualBytesKnown = true;
   uint64_t id = 0;
 };
-class EspUsbDeviceVendor : public EspUsbDeviceClass, public Print
+class EspUsbDeviceBulkStream : public EspUsbDeviceClass, public Print
 {
 public:
   using RxCallback = std::function<void(size_t)>;
   using TxCompleteCallback = std::function<void(size_t)>;
   using RxDataCallback = std::function<void(const uint8_t *, size_t)>;
-  using ControlRequestCallback = std::function<bool(const EspUsbDeviceVendorControlRequest &)>;
   using DirectCompleteCallback = std::function<void(const EspUsbTransferResult &)>;
 
-  explicit EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize = 64);
-  ~EspUsbDeviceVendor() override;
-  esp_err_t configure(const EspUsbVendorConfig &config);
-  const EspUsbVendorConfig &configuration() const { return config_; }
+  ~EspUsbDeviceBulkStream() override;
+  esp_err_t configure(const EspUsbBulkStreamConfig &config);
+  const EspUsbBulkStreamConfig &configuration() const { return config_; }
   bool begin() override;
   void end() override;
   bool isHid() const override { return false; }
-  bool isVendor() const override { return true; }
   void prepareToStop() override;
-  uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
-  uint8_t interfaceCount() const override { return 1; }
-  uint8_t endpointCount() const override { return 1; }
-  bool onVendorControlRequest(uint8_t rhport, uint8_t stage, const void *request) override;
 
   bool mounted() const;
   int available();
@@ -1101,28 +1028,96 @@ public:
   // this callback; copy what must outlive it. Set callbacks while stopped.
   esp_err_t onRxData(RxDataCallback callback);
   esp_err_t onRx(RxCallback callback);
-  esp_err_t onControlRequest(ControlRequestCallback callback);
-  bool sendControlResponse(const EspUsbDeviceVendorControlRequest &request, const void *data = nullptr, size_t length = 0);
   uint16_t endpointSize() const { return endpointSize_; }
   void handleRx(const uint8_t *data, size_t length);
   void handleTxComplete(size_t sentBytes);
-  bool handleControlRequest(uint8_t rhport, uint8_t stage, const void *request);
 
-private:
-  friend struct EspUsbVendorState;
+protected:
+  explicit EspUsbDeviceBulkStream(EspUsbDevice &device, uint16_t endpointSize = 64);
+  virtual uint16_t openBulkInterface(uint8_t port, const uint8_t *descriptor, uint16_t length,
+      uint8_t &in, uint8_t &out, uint16_t &mps) = 0;
+  bool openBulkPair(uint8_t port, const uint8_t *endpoints, uint8_t &in, uint8_t &out, uint16_t &mps);
+  virtual bool onBulkControl(uint8_t port, uint8_t stage, const void *request) {
+    return onVendorControlRequest(port, stage, request);
+  }
+  virtual bool defaultStreamTermination() const { return false; }
+  virtual void onBulkReset() {}
+  virtual bool onBulkExtraCompletion(uint8_t, uint8_t, uint32_t) { return false; }
+  friend struct EspUsbBulkState;
   esp_err_t startError() const override { return startError_; }
   esp_err_t startError_ = ESP_OK;
-  EspUsbVendorConfig config_;
-  EspUsbVendorState *state_ = nullptr;
+  EspUsbBulkStreamConfig config_;
+  EspUsbBulkState *state_ = nullptr;
   uint16_t endpointSize_ = 64;
   uint8_t interfaceNumber_ = 0;
   RxCallback rxCallback_;
   RxDataCallback rxDataCallback_;
   TxCompleteCallback txCompleteCallback_;
-  ControlRequestCallback controlRequestCallback_;
   DirectCompleteCallback directTxCompleteCallback_;
   DirectCompleteCallback directRxCompleteCallback_;
   uint64_t nextTransferId_ = 0;
+};
+
+class EspUsbDeviceVendor : public EspUsbDeviceBulkStream
+{
+public:
+  using ControlRequestCallback = std::function<bool(const EspUsbDeviceVendorControlRequest &)>;
+  explicit EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize = 64);
+  ~EspUsbDeviceVendor() override;
+  bool isVendor() const override { return true; }
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 1; }
+  uint16_t configurationDescriptor(uint8_t *, uint8_t, uint8_t, uint16_t) override;
+  bool onVendorControlRequest(uint8_t port, uint8_t stage, const void *request) override;
+  esp_err_t onControlRequest(ControlRequestCallback callback);
+  bool sendControlResponse(const EspUsbDeviceVendorControlRequest &, const void *data = nullptr, size_t length = 0);
+  bool handleControlRequest(uint8_t port, uint8_t stage, const void *request);
+protected:
+  uint16_t openBulkInterface(uint8_t, const uint8_t *, uint16_t, uint8_t &, uint8_t &, uint16_t &) override;
+private:
+  ControlRequestCallback controlRequestCallback_;
+};
+
+class EspUsbDeviceCdcSerial : public EspUsbDeviceBulkStream
+{
+public:
+  using BreakCallback = std::function<void(uint16_t)>;
+  using LineCodingCallback = std::function<void(const EspUsbDeviceCdcLineCoding &)>;
+  using LineStateCallback = std::function<void(const EspUsbDeviceCdcLineState &)>;
+  explicit EspUsbDeviceCdcSerial(EspUsbDevice &device, const char *name = nullptr);
+  ~EspUsbDeviceCdcSerial() override;
+  bool begin() override;
+  void end() override;
+  bool isCdc() const override { return true; }
+  uint8_t interfaceCount() const override { return 2; }
+  uint8_t endpointCount() const override { return 2; }
+  uint16_t configurationDescriptor(uint8_t *, uint8_t, uint8_t, uint16_t) override;
+  const char *functionName() const override { return name_; }
+  void assignFunctionIds(uint8_t instance, uint8_t stringIndex) override;
+  // Index in CDC descriptor order, assigned at begin; independent of TinyUSB.
+  uint8_t port() const { return instance_; }
+  esp_err_t setName(const char *name);
+  bool connected() const;
+  EspUsbDeviceCdcLineCoding lineCoding() const;
+  EspUsbDeviceCdcLineState lineState() const;
+  esp_err_t onLineCoding(LineCodingCallback callback);
+  esp_err_t onLineState(LineStateCallback callback);
+  esp_err_t onBreak(BreakCallback callback);
+protected:
+  uint16_t openBulkInterface(uint8_t, const uint8_t *, uint16_t, uint8_t &, uint8_t &, uint16_t &) override;
+  bool onBulkControl(uint8_t port, uint8_t stage, const void *request) override;
+  bool defaultStreamTermination() const override { return true; }
+  void onBulkReset() override;
+  bool onBulkExtraCompletion(uint8_t endpoint, uint8_t result, uint32_t bytes) override;
+private:
+  const char *name_ = nullptr;
+  uint8_t instance_ = 0, stringIndex_ = 0, notifyEndpoint_ = 0;
+  uint8_t *controlBuffer_ = nullptr;
+  EspUsbDeviceCdcLineCoding lineCoding_{115200, 0, 0, 8};
+  EspUsbDeviceCdcLineState lineState_;
+  BreakCallback breakCallback_;
+  LineCodingCallback lineCodingCallback_;
+  LineStateCallback lineStateCallback_;
 };
 
 // CDC-NCM (USB network / "USB Ethernet") device function. Presents the device

@@ -134,3 +134,25 @@ TX上限照会は65535 byteとなった。RXはMPS/cache専有容量単位で654
 
 この修正後、標準入口のS3–S3全4 testsが成功（230.70秒）。
 大きな転送のcaseで53件の返却、他caseで旧完了event/queue満杯、reset/end競合、通常copy/borrowed経路も確認した。
+
+## 採用記録: CDCとVendorのbulk stream共通化
+
+`EspUsbDeviceBulkStream`へ容量、外部ring、copy/borrowed、返却、取消しを切り出した。
+CDCはこの経路と固有のline coding/controlを使い、TinyUSB CDC classと固定instance配列を廃止した。
+通常のDevice+Function、Print/read/writeの利用感は維持する。
+共通設定は`EspUsbBulkStreamConfig`/`EspUsbBulkRxMode`とし、Vendor名はaliasで継続可能。
+
+コピー送信の終端を`EspUsbStreamTermination`で明示した。FunctionDefaultではVendorのContinueと
+CDCのshort/ZLPをそれぞれ維持する。利点はHost側readを考えた既定動作と連続streamの選択、
+不利益は要求設定のFunctionDefaultと実効policyを区別する必要、および選択した場合の追加ZLPである。
+借用転送の明示終端とは別にし、write一回をメッセージ境界とはしない。
+
+CDCのcallback/setNameは停止中登録に統一し、lineCoding/lineStateは参照からsnapshotへ変更した。
+競合を避ける利点があり、取得済み参照の自動更新に依存する利用は再取得へ移す。
+独自化後の個数は構成全体のendpoint予算で検証するため、compile時個数のmaxCdcPortsは廃止した。
+S3で2 CDCとCDC+Vendor+HIDの構成を分け、容量変更、line coding、借用、通信、key押下/解放を確認した。
+移行・制約・実験は[V3_CDC_API.ja.md](V3_CDC_API.ja.md)を参照。
+
+最終の標準入口は6 passed、340.68秒。46取得点の失敗/回復とVendorの明示コピー終端も確認。
+3 build probeのnmでFunctionごとのリンク除外と未使用取消し処理の不在を確認した。
+RXを使用しない構成の明示mode、固定registry/descriptor領域の撤去は継続する。

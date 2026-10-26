@@ -2,8 +2,8 @@
 
 // Registry for the TinyUSB "application" class drivers this library adds on top
 // of the vendored built-ins (usbd_app_driver_get_cb). The vendored TinyUSB under
-// src/ supplies the interim core. Vendor and CCID register their independent
-// class drivers here instead of adding references to its built-in table.
+// src/ supplies the interim core. Bulk streams (CDC/Vendor) and CCID register
+// independent class drivers instead of referencing its built-in table.
 //
 // The indirection exists for footprint: usbd_app_driver_get_cb is reachable from
 // usbd.c and therefore always linked, so if it named the CCID driver directly it

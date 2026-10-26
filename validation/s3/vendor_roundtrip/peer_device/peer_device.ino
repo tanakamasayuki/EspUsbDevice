@@ -290,6 +290,20 @@ void loop() {
       Serial.printf("LIFECYCLE_END parked=%u stopping=%u done=%u error=%d\r\n",
           unsigned(parked), unsigned(stopping), unsigned(done), lifecycleEndResult.load());
 #endif
+    } else if (command == "copy_terminated") {
+      EspUsbBulkStreamConfig config;
+      config.rxCapacity = 64; config.txCapacity = 256; config.transferBytes = 128;
+      config.streamTermination = EspUsbStreamTermination::EndWithShortPacket;
+      const auto result = vendor.configure(config);
+      auto invalid = config; invalid.streamTermination = static_cast<EspUsbStreamTermination>(255);
+      const bool kept = vendor.configure(invalid) == ESP_ERR_INVALID_ARG &&
+          vendor.configuration().streamTermination == config.streamTermination;
+      Serial.printf("COPY_TERMINATED %u\r\n", unsigned(result == ESP_OK && kept));
+    } else if (command.startsWith("copy_post ")) {
+      const unsigned n = command.substring(10).toInt();
+      if (!n || n > sizeof(directBuffer)) { Serial.println("INVALID_TX_COMMAND"); return; }
+      for (size_t i = 0; i < n; ++i) directBuffer[i] = uint8_t(i * 37 + n);
+      Serial.printf("COPY_POSTED %u\r\n", unsigned(vendor.write(directBuffer, n)));
     } else if (command == "batch_probe") {
       vendor.flush(); // An empty flush must not arm future writes.
       const uint8_t byte = 1;

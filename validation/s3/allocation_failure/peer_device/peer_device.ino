@@ -35,6 +35,7 @@ void freeUsbMemory(void *memory) {
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 EspUsbDeviceVendor *second = nullptr;
+EspUsbDeviceCdcSerial *serialPort = nullptr;
 uint8_t echo[129];
 size_t wanted = 0, received = 0;
 
@@ -55,7 +56,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 5 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 6 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -68,6 +69,7 @@ void loop() {
           config.rxCapacity = config.txCapacity = config.transferBytes = 0; points = 3;
         }
         if (mode == 4) { second = new EspUsbDeviceVendor(device); points = 12; }
+        if (mode == 5) { serialPort = new EspUsbDeviceCdcSerial(device); points = 13; }
         ok &= vendor.configure(config) == ESP_OK;
         for (unsigned point = 1; point <= points && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;
@@ -85,6 +87,7 @@ void loop() {
           if (ok) ++recoveries;
         }
         delete second; second = nullptr;
+        delete serialPort; serialPort = nullptr;
       }
       vendor.configure(EspUsbVendorConfig());
       delay(10);

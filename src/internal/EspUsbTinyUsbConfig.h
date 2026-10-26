@@ -69,27 +69,19 @@
 #define CFG_TUD_DWC2_DMA_ENABLE 1
 #define CFG_TUD_DWC2_SLAVE_ENABLE 0
 
-// Compile one instance of every device class supported by the v2 function
-// model. Whether an instance appears in a device is decided by its descriptor
-// graph, not by Arduino-ESP32 Kconfig.
-// CDC is the one class the v2 function model can instantiate more than once,
-// so its count is a capacity rather than a flag. What bounds it is the
-// controller's non-control IN endpoint budget, not RAM: every ACM function
-// costs two IN endpoints (notification + data), and validateControllerEndpoints()
-// enforces the per-controller ceiling at begin(). S2/S3 have 4 non-control IN
-// endpoints, so two ports is the hardware maximum; the P4 HS controller has 7,
-// so three. Sizing the compile-time array to exactly that maximum keeps the
-// static cost at what the SoC could actually enumerate - a port that could
-// never be described is not worth its buffers.
-#ifndef CFG_TUD_CDC
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-#define CFG_TUD_CDC 3
-#else
-#define CFG_TUD_CDC 2
+// CDC-ACM and Vendor use independent instance-owned class drivers.
+#if defined(CFG_TUD_CDC_RX_BUFSIZE) || defined(CFG_TUD_CDC_TX_BUFSIZE) || \
+    defined(CFG_TUD_VENDOR_RX_BUFSIZE) || defined(CFG_TUD_VENDOR_TX_BUFSIZE) || \
+    defined(CFG_TUD_VENDOR_RX_BUFFERED) || defined(CFG_TUD_VENDOR_TX_BUFFERED)
+#error "CDC/Vendor buffers and modes use EspUsbBulkStreamConfig; remove TinyUSB build flags"
 #endif
+#if defined(CFG_TUD_CDC) && CFG_TUD_CDC != 0
+#error "CDC uses runtime instance resources; do not enable TinyUSB CDC"
 #endif
-// The remaining legacy classes are compiled in by default. Vendor has moved
-// to its independent driver; the footprint figures below describe v2.
+#undef CFG_TUD_CDC
+#define CFG_TUD_CDC 0
+// The remaining legacy classes are compiled in by default. CDC and Vendor
+// use the independent bulk driver; the footprint figures below describe v2.
 // Every legacy class was enabled so that any sketch could use any class
 // without reconfiguring the library, and each one behind #ifndef so a sketch
 // that knows it will never use a class can drop it from build_opt.h and get
@@ -159,7 +151,7 @@
 #endif
 
 // Class buffer sizes. Every one of these is behind #ifndef so a sketch can
-// raise it from build_opt.h (-DCFG_TUD_VENDOR_TX_BUFSIZE=8192) without copying
+// raise it from build_opt.h (-DCFG_TUD_MIDI_TX_BUFSIZE=8192) without copying
 // the library: the flag reaches the library's own translation units because
 // Arduino puts build_opt.h on the command line for the whole build. That is the
 // one thing the core's precompiled TinyUSB cannot offer - its sizes are baked
@@ -172,12 +164,6 @@
 // truncates to a depth of 0 - the device still reports usb_ready but never
 // mounts - and anything above 32768 overflows the index space. The #error below
 // turns both into a build failure instead of a device that enumerates wrong.
-#ifndef CFG_TUD_CDC_RX_BUFSIZE
-#define CFG_TUD_CDC_RX_BUFSIZE 512
-#endif
-#ifndef CFG_TUD_CDC_TX_BUFSIZE
-#define CFG_TUD_CDC_TX_BUFSIZE 512
-#endif
 #ifndef CFG_TUD_MSC_EP_BUFSIZE
 #define CFG_TUD_MSC_EP_BUFSIZE 4096
 #endif
@@ -226,8 +212,7 @@
 #ifndef CFG_TUD_MIDI_TX_BUFSIZE
 #define CFG_TUD_MIDI_TX_BUFSIZE 512
 #endif
-#if CFG_TUD_CDC_RX_BUFSIZE > 32768 || CFG_TUD_CDC_TX_BUFSIZE > 32768 ||       \
-    CFG_TUD_MIDI_RX_BUFSIZE > 32768 || CFG_TUD_MIDI_TX_BUFSIZE > 32768
+#if CFG_TUD_MIDI_RX_BUFSIZE > 32768 || CFG_TUD_MIDI_TX_BUFSIZE > 32768
 #error "tu_fifo indices are uint16_t over [0, 2*depth): class FIFOs cannot exceed 32768 bytes"
 #endif
 

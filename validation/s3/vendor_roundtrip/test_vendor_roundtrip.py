@@ -245,6 +245,20 @@ def test_vendor_roundtrip(dut, peers):
             device.expect_exact(f"TX_WAIT {18 + 2 * cycle}\r\n", timeout=5)
             device.write("direct_status")
             device.expect_exact(f"DIRECT_STATUS {18 + 2 * cycle} status=0 requested=63 actual=63 known=1 pointer=1\r\n", timeout=5)
+        for board in (dut, device):
+            board.write("stop")
+            board.expect_exact("STOPPED\r\n", timeout=30)
+        device.write("copy_terminated")
+        device.expect_exact("COPY_TERMINATED 1\r\n", timeout=5)
+        device.write("start")
+        device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
+        dut.write("start")
+        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        for length in (1, 63, 64, 65, 127, 128, 129):
+            device.write(f"copy_post {length}")
+            device.expect_exact(f"COPY_POSTED {length}\r\n", timeout=5)
+            dut.write(f"receive {length} 1")
+            dut.expect_exact(f"READ_OK {length}\r\n", timeout=10)
     finally:
         # Always attempt both stops, also after an assertion/timeout. No hook
         # changes report outcomes or starts a hidden recovery sequence.

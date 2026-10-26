@@ -1,8 +1,9 @@
 # v3 Vendor APIの実装と移行
 
-2026-10-26、S3–S3で検証中の実装。Vendorクラス処理は独自driverへ移し、
-TinyUSBのVendor driverは無効化した。共通EP0、device state、DWC2は引き続き暫定TinyUSB adapterを使う。
+2026-10-26、S3–S3で検証中の実装。Vendor/CDCクラス処理は共通の独自bulk driverへ移し、
+TinyUSBのVendor/CDC driverは無効化した。共通EP0、device state、DWC2は引き続き暫定TinyUSB adapterを使う。
 他クラスの置換とP4/S2/S31の実機検証はこれからである。
+共通設定型とCDC固有の契約は[CDCガイド](V3_CDC_API.ja.md)を参照。
 
 ## 設定して開始する
 
@@ -32,6 +33,7 @@ callback設定も停止中に行い、各`on*()`の戻り値を確認する。
 | rxBuffer / txBuffer | 任意の外部ring領域。nullなら自動確保。非DMA・非alignment領域も可。指定領域はbeginからendまで保持 |
 | transferBytes | copy TXの一回の投稿量の上限。実効MPS以上が必要。controller内部のDMA armは必要に応じて分割 |
 | autoFlush | trueが標準。短いwriteも送出を進める。falseは明示flushでdrainを開始 |
+| streamTermination | FunctionDefaultはVendorでContinue。EndWithShortPacketならcopy送出の末尾も必要に応じZLPで終端 |
 | rxMode | Streamはavailable/read、CallbackはonRxData。Callback/BorrowedではrxCapacity=0としRX ringを作らない |
 
 TX容量0ではcopy用ringとTX stagingを作らず、borrowed送信だけを使える。

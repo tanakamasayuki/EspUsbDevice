@@ -28,7 +28,6 @@
 
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
 #include "tusb.h"
-#include "class/cdc/cdc_device.h"
 #include "class/midi/midi_device.h"
 #include "class/msc/msc_device.h"
 // usbd_edpt_claim() / usbd_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
@@ -173,19 +172,6 @@ static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
 static constexpr uint8_t USB_SCSI_CMD_SYNCHRONIZE_CACHE_10 = 0x35;
 
 static EspUsbDevice *g_activeDevice = nullptr;
-// Compile-time CDC port capacity. Mirrors CFG_TUD_CDC where TinyUSB exists and
-// keeps a single nominal port on targets built without it, so the CDC class
-// still compiles (and reports "not connected") off a USB-capable SoC.
-#if ESP_USB_DEVICE_HAS_TINYUSB
-#define ESP_USB_DEVICE_CDC_PORTS CFG_TUD_CDC
-#else
-#define ESP_USB_DEVICE_CDC_PORTS 1
-#endif
-
-// One slot per compiled TinyUSB CDC instance. The index is the instance number
-// TinyUSB reports in its callbacks, so dispatch is a lookup rather than a
-// search, and a device with fewer ports than CFG_TUD_CDC leaves the tail null.
-static EspUsbDeviceCdcSerial *g_cdcSerials[ESP_USB_DEVICE_CDC_PORTS] = {};
 static EspUsbDeviceMidi *g_activeMidi = nullptr;
 static EspUsbDeviceMsc *g_activeMsc = nullptr;
 static EspUsbDeviceNet *g_activeNet = nullptr;
@@ -625,30 +611,6 @@ void tud_umount_cb(void)
   if (g_activeDevice)
   {
     g_activeDevice->handleBusDetached();
-  }
-}
-
-void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
-{
-  if (itf < ESP_USB_DEVICE_CDC_PORTS && g_cdcSerials[itf])
-  {
-    g_cdcSerials[itf]->handleLineState(dtr, rts);
-  }
-}
-
-void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *lineCoding)
-{
-  if (itf < ESP_USB_DEVICE_CDC_PORTS && g_cdcSerials[itf] && lineCoding)
-  {
-    g_cdcSerials[itf]->handleLineCoding(lineCoding->bit_rate, lineCoding->stop_bits, lineCoding->parity, lineCoding->data_bits);
-  }
-}
-
-void tud_cdc_rx_cb(uint8_t itf)
-{
-  if (itf < ESP_USB_DEVICE_CDC_PORTS && g_cdcSerials[itf])
-  {
-    g_cdcSerials[itf]->handleRx();
   }
 }
 
@@ -1594,11 +1556,9 @@ bool EspUsbDevice::buildDescriptors()
   dfuInterfaceNumber_ = 0xff;
 
   // Hand every function its identity before any descriptor bytes are written.
-  // The CDC instance index has to match the order the functions appear in the
-  // configuration descriptor, because that is the order TinyUSB claims their
-  // interfaces in and therefore the order it numbers its class instances. HID
-  // functions are emitted first but are never CDC, so counting in registration
-  // order gives the same sequence as the emitted descriptor.
+  // CDC port() is a logical index in descriptor order. Its independent bulk
+  // driver dispatches by interface number, without TinyUSB CDC instance slots.
+  // HID functions are emitted first, but are never counted as CDC ports.
   uint8_t cdcInstance = 0;
   memset(functionStrings_, 0, sizeof(functionStrings_));
   for (size_t i = 0; i < classCount_; i++)
@@ -2865,11 +2825,6 @@ uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
   return ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD;
 }
 
-uint8_t EspUsbDevice::maxCdcPorts()
-{
-  return ESP_USB_DEVICE_CDC_PORTS;
-}
-
 // The TinyUSB HID instance a class's reports go out on. There is one HID
 // interface in this build whether the HID is a single class or a merged
 // composite, so it is slot 0 either way; `classInstance` is the class's
@@ -2896,214 +2851,6 @@ EspUsbDeviceClass::EspUsbDeviceClass(EspUsbDevice &device) : device_(device)
 EspUsbDeviceClass::~EspUsbDeviceClass()
 {
   device_.removeClass(this);
-}
-
-EspUsbDeviceCdcSerial::EspUsbDeviceCdcSerial(EspUsbDevice &device, const char *name)
-    : EspUsbDeviceClass(device), name_(name)
-{
-}
-
-EspUsbDeviceCdcSerial::~EspUsbDeviceCdcSerial()
-{
-  end();
-}
-
-void EspUsbDeviceCdcSerial::assignFunctionIds(uint8_t instance, uint8_t stringIndex)
-{
-  instance_ = instance;
-  stringIndex_ = stringIndex;
-}
-
-bool EspUsbDeviceCdcSerial::instanceValid() const
-{
-  return instance_ < ESP_USB_DEVICE_CDC_PORTS;
-}
-
-bool EspUsbDeviceCdcSerial::begin()
-{
-  // More CDC functions were registered than this build has TinyUSB instances
-  // for. The descriptor would promise a port that nothing drives, so refuse
-  // here rather than enumerate a dead COM port.
-  if (!instanceValid())
-  {
-    return false;
-  }
-  if (g_cdcSerials[instance_] && g_cdcSerials[instance_] != this)
-  {
-    return false;
-  }
-  g_cdcSerials[instance_] = this;
-  return true;
-}
-
-bool EspUsbDeviceCdcSerial::afterDeviceStarted()
-{
-  return true;
-}
-
-void EspUsbDeviceCdcSerial::end()
-{
-  if (instanceValid() && g_cdcSerials[instance_] == this)
-  {
-    g_cdcSerials[instance_] = nullptr;
-  }
-}
-
-uint16_t EspUsbDeviceCdcSerial::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
-{
-  if (!dst || endpointNumber == 0 || endpointNumber > 14)
-  {
-    return 0;
-  }
-  const uint8_t epNotification = static_cast<uint8_t>(0x80 | endpointNumber);
-  const uint8_t epOut = static_cast<uint8_t>(endpointNumber + 1);
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
-  uint8_t descriptor[] = {
-      TUD_CDC_DESCRIPTOR(interfaceNumber, stringIndex_, epNotification, 8,
-                         epOut, epIn, endpointSize),
-  };
-  // The macro routes its string index to the control interface's iInterface
-  // and hardcodes the association's iFunction (byte 7 of the leading 8-byte
-  // IAD) to 0. Windows names a composite child device from iFunction, so a
-  // multi-port device that filled in only iInterface would still show two
-  // identically named COM ports in Device Manager.
-  descriptor[7] = stringIndex_;
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
-}
-
-int EspUsbDeviceCdcSerial::available()
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (!instanceValid())
-  {
-    return 0;
-  }
-  return static_cast<int>(tud_cdc_n_available(instance_));
-#else
-  return 0;
-#endif
-}
-
-int EspUsbDeviceCdcSerial::read()
-{
-  uint8_t data = 0;
-  return read(&data, 1) == 1 ? data : -1;
-}
-
-size_t EspUsbDeviceCdcSerial::read(uint8_t *buffer, size_t size)
-{
-  if (!buffer || size == 0)
-  {
-    return 0;
-  }
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (!instanceValid())
-  {
-    return 0;
-  }
-  return tud_cdc_n_read(instance_, buffer, static_cast<uint32_t>(size));
-#else
-  return 0;
-#endif
-}
-
-size_t EspUsbDeviceCdcSerial::write(uint8_t data)
-{
-  return write(&data, 1);
-}
-
-size_t EspUsbDeviceCdcSerial::write(const uint8_t *buffer, size_t size)
-{
-  if (!buffer || size == 0)
-  {
-    return 0;
-  }
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (!instanceValid() || !tud_cdc_n_ready(instance_))
-  {
-    return 0;
-  }
-  const uint32_t written = tud_cdc_n_write(instance_, buffer, static_cast<uint32_t>(size));
-  tud_cdc_n_write_flush(instance_);
-  return written;
-#else
-  return 0;
-#endif
-}
-
-void EspUsbDeviceCdcSerial::flush()
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (instanceValid())
-  {
-    tud_cdc_n_write_flush(instance_);
-  }
-#endif
-}
-
-bool EspUsbDeviceCdcSerial::connected() const
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  return instanceValid() && tud_cdc_n_connected(instance_);
-#else
-  return false;
-#endif
-}
-
-const EspUsbDeviceCdcLineCoding &EspUsbDeviceCdcSerial::lineCoding() const
-{
-  return lineCoding_;
-}
-
-const EspUsbDeviceCdcLineState &EspUsbDeviceCdcSerial::lineState() const
-{
-  return lineState_;
-}
-
-void EspUsbDeviceCdcSerial::onLineCoding(LineCodingCallback callback)
-{
-  lineCodingCallback_ = callback;
-}
-
-void EspUsbDeviceCdcSerial::onLineState(LineStateCallback callback)
-{
-  lineStateCallback_ = callback;
-}
-
-void EspUsbDeviceCdcSerial::onRx(RxCallback callback)
-{
-  rxCallback_ = callback;
-}
-
-void EspUsbDeviceCdcSerial::handleLineCoding(uint32_t baud, uint8_t stopBits, uint8_t parity, uint8_t dataBits)
-{
-  lineCoding_.baud = baud;
-  lineCoding_.stopBits = stopBits;
-  lineCoding_.parity = parity;
-  lineCoding_.dataBits = dataBits;
-  if (lineCodingCallback_)
-  {
-    lineCodingCallback_(lineCoding_);
-  }
-}
-
-void EspUsbDeviceCdcSerial::handleLineState(bool dtr, bool rts)
-{
-  lineState_.dtr = dtr;
-  lineState_.rts = rts;
-  if (lineStateCallback_)
-  {
-    lineStateCallback_(lineState_);
-  }
-}
-
-void EspUsbDeviceCdcSerial::handleRx()
-{
-  if (rxCallback_)
-  {
-    rxCallback_(available());
-  }
 }
 
 #if ESP_USB_DEVICE_HAS_TINYUSB

@@ -88,11 +88,11 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 ## 次に進める作業
 
-1. allocator各取得点の故障注入とrollbackを検証する。巨大RX ringによる失敗は確認済みだが、全取得点の検証ではない。
-2. Vendorのring/transfer契約をCDCへ展開し、HIDとの複合で確認する。
-   runtime容量・callback登録時期・借用転送の意味を揃え、CDCのline coding/stateと通知endpointは固有契約として扱う。
-3. 必要なFunction registryとdescriptor容量を動的にし、固定class上限を外す。
-4. Audioの最小周期経路と併用し、共通設計を見直してから残クラス・EP0/DCDを置換する。
+1. Function registryとdescriptor容量を動的にし、固定class上限と未使用descriptor領域を撤去する。
+2. CDCのcontrol要求、通知、reset/endと借用取消しの組合せを必要範囲で拡張する。
+   Vendor/CDCの共通転送と基本controlは下記で実装・検証済みだが、全OS/control要求の網羅ではない。
+3. Audioの最小周期経路と併用して共通設計を見直し、HIDと残クラスを独自化する。
+4. EP0/device state/DCDを置換し、TinyUSB依存を除去する。
    16 bitの投稿長も暫定adapterの制約であり、v3の最終上限として固定しない。
 
 Sol Mediumを基本とし、競合・EP0/DCD等の難所だけHighを検討する。
@@ -181,3 +181,36 @@ strong定義で差し替え、通常/Callback RX/外部ring/Borrowed専用/2 ins
 33回復後のheap一致・heap integrity・外部ring誤解放なしと、実USBの1/64/129 byte往復も確認。
 通常buildはweak定義のmalloc/aligned DMA確保を使う。公開API・build_opt.h・conftestへの試験設定追加はない。
 Device descriptor、RTOS/PHY、他クラスの全取得点まで検証したものではない。
+
+## CDCと共通bulk streamの実装
+
+`EspUsbDeviceBulkStream.cpp`へVendorのring/DMA/借用/返却/取消しを切り出し、CDCも同じ経路を使う。
+`EspUsbDeviceVendor.cpp`はVendor descriptor/controlの固有処理、
+`EspUsbDeviceCdcSerial.cpp`はCDC descriptor/line coding/state/breakの固有処理となる。
+CFG_TUD_CDC=0にして旧CDC driver、固定instance配列、固定FIFOを外した。
+共通型、コピー終端policy、snapshotと移行は[V3_CDC_API.ja.md](V3_CDC_API.ja.md)。
+
+`cdc-shared-bulk.xml`の初回確認は1 passed、45.53秒。2 CDCの容量を小/大/非power-of-twoへ変更し、
+両portの42往復、借用RX/TXの7往復、CDC+Vendor+HID構成の6往復とkey押下/解放を確認した。
+S3のIN endpoint予算から、2 CDCとCDC+Vendor+HIDは別構成にしている。
+CDC+Vendorも含む確保失敗を追加し、46失敗/46回復、heap 321484→321484 byteを確認した。
+copy stream末尾のEndWithShortPacketはVendor側でも明示設定し、Host readへZLPを含む終端を確認する。
+全v3回帰とリンク除外確認の結果は下記へ記録する。
+
+最終確認: `cdc-vendor-all.xml`、**6 passed、0 skipped、340.68秒**。
+allocation_failure/cancel_fence/cancel_lifecycle/cdc_stream/transfer_limits/vendor_roundtripを順次実行した。
+全caseで両boardのSTOPPED、panicなしを確認。原本は
+`/tmp/pytest-embedded/2026-10-26_05-04-04-756554/`、JUnit/transcript/serialコピーは`.pytest-results/`。
+
+Device only / Vendor copy / CDC copyの3 build probeもcompile成功。nmで以下を確認した。
+
+- Device onlyにはVendor/CDC/BulkStream/BulkState実装がない。
+- Vendor copyにはCDC固有処理がなく、CDC copyにはVendor固有処理がない。
+- 両copy probeに未使用cancelDirect/cancelPump/dcd_edpt_abortはない。
+- 全probeにTinyUSBのcdcd/tud_cdc_n/vendord実装がない。
+
+旧`CFG_TUD_CDC_TX_BUFSIZE=2048`を指定するbuildは、EspUsbBulkStreamConfigへの移行案内で拒否することも確認した。
+`python3 tools/verify_tinyusb_vendor.py`も51 file / 15 compiled sourcesで一致。
+
+次の具体的作業は、RXを使わない送信専用modeを明示し、資源0のためにdummy RX callbackを要求しない契約へ整理すること、
+およびFunction registry/descriptor容量の動的化である。未検証のOS/SoCは上記と同じで、v3全体は未完了。
