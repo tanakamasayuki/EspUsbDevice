@@ -75,6 +75,7 @@ void loop() {
           points = 5;
           if (mode == 7) { config.txCapacity = config.transferBytes = 0; points = 3; }
         }
+        ++points; // Begin-time Function index, sized to the registered list.
         ok &= vendor.configure(config) == ESP_OK;
         for (unsigned point = 1; point <= points && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;

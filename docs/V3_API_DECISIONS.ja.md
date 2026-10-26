@@ -164,3 +164,19 @@ Disabledを追加し、RX ring/packetを省略、OUTは未arm、受信APIは非�
 modeが一つ増える一方、使わない受信を借用受信と偽って設定しなくてよくなる。
 S3でCDC/Vendorそれぞれcopy/borrowed送信を確認し、RX callbackなしで開始・受信API拒否を検証した。
 追加modeを含む確保失敗は54取得点で回復した。
+
+## 採用記録: Function登録と複合ID
+
+固定6 slotを廃止し、constructorの登録linkとbegin時の実数分の一覧に分けた。
+constructorでのOOMによる脱落を避け、一覧の確保失敗をbeginの結果で扱える。
+Functionごとにlink/登録状態を持つ負担とbegin時の確保点が増える一方、Deviceの未使用6 slotは不要になる。
+稼働中登録は明示拒否し、未登録Functionがあるままの次回開始も拒否する。停止後に再登録できる。
+
+7個のcustom HIDで既存のreport ID重複を実測したため、構成内で一意なIDを割り当てる方式を採用した。
+通常の送信は自動で追従し、固定IDを使う通信相手にはdescriptorを読む移行が必要になる。
+configuration descriptor自体の固定容量は残っており、今回の変更だけで全体の動的化が完了したとはしない。
+詳細・実験は[V3_FUNCTION_REGISTRY.ja.md](V3_FUNCTION_REGISTRY.ja.md)を参照。
+
+未登録のHIDからの送信は無効なruntime identityで拒否する。
+登録拒否時に初期値slot 0から別Functionとして送ってしまう経路を残さない。
+拒否されたCDC/Vendorの破棄がDevice全体を停止する問題も、所有する転送状態の有無で判定して修正した。

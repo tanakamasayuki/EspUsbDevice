@@ -1,6 +1,8 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbHidDescriptor.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbMemory.h"
+#include <memory>
 
 #include <ctype.h>
 #include <new>
@@ -864,6 +866,12 @@ namespace
 bool isDeviceInterfaceGuid(const char *guid);
 } // namespace
 
+struct EspUsbDevice::RegistrationTransaction {
+  EspUsbDevice &device;
+  bool keep = false;
+  ~RegistrationTransaction() { if (!keep) device.releaseClassRegistry(); }
+};
+
 bool EspUsbDevice::begin()
 {
   return begin(EspUsbDeviceConfig());
@@ -882,6 +890,12 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     setLastError(ESP_ERR_INVALID_STATE);
     return false;
   }
+  if (rejectedClassCount_) { setLastError(ESP_ERR_INVALID_STATE); return false; }
+  // String indices and logical Function/report identities are USB uint8_t values.
+  // This is a protocol bound, independent of controller endpoint limits.
+  if (classCount_ > size_t(UINT8_MAX) - FIRST_FUNCTION_STRING_INDEX + 1) {
+    setLastError(ESP_ERR_INVALID_SIZE); return false;
+  }
   config_ = config;
   // Checked before the descriptors are built: the registry property writes a
   // constant length, so a GUID of the wrong shape would produce a set Windows
@@ -891,6 +905,8 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     lastError_ = ESP_ERR_INVALID_ARG;
     return false;
   }
+  RegistrationTransaction registryGuard{*this};
+  if (!allocateClassRegistry()) return false;
   if (!buildDescriptors())
   {
     return false;
@@ -927,14 +943,14 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
   size_t begunClassCount = 0;
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && !classes_[i]->begin())
+    if (classAt(i) && !classAt(i)->begin())
     {
-      const esp_err_t error = classes_[i]->startError();
-      classes_[i]->end();
+      const esp_err_t error = classAt(i)->startError();
+      classAt(i)->end();
       while (begunClassCount > 0)
       {
         --begunClassCount;
-        classes_[begunClassCount]->end();
+        classAt(begunClassCount)->end();
       }
       setLastError(error);
       return false;
@@ -949,7 +965,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
       while (begunClassCount > 0)
       {
         --begunClassCount;
-        classes_[begunClassCount]->end();
+        classAt(begunClassCount)->end();
       }
       setLastError(ESP_ERR_INVALID_STATE);
       return false;
@@ -981,7 +997,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
       while (begunClassCount > 0)
       {
         --begunClassCount;
-        classes_[begunClassCount]->end();
+        classAt(begunClassCount)->end();
       }
       setLastError(err);
       return false;
@@ -989,7 +1005,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     tinyusbStarted_ = true;
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (classes_[i] && !classes_[i]->afterDeviceStarted())
+      if (classAt(i) && !classAt(i)->afterDeviceStarted())
       {
         espusb::internal::stopTinyUsbRuntime();
         tinyusbStarted_ = false;
@@ -997,7 +1013,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
         while (begunClassCount > 0)
         {
           --begunClassCount;
-          classes_[begunClassCount]->end();
+          classAt(begunClassCount)->end();
         }
         setLastError(ESP_FAIL);
         return false;
@@ -1007,13 +1023,14 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     while (begunClassCount > 0)
     {
       --begunClassCount;
-      classes_[begunClassCount]->end();
+      classAt(begunClassCount)->end();
     }
     setLastError(ESP_ERR_NOT_SUPPORTED);
     return false;
 #endif
   }
 
+  registryGuard.keep = true;
   running_ = true;
   ready_ = tinyusbStarted_;
   setLastError(ESP_OK);
@@ -1031,7 +1048,7 @@ esp_err_t EspUsbDevice::end()
 #endif
   for (size_t i = 0; i < classCount_; ++i)
   {
-    if (classes_[i]) classes_[i]->prepareToStop();
+    if (classAt(i)) classAt(i)->prepareToStop();
   }
 #if ESP_USB_DEVICE_HAS_TINYUSB
   if (tinyusbStarted_)
@@ -1048,9 +1065,9 @@ esp_err_t EspUsbDevice::end()
   {
     for (size_t i = classCount_; i > 0; --i)
     {
-      if (classes_[i - 1])
+      if (classAt(i - 1))
       {
-        classes_[i - 1]->end();
+        classAt(i - 1)->end();
       }
     }
   }
@@ -1060,6 +1077,8 @@ esp_err_t EspUsbDevice::end()
   }
   running_ = false;
   ready_ = false;
+  for (auto *function = firstClass_; function; function = function->nextRegistered_) function->assignedReportId_ = 0;
+  releaseClassRegistry();
   setLastError(ESP_OK);
   return ESP_OK;
 }
@@ -1068,7 +1087,7 @@ bool EspUsbDevice::handleVendorControlRequest(uint8_t rhport, uint8_t stage, con
 {
   for (size_t i = 0; i < classCount_; ++i)
   {
-    if (classes_[i] && classes_[i]->onVendorControlRequest(rhport, stage, request)) return true;
+    if (classAt(i) && classAt(i)->onVendorControlRequest(rhport, stage, request)) return true;
   }
   return false;
 }
@@ -1131,42 +1150,75 @@ const char *EspUsbDevice::lastErrorName() const
   }
 }
 
-bool EspUsbDevice::addClass(EspUsbDeviceClass *deviceClass)
+EspUsbDeviceClass *EspUsbDevice::classAt(size_t index) const
 {
-  if (!deviceClass || running_ || classCount_ >= MAX_CLASSES)
-  {
-    setLastError(running_ ? ESP_ERR_INVALID_STATE : ESP_FAIL);
-    return false;
-  }
-  classes_[classCount_] = deviceClass;
-  deviceClass->hidInstance_ = static_cast<uint8_t>(classCount_);
-  classCount_++;
-  setLastError(ESP_OK);
+  if (index >= classCount_) return nullptr;
+  if (classes_) return classes_[index];
+  auto *function = firstClass_;
+  while (function && index--) function = function->nextRegistered_;
+  return function;
+}
+
+void EspUsbDevice::releaseClassRegistry()
+{
+  espusb::internal::freeUsbMemory(classes_);
+  classes_ = nullptr; functionStrings_ = nullptr;
+}
+
+bool EspUsbDevice::allocateClassRegistry()
+{
+  releaseClassRegistry();
+  if (!classCount_) return true;
+  const size_t bytes = classCount_ * (sizeof(*classes_) + sizeof(*functionStrings_));
+  classes_ = static_cast<EspUsbDeviceClass **>(espusb::internal::allocateUsbMemory(bytes));
+  if (!classes_) { setLastError(ESP_ERR_NO_MEM); return false; }
+  functionStrings_ = static_cast<const char **>(static_cast<void *>(classes_ + classCount_));
+  auto *function = firstClass_;
+  for (size_t i = 0; i < classCount_; ++i, function = function->nextRegistered_) classes_[i] = function;
+  memset(functionStrings_, 0, classCount_ * sizeof(*functionStrings_));
   return true;
 }
 
-void EspUsbDevice::removeClass(EspUsbDeviceClass *deviceClass)
+bool EspUsbDevice::addClass(EspUsbDeviceClass *function)
 {
-  for (size_t i = 0; i < classCount_; ++i)
-  {
-    if (classes_[i] != deviceClass)
-    {
-      continue;
-    }
-    for (size_t j = i + 1; j < classCount_; ++j)
-    {
-      classes_[j - 1] = classes_[j];
-      if (classes_[j - 1])
-      {
-        classes_[j - 1]->hidInstance_ = static_cast<uint8_t>(j - 1);
-      }
-    }
-    classes_[--classCount_] = nullptr;
-    // Slot indices shifted, so the names published against them are stale.
-    // buildDescriptors() refills the table; until then no index resolves.
-    memset(functionStrings_, 0, sizeof(functionStrings_));
-    return;
+  if (!function || &function->device_ != this) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+  if (function->registered_) return true;
+  if (running_) {
+    if (!function->registrationRejected_) { function->registrationRejected_ = true; ++rejectedClassCount_; }
+    setLastError(ESP_ERR_INVALID_STATE); return false;
   }
+  if (function->registrationRejected_) { function->registrationRejected_ = false; --rejectedClassCount_; }
+  releaseClassRegistry();
+  for (auto *item = firstClass_; item; item = item->nextRegistered_) item->assignedReportId_ = 0;
+  function->nextRegistered_ = nullptr;
+  function->registered_ = true;
+  function->hidInstance_ = static_cast<uint8_t>(classCount_++);
+  if (lastClass_) lastClass_->nextRegistered_ = function;
+  else firstClass_ = function;
+  lastClass_ = function;
+  configDescriptorLength_ = 0;
+  setLastError(ESP_OK); return true;
+}
+
+void EspUsbDevice::removeClass(EspUsbDeviceClass *function)
+{
+  if (!function) return;
+  if (function->registrationRejected_) { function->registrationRejected_ = false; --rejectedClassCount_; }
+  if (!function->registered_) return;
+  if (running_ && end() != ESP_OK) return;
+  releaseClassRegistry();
+  auto **link = &firstClass_;
+  EspUsbDeviceClass *previous = nullptr;
+  while (*link && *link != function) { previous = *link; link = &(*link)->nextRegistered_; }
+  if (!*link) return;
+  *link = function->nextRegistered_;
+  if (lastClass_ == function) lastClass_ = previous;
+  function->nextRegistered_ = nullptr; function->registered_ = false; function->hidInstance_ = UINT8_MAX; --classCount_;
+  size_t index = 0;
+  for (auto *item = firstClass_; item; item = item->nextRegistered_) {
+    item->hidInstance_ = static_cast<uint8_t>(index++); item->assignedReportId_ = 0;
+  }
+  configDescriptorLength_ = 0;
 }
 
 bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs)
@@ -1219,8 +1271,7 @@ bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void 
 
 const uint8_t *EspUsbDevice::deviceDescriptor()
 {
-  buildDescriptors();
-  return deviceDescriptor_;
+  return buildDescriptors() ? deviceDescriptor_ : nullptr;
 }
 
 const uint8_t *EspUsbDevice::configurationDescriptor(uint8_t index)
@@ -1248,8 +1299,7 @@ const uint8_t *EspUsbDevice::deviceQualifierDescriptor()
   {
     return nullptr;
   }
-  buildDescriptors();
-  return deviceQualifierDescriptor_;
+  return buildDescriptors() ? deviceQualifierDescriptor_ : nullptr;
 #else
   return nullptr;
 #endif
@@ -1339,7 +1389,7 @@ const uint16_t *EspUsbDevice::stringDescriptor(uint8_t index, uint16_t langid)
     value = g_netMacString;
   }
   else if (index >= FIRST_FUNCTION_STRING_INDEX &&
-           index < FIRST_FUNCTION_STRING_INDEX + MAX_CLASSES)
+           functionStrings_ && size_t(index - FIRST_FUNCTION_STRING_INDEX) < classCount_)
   {
     value = functionStrings_[index - FIRST_FUNCTION_STRING_INDEX];
   }
@@ -1384,9 +1434,9 @@ EspUsbDeviceClass *EspUsbDevice::hidClassForInstance(uint8_t instance) const
   }
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isHid())
+    if (classAt(i) && classAt(i)->isHid())
     {
-      return classes_[i];
+      return classAt(i);
     }
   }
   return nullptr;
@@ -1432,7 +1482,7 @@ void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_
     {
       for (size_t i = 0; i < classCount_; i++)
       {
-        if (classes_[i] && classes_[i]->isHid() &&
+        if (classAt(i) && classAt(i)->isHid() &&
             classReportId(static_cast<uint8_t>(i)) == data[0])
         {
           reportId = data[0];
@@ -1444,13 +1494,13 @@ void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_
     }
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (!classes_[i] || !classes_[i]->isHid())
+      if (!classAt(i) || !classAt(i)->isHid())
       {
         continue;
       }
-      if (classReportId(static_cast<uint8_t>(i)) == reportId && classes_[i])
+      if (classReportId(static_cast<uint8_t>(i)) == reportId && classAt(i))
       {
-        classes_[i]->onHidSetReport(reportId, reportType, data, length);
+        classAt(i)->onHidSetReport(reportId, reportType, data, length);
         return;
       }
     }
@@ -1473,9 +1523,9 @@ void EspUsbDevice::handleHidSetProtocol(uint8_t instance, uint8_t protocol)
     }
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (classes_[i])
+      if (classAt(i))
       {
-        classes_[i]->onHidSetProtocol(protocol);
+        classAt(i)->onHidSetProtocol(protocol);
       }
     }
     return;
@@ -1528,9 +1578,9 @@ void EspUsbDevice::handleBusAttached()
   // Every class hears this, composite or not: the bus is shared by all of them.
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i])
+    if (classAt(i))
     {
-      classes_[i]->onBusAttached();
+      classAt(i)->onBusAttached();
     }
   }
 }
@@ -1539,15 +1589,24 @@ void EspUsbDevice::handleBusDetached()
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i])
+    if (classAt(i))
     {
-      classes_[i]->onBusDetached();
+      classAt(i)->onBusDetached();
     }
   }
 }
 
 bool EspUsbDevice::buildDescriptors()
 {
+  // Published descriptors are immutable while running. USB GET_DESCRIPTOR
+  // must never rebuild tables or allocate temporary Function state.
+  if ((running_ || g_activeDevice == this) && configDescriptorLength_) return true;
+  if (rejectedClassCount_) { setLastError(ESP_ERR_INVALID_STATE); return false; }
+  if (classCount_ > size_t(UINT8_MAX) - FIRST_FUNCTION_STRING_INDEX + 1) {
+    setLastError(ESP_ERR_INVALID_SIZE); return false;
+  }
+  // Descriptor-only inspection before begin uses the same exact-sized index.
+  if (classCount_ && !classes_ && !allocateClassRegistry()) return false;
   if (!allocateDescriptorBuffers())
   {
     return false;
@@ -1560,41 +1619,64 @@ bool EspUsbDevice::buildDescriptors()
   // driver dispatches by interface number, without TinyUSB CDC instance slots.
   // HID functions are emitted first, but are never counted as CDC ports.
   uint8_t cdcInstance = 0;
-  memset(functionStrings_, 0, sizeof(functionStrings_));
+  if (classCount_) memset(functionStrings_, 0, classCount_ * sizeof(*functionStrings_));
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (!classes_[i])
+    if (!classAt(i))
     {
       continue;
     }
-    const char *name = classes_[i]->functionName();
+    const char *name = classAt(i)->functionName();
     uint8_t stringIndex = 0;
     if (name && name[0] != '\0')
     {
       stringIndex = static_cast<uint8_t>(FIRST_FUNCTION_STRING_INDEX + i);
       functionStrings_[i] = name;
     }
-    classes_[i]->assignFunctionIds(classes_[i]->isCdc() ? cdcInstance++ : 0,
+    classAt(i)->assignFunctionIds(classAt(i)->isCdc() ? cdcInstance++ : 0,
                                    stringIndex);
   }
 
   const bool composite = compositeHid();
+  // Reserve unique preferred IDs first, then assign unused IDs to repeated
+  // types and custom Functions. No fixed per-type slot or temporary ID table.
+  for (size_t i = 0; i < classCount_; ++i) classAt(i)->assignedReportId_ = 0;
+  if (composite) {
+    for (size_t i = 0; i < classCount_; ++i) {
+      auto *function = classAt(i);
+      if (!function->isHid()) continue;
+      const uint8_t preferred = function->hidReportId();
+      bool used = false;
+      for (size_t j = 0; preferred && j < i; ++j) used |= classAt(j)->assignedReportId_ == preferred;
+      if (preferred && !used) function->assignedReportId_ = preferred;
+    }
+    for (size_t i = 0; i < classCount_; ++i) {
+      auto *function = classAt(i);
+      if (!function->isHid() || function->assignedReportId_) continue;
+      for (unsigned candidate = 1; candidate <= UINT8_MAX; ++candidate) {
+        bool used = false;
+        for (size_t j = 0; j < classCount_; ++j) used |= classAt(j)->assignedReportId_ == candidate;
+        if (!used) { function->assignedReportId_ = uint8_t(candidate); break; }
+      }
+      if (!function->assignedReportId_) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+    }
+  }
   uint8_t interfaceCount = composite ? 1 : 0;
   if (!composite)
   {
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (classes_[i] && classes_[i]->isHid())
+      if (classAt(i) && classAt(i)->isHid())
       {
-        interfaceCount += classes_[i]->interfaceCount();
+        interfaceCount += classAt(i)->interfaceCount();
       }
     }
   }
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && !classes_[i]->isHid())
+    if (classAt(i) && !classAt(i)->isHid())
     {
-      interfaceCount += classes_[i]->interfaceCount();
+      interfaceCount += classAt(i)->interfaceCount();
     }
   }
 
@@ -1642,7 +1724,14 @@ bool EspUsbDevice::buildDescriptors()
     uint16_t length;
     uint16_t highSpeedPacketSize;
   };
-  HidSpeedFixup hidSpeedFixups[MAX_CLASSES] = {};
+  size_t hidFixupCapacity = 0;
+  for (size_t i = 0; i < classCount_; ++i) if (classAt(i)->isHid()) ++hidFixupCapacity;
+  if (composite) hidFixupCapacity = 1;
+  std::unique_ptr<HidSpeedFixup, decltype(&espusb::internal::freeUsbMemory)> fixupStorage(
+      hidFixupCapacity ? static_cast<HidSpeedFixup *>(espusb::internal::allocateUsbMemory(hidFixupCapacity * sizeof(HidSpeedFixup))) : nullptr,
+      espusb::internal::freeUsbMemory);
+  if (hidFixupCapacity && !fixupStorage) { setLastError(ESP_ERR_NO_MEM); return false; }
+  auto *hidSpeedFixups = fixupStorage.get();
   size_t hidSpeedFixupCount = 0;
   if (composite)
   {
@@ -1650,9 +1739,9 @@ bool EspUsbDevice::buildDescriptors()
     // NKRO keyboard's bitmap report). Bounded by CFG_TUD_HID_EP_BUFSIZE (64).
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (classes_[i] && classes_[i]->isHid())
+      if (classAt(i) && classAt(i)->isHid())
       {
-        const uint16_t hint = classes_[i]->hidInEndpointSize();
+        const uint16_t hint = classAt(i)->hidInEndpointSize();
         if (hint > endpointSize)
         {
           endpointSize = hint;
@@ -1661,12 +1750,12 @@ bool EspUsbDevice::buildDescriptors()
     }
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (!classes_[i] || !classes_[i]->isHid())
+      if (!classAt(i) || !classAt(i)->isHid())
       {
         continue;
       }
-      const uint8_t *src = classes_[i]->hidReportDescriptor();
-      const uint16_t srcLen = classes_[i]->hidReportDescriptorLength();
+      const uint8_t *src = classAt(i)->hidReportDescriptor();
+      const uint16_t srcLen = classAt(i)->hidReportDescriptorLength();
       if (!src || srcLen < 6 || hidReportDescriptorLength_ + srcLen + 2 > MAX_HID_REPORT_DESCRIPTOR)
       {
         setLastError(ESP_FAIL);
@@ -1756,11 +1845,11 @@ bool EspUsbDevice::buildDescriptors()
     uint16_t compositeHighSpeedSize = 0;
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (!classes_[i] || !classes_[i]->isHid())
+      if (!classAt(i) || !classAt(i)->isHid())
       {
         continue;
       }
-      const uint16_t hint = classes_[i]->hidHighSpeedEndpointSize();
+      const uint16_t hint = classAt(i)->hidHighSpeedEndpointSize();
       if (hint > compositeHighSpeedSize)
       {
         compositeHighSpeedSize = hint;
@@ -1778,19 +1867,19 @@ bool EspUsbDevice::buildDescriptors()
   {
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (!classes_[i] || !classes_[i]->isHid())
+      if (!classAt(i) || !classAt(i)->isHid())
       {
         continue;
       }
-      uint16_t written = classes_[i]->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, endpointSize);
-      const uint16_t highSpeedSize = classes_[i]->hidHighSpeedEndpointSize();
+      uint16_t written = classAt(i)->configurationDescriptor(&configDescriptor_[offset], interfaceNumber, endpointNumber, endpointSize);
+      const uint16_t highSpeedSize = classAt(i)->hidHighSpeedEndpointSize();
       if (written > 0 && highSpeedSize > 0)
       {
         hidSpeedFixups[hidSpeedFixupCount++] = {offset, written, highSpeedSize};
       }
       offset += written;
-      interfaceNumber += classes_[i]->interfaceCount();
-      endpointNumber += classes_[i]->endpointCount();
+      interfaceNumber += classAt(i)->interfaceCount();
+      endpointNumber += classAt(i)->endpointCount();
       if (offset > MAX_CONFIG_DESCRIPTOR)
       {
         setLastError(ESP_FAIL);
@@ -1818,14 +1907,14 @@ bool EspUsbDevice::buildDescriptors()
   uint8_t videoEndpointNumber = 0;
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (!classes_[i] || classes_[i]->isHid())
+    if (!classAt(i) || classAt(i)->isHid())
     {
       continue;
     }
     const uint16_t classOffset = offset;
     const uint8_t classInterface = interfaceNumber;
     const uint8_t classEndpoint = endpointNumber;
-    uint16_t written = classes_[i]->configurationDescriptorForSpeed(
+    uint16_t written = classAt(i)->configurationDescriptorForSpeed(
         &configDescriptor_[offset], MAX_CONFIG_DESCRIPTOR - offset,
         interfaceNumber, endpointNumber, false);
     if (written == 0)
@@ -1834,32 +1923,32 @@ bool EspUsbDevice::buildDescriptors()
       return false;
     }
     offset += written;
-    if (classes_[i]->isAudio())
+    if (classAt(i)->isAudio())
     {
-      audioClass = classes_[i];
+      audioClass = classAt(i);
       audioOffset = classOffset;
       audioLength = written;
       audioInterfaceNumber = classInterface;
       audioEndpointNumber = classEndpoint;
     }
-    if (classes_[i]->isVideo())
+    if (classAt(i)->isVideo())
     {
-      videoClass = classes_[i];
+      videoClass = classAt(i);
       videoOffset = classOffset;
       videoLength = written;
       videoInterfaceNumber = classInterface;
       videoEndpointNumber = classEndpoint;
     }
-    if (classes_[i]->isVendor())
+    if (classAt(i)->isVendor())
     {
       vendorInterfaceNumber_ = classInterface;
     }
-    if (classes_[i]->isDfu())
+    if (classAt(i)->isDfu())
     {
       dfuInterfaceNumber_ = classInterface;
     }
-    interfaceNumber += classes_[i]->interfaceCount();
-    endpointNumber += classes_[i]->endpointCount();
+    interfaceNumber += classAt(i)->interfaceCount();
+    endpointNumber += classAt(i)->endpointCount();
     if (offset > MAX_CONFIG_DESCRIPTOR)
     {
       setLastError(ESP_FAIL);
@@ -2704,7 +2793,7 @@ bool EspUsbDevice::compositeHid() const
   size_t hidCount = 0;
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isHid())
+    if (classAt(i) && classAt(i)->isHid())
     {
       hidCount++;
     }
@@ -2716,7 +2805,7 @@ bool EspUsbDevice::hasHidClass() const
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isHid())
+    if (classAt(i) && classAt(i)->isHid())
     {
       return true;
     }
@@ -2728,7 +2817,7 @@ bool EspUsbDevice::hasCdcClass() const
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isCdc())
+    if (classAt(i) && classAt(i)->isCdc())
     {
       return true;
     }
@@ -2740,7 +2829,7 @@ bool EspUsbDevice::hasMidiClass() const
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isMidi())
+    if (classAt(i) && classAt(i)->isMidi())
     {
       return true;
     }
@@ -2752,7 +2841,7 @@ bool EspUsbDevice::hasMscClass() const
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isMsc())
+    if (classAt(i) && classAt(i)->isMsc())
     {
       return true;
     }
@@ -2764,7 +2853,7 @@ bool EspUsbDevice::hasVendorClass() const
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isVendor())
+    if (classAt(i) && classAt(i)->isVendor())
     {
       return true;
     }
@@ -2776,7 +2865,7 @@ bool EspUsbDevice::hasAudioClass() const
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isAudio())
+    if (classAt(i) && classAt(i)->isAudio())
     {
       return true;
     }
@@ -2788,7 +2877,7 @@ bool EspUsbDevice::hasVideoClass() const
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isVideo())
+    if (classAt(i) && classAt(i)->isVideo())
     {
       return true;
     }
@@ -2800,7 +2889,7 @@ bool EspUsbDevice::hasNetClass() const
 {
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classes_[i] && classes_[i]->isNet())
+    if (classAt(i) && classAt(i)->isNet())
     {
       return true;
     }
@@ -2810,19 +2899,7 @@ bool EspUsbDevice::hasNetClass() const
 
 uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
 {
-  if (!compositeHid())
-  {
-    return 0;
-  }
-  if (classInstance < classCount_ && classes_[classInstance])
-  {
-    const uint8_t reportId = classes_[classInstance]->hidReportId();
-    if (reportId)
-    {
-      return reportId;
-    }
-  }
-  return ESP_USB_DEVICE_HID_REPORT_ID_KEYBOARD;
+  return compositeHid() && classInstance < classCount_ ? classAt(classInstance)->assignedReportId_ : 0;
 }
 
 // The TinyUSB HID instance a class's reports go out on. There is one HID
@@ -2834,8 +2911,8 @@ uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
 // same mistake produced on the descriptor side.
 uint8_t EspUsbDevice::classRuntimeInstance(uint8_t classInstance) const
 {
-  (void)classInstance;
-  return 0;
+  // An unregistered HID must never send using another Function's slot 0.
+  return classInstance < classCount_ && classAt(classInstance)->isHid() ? 0 : UINT8_MAX;
 }
 
 void EspUsbDevice::setLastError(esp_err_t error)
@@ -6736,6 +6813,11 @@ bool EspUsbDeviceHidCustom::begin()
 
 bool EspUsbDeviceHidCustom::sendReport(const void *data, size_t length, uint8_t reportId, uint32_t timeoutMs)
 {
+  if (device_.compositeHid()) {
+    const uint8_t assigned = device_.classReportId(hidInstance_);
+    if (reportId && reportId != assigned) return false;
+    reportId = assigned;
+  }
   if (!data || length == 0)
   {
     return false;
@@ -6839,7 +6921,7 @@ bool EspUsbDeviceHidVendor::sendInput(const void *data, size_t length, uint32_t 
   {
     length = reportSize_;
   }
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), ESP_USB_DEVICE_HID_REPORT_ID_VENDOR, data, length, timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), data, length, timeoutMs);
 }
 
 void EspUsbDeviceHidVendor::onOutputReport(ReportCallback callback)
@@ -6939,7 +7021,7 @@ bool EspUsbDeviceHidGamepad::sendReport(const EspUsbDeviceGamepadReport &report,
       static_cast<uint8_t>((report_.buttons >> 16) & 0xff),
       static_cast<uint8_t>((report_.buttons >> 24) & 0xff),
   };
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), hidReportId(), data, sizeof(data), timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), data, sizeof(data), timeoutMs);
 }
 
 bool EspUsbDeviceHidGamepad::send(int8_t x,
@@ -7008,7 +7090,7 @@ bool EspUsbDeviceHidConsumerControl::sendUsage(uint16_t usage, uint32_t timeoutM
       static_cast<uint8_t>(usage & 0xff),
       static_cast<uint8_t>((usage >> 8) & 0xff),
   };
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), hidReportId(), report, sizeof(report), timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), report, sizeof(report), timeoutMs);
 }
 
 bool EspUsbDeviceHidConsumerControl::press(uint16_t usage, uint32_t timeoutMs)
@@ -7070,7 +7152,7 @@ bool EspUsbDeviceHidSystemControl::begin()
 bool EspUsbDeviceHidSystemControl::sendUsage(uint8_t usage, uint32_t timeoutMs)
 {
   usage_ = usage;
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), hidReportId(), &usage_, sizeof(usage_), timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), &usage_, sizeof(usage_), timeoutMs);
 }
 
 bool EspUsbDeviceHidSystemControl::press(uint8_t usage, uint32_t timeoutMs)

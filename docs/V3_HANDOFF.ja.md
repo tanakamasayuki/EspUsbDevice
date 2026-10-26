@@ -88,7 +88,8 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 ## 次に進める作業
 
-1. Function registryとdescriptor容量を動的にし、固定class上限と未使用descriptor領域を撤去する。
+1. descriptor writerのサイズ照会を導入し、configuration/HID report/BOS/MS OSの固定領域を撤去する。
+   Function registryの固定上限は下記で撤去済み。
 2. CDCのcontrol要求、通知、reset/endと借用取消しの組合せを必要範囲で拡張する。
    Vendor/CDCの共通転送と基本controlは下記で実装・検証済みだが、全OS/control要求の網羅ではない。
 3. Audioの最小周期経路と併用して共通設計を見直し、HIDと残クラスを独自化する。
@@ -223,3 +224,29 @@ HostのVendor readもMPS倍数時にはZLPを消費する長さで要求する�
 `tx-only.xml`はCDC suite 1 passed、42.26秒。確保失敗suiteも追加の8取得点を含む54失敗/54回復を確認した
 （原本`/tmp/pytest-embedded/2026-10-26_05-14-53-103287/test_allocation_failure/`）。
 次は登録/descriptorの固定容量の撤去。
+
+## Function registryの動的化
+
+固定MAX_CLASSES=6を撤去。constructorはFunction内のlinkへ登録し、beginで実数に応じた
+検索/名前の一覧を一度確保する。end/開始失敗で解放し、未登録Functionを黙って省略しない。
+GET_DESCRIPTORでは稼働中のdescriptorを再構築せず、worker起動前の公開時点から固定する。
+同じ種類/custom HIDのreport ID衝突も見つかったため、preferred IDの予約と空きIDの割当へ変更した。
+詳細は[V3_FUNCTION_REGISTRY.ja.md](V3_FUNCTION_REGISTRY.ja.md)。
+
+最初の確認は`function-registry.xml`、2 passed、75.41秒。
+登録/削除/名前/再登録の20反復でheap 324576→324576 byte、
+7 Functionの実USB reportと、一覧を含む62取得点の確保失敗/回復を確認した。
+その後、同じpreferred IDを指定したHIDの再割当も加えて全回帰を実行中。
+configuration/HID report/BOS/MS OSの固定領域はまだ残っており、次はdescriptorのサイズ照会と動的確保へ進める。
+
+最終の標準実行: `dynamic-registry-all.xml`、**7 passed、0 skipped、360.78秒**。
+全caseの両board STOPPEDとpanicなしを確認した。原本は
+`/tmp/pytest-embedded/2026-10-26_07-03-54-332264/`、コピーとJUnit/transcriptは`.pytest-results/`。
+最後に、未登録/数超過がbegin前のdescriptor getterでも拒否される条件を追加し、
+`function-registry-final.xml`のfocused実行でも1 passed、31.65秒を確認した。
+
+リンク確認: Device only / Vendor copy / CDC copyの3 probeを再compileし、
+未使用Function固有処理・取消し・TinyUSB CDC/Vendorの不在をnmで確認した。
+最後のfocused実行には、未登録HIDの送信拒否とその破棄後の通信継続も含む。
+`python3 tools/verify_tinyusb_vendor.py`は51 file / 15 compiled sourcesで一致。
+次はFunction descriptorのサイズ照会契約と、固定descriptor領域の撤去を進める。

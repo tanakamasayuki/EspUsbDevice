@@ -701,11 +701,6 @@ private:
   friend class EspUsbDeviceNet;
   friend class EspUsbDeviceCcid;
   friend class EspUsbDeviceDfu;
-  // Raised from 4 when CDC became multi-instance: the P4 HS controller's 7
-  // non-control IN endpoints admit HID + MSC + Vendor + CDC x2, which is five
-  // functions. Each slot is one pointer, so the ceiling costs nothing to carry;
-  // the endpoint budget is what actually decides whether a device is buildable.
-  static constexpr size_t MAX_CLASSES = 6;
   // String descriptor indices 1-3 are manufacturer / product / serial and 4 is
   // the CDC-NCM MAC address. Per-function names start after those.
   static constexpr uint8_t FIRST_FUNCTION_STRING_INDEX = 5;
@@ -775,12 +770,19 @@ private:
   void removeClass(EspUsbDeviceClass *deviceClass);
 
   EspUsbDeviceConfig config_;
-  EspUsbDeviceClass *classes_[MAX_CLASSES] = {};
+  // Intrusive configuration order; the exact-sized lookup/name table exists
+  // only during a build/run and is released on end or failed begin.
+  EspUsbDeviceClass *firstClass_ = nullptr, *lastClass_ = nullptr;
+  EspUsbDeviceClass **classes_ = nullptr;
   // Function name per class slot, published at string index
   // FIRST_FUNCTION_STRING_INDEX + slot. Filled by buildDescriptors() from
   // EspUsbDeviceClass::functionName(); null slots have no string.
-  const char *functionStrings_[MAX_CLASSES] = {};
-  size_t classCount_ = 0;
+  const char **functionStrings_ = nullptr;
+  size_t classCount_ = 0, rejectedClassCount_ = 0;
+  struct RegistrationTransaction;
+  bool allocateClassRegistry();
+  void releaseClassRegistry();
+  EspUsbDeviceClass *classAt(size_t index) const;
   bool running_ = false;
   bool ready_ = false;
   bool tinyusbStarted_ = false;
@@ -868,7 +870,11 @@ public:
     (void)instance;
     (void)stringIndex;
   }
+  // Preferred ID. Repeated HID types receive unique IDs in a composite.
   virtual uint8_t hidReportId() const { return 0; }
+  // Assigned composite identity from the last descriptor build; 0 after end
+  // or for a standalone HID. Normal sendReport/sendInput choose it for you.
+  uint8_t compositeReportId() const { return assignedReportId_; }
   virtual const uint8_t *hidReportDescriptor() const { return nullptr; }
   virtual uint16_t hidReportDescriptorLength() const { return 0; }
   // Preferred IN endpoint wMaxPacketSize for this HID class, or 0 for "no
@@ -905,7 +911,10 @@ protected:
   // This class's slot in EspUsbDevice::classes_, i.e. its registration order.
   // Not a TinyUSB instance number, despite the name: the device maps it through
   // classReportId() and classRuntimeInstance() before anything reaches TinyUSB.
-  uint8_t hidInstance_ = 0;
+  uint8_t hidInstance_ = UINT8_MAX;
+  EspUsbDeviceClass *nextRegistered_ = nullptr;
+  bool registered_ = false, registrationRejected_ = false;
+  uint8_t assignedReportId_ = 0;
 };
 
 // Per-call submission error. Rejection never borrows a buffer or notifies.

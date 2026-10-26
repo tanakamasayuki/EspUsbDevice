@@ -333,7 +333,7 @@ void EspUsbDeviceBulkStream::prepareToStop() {
   portEXIT_CRITICAL(&bulkLock);
 }
 void EspUsbDeviceBulkStream::end() {
-  if (device_.tinyusbStarted_) { device_.end(); return; }
+  if (device_.tinyusbStarted_ && state_) { device_.end(); return; }
   portENTER_CRITICAL(&bulkLock);
   auto *state = state_;
   state_ = nullptr;
