@@ -315,3 +315,17 @@ alt変更はhardware abortと旧完了eventの排出後に再armする。最初�
 現時点でISR経路を追加する根拠はなく、アプリcallback/borrowed PCMの契約も未導入とする。
 この値は性能比較ではなく、周期転送が継続する実装を選ぶための確認である。
 公称clock feedbackのみで外部codec clockの追従は扱わず、複数formatと固定control/model配列も後続へ残す。
+
+## DFU転送サイズと保存先
+
+2026-10-27。DFUを次の置換対象とする。旧transferSizeはstaticでCFG_TUD_DFU_XFER_BUFSIZEに固定され、
+RuntimeだけでもDownloadのbufferをリンクし、単一global instanceが全interfaceを制限していた。
+EspUsbDfuConfigで最大blockと外部bufferを選び、Runtimeはblock領域を持たない方式へ変更する。
+通常のDevice + Dfu + beginは維持し、transferSizeをinstance getterへ、onErrorを型付きstatusへ変更する。
+稼働中setterを拒否し、宣言した容量と状態機械が食い違う変更を防ぐ。
+
+USB protocolとOTAを分ける同期backendも用意する。特定アプリ向けではなく、外部flashや別processorへ
+imageを渡す用途を含める。byte配列の保持はcallback中まで、途中書込みはstatusで失敗、manifestで検証・適用し、
+失敗/中断時にはabortで片付ける。既定OTAのComplete vetoと自動再起動はcustom backendへ持ち込まない。
+利点は保存先の自由と実state machineのRAM backend検証。不利益はcallback契約と開始失敗、callback自体の費用である。
+非同期flashやUploadの先行設計はしない。まずS3上でGETSTATUSと実control転送の結果を確認する。

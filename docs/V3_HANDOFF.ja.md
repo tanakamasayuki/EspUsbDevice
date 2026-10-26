@@ -506,3 +506,30 @@ UAC1/UAC2 PCMとevent、CDC/Vendor/HID/MIDI/MSC、descriptor/registryと取消�
 serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-audio-all*`。
 Audioのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致し、
 旧tests/examplesはmainと同一、mainはv3の祖先。残るclass/core/DCDと他SoC/HSの置換・検証は未完である。
+
+
+## DFU classの独自化
+
+2026-10-27。TinyUSB DFU Runtime/Download class、global stateと固定1024 byte領域を撤去した。
+EspUsbDfuConfigで64..65535 byteと外部buffer、poll timeout/manifestationを指定する。
+Runtimeはblock領域を持たず、Functionごとに状態・backendを分ける。既定OTAに加えて同期backendを追加した。
+onErrorはEspUsbDfuStatusへ、transferSizeはinstanceへ変更し、稼働中setterを拒否する。
+API判断と実測はV3_DFU_API.ja.mdを参照。
+
+
+## S3–S3の実測結果
+
+`dfu-runtime-related.xml`は**2 passed、0 skipped、0 unfinished、74.27秒**。
+64/129/4097/65535 byte、内外buffer、独立2 Download + Runtime、GETSTATUSとblock順序、
+不正要求のSTALL/CLRSTATUS、write/manifest失敗、ABORTとend時の一度だけの回収、
+manifestation tolerantとreset待ち、DETACHのtimeout復帰を確認した。metadata反復のheapも回復した。
+502取得点の確保失敗/回復は338520→338520 byte、両case両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-26_19-25-20-261549/`、コピーとJUnit/transcriptは`validation/.pytest-results/dfu-runtime-related*`。
+DFUのみ/Deviceのみの最小build/nmで、旧TinyUSB DFUと未使用独自DFUの不在を確認した。
+試験は公開IDF Host APIのRAM backendで行い、conftestや独自pytest hookを使わない。
+Coreのenum filterが有効なため、Hostは対象VID/PIDのfilterを明示する。
+通常収集は17件。今回の関連2件は直近の全16件成功とは別である。
+
+残るclassはNCM/Video。共通EP0/core/DCDは暫定TinyUSBのままで、全置換の完了ではない。
+実OTA/再起動とdfu-util、block周回、EP0途中切断・実書込み中reset、他SoC/HSは未検証。
+Runtimeのみでも共通driverのDownload/OTA codeがリンクされ得る点は、後続の費用整理に残す。

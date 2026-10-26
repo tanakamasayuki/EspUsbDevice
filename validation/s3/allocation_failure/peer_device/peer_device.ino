@@ -40,6 +40,8 @@ EspUsbDeviceHidVendor *hid[2] = {};
 EspUsbDeviceMidi *midi[2] = {};
 EspUsbDeviceMsc *msc[2] = {};
 EspUsbAudioFunction *audio = nullptr;
+EspUsbDeviceDfu *dfu[2] = {};
+uint8_t dfuBuffer[130];
 alignas(64) uint8_t mscBuffer[512];
 EspUsbDeviceMidiPacket midiRx[19], midiTx[21];
 EspUsbDeviceHidCustom *inputOnly = nullptr;
@@ -65,7 +67,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 28 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 32 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -121,7 +123,7 @@ void loop() {
             ok &= msc[1]->begin(8, 512); points += 2;
           }
         }
-        if (mode >= 24) {
+        if (mode >= 24 && mode <= 27) {
           audio = new EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2);
           if (mode != 26) ok &= audio->addPlaybackStream().addFormat({48000,2,2,16});
           if (mode == 26 || mode == 27) ok &= audio->addCaptureStream().addFormat({48000,2,2,16});
@@ -129,6 +131,14 @@ void loop() {
           ok &= audio->configure(notifications) == ESP_OK;
           points += mode == 27 ? 8 : mode == 26 ? 5 : 6; // State, selected PCM buffers, feedback and class registry.
           if (mode != 25) ++points;
+        }
+        if (mode >= 28) {
+          dfu[0] = new EspUsbDeviceDfu(device, mode == 28 ? EspUsbDeviceDfuMode::Runtime : EspUsbDeviceDfuMode::Download);
+          EspUsbDfuConfig firmware; firmware.transferBytes = 129;
+          if (mode == 30) firmware.transferBuffer = dfuBuffer + 1;
+          ok &= dfu[0]->configure(firmware) == ESP_OK;
+          points += mode == 29 || mode == 31 ? 4 : 3;
+          if (mode == 31) { dfu[1] = new EspUsbDeviceDfu(device); points += 2; }
         }
         points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.
         EspUsbDeviceConfig identity;
@@ -165,6 +175,7 @@ void loop() {
         for (auto &function : midi) { delete function; function = nullptr; }
         for (auto &function : msc) { delete function; function = nullptr; }
         delete audio; audio = nullptr;
+        for (auto &function : dfu) { delete function; function = nullptr; }
       }
       vendor.configure(EspUsbVendorConfig());
       delay(10);

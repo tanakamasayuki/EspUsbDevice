@@ -2317,35 +2317,48 @@ enum class EspUsbDeviceDfuMode : uint8_t
   Download,
 };
 
+enum class EspUsbDfuStatus : uint8_t {
+  Ok = 0, Target, File, Write, Erase, CheckErased, Program, Verify,
+  Address, NotDone, Firmware, Vendor, UsbReset, PowerOnReset, Unknown, StalledPacket
+};
+struct EspUsbDfuConfig {
+  size_t transferBytes = 1024;
+  uint8_t *transferBuffer = nullptr; // Download only; CPU copy, no DMA alignment.
+  uint16_t detachTimeoutMs = 1000;
+  uint32_t downloadPollMs = 1;
+  uint32_t manifestPollMs = 250;
+  bool manifestationTolerant = false;
+};
+// Synchronous callbacks on the USB worker. Download's data is valid only until
+// the callback returns. A supplied backend owns verification and activation;
+// the built-in OTA Complete callback and automatic restart do not apply to it.
+struct EspUsbDfuBackend {
+  std::function<EspUsbDfuStatus(uint16_t block, const uint8_t *data, size_t bytes)> download;
+  std::function<EspUsbDfuStatus()> manifest;
+  std::function<void()> abort;
+};
+struct EspUsbDfuState;
+
 // A DFU function. Costs one interface and no endpoints: every DFU transfer
 // travels on EP0, which is why this is the one class that can be added to a
 // device whose endpoint budget is already spent.
 class EspUsbDeviceDfu : public EspUsbDeviceClass
 {
 public:
-  // Called instead of the default action when the host sends DFU_DETACH in
-  // Runtime mode. Runs on the usbd task: set a flag and act from loop().
   using DetachCallback = std::function<void()>;
-  // Download progress, in bytes written so far.
-  //
-  // There is no second "total" argument because DFU 1.1 has no field for one:
-  // the host never tells the device how long the image is, so a percentage is
-  // not something this class can honestly offer. A sketch that wants one has to
-  // learn the size some other way.
   using ProgressCallback = std::function<void(size_t written)>;
-  // The image was written and verified, and the boot partition has moved to it.
-  // Return false to refuse it after all, which points the boot partition back
-  // at the running firmware and fails the transfer on the host.
   using CompleteCallback = std::function<bool()>;
-  // The download failed. `status` is the DFU status code reported to the host.
-  using ErrorCallback = std::function<void(uint8_t status)>;
-
+  using ErrorCallback = std::function<void(EspUsbDfuStatus status)>;
   explicit EspUsbDeviceDfu(EspUsbDevice &device,
                            EspUsbDeviceDfuMode mode = EspUsbDeviceDfuMode::Download,
                            const char *name = nullptr);
   ~EspUsbDeviceDfu() override;
-
+  esp_err_t configure(const EspUsbDfuConfig &config);
+  const EspUsbDfuConfig &configuration() const { return config_; }
+  esp_err_t setBackend(const EspUsbDfuBackend &backend);
   bool begin() override;
+  esp_err_t startError() const override { return startError_; }
+  void prepareToStop() override;
   void end() override;
   bool isHid() const override { return false; }
   bool isDfu() const override { return true; }
@@ -2354,48 +2367,36 @@ public:
   uint8_t endpointCount() const override { return 0; }
   const char *functionName() const override { return name_; }
   void assignFunctionIds(uint8_t instance, uint8_t stringIndex) override;
-
   EspUsbDeviceDfuMode mode() const { return mode_; }
-  // Block size this function declares (wTransferSize), which is
-  // CFG_TUD_DFU_XFER_BUFSIZE. Raise it from build_opt.h.
-  static uint16_t transferSize();
-
-  // Runtime mode only. Without one, DFU_DETACH restarts into the ROM download
-  // loader - which is what a host that sent DETACH asked for.
-  void onDetach(DetachCallback callback);
-
-  // Download mode only.
-  void onProgress(ProgressCallback callback);
-  void onComplete(CompleteCallback callback);
-  void onError(ErrorCallback callback);
-  // Restart into the newly written firmware once the host's download is
-  // verified. On by default: a DFU download that does not reach the new image
-  // has not finished, and the function declares itself manifestation-intolerant
-  // so the host already expects the device to reset. Turn it off to restart at
-  // a moment the sketch chooses, and note the device stays unusable for DFU
-  // until it does.
-  void restartWhenComplete(bool enable);
-  // Bytes written so far.
-  size_t written() const;
-  // The update this function drives, for a sketch that wants to inspect it.
-  EspUsbDeviceFirmwareUpdate &firmware();
-
-  // Internal (called from the tud_dfu_* callbacks on the usbd task).
-  void handleDetach();
-  void handleDownload(uint16_t blockNumber, const uint8_t *data, uint16_t length);
-  void handleManifest();
-  void handleAbort();
-  uint32_t pollTimeout(uint8_t state) const;
+  uint16_t transferSize() const { return uint16_t(config_.transferBytes); }
+  // Actual allocated Download buffer bytes; 0 before begin/end or in Runtime.
+  size_t transferCapacity() const;
+  esp_err_t onDetach(DetachCallback callback);
+  esp_err_t onProgress(ProgressCallback callback);
+  // Built-in OTA only: false vetoes the image and restores the running boot partition.
+  esp_err_t onComplete(CompleteCallback callback);
+  esp_err_t onError(ErrorCallback callback);
+  // Built-in OTA only; true by default. Frozen while started.
+  esp_err_t restartWhenComplete(bool enable);
+  size_t written() const { return written_.load(); }
+  EspUsbDeviceFirmwareUpdate &firmware() { return firmware_; }
   void onBusDetached() override;
-
 private:
-  void failDownload(uint8_t status);
-
+  friend struct EspUsbDfuState;
+  void handleDetach();
+  EspUsbDfuStatus handleDownload(uint16_t block, const uint8_t *data, uint16_t bytes);
+  EspUsbDfuStatus handleManifest();
+  void handleAbort();
+  EspUsbDfuStatus failDownload(EspUsbDfuStatus status);
   EspUsbDeviceDfuMode mode_ = EspUsbDeviceDfuMode::Download;
   const char *name_ = nullptr;
-  uint8_t stringIndex_ = 0;
-  bool restartWhenComplete_ = true;
-  bool downloadOpen_ = false;
+  uint8_t stringIndex_ = 0, interface_ = 255;
+  EspUsbDfuConfig config_;
+  EspUsbDfuBackend backend_;
+  EspUsbDfuState *state_ = nullptr;
+  esp_err_t startError_ = ESP_OK;
+  bool restartWhenComplete_ = true, downloadOpen_ = false;
+  std::atomic<size_t> written_{0};
   EspUsbDeviceFirmwareUpdate firmware_;
   DetachCallback detachCallback_;
   ProgressCallback progressCallback_;

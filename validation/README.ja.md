@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので16 tests。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので17 tests。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -53,7 +53,7 @@ payload・境界・末尾終端・分割後の取消しを確認する。
 **16 passed、0 skipped、0 unfinished、823.56秒**。全caseで両board STOPPED、panicなし。
 serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとtranscriptは
 `.pytest-results/runtime-audio-all-serial/`と`runtime-audio-all-transcript.txt`へ保存した。
-`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/descriptor/registryの438取得点を失敗させて回復を確認する。
+`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/DFU/descriptor/registryの502取得点を失敗させて回復を確認する。
 文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
 MIDIのqueue/callback/外部ring/片方向/複数instance、MSCの内部/外部DMA bufferと複数instanceも含む。
 `s3/midi_stream`はevent容量1から、外部ring、callback、片方向、2 MIDI、CDC+Keyboard併用、
@@ -80,7 +80,7 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 隣接sectorのguardと独立2 MSCを確認する。HostのPID同期は公開IDF APIでinterfaceを再取得して行う。
 `s3/audio_events`は任意容量/無効化、overflow、並列producerとUAC2の実Mute制御、稼働中破棄を確認する。
 手順・移行・PCMの対応範囲は[Audioガイド](../docs/V3_AUDIO_API.ja.md)を参照。
-通常実行は16 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
+通常実行は17 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -88,7 +88,7 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`16 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`17 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
@@ -153,3 +153,23 @@ UAC1/UAC2 PCMとevent、CDC/Vendor/HID/MIDI/MSC、descriptor/registryと取消�
 serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-audio-all*`。
 Audioのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致し、
 旧tests/examplesはmainと同一、mainはv3の祖先。残るclass/core/DCDと他SoC/HSの置換・検証は未完である。
+
+
+`s3/dfu_transport`は公開IDF Hostと同期RAM backendで、複数DFUの実control転送、runtime容量、
+最大65535 byte block、エラー/中断/manifestation/DETACHを検証する。保存先は試験RAMなのでOTA更新は行わない。
+`build_probes/dfu_only`はRuntimeのみ。旧TinyUSB DFUと未使用DFUのリンク除外も確認する。
+API・移行と未検証範囲は[DFUガイド](../docs/V3_DFU_API.ja.md)。
+
+
+## S3–S3の実測結果
+
+`dfu-runtime-related.xml`は**2 passed、0 skipped、0 unfinished、74.27秒**。
+64/129/4097/65535 byte、内外buffer、独立2 Download + Runtime、GETSTATUSとblock順序、
+不正要求のSTALL/CLRSTATUS、write/manifest失敗、ABORTとend時の一度だけの回収、
+manifestation tolerantとreset待ち、DETACHのtimeout復帰を確認した。metadata反復のheapも回復した。
+502取得点の確保失敗/回復は338520→338520 byte、両case両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-26_19-25-20-261549/`、コピーとJUnit/transcriptは`validation/.pytest-results/dfu-runtime-related*`。
+DFUのみ/Deviceのみの最小build/nmで、旧TinyUSB DFUと未使用独自DFUの不在を確認した。
+試験は公開IDF Host APIのRAM backendで行い、conftestや独自pytest hookを使わない。
+Coreのenum filterが有効なため、Hostは対象VID/PIDのfilterを明示する。
+通常収集は17件。今回の関連2件は直近の全16件成功とは別である。
