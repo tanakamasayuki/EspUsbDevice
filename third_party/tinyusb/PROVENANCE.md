@@ -71,6 +71,15 @@ recorded local patches. `src/tusb_config.h` and
   `4` for Windows NCM compatibility (EspUsbDevice issue #3). This matches the
   existing four-byte transmit alignment and backports
   [TinyUSB PR #3914](https://github.com/hathach/tinyusb/pull/3914).
+- Temporary v3 adapter extensions (until the independent EP0/DCD replaces it):
+  `device/dcd.h`, `device/usbd.c`, and `device/usbd_pvt.h` add endpoint abort
+  without resetting DATA PID, plus nonblocking FIFO fences that report a full
+  queue for worker retries. `portable/synopsys/dwc2/dcd_dwc2.c` stops endpoints
+  without STALL and segments DMA using the actual GHWCFG3 counter widths. S3
+  implements seven packet-count bits despite the common register type exposing
+  ten. Intermediate arms produce no completion event; only full completion or
+  an OUT short/ZLP returns the transfer. Segmentation, cancellation, and selected
+  reset/end races are tested on S3–S3; P4/S2/S31 remain unverified.
 - An upstream pin change must review these replacements. The scripts fail if
   a replacement no longer matches exactly once; remove it when the new upstream
   already includes the fix.

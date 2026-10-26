@@ -111,7 +111,7 @@ DMA allocatorを用意し、alignmentとcache lineの専有容量まで含むBuf
 TX/RXのcache操作はdriverの責務。利用者へSoCごとのcache flushを要求しない。
 P4で隣接変数とcache lineを共有するRX bufferを許可するかは、E4の検証まで許可しない。
 
-`capacity`（保持可能量）、`transferBytes`（一回にarmする量）、`maxPacketSize`（wire packet）、
+`capacity`（保持可能量）、`transferBytes`（一回に投稿する量。内部armは分割可）、`maxPacketSize`（wire packet）、
 `queueDepth`（受理できる未完transfer数）を区別する。旧TinyUSBの65535/32768をv3の公開上限に引き継がない。
 ハード制限内の分割を実装するか、上限を返して拒否するかはE3/E4で選ぶ。無言の切り詰めはしない。
 

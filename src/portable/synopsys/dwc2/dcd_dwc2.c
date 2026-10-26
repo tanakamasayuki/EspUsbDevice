@@ -32,6 +32,7 @@ typedef struct {
   tu_fifo_t* ff;
   uint16_t total_len;
   uint16_t max_size;
+  uint16_t dma_done, dma_chunk; // Non-EP0 DMA segmentation; one final event.
   uint8_t interval;
   uint8_t iso_retry; // ISO retry counter
 } xfer_ctl_t;
@@ -359,6 +360,21 @@ static void edpt_schedule_packets(uint8_t rhport, const uint8_t epnum, const uin
     num_packets = 1;
   } else {
     total_bytes = xfer->total_len;
+#if CFG_TUD_DWC2_DMA_ENABLE
+    if (dma_device_enabled(dwc2)) {
+      // GHWCFG3 describes the *implemented* counters. S3 has 7 packet bits,
+      // even though the common TSIZ register type has space for 10.
+      const dwc2_ghwcfg3_t caps = {.value = dwc2->ghwcfg3};
+      const uint32_t byte_limit = (1u << tu_min8(19, 11 + caps.xfer_size_width)) - 1;
+      const uint32_t packet_limit = (1u << tu_min8(10, 4 + caps.packet_size_width)) - 1;
+      const uint32_t limit = tu_min32(byte_limit, packet_limit * xfer->max_size);
+      const uint16_t remaining = xfer->total_len - xfer->dma_done;
+      // Intermediate chunks must end on a packet boundary, without inserting
+      // a short packet into the application's transfer.
+      total_bytes = remaining > limit ? (uint16_t)(limit / xfer->max_size * xfer->max_size) : remaining;
+      xfer->dma_chunk = total_bytes;
+    }
+#endif
     num_packets = (uint16_t)tu_div_ceil(total_bytes, xfer->max_size);
     if (num_packets == 0) {
       num_packets = 1; // zero length packet still count as 1
@@ -644,6 +660,7 @@ bool dcd_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint16_t to
     xfer->buffer = buffer;
     xfer->ff = NULL;
     xfer->total_len = total_bytes;
+    xfer->dma_done = xfer->dma_chunk = 0;
     xfer->iso_retry = xfer->interval; // Reset ISO retry counter to interval value
 
     // EP0 can only handle one packet
@@ -680,6 +697,7 @@ bool dcd_edpt_xfer_fifo(uint8_t rhport, uint8_t ep_addr, tu_fifo_t* ff, uint16_t
     xfer->buffer = NULL;
     xfer->ff = ff;
     xfer->total_len = total_bytes;
+    xfer->dma_done = xfer->dma_chunk = 0;
     xfer->iso_retry = xfer->interval; // Reset ISO retry counter to interval value
 
     // Schedule packets to be sent within interrupt
@@ -720,11 +738,11 @@ bool dcd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
   if (dir == TUSB_DIR_IN) dep->diepint = 0xffffffffu;
   else {
     dep->doepint = 0xffffffffu;
-    if (xfer->buffer && xfer->total_len) dcd_dcache_invalidate(xfer->buffer, xfer->total_len);
+    if (xfer->buffer && xfer->dma_chunk) dcd_dcache_invalidate(xfer->buffer, xfer->dma_chunk);
   }
   dep->ctl |= EPCTL_USBAEP;
   xfer->buffer = NULL;
-  xfer->total_len = 0;
+  xfer->total_len = xfer->dma_done = xfer->dma_chunk = 0;
   usbd_spin_unlock(false);
   return true;
 }
@@ -1067,9 +1085,22 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
       } else {
         dwc2_dep_t* epout = &dwc2->epout[epnum];
 
-        // determine actual received bytes
+        // Non-EP0 DMA may require several hardware arms. Invalidate only
+        // this chunk, and stop early on a short packet or ZLP.
         const dwc2_ep_tsize_t tsiz = {.value = epout->tsiz};
         const uint16_t remain = tsiz.xfer_size;
+        if (epnum != 0) {
+          const uint16_t actual = xfer->dma_chunk - remain;
+          dcd_dcache_invalidate(xfer->buffer, actual);
+          xfer->dma_done += actual;
+          if (actual == xfer->dma_chunk && xfer->dma_done < xfer->total_len) {
+            if (xfer->buffer) xfer->buffer += actual;
+            edpt_schedule_packets(rhport, epnum, TUSB_DIR_OUT);
+          } else {
+            dcd_event_xfer_complete(rhport, epnum, xfer->dma_done, XFER_RESULT_SUCCESS, true);
+          }
+          return;
+        }
         xfer->total_len -= remain;
 
         // EP0 invalidates only this (final) chunk's DMA-written bytes: DOEPDMA "is incremented on
@@ -1096,6 +1127,16 @@ static void handle_epin_dma(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepin
   xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, TUSB_DIR_IN);
 
   if (diepint_bm.xfer_complete) {
+    if (epnum != 0) {
+      xfer->dma_done += xfer->dma_chunk;
+      if (xfer->dma_done < xfer->total_len) {
+        if (xfer->buffer) xfer->buffer += xfer->dma_chunk;
+        edpt_schedule_packets(rhport, epnum, TUSB_DIR_IN);
+      } else {
+        dcd_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, xfer->dma_done, XFER_RESULT_SUCCESS, true);
+      }
+      return;
+    }
     if ((epnum == 0) && _dcd_data.ep0_pending[TUSB_DIR_IN]) {
       // EP0 can only handle one packet: advance past the sent bytes, then schedule the next.
       if (xfer->buffer != NULL) {

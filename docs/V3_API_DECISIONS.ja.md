@@ -118,4 +118,16 @@ submission/resultへidを追加し、古い要求が次の借用を取り消さ�
 利点は接続を維持したまま不要な借用を終了できることと、callbackでの安全な再投稿。
 不利益は取消し受理後も返却を待つ必要があること、借用ごとのidとpending状態の保持である。
 S3–S3で20反復、部分転送、即再投稿、旧完了16件、queue満杯、古いidの拒否を確認した。
-取消しとreset/endの競合、P4/S2/S31は未検証。詳細・結果はVendorガイドと引き渡し文書を参照。
+取消しと実bus reset/endの競合も3条件各3回で返却・再接続を確認した。
+P4/S2/S31は未検証。詳細・結果はVendorガイドと引き渡し文書を参照。
+
+## 採用記録: controller能力による内部DMA分割
+
+S3実機で転送上限付近を流し、register型のpacket数幅10 bitと実装幅7 bitの相違によるtimeoutを再現した。
+GHWCFG3の能力に合わせてDCD内のDMA armを分割し、bufferの借用・返却は全体で一回に保つ。
+これにより利用者がS3の8128 byte単位を意識せず、大きなborrowed転送を投稿できる。
+中間armはpacket境界に揃え、short/ZLPを挿入しない。
+不利益はchunkごとのIRQ/cache処理と、暫定DCDのendpoint状態に進行量/chunk長各16 bitを保持する固定費である。
+TX上限照会は65535 byteとなった。RXはMPS/cache専有容量単位で65472 byte。
+既存の上限以下の投稿と通常Printの利用コードは変更不要だが、固定上限を決め打ちした利用は照会値を使う。
+この16 bit上限はTinyUSB adapterの暫定制約であり、独自core/DCDで残す最終仕様ではない。

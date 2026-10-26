@@ -2,7 +2,7 @@
 #include <EspUsbDevice.h>
 #include "esp_heap_caps.h"
 #include <atomic>
-#ifdef ESPUSB_CANCEL_FENCE_FAULT
+#if defined(ESPUSB_CANCEL_FENCE_FAULT) || defined(ESPUSB_CANCEL_LIFECYCLE_FAULT)
 #include "../../../../src/tusb.h"
 #include "../../../../src/device/usbd_pvt.h"
 #include "../../../../src/device/dcd.h"
@@ -77,6 +77,39 @@ void injectCancelFence(void *) {
     faultEvents.store(usbd_event_queue_capacity());
   }
   faultDone.store(true);
+}
+#endif
+
+#ifdef ESPUSB_CANCEL_LIFECYCLE_FAULT
+// Park only the USB worker, never its ISR or a lock. The sketch and Host can
+// arrange a real bus reset or cooperative end while cancellation is pending.
+std::atomic<bool> lifecycleParked{false}, lifecycleRelease{false}, lifecycleTimedOut{false};
+std::atomic<unsigned> lifecycleResets{0};
+unsigned lifecycleResetMark = 0;
+std::atomic<bool> lifecycleEndDone{false};
+std::atomic<int> lifecycleEndResult{-1}, lifecycleTx{-1}, lifecycleRx{-1};
+extern "C" void tud_event_hook_cb(uint8_t, uint32_t event, bool) {
+  if (event == DCD_EVENT_BUS_RESET) lifecycleResets.fetch_add(1);
+}
+void parkLifecycle(void *) {
+  lifecycleParked.store(true);
+  const uint32_t deadline = millis() + 12000;
+  while (!lifecycleRelease.load() && int32_t(deadline - millis()) > 0) delay(1);
+  lifecycleTimedOut.store(!lifecycleRelease.load());
+  lifecycleParked.store(false);
+}
+espusb::internal::TinyUsbRuntimeJob lifecycleParkJob{parkLifecycle, nullptr};
+void cancelThenPark(void *) {
+  lifecycleTx.store(vendor.cancelDirectTx(lastTxId));
+  lifecycleRx.store(vendor.cancelDirectRx(lastRxId));
+  // FIFO jobs: abort runs first and queues its fences, then this job parks the
+  // worker before it can process those fences. end must safely discard them.
+  espusb::internal::postTinyUsbRuntimeJob(lifecycleParkJob);
+}
+void endLifecycle(void *) {
+  lifecycleEndResult.store(device.end());
+  lifecycleEndDone.store(true);
+  vTaskDelete(nullptr);
 }
 #endif
 
@@ -223,6 +256,40 @@ void loop() {
       while ((!faultDone.load() || !faultSaturated.load()) && int32_t(deadline - millis()) > 0) delay(1);
       Serial.printf("FAULT_STATUS events=%u full=%u tx=%d rx=%d\r\n", faultEvents.load(), unsigned(faultSaturated.load()), faultTx.load(), faultRx.load());
 #endif
+#ifdef ESPUSB_CANCEL_LIFECYCLE_FAULT
+    } else if (command == "fault_park" || command == "fault_park_cancelled") {
+      lifecycleRelease.store(false); lifecycleParked.store(false); lifecycleTimedOut.store(false);
+      lifecycleResetMark = lifecycleResets.load();
+      staleTxId = lastTxId; staleRxId = lastRxId;
+      const bool queued = usbd_try_defer_func(command == "fault_park" ? parkLifecycle : cancelThenPark, nullptr);
+      const uint32_t deadline = millis() + 3000;
+      while (queued && !lifecycleParked.load() && int32_t(deadline - millis()) > 0) delay(1);
+      Serial.printf("LIFECYCLE_PARKED %u\r\n", unsigned(queued && lifecycleParked.load()));
+    } else if (command == "fault_reset_release") {
+      const uint32_t deadline = millis() + 5000;
+      while (lifecycleResets.load() == lifecycleResetMark && int32_t(deadline - millis()) > 0) delay(1);
+      const bool reset = lifecycleResets.load() != lifecycleResetMark;
+      const bool parked = lifecycleParked.load() && !lifecycleTimedOut.load();
+      lifecycleRelease.store(true);
+      Serial.printf("LIFECYCLE_RESET observed=%u parked=%u\r\n", unsigned(reset), unsigned(parked));
+    } else if (command == "fault_end_release") {
+      lifecycleEndDone.store(false); lifecycleEndResult.store(-1);
+      const bool parked = lifecycleParked.load() && !lifecycleTimedOut.load();
+      TaskHandle_t task = nullptr;
+      const bool created = xTaskCreate(endLifecycle, "probe-end", 4096, nullptr, 5, &task) == pdPASS;
+      bool stopping = false;
+      const uint32_t deadline = millis() + 5000;
+      while (created && !stopping && int32_t(deadline - millis()) > 0) {
+        stopping = vendor.cancelDirectTx(lastTxId) == ESP_ERR_INVALID_STATE;
+        if (!stopping) delay(1);
+      }
+      lifecycleRelease.store(true);
+      while (created && !lifecycleEndDone.load() && int32_t(deadline - millis()) > 0) delay(1);
+      const bool done = created && lifecycleEndDone.load();
+      if (done && lifecycleEndResult.load() == ESP_OK) started = false;
+      Serial.printf("LIFECYCLE_END parked=%u stopping=%u done=%u error=%d\r\n",
+          unsigned(parked), unsigned(stopping), unsigned(done), lifecycleEndResult.load());
+#endif
     } else if (command == "batch_probe") {
       vendor.flush(); // An empty flush must not arm future writes.
       const uint8_t byte = 1;
@@ -319,7 +386,7 @@ void loop() {
       const auto alignment = vendor.writeDirect(directBuffer + 1, 1);
       const bool alignmentRejected = !alignment && alignment.error == EspUsbTransferError::NotAligned;
       const bool lengthRejected = !vendor.writeDirect(directBuffer, 65536);
-      const auto packets = vendor.writeDirect(directBuffer, 65535);
+      const auto packets = vendor.writeDirect(directBuffer, vendor.maxDirectTransfer() + 1);
       const bool packetsRejected = !packets && packets.error == EspUsbTransferError::BadArgument;
       Serial.printf("DIRECT_INVALID %u max=%u\r\n", unsigned(nullRejected && alignmentRejected && lengthRejected && packetsRejected && completions.load() == before), unsigned(vendor.maxDirectTransfer()));
     } else if (command == "capacities") {
@@ -364,9 +431,15 @@ void loop() {
         Serial.printf("ARMED %u\r\n", unsigned(expected));
       }
     } else if (command == "stop") {
+#ifdef ESPUSB_CANCEL_LIFECYCLE_FAULT
+      lifecycleRelease.store(true);
+#endif
       if (device.end() != ESP_OK) { Serial.println("STOP_FAILED"); return; }
 #ifdef ESPUSB_CANCEL_FENCE_FAULT
       espusb::internal::removeTinyUsbRuntimeJob(faultFillJob);
+#endif
+#ifdef ESPUSB_CANCEL_LIFECYCLE_FAULT
+      espusb::internal::removeTinyUsbRuntimeJob(lifecycleParkJob);
 #endif
       started = false;
       expected = received = 0;

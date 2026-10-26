@@ -113,9 +113,8 @@ struct EspUsbVendorState {
   void transmit() {
     if (stopping || !epIn || txBusy || directBuffer || !flushing || !tx.used) return;
     if (!usbd_edpt_claim(rhport, epIn)) return;
-    // The interim DWC2 adapter has a 10-bit packet count and a 16-bit
-    // software length. Split copied data instead of overflowing either.
-    const size_t n = std::min(tx.used, std::min(size_t(owner.config_.transferBytes), size_t(packetSize) * 1023));
+    // The adapter splits hardware arms internally; its call length is 16-bit.
+    const size_t n = std::min(tx.used, size_t(owner.config_.transferBytes));
     tx.peek(txPacket, n);
     txBusy = true;
     if (usbd_edpt_xfer(rhport, epIn, txPacket, uint16_t(n), false)) tx.drop(n);
@@ -421,7 +420,7 @@ bool EspUsbDeviceVendor::directWriteSupported() { return true; }
 size_t EspUsbDeviceVendor::maxDirectTransfer() const {
   portENTER_CRITICAL(&vendorLock);
   const size_t value = state_ && !state_->stopping && state_->epIn
-      ? std::min(size_t(UINT16_MAX), size_t(state_->packetSize) * 1023) : 0;
+      ? size_t(UINT16_MAX) : 0;
   portEXIT_CRITICAL(&vendorLock);
   return value;
 }
@@ -444,7 +443,6 @@ EspUsbTransferSubmission EspUsbDeviceVendor::writeDirect(const void *buffer, siz
   portENTER_CRITICAL(&vendorLock);
   if (error == EspUsbTransferError::None) {
     if (!state_ || state_->stopping || !state_->epIn) error = EspUsbTransferError::NotMounted;
-    else if (n > size_t(state_->packetSize) * 1023) error = EspUsbTransferError::BadArgument;
     else if (state_->directBuffer || state_->txBusy || state_->tx.used || !usbd_edpt_claim(state_->rhport, state_->epIn))
       error = EspUsbTransferError::Busy;
     else {
@@ -468,7 +466,7 @@ size_t EspUsbDeviceVendor::maxDirectReceive() const {
   portENTER_CRITICAL(&vendorLock);
   size_t value = 0;
   if (state_ && !state_->stopping && state_->epOut && config_.rxMode == EspUsbVendorRxMode::Borrowed) {
-    value = std::min(size_t(UINT16_MAX), size_t(state_->packetSize) * 1023);
+    value = size_t(UINT16_MAX);
     value -= value % std::max(size_t(state_->packetSize), size_t(64));
   }
   portEXIT_CRITICAL(&vendorLock);
@@ -491,7 +489,7 @@ EspUsbTransferSubmission EspUsbDeviceVendor::readDirect(void *buffer, size_t cap
   if (error == EspUsbTransferError::None) {
     if (!state_ || state_->stopping || !state_->epOut) error = EspUsbTransferError::NotMounted;
     else if (config_.rxMode != EspUsbVendorRxMode::Borrowed) error = EspUsbTransferError::NotSupported;
-    else if (capacity % state_->packetSize || capacity > size_t(state_->packetSize) * 1023)
+    else if (capacity % state_->packetSize)
       error = EspUsbTransferError::BadArgument;
     else if (state_->directRxBuffer || state_->rxBusy || !usbd_edpt_claim(state_->rhport, state_->epOut))
       error = EspUsbTransferError::Busy;

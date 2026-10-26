@@ -33,7 +33,9 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 古い完了eventを16件残し、queue満杯でfence予約が失敗する条件を作る。
 取消しcallbackで即再投稿しても旧完了が新しい領域を返さないことを確認する。
 このvariantだけがprivate headerを使う。公開APIの利用例にはしない。
-通常実行は2 testsであり、両caseとも同じS3–S3を順次使い、finallyで両boardを明示停止する。
+`s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
+`s3/transfer_limits`は公開APIだけで大きなborrowed転送のpayload・境界・末尾終端を確認する。
+通常実行は4 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -41,7 +43,7 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`2 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`4 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。

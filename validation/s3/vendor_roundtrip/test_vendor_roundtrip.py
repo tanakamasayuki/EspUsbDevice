@@ -65,7 +65,7 @@ def test_vendor_roundtrip(dut, peers):
         dut.write("start")
         dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
         device.write("direct_invalid")
-        device.expect_exact("DIRECT_INVALID 1 max=65472\r\n", timeout=5)
+        device.expect_exact("DIRECT_INVALID 1 max=65535\r\n", timeout=5)
         device.write("callback_mutation")
         device.expect_exact("CALLBACK_MUTATION_REJECTED 1\r\n", timeout=5)
         for length in (1, 63, 64, 65, 127, 128, 129):

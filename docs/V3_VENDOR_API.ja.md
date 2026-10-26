@@ -30,7 +30,7 @@ callback設定も停止中に行い、各`on*()`の戻り値を確認する。
 | --- | --- |
 | rxCapacity / txCapacity | byte stream ringの容量。packet size、transfer sizeとは別 |
 | rxBuffer / txBuffer | 任意の外部ring領域。nullなら自動確保。非DMA・非alignment領域も可。指定領域はbeginからendまで保持 |
-| transferBytes | copy TXの一回のarm量の上限。実効MPS以上が必要。下位のpacket数上限でさらに分割 |
+| transferBytes | copy TXの一回の投稿量の上限。実効MPS以上が必要。controller内部のDMA armは必要に応じて分割 |
 | autoFlush | trueが標準。短いwriteも送出を進める。falseは明示flushでdrainを開始 |
 | rxMode | Streamはavailable/read、CallbackはonRxData。Callback/BorrowedではrxCapacity=0としRX ringを作らない |
 
@@ -71,8 +71,10 @@ auto submission = vendor.writeDirect(buffer, length,
 ```
 
 一instanceにつき未完borrowed TXは一つ。copy TXが残る場合もBusyとなる。
-上限は`maxDirectTransfer()`で実効接続から照会する。暫定DCDには16bit長と10bit packet数の
-両方の制限があり、S3のMPS64では65472 byte。新DCDへ移す際にこの上限を公開定数として固定しない。
+上限は`maxDirectTransfer()`で実効接続から照会する。暫定adapterの呼出し長は16 bitで、現在のTX上限は65535 byte。
+controllerの実装カウンタ幅は能力レジスタから読み、内部でDMA armを分割する。
+S3実機はpacket数7 bitで、一armの上限はMPS64で8128 byteである。利用者がこの単位に分割する必要はない。
+全体に対して一度だけ返却し、途中にshort/ZLPを挿入しない。新DCDへ移す際に16 bit上限を公開定数として固定しない。
 
 `Continue`はZLPを追加しない。`EndWithShortPacket`はMPS倍数長なら末尾ZLPまで含めて返却する。
 data転送とZLPの間に次の送信が割り込まない。普通のwriteの戻り値とwire完了は区別する。
@@ -114,7 +116,9 @@ event queue満杯では次のworker反復で再試行し、返却まで同方向
 S3で容量変更、非power-of-twoの外部ring、callback RX、複数instance、reset/end返却、
 ZLP、100回開始終了を検証する。DeviceだけのbuildではVendor実装がリンクされないことも確認する。
 他クラスの固定資源はまだ残るため、ライブラリ全体の未使用費用が解決済みとはしない。
-P4 DMA/cache、全資源取得点の故障注入、cancelとreset/endの競合、他クラスへの展開を続ける。
+P4 DMA/cache、全資源取得点の故障注入、他クラスへの展開を続ける。
+cancelとreset/endの競合は、workerを停止した専用実機試験で3条件各3回を確認した。
+取消しjob実行前の実bus reset、job実行前のend、DMA停止後・fence実行前のendが対象である。
 
 ## 投稿式borrowed RXと呼出しごとの結果
 

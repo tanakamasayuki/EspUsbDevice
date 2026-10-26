@@ -62,7 +62,7 @@ uv run --env-file .env pytest -q -rs --junitxml=.pytest-results/s3-vendor.xml
 終了値0だけでは全件skipを合格と区別できない。現時点では今回の結果が1 passedであることを確認する。
 この標準機能の追加はpluginへの依頼候補とし、独自gateを再実装しない。
 
-## 現在の実装と検証
+## Vendor初期実装の検証記録
 
 Vendorを`src/EspUsbDeviceVendor.cpp`へ切り出し、TinyUSB Vendor driverを無効化した。
 instanceごとの容量、外部ring、自動送出/明示flush、callback RX、copyなしTXをAPIで選べる。
@@ -88,11 +88,12 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 ## 次に進める作業
 
-1. 個別cancelとreset/endが競合する場合の返却、再接続、上限長の成功転送を検証する。
-   基本取消し・旧完了event・queue満杯・古い取消しidは下記試験で確認済み。
-2. allocator各取得点での故障注入、callbackからの次転送、部分転送中のresetを新しい試験に追加する。
-3. 共通ring/transfer契約をCDCへ展開し、HIDとの複合で確認する。必要なregistryとdescriptor容量を動的にする。
+1. allocator各取得点の故障注入とrollbackを検証する。巨大RX ringによる失敗は確認済みだが、全取得点の検証ではない。
+2. Vendorのring/transfer契約をCDCへ展開し、HIDとの複合で確認する。
+   runtime容量・callback登録時期・借用転送の意味を揃え、CDCのline coding/stateと通知endpointは固有契約として扱う。
+3. 必要なFunction registryとdescriptor容量を動的にし、固定class上限を外す。
 4. Audioの最小周期経路と併用し、共通設計を見直してから残クラス・EP0/DCDを置換する。
+   16 bitの投稿長も暫定adapterの制約であり、v3の最終上限として固定しない。
 
 Sol Mediumを基本とし、競合・EP0/DCD等の難所だけHighを検討する。
 API変更ごとに利点・不利益、既存利用への影響、移行例、実験結果を更新する。
@@ -130,3 +131,36 @@ Cancelledが一度だけ返ること、取消し直後の送受信、canary、�
 copy write専用の新build probeもcompile成功。nmで`EspUsbDeviceVendor::write`の存在と、
 `cancelDirect*`/`cancelPump`/`dcd_edpt_abort`/`vendord_*`の不在を確認した。
 未使用取消しcodeのリンク除外であり、instance内の状態保持や共通runtimeの固定費までゼロという主張ではない。
+
+## 取消しとreset/endの競合試験
+
+`vendor-cancel-lifecycle.xml`、1 passed、90.00秒。S3–S3で次の3条件を各3回確認した。
+
+- workerを止め、取消し要求後に実際のHost bus resetを発生。DCD ISRがresetをqueueへ入れたことを確認してworkerを再開する。TX/RXともBusResetで一度だけ返却。
+- 取消しjobの実行前にendを要求。停止処理開始後にworkerを再開し、TX/RXともStoppedで返却。
+- DMA停止後、返却fenceの実行前にendを要求。残るfenceを破棄し、TX/RXともStoppedで一度だけ返却。
+
+全条件で64 byte部分転送を入れ、返却後のcanary、同じinstanceで再接続した後の送受信、
+古いidの拒否を確認した。旧workerのqueue/jobが次のbeginへ残らないこともこの範囲で確認した。
+実行variantだけがprivate hookを使う。conftestやpytest hookは追加していない。
+serial原本は`/tmp/pytest-embedded/2026-10-26_04-31-54-532422/test_cancel_lifecycle/`。
+これは全ての競合順序を網羅する主張ではなく、上記で明示した返却前後の条件の結果である。
+
+## DWC2の実カウンタ幅と大きな転送
+
+65408 byteのTXを実際に流すと、4096 byteのHost readが一度成功した後、次のreadがtimeoutした。
+S3実機のGHWCFG3は`0x00c804b5`（転送長16 bit、packet数7 bit）。
+共通register型のpacket数10 bitを実装能力とみなす計算が誤りだった。
+失敗の原本は`/tmp/pytest-embedded/2026-10-26_04-37-25-702985/test_transfer_limits/`。
+
+DMA armを能力レジスタのbyte/packet上限で分割し、中間armでは完了通知を出さないよう修正した。
+RXはchunkごとにcacheをinvalidateし、short/ZLPで早く終わった時だけ途中の合計量で返却する。
+abortも進行中chunkだけをinvalidateし、移動後pointerへ元の全長を適用しない。
+TX上限は暫定adapterの16 bit長から65535 byte、RXはMPS/64単位へ切り下げて65472 byteとなる。
+最初の修正確認は`vendor-transfer-limits.xml`、1 passed、40.02秒。
+その後、8128/16256 byteの分割境界前後、大きな転送後の1 byte送信、
+8192 byteまで部分送受信した後の取消しを追加した。最終結果は下記に記録する。
+
+変更した暫定TinyUSB fileの差分は`third_party/tinyusb/LOCAL_PATCHES.json`へ記録し、
+`python3 tools/verify_tinyusb_vendor.py`で51選択file・15 compiled sourcesの一致を確認した。
+最終的なTinyUSB全置換の方針は変更していない。

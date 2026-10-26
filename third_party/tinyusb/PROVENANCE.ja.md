@@ -70,6 +70,13 @@ patchを適用したものです。`src/tusb_config.h`と
   `wNdbOutDivisor`を両方`4`へ変更（EspUsbDevice issue #3）。既存の送信処理の
   4 byte alignmentと整合し、
   [TinyUSB PR #3914](https://github.com/hathach/tinyusb/pull/3914)の修正を取り込む。
+- v3暫定adapterの追加変更（独自EP0/DCDへの全置換まで使用）:
+  `device/dcd.h`、`device/usbd.c`、`device/usbd_pvt.h`へ、DATA PIDを保持する
+  endpoint abortと非blocking FIFO fence予約を追加。queue満杯を返してworker側で再試行する。
+  `portable/synopsys/dwc2/dcd_dwc2.c`はendpointをSTALLせず停止し、DMA転送をGHWCFG3の
+  実カウンタ幅で分割する。S3のpacket数は7 bitであり、共通register型の10 bitとは異なる。
+  中間armでは完了eventを出さず、OUTのshort/ZLPまたは全体の完了で一度通知する。
+  S3–S3で分割・取消し・reset/end競合を検証し、P4/S2/S31は未検証。
 - upstream pin更新時は置換内容も見直す。置換元が正確に1か所へ一致しなければ
   scriptは失敗する。新しいupstreamに修正が含まれる場合は該当patchを削除する。
 
