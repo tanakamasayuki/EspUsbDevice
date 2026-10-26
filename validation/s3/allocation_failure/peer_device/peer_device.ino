@@ -127,6 +127,7 @@ void loop() {
           if (mode == 26 || mode == 27) ok &= audio->addCaptureStream().addFormat({48000,2,2,16});
           EspUsbAudioConfig notifications; notifications.eventCapacity = mode == 25 ? 0 : 17;
           ok &= audio->configure(notifications) == ESP_OK;
+          points += mode == 27 ? 8 : mode == 26 ? 5 : 6; // State, selected PCM buffers, feedback and class registry.
           if (mode != 25) ++points;
         }
         points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.

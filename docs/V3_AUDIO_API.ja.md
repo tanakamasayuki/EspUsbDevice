@@ -1,8 +1,8 @@
-# v3 Audio: event通知のruntime構成
+# v3 Audio: PCM転送とevent通知のruntime構成
 
-2026-10-27。Audioの独自化に先立ち、固定8件のevent配列を停止中APIへ移した。
-通知を使わなければeventCapacity=0で配列を確保しない。Functionとqueueの管理情報は残る。
-PCMのTinyUSB class/FIFO・global instanceはまだ置き換えておらず、PCM容量をAPI化した段階ではない。
+2026-10-27。Audio classを独自driverへ移し、TinyUSB Audio class/FIFOと単一global instanceを撤去した。
+通知とPCM ringの容量を停止中APIで指定する。Function、control/model、queueの管理情報は残る。
+共通EP0/core/DCDは引き続きTinyUSBを使う。
 
 ```cpp
 EspUsbDevice device;
@@ -13,6 +13,7 @@ void setup() {
   playback.addFormat({48000, 2, 2, 16});
   EspUsbAudioConfig config;
   config.eventCapacity = 0; // No event polling in this application.
+  config.playbackBufferFrames = 256; // 1024 bytes for stereo 16-bit PCM.
   if (audio.configure(config) != ESP_OK) return;
   device.begin();
 }
@@ -36,7 +37,7 @@ configureはInvalidState、addFormatはfalseを返す。streamを返す従来API
 構成を保ち、Device.lastErrorにInvalidStateを設定する。raw descriptor writerも稼働中の再構築を拒否する。
 追加したstream自体や一形式の制約を再整理した段階ではなく、formatを入れ替えるAPIは後続課題。
 
-未登録Audioの手動beginはInvalidStateで拒否し、そのstreamから既存AudioのFIFOへアクセスしない。
+未登録Audioの手動beginはInvalidStateで拒否し、そのstreamから既存Audioのbufferへアクセスしない。
 稼働中のFunction破棄はDeviceを停止し、USB worker/DMAが止まってからevent領域を解放する。
 Audio全体の制御状態とsetMute/setVolumeの同時更新、endとPCM read/writeの同時操作まで
 安全性を証明した変更ではない。これらの所有権は独自の転送/control stateで再整理する。
@@ -59,6 +60,44 @@ JUnit/transcript/serialコピーはvalidation/.pytest-results/audio-events-relat
 不利益は通知有効時の動的確保・管理情報と、queue操作の短いlockである。
 既存の通常のpollEvent呼出し方を維持するが、稼働中のformat追加やFunctionの先行手動beginに依存するコードは移行が必要。
 
-次はUAC1/UAC2の制御・周期転送を独自driverへ移し、選択方向/formatに応じたPCM ring・DMA・feedback資源とする。
-その際にformat一覧、control state、容量上限、callback context、reset/alt-setting/endの所有権も再整理する。
-今回の試験はPCMの連続転送やfeedbackの安定性、OS音声アプリ、P4/S2/S31/HSを証明しない。
+PCM bufferはsample frame数で指定する。1 frameは全channelの1 sampleで、byte数は
+channels × subslotBytes × bufferFrames。24 bit PCMでも容量がframe境界からずれない。
+選択した方向だけにringと最大packet分のDMA bufferを確保し、UAC2 Playbackだけに4 byte feedbackを加える。
+既定は各256 frame。playbackBuffer/captureBufferに外部byte配列を渡せる。必要長は上記byte数で、
+Device.endまで有効に保ちアプリが直接書き換えない。ringはCPU copy用なのでDMA alignmentは不要。
+両方向の実使用領域が重なる指定、pointer/size overflow、外部buffer付きの容量0を拒否する。
+
+容量0ならringを確保しない。Playbackは受信を捨てoverrunへ記録する。
+CaptureはDMA packetを無音で埋めunderrunへ記録する。USB転送に必要なDMA buffer自体は残る。
+capacity()は確保したring byte数、packetCapacity()はselected formatのFS最大packet byte数を返す。
+どちらもbegin前/終了後は0。HSで必要なpacketが小さくても、FS fallback用のDMA容量は確保する。
+
+read/writeはframe境界まで切り下げたbyte数を処理し、戻り値もbyte数。
+Playbackは満杯なら新しいPCMを捨て、未読データを保持する。
+Captureは入る分だけcopyして実数を返す。旧TinyUSB FIFOの上書きに依存したアプリは戻り値を確認する。
+availableForWrite()で空きを確認できる。容量の小さいqueueでも部分frameを保存しない。
+clearBufferはqueueだけを消し、既にarmしたpacketは取り消さない。
+Captureはalt=0で事前充填でき、最初のalt=1で保持する。停止や稼働中のalt再設定ではqueueを消す。
+
+captureの端数sample rateは各USB intervalへ分配し、不足を無音補完する。
+UAC2 feedbackはUSB由来の公称clockをQ16.16で返す。外部codecのclock driftへ追従する
+消費量/clock APIはまだない。この段階のdriverを非同期codecの適応feedback対応とは扱わない。
+periodic転送の完了と再armはUSB workerで行う。アプリのread/writeとは短いcritical sectionで共有する。
+alt変更はまずhardwareをabortし、旧完了eventをFIFO fenceで排出してからbufferを再利用する。
+Device.endはworker/DMA停止後にring、packet、feedback、event配列を解放する。
+
+利点は使う方向と選択formatに応じた確保、build flagなしの容量変更、Functionごとの独立性、
+captureの明示的な部分書込み。不利益はbegin時の確保失敗と、copy/lockの費用、capture戻り値確認が必要な点。
+Device + Function + addStream/addFormat + begin、read/write/pollEventという通常の流れは維持する。
+旧CFG_TUD_AUDIOの有効化と固定buffer flagは拒否する。形式はaddFormatで、queueはconfigureで指定する。
+
+未完の範囲は複数formatのalternate選択、format/control stateの固定配列、外部clock feedback、
+callback/borrowed PCMの所有権API、OS音声アプリ、P4/S2/S31/HSである。
+現在は方向ごとに一形式だけ対応し、worker再armの連続性は実機で評価する。
+
+
+独自PCM driverの関連試験audio-pcm-related.xmlは**3 passed、0 skipped、0 unfinished、145.99秒**。
+PCM・event制御・438取得点の失敗/回復を含み、両board STOPPED、panicなし。
+serial原本は/tmp/pytest-embedded/2026-10-26_18-51-19-326855/、コピーとJUnit/transcriptはvalidation/.pytest-results/audio-pcm-related*。
+Audioのみ/Deviceのみの最小buildとnmも成功し、旧TinyUSB Audioと未使用独自Audioの不在を確認した。
+通常収集は16件。全体の最後の成功はMSC時点の14件であり、今回の関連3件と区別する。

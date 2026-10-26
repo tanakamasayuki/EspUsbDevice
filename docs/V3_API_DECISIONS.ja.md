@@ -292,3 +292,26 @@ multi-producerのslot競合を短いcritical sectionで防ぎ、通知経路で�
 利点は不要通知の配列省略・容量調整・明示的な開始エラー。不利益は有効時の動的確保と短いlock。
 PCM側のTinyUSB class/FIFO/globalは残っており、Audio全置換の完了とは扱わない。
 S3の実USB制御と413取得点の失敗回復は[Audioガイド](V3_AUDIO_API.ja.md)へ記録した。
+
+## Audio PCMのruntime資源
+
+2026-10-27。通知容量に続きTinyUSB Audio class/FIFOを独自driverへ置き換える。
+基本のDevice + Function + stream/format + begin/read/writeは保ち、停止中configureで
+方向別bufferFramesと任意の外部bufferを指定する。frame単位の容量は24 bit PCMでも
+channel一組を分断しないためで、read/write/available/capacityの値は既存のbyte単位に揃える。
+
+選択方向にだけringとselected formatの最大packet分のDMAを確保する。
+容量0はringなしのPlayback破棄/Capture無音とし、転送を支えるDMAの費用は残る。
+UAC2 Playbackだけfeedback領域を持つ。各Functionのstateを分け、単一global instanceを撤去する。
+外部ringはCPU copy用とし、DMA alignmentを利用者に要求しない。
+
+Captureは満杯時に未送信データを上書きせず、入ったbyte数を返す。
+これは旧FIFOに比べデータ保持とbackpressureが明確になる一方、戻り値を無視した利用は移行が必要。
+availableForWriteで空きを調べ、残りはアプリが再投稿する。既にarmしたpacketはclearBufferでは取り消さない。
+alt変更はhardware abortと旧完了eventの排出後に再armする。最初の開始時だけ事前充填を保持する。
+
+周期処理はまずworkerで検証する。S3実測の48 kHz/44.1 kHz stereo 16 bitでは
+1.5秒のcaptureで287232/263892 byteを受信し、payload不正・無音補完は0だった。
+現時点でISR経路を追加する根拠はなく、アプリcallback/borrowed PCMの契約も未導入とする。
+この値は性能比較ではなく、周期転送が継続する実装を選ぶための確認である。
+公称clock feedbackのみで外部codec clockの追従は扱わず、複数formatと固定control/model配列も後続へ残す。

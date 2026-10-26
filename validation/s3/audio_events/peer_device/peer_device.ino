@@ -51,6 +51,23 @@ bool metadata() {
     ok &= local.end() == ESP_OK && !function.eventCapacity();
     ok &= function.configure(config) == ESP_OK && local.begin(identity) && local.end() == ESP_OK;
   }
+  {
+    EspUsbDevice local; EspUsbAudioFunction function(local, EspUsbAudioProtocol::Uac2);
+    auto &input = function.addPlaybackStream(); auto &output = function.addCaptureStream();
+    ok &= input.addFormat({48000,2,2,16}) && output.addFormat({48000,2,2,16});
+    uint8_t buffers[65] = {};
+    EspUsbAudioConfig config; config.eventCapacity = 0;
+    config.playbackBufferFrames = config.captureBufferFrames = 8;
+    config.playbackBuffer = buffers + 1; config.captureBuffer = buffers + 17;
+    EspUsbDeviceConfig identity; identity.startTinyUsb = false;
+    ok &= function.configure(config) == ESP_OK && !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_ARG;
+    config.captureBuffer = buffers + 33;
+    ok &= function.configure(config) == ESP_OK && local.begin(identity);
+    ok &= input.capacity() == 32 && output.capacity() == 32;
+    ok &= local.end() == ESP_OK;
+    config.playbackBufferFrames = SIZE_MAX;
+    ok &= function.configure(config) == ESP_ERR_INVALID_SIZE;
+  }
   return ok && parallelQueue();
 }
 void setup() { Serial.begin(115200); Serial.setTimeout(100); }

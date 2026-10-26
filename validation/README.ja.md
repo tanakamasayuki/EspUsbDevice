@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので15 tests。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので16 tests。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -53,7 +53,7 @@ payload・境界・末尾終端・分割後の取消しを確認する。
 **14 passed、0 skipped、0 unfinished、772.40秒**。全caseで両board STOPPED、panicなし。
 serial原本は`/tmp/pytest-embedded/2026-10-26_17-57-02-044220/`、コピーとtranscriptは
 `.pytest-results/runtime-msc-all-serial/`と`runtime-msc-all-transcript.txt`へ保存した。
-`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/descriptor/registryの413取得点を失敗させて回復を確認する。
+`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/descriptor/registryの438取得点を失敗させて回復を確認する。
 文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
 MIDIのqueue/callback/外部ring/片方向/複数instance、MSCの内部/外部DMA bufferと複数instanceも含む。
 `s3/midi_stream`はevent容量1から、外部ring、callback、片方向、2 MIDI、CDC+Keyboard併用、
@@ -79,8 +79,8 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 `s3/msc_bot`は手動Hostで511/512 byte sectorの各BOT13ケース、不正CBW、reset/Sense/回復、
 隣接sectorのguardと独立2 MSCを確認する。HostのPID同期は公開IDF APIでinterfaceを再取得して行う。
 `s3/audio_events`は任意容量/無効化、overflow、並列producerとUAC2の実Mute制御、稼働中破棄を確認する。
-手順・移行・PCM未置換の範囲は[Audioガイド](../docs/V3_AUDIO_API.ja.md)を参照。
-通常実行は15 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
+手順・移行・PCMの対応範囲は[Audioガイド](../docs/V3_AUDIO_API.ja.md)を参照。
+通常実行は16 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -88,7 +88,7 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`15 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`16 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
@@ -127,3 +127,19 @@ msc_storage/msc_botの手順・Hostの制約・362取得点の失敗/回復は[M
 
 Audio追加後の収集は15件。直近はaudio_events/allocation_failureの関連2件が成功した（77.39秒、413取得点）。
 現在の全15件一括実行済みとはしない。全体の直近成功は上記MSC時点の14件。
+
+
+`s3/audio_stream`はUAC1/UAC2の実PCMを検証する。48 kHz/44.1 kHz stereo 16 bit、
+双方向、小容量Playback、ringなしCapture、外部buffer、停止・再開、無音補完を含む。
+Hostの公開FIFO設定を{64,32,64} linesへ変更し196 byte endpointを収容する。
+EspUsbHost 2.10.1では存在しないOutput方向へのRunning/Feedback統計queryがnull参照となるため、
+選択した方向だけのqueryを呼ぶ。Host libraryへのpatchやpytest hookは使わない。
+`build_probes/audio_only`はring/eventなしCaptureの最小build。
+DeviceのみとAudioのみのbuild/nmで、未使用独自Audioと旧TinyUSB Audio symbolの除外を確認する。
+
+
+独自PCM driverの関連試験audio-pcm-related.xmlは**3 passed、0 skipped、0 unfinished、145.99秒**。
+PCM・event制御・438取得点の失敗/回復を含み、両board STOPPED、panicなし。
+serial原本は/tmp/pytest-embedded/2026-10-26_18-51-19-326855/、コピーとJUnit/transcriptは.pytest-results/audio-pcm-related*。
+Audioのみ/Deviceのみの最小buildとnmも成功し、旧TinyUSB Audioと未使用独自Audioの不在を確認した。
+通常収集は16件。全体の最後の成功はMSC時点の14件であり、今回の関連3件と区別する。

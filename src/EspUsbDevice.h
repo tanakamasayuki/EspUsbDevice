@@ -1515,6 +1515,8 @@ struct EspUsbAudioVolumeRange
   int16_t resolution = 0;
 };
 
+struct EspUsbAudioState;
+namespace espusb { namespace internal { struct AudioTransport; } }
 class EspUsbAudioFunction;
 
 class EspUsbAudioPlaybackStream
@@ -1526,6 +1528,8 @@ public:
   }
   bool addFormat(const EspUsbAudioFormat &format);
   int available() const;
+  size_t capacity() const;
+  size_t packetCapacity() const;
   size_t read(void *data, size_t length);
   bool clearBuffer();
   EspUsbAudioStreamStats stats() const;
@@ -1533,6 +1537,8 @@ public:
 
 private:
   friend class EspUsbAudioFunction;
+  friend struct EspUsbAudioState;
+  friend struct espusb::internal::AudioTransport;
   explicit EspUsbAudioPlaybackStream(EspUsbAudioFunction &function)
       : function_(function) {}
 
@@ -1551,12 +1557,17 @@ public:
   }
   bool addFormat(const EspUsbAudioFormat &format);
   size_t write(const void *data, size_t length);
+  size_t availableForWrite() const;
+  size_t capacity() const;
+  size_t packetCapacity() const;
   bool clearBuffer();
   EspUsbAudioStreamStats stats() const;
   void resetStats();
 
 private:
   friend class EspUsbAudioFunction;
+  friend struct EspUsbAudioState;
+  friend struct espusb::internal::AudioTransport;
   explicit EspUsbAudioCaptureStream(EspUsbAudioFunction &function)
       : function_(function) {}
 
@@ -1570,6 +1581,10 @@ private:
 
 struct EspUsbAudioConfig {
   size_t eventCapacity = 8;
+  size_t playbackBufferFrames = 256;
+  size_t captureBufferFrames = 256;
+  uint8_t *playbackBuffer = nullptr;
+  uint8_t *captureBuffer = nullptr;
 };
 
 class EspUsbAudioFunction : public EspUsbDeviceClass
@@ -1591,6 +1606,7 @@ public:
   size_t eventCapacity() const;
   esp_err_t startError() const override { return startError_; }
   bool begin() override;
+  void prepareToStop() override;
   void end() override;
   bool isHid() const override { return false; }
   bool isAudio() const override { return true; }
@@ -1643,6 +1659,8 @@ public:
   void clearEvents();
 
 private:
+  friend struct EspUsbAudioState;
+  friend struct espusb::internal::AudioTransport;
   friend class EspUsbAudioPlaybackStream;
   friend class EspUsbAudioCaptureStream;
 
@@ -1654,6 +1672,7 @@ private:
   void pushControlEvent(espusb::internal::AudioControlSelector selector,
                         uint8_t entityId, uint8_t channel, int32_t value);
 
+  EspUsbAudioState *state_ = nullptr;
   EspUsbAudioConfig config_;
   esp_err_t startError_ = ESP_OK;
   std::atomic<bool> started_{false};

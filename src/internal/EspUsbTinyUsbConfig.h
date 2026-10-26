@@ -82,29 +82,10 @@
 #define CFG_TUD_CDC 0
 // The remaining legacy classes are compiled in by default. CDC and Vendor
 // use independent drivers, as do HID/MIDI/MSC; these figures describe v2.
-// Every legacy class was enabled so that any sketch could use any class
-// without reconfiguring the library, and each one behind #ifndef so a sketch
-// that knows it will never use a class can drop it from build_opt.h and get
-// the RAM back. TinyUSB allocates each class's buffers statically at file
-// scope, so an unused class costs RAM whether or not a sketch instantiates
-// anything. Measured on an ESP32-S3 with examples/Keyboard, which uses HID
-// alone: CDC-NCM 16,016 bytes, Audio 7,760, MSC 4,096, CDC 2,824, MIDI 1,288,
-// Vendor 1,276, DFU 1,024, Video 512 - about 34 KB, against HID's own 12.
-//
-//   // build_opt.h, for a keyboard that will never be anything else
-//   -DCFG_TUD_NCM=0
-//   -DCFG_TUD_AUDIO=0
-//
-// Turning off a class the sketch actually uses does NOT fail to build, which
-// is the trap here. The Arduino core ships its own TinyUSB, and its archive is
-// on the link line: when this library's copy of a driver is compiled out, the
-// missing symbols resolve against the core's instead. Measured with
-// examples/UsbNetwork and -DCFG_TUD_NCM=0 - it linked, and ncm_epbuf came from
-// libarduino_tinyusb.a rather than from class/net/ncm_device.c.o. The result
-// is a device assembled from two differently configured stacks. So disable
-// only what the sketch is certain never to instantiate, and check the device
-// still enumerates as it should. build_opt.h is library-wide and needs
-// `arduino-cli --clean`.
+// Independent CDC, Vendor, HID, MIDI, MSC and Audio drivers allocate only the
+// resources selected by each Function. Keep their legacy TinyUSB classes off
+// so the Arduino core's archive cannot supply a second class implementation.
+// NCM, Video and DFU still use the legacy class path during this migration.
 #if defined(CFG_TUD_MSC) && CFG_TUD_MSC != 0
 #error "MSC uses runtime resources; do not enable TinyUSB MSC"
 #endif
@@ -120,9 +101,11 @@
 #endif
 #undef CFG_TUD_MIDI
 #define CFG_TUD_MIDI 0
-#ifndef CFG_TUD_AUDIO
-#define CFG_TUD_AUDIO 1
+#if defined(CFG_TUD_AUDIO) && CFG_TUD_AUDIO != 0
+#error "Audio uses runtime resources; do not enable TinyUSB Audio"
 #endif
+#undef CFG_TUD_AUDIO
+#define CFG_TUD_AUDIO 0
 #ifndef CFG_TUD_VENDOR
 #define CFG_TUD_VENDOR 0
 #endif
@@ -191,45 +174,13 @@
 #define CFG_TUD_NCM_IN_NTB_N 3
 #define CFG_TUD_NCM_OUT_NTB_N 2
 
-// These are compile-time capacities, not a fixed Audio Card topology.
-// Descriptor validation will reject formats that exceed the selected bus and
-// controller limits.
-#define CFG_TUD_AUDIO_ENABLE_EP_IN 1
-#define CFG_TUD_AUDIO_ENABLE_EP_OUT 1
-#define CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP 1
-#define CFG_TUD_AUDIO_ENABLE_INTERRUPT_EP 0
-#define CFG_TUD_AUDIO_MAX_N_CHANNELS 2
-#define CFG_TUD_AUDIO_MAX_N_BYTES_PER_SAMPLE 4
-#define CFG_TUD_AUDIO_CTRL_BUF_SZ 128
-
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-#define ESP_USB_TINYUSB_AUDIO_MAX_SAMPLE_RATE 192000
-#define ESP_USB_TINYUSB_AUDIO_SW_PACKETS 8
-#else
-#define ESP_USB_TINYUSB_AUDIO_MAX_SAMPLE_RATE 96000
-#define ESP_USB_TINYUSB_AUDIO_SW_PACKETS 4
+// Audio storage and packet sizes come from the selected runtime formats.
+#if defined(CFG_TUD_AUDIO_CTRL_BUF_SZ) || defined(CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX) || \
+    defined(CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX) || defined(CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ) || \
+    defined(CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ) || defined(ESP_USB_TINYUSB_AUDIO_MAX_SAMPLE_RATE) || \
+    defined(ESP_USB_TINYUSB_AUDIO_SW_PACKETS)
+#error "Audio storage uses EspUsbAudioConfig and selected formats; remove TinyUSB Audio buffer flags"
 #endif
-
-// P4's HS controller may negotiate Full Speed. Compile-time storage therefore
-// covers the largest packet from either negotiated speed; descriptor/runtime
-// validation still decides which rates are legal for the current connection.
-#define ESP_USB_TINYUSB_AUDIO_FS_EP_SIZE                                  \
-  TUD_AUDIO_EP_SIZE(false, 96000,                                        \
-                    CFG_TUD_AUDIO_MAX_N_BYTES_PER_SAMPLE,                 \
-                    CFG_TUD_AUDIO_MAX_N_CHANNELS)
-#define ESP_USB_TINYUSB_AUDIO_HS_EP_SIZE                                  \
-  TUD_AUDIO_EP_SIZE(true, ESP_USB_TINYUSB_AUDIO_MAX_SAMPLE_RATE,          \
-                    CFG_TUD_AUDIO_MAX_N_BYTES_PER_SAMPLE,                 \
-                    CFG_TUD_AUDIO_MAX_N_CHANNELS)
-#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX                                 \
-  (ESP_USB_TINYUSB_AUDIO_FS_EP_SIZE > ESP_USB_TINYUSB_AUDIO_HS_EP_SIZE    \
-       ? ESP_USB_TINYUSB_AUDIO_FS_EP_SIZE                                 \
-       : ESP_USB_TINYUSB_AUDIO_HS_EP_SIZE)
-#define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX
-#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ                             \
-  (ESP_USB_TINYUSB_AUDIO_SW_PACKETS * CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX)
-#define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ                            \
-  (ESP_USB_TINYUSB_AUDIO_SW_PACKETS * CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX)
 
 // UVC payload staging buffer, one per streaming interface, statically
 // allocated. The class driver assembles one payload here - UVC header plus

@@ -473,3 +473,23 @@ API/利点・不利益/原本は[V3_AUDIO_API.ja.md](V3_AUDIO_API.ja.md)を参�
 UAC1/UAC2 control、feedback、captureの端数rate、alt設定変更/reset/endと旧完了eventを揃えて検証する。
 現状はformat/control stateの固定配列と単一形式・single global制約があり、今回のevent変更だけでは解消していない。
 全体収集は15件になった。直近の全体成功はMSC時点の14件（772.40秒）で、今回は関連2件を実行した。
+
+
+## Audio classの独自化
+
+2026-10-27。TinyUSB Audio class/FIFOとsingle globalを撤去した。選択方向とformatの最大packetに応じたDMA、
+方向別runtime ring（frame数・外部buffer・容量0）、UAC1/UAC2 control、capture端数rateと無音補完、
+USB由来の公称feedback、alt変更時のabort/FIFO fenceを実装した。周期処理はworkerで実測し、ISR経路は追加していない。
+Captureは部分書込みの戻り値を使うbackpressureへ変更。clearBufferはarm済みpacketを取り消さない。
+S3 Hostは公開FIFO設定{64,32,64}を使用。EspUsbHost 2.10.1の存在しないOutput方向への統計/Running queryを避ける。
+Device仕様をHost不具合に合わせて変えず、Host libraryも変更していない。
+
+
+独自PCM driverの関連試験audio-pcm-related.xmlは**3 passed、0 skipped、0 unfinished、145.99秒**。
+PCM・event制御・438取得点の失敗/回復を含み、両board STOPPED、panicなし。
+serial原本は/tmp/pytest-embedded/2026-10-26_18-51-19-326855/、コピーとJUnit/transcriptはvalidation/.pytest-results/audio-pcm-related*。
+Audioのみ/Deviceのみの最小buildとnmも成功し、旧TinyUSB Audioと未使用独自Audioの不在を確認した。
+通常収集は16件。全体の最後の成功はMSC時点の14件であり、今回の関連3件と区別する。
+
+次は全16件の一括確認と、残るclass/core/DCDの独自化へ進む。Audioの複数format、固定model/control配列、
+外部codec clock feedback、borrowed/callback PCM API、他OS/SoC/HSは未完。詳細はV3_AUDIO_API.ja.md。
