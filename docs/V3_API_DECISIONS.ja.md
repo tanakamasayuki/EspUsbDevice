@@ -131,3 +131,6 @@ GHWCFG3の能力に合わせてDCD内のDMA armを分割し、bufferの借用・
 TX上限照会は65535 byteとなった。RXはMPS/cache専有容量単位で65472 byte。
 既存の上限以下の投稿と通常Printの利用コードは変更不要だが、固定上限を決め打ちした利用は照会値を使う。
 この16 bit上限はTinyUSB adapterの暫定制約であり、独自core/DCDで残す最終仕様ではない。
+
+この修正後、標準入口のS3–S3全4 testsが成功（230.70秒）。
+大きな転送のcaseで53件の返却、他caseで旧完了event/queue満杯、reset/end競合、通常copy/borrowed経路も確認した。

@@ -34,7 +34,9 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 取消しcallbackで即再投稿しても旧完了が新しい領域を返さないことを確認する。
 このvariantだけがprivate headerを使う。公開APIの利用例にはしない。
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
-`s3/transfer_limits`は公開APIだけで大きなborrowed転送のpayload・境界・末尾終端を確認する。
+`s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
+payload・境界・末尾終端・分割後の取消しを確認する。
+最新の全実行は`vendor-segmented-all.xml`、4 passed、230.70秒。
 通常実行は4 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補

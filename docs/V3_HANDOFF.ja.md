@@ -164,3 +164,10 @@ TX上限は暫定adapterの16 bit長から65535 byte、RXはMPS/64単位へ切�
 変更した暫定TinyUSB fileの差分は`third_party/tinyusb/LOCAL_PATCHES.json`へ記録し、
 `python3 tools/verify_tinyusb_vendor.py`で51選択file・15 compiled sourcesの一致を確認した。
 最終的なTinyUSB全置換の方針は変更していない。
+
+最終実行: `vendor-segmented-all.xml`、**4 passed、0 skipped、230.70秒**。
+`cancel_fence`、`cancel_lifecycle`、`transfer_limits`、`vendor_roundtrip`を標準入口で順次実行し、
+全caseで両boardのSTOPPEDとpanicなしを確認した。大きな転送のcaseは53件の返却を検証した。
+全serial原本は`/tmp/pytest-embedded/2026-10-26_04-40-58-232822/`。
+JUnit、transcript、serialコピー、初回の失敗ログは`validation/.pytest-results/`に保存した。
+これはS3–S3のVendor経路の結果であり、CDC等の置換やv3全体の完了を意味しない。
