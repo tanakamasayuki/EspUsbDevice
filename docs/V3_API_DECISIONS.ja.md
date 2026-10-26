@@ -233,3 +233,18 @@ Keyboard/Vendor HIDのcallback登録とNKRO設定をesp_err_t返却の停止中A
 不利益はGET_REPORT/idleを支える保存・応答領域分のRAMである。定義しないOutput/Featureの領域は確保しない。
 2 IDの独立状態、200回の並行読出し、20/100 ms指定の周期、停止とreset、boot/NKRO/MouseをS3で確認した。
 実測と未検証の範囲は[V3_HID_API.ja.md](V3_HID_API.ja.md)を参照する。
+
+
+## 採用記録: MIDIをevent単位のruntime構成へ
+
+readPacket/writePacketとnote等のhelperを維持し、cable数、event queue容量、転送単位、
+外部ring、Queue/Callback/Disabledを停止中APIへ移した。TinyUSB MIDI classと固定FIFOは無効にする。
+共通bulkを使う複数instanceにし、4 byte eventの検証とcopy受理を同じlock内で行う。
+MPS未満のringも一つのDMA packetに残りを保持して取りこぼさず読み出せるようにした。
+
+利点は再ビルドなしの構成変更、不要方向の大きな領域省略、typed callback、複数MIDIと他Functionの併用。
+不利益はbegin時の確保、小さいringでの小分けcopy、availableがring容量を超える場合があること。
+不正cable数をclampせず拒否し、予約CINと範囲外cableのeventを排除するため、従来これらを送った利用者は修正が必要。
+TinyUSB直接呼出しとCFG_TUD_MIDI_*設定もpacket API/configへ移行する。
+HS/他SoC/OS音楽アプリの相互接続とMIDI 2.0は今回の検証範囲外。
+実通信、並行終了、313取得点の失敗回復と移行は[MIDIガイド](V3_MIDI_API.ja.md)を参照する。

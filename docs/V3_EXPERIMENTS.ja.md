@@ -31,7 +31,7 @@ profile / 実機 / negotiated speed:
 - S3–S3のVendor往復を1/63/64/65/127/128/129 byteで確認する。開始・停止はtest本文で明示する。
 - plugin 1.10.0の標準`arduino_combos`・port・lock・dut/peersを使用し、`--combo all`で実行する。
   現在はS3–S3一組だけ。通信assertionをretry/skipで隠さない。
-- 現在は10ケースなので、今回10 passedであることとJUnitを確認する。終了値0だけでは全件skipを区別できない。
+- 現在は11ケースなので、今回11 passedであることとJUnitを確認する。終了値0だけでは全件skipを区別できない。
 - pluginは組合せ単位のログ・結果とcleanup失敗後の中断を提供する。
   必須case監査・serial監査など不足が必要になったらpluginへの追加候補として整理する。
   独自conftestを別のファイルへ移して使い続けない。

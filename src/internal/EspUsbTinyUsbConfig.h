@@ -114,9 +114,11 @@
 #endif
 #undef CFG_TUD_HID
 #define CFG_TUD_HID 0
-#ifndef CFG_TUD_MIDI
-#define CFG_TUD_MIDI 1
+#if defined(CFG_TUD_MIDI) && CFG_TUD_MIDI != 0
+#error "MIDI uses runtime instance resources; do not enable TinyUSB MIDI"
 #endif
+#undef CFG_TUD_MIDI
+#define CFG_TUD_MIDI 0
 #ifndef CFG_TUD_AUDIO
 #define CFG_TUD_AUDIO 1
 #endif
@@ -152,20 +154,8 @@
 #define CFG_TUD_DFU_RUNTIME 1
 #endif
 
-// Class buffer sizes. Every one of these is behind #ifndef so a sketch can
-// raise it from build_opt.h (-DCFG_TUD_MIDI_TX_BUFSIZE=8192) without copying
-// the library: the flag reaches the library's own translation units because
-// Arduino puts build_opt.h on the command line for the whole build. That is the
-// one thing the core's precompiled TinyUSB cannot offer - its sizes are baked
-// into the shipped sdkconfig - so leaving them unguarded here threw away the
-// only lever this library has.
-//
-// The ceiling is 32768 for every tu_fifo-backed buffer, not a matter of RAM:
-// tu_edpt_stream_init() takes the size as uint16_t, and tu_fifo keeps its read
-// and write indices in the range [0, 2*depth) with uint16_t indices. 65536
-// truncates to a depth of 0 - the device still reports usb_ready but never
-// mounts - and anything above 32768 overflows the index space. The #error below
-// turns both into a build failure instead of a device that enumerates wrong.
+// Remaining legacy class buffers. CDC, Vendor, HID and MIDI use independent
+// runtime resources; these knobs disappear as the other classes are replaced.
 #ifndef CFG_TUD_MSC_EP_BUFSIZE
 #define CFG_TUD_MSC_EP_BUFSIZE 4096
 #endif
@@ -186,14 +176,9 @@
 #if defined(CFG_TUD_HID_EP_BUFSIZE) || defined(CFG_TUD_HID_BUFSIZE)
 #error "HID storage is derived from report descriptors; remove TinyUSB HID build flags"
 #endif
-#ifndef CFG_TUD_MIDI_RX_BUFSIZE
-#define CFG_TUD_MIDI_RX_BUFSIZE 512
-#endif
-#ifndef CFG_TUD_MIDI_TX_BUFSIZE
-#define CFG_TUD_MIDI_TX_BUFSIZE 512
-#endif
-#if CFG_TUD_MIDI_RX_BUFSIZE > 32768 || CFG_TUD_MIDI_TX_BUFSIZE > 32768
-#error "tu_fifo indices are uint16_t over [0, 2*depth): class FIFOs cannot exceed 32768 bytes"
+#if defined(CFG_TUD_MIDI_RX_BUFSIZE) || defined(CFG_TUD_MIDI_TX_BUFSIZE) || \
+    defined(CFG_TUD_MIDI_RX_EPSIZE) || defined(CFG_TUD_MIDI_TX_EPSIZE) || defined(CFG_TUD_MIDI_EP_BUFSIZE)
+#error "MIDI packet buffers use EspUsbMidiConfig; remove TinyUSB MIDI build flags"
 #endif
 
 // TinyUSB defaults both NCM NTB pools to 1, which leaves the transmitter with a

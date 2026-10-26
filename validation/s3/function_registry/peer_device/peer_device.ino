@@ -111,11 +111,17 @@ void loop() {
   } else if (command == "active_reject") {
     auto *cdc = new EspUsbDeviceCdcSerial(device);
     bool rejected = device.lastError() == ESP_ERR_INVALID_STATE;
+    rejected &= !cdc->begin() && static_cast<EspUsbDeviceClass *>(cdc)->startError() == ESP_ERR_INVALID_STATE;
     delete cdc;
     rejected &= device.ready();
     auto *vendor = new EspUsbDeviceVendor(device);
     rejected &= device.lastError() == ESP_ERR_INVALID_STATE;
+    rejected &= !vendor->begin() && static_cast<EspUsbDeviceClass *>(vendor)->startError() == ESP_ERR_INVALID_STATE;
     delete vendor;
+    rejected &= device.ready();
+    auto *midi = new EspUsbDeviceMidi(device);
+    rejected &= !midi->begin() && midi->startError() == ESP_ERR_INVALID_STATE;
+    delete midi;
     rejected &= device.ready();
     auto *hid = new PreferredHid(device, 5);
     rejected &= device.lastError() == ESP_ERR_INVALID_STATE;

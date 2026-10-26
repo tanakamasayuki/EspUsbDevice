@@ -5,7 +5,7 @@ def test_allocation_failure(dut, peers):
     device = peers["device"]
     try:
         device.write("faults")
-        result = device.expect(r"FAULTS ok=1 failed=200 recovered=200 before=(\d+) after=(\d+)\r\n", timeout=60)
+        result = device.expect(r"FAULTS ok=1 failed=313 recovered=313 before=(\d+) after=(\d+)\r\n", timeout=60)
         assert result.group(1) == result.group(2), "heap leaked across failure/recovery"
         # A final real exchange proves the recovered registry still enumerates.
         device.write("start")

@@ -5,7 +5,7 @@ def test_vendor_roundtrip(dut, peers):
     device = peers["device"]
     try:
         # Reconfigure the same binary, including small -> large -> small.
-        for rx, tx, transfer, automatic in ((64, 64, 64, 1), (2048, 4096, 256, 1), (97, 131, 128, 1),
+        for rx, tx, transfer, automatic in ((1, 1, 1, 1), (64, 64, 64, 1), (2048, 4096, 256, 1), (97, 131, 128, 1),
                                             (64, 128, 64, 0), (64, 64, 64, 1), (97, 131, 128, 1)):
             device.write(f"configure {rx} {tx} {transfer} {automatic}")
             device.expect_exact(f"CONFIG_RESULT 0 rx={rx} tx={tx}\r\n", timeout=5)

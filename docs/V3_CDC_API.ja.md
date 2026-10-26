@@ -2,6 +2,7 @@
 
 2026-10-26。CDC-ACMのクラス処理を独自実装へ移し、TinyUSB CDCを無効化した。
 VendorとCDCは`EspUsbDeviceBulkStream`のring、DMA、借用・返却、取消しを共有する。
+MIDIも同じcopy転送を使うが、公開APIは4 byte event単位とし、byte streamや借用転送を直接使わせない。
 共通EP0、device state、DWC2は引き続き暫定TinyUSB adapterである。
 
 ## 普通の利用
@@ -31,6 +32,8 @@ DeviceとFunctionを作り、設定してbegin、read/write/Print、endという
 configureとcallback登録は停止中だけ成功する。容量はinstance単位で、end→configure→beginで変更する。
 開始失敗時はdevice.lastError()を確認する。再開のためにbuild_opt.hやclean rebuildを使わない。
 設定の意味とborrowed転送の返却契約は[Vendorガイド](V3_VENDOR_API.ja.md)と共通である。
+copy RX/TXのringとtransferBytesは1 byteから指定でき、RXの一packetの残りを保持して小さいringでも欠落を防ぐ。
+availableにはこの保留分も含む。DMA packetの容量とringの容量は別である。
 
 | API/設定 | 意味 |
 | --- | --- |

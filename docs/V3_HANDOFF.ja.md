@@ -90,7 +90,7 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 1. legacy classの固定資源とruntime/APIの制限を整理する。
    Function registry、configuration/HID report/BOS/MS OSと文字列/URLの固定領域は下記で撤去済み。
-   HID classとGET_REPORT/idleは独自化済み。期限近傍と未完IN中のprotocol変更、OS互換性の追加検証は残る。
+   HID classとGET_REPORT/idle、MIDI classのpacket転送は独自化済み。期限近傍と未完IN中のprotocol変更、OS互換性の追加検証は残る。
 2. CDCのcontrol要求、通知、reset/endと借用取消しの組合せを必要範囲で拡張する。
    Vendor/CDCの共通転送と基本controlは下記で実装・検証済みだが、全OS/control要求の網羅ではない。
 3. Audioの最小周期経路と併用して共通設計を見直し、HIDの残制御と残クラスを独自化する。
@@ -382,3 +382,30 @@ Keyboard/Vendorのcallback設定とNKRO設定はesp_err_t・停止中に統一�
 全caseで両board STOPPED、panicなし。serial原本は`/tmp/pytest-embedded/2026-10-26_13-02-08-326097/`、
 JUnit/transcript/serialコピーは`validation/.pytest-results/hid-report-idle-all*`。
 TinyUSB tree照合は51 file / 15 sourcesで一致し、旧test/sampleはmainと同一のまま。
+
+
+## MIDI classの独自化と最小event queue
+
+`EspUsbDeviceMidi.cpp`へ分離し、CFG_TUD_MIDI=0、単一global instanceとtud_midi_*呼出しを撤去した。
+共通bulk上で4 byte eventを保ち、runtime cable/queue/transfer設定、外部ring、typed callback、片方向を扱う。
+既存helperは維持する。無効cable数と予約CINを拒否する変更の利点/移行は[V3_MIDI_API.ja.md](V3_MIDI_API.ja.md)へ記録した。
+
+bulkのRXはDMA packet内の未読部分を保持するため、ring容量1でも完全packetを失わず順次読める。
+byte streamにも適用し、available分を一度に読む場合も残りを取り出す。
+MIDIのTX検証はbulk lock内で行い、送信中endと終了後の停止中設定を分離する。
+未登録CDC/Vendor/MIDIの手動beginもInvalidStateで拒否し、既存通信を壊さない。
+
+標準`--combo all`の`runtime-midi-all.xml`は**11 passed、0 skipped、0 unfinished、586.92秒**。
+その後のlock整理、非対称cable/全helper/並行end試験追加後、関連3件の
+`midi-stream-final.xml`は**3 passed、0 skipped、0 unfinished、192.03秒**。
+失敗注入は313取得点の失敗/回復を確認。各実行の全caseで両board STOPPED、panicなし。
+serial原本はそれぞれ`/tmp/pytest-embedded/2026-10-26_13-53-51-584234/`と
+`/tmp/pytest-embedded/2026-10-26_14-12-20-431884/`、コピーとtranscript/JUnitは`.pytest-results/`。
+
+plugin 1.10.0のcomboガイドも再確認した。結線済み組の列挙と`--combo all`を継続し、
+conftestや独自hookは追加していない。既存test/sampleは設計対象に含めない。
+残るAudio/MSC/NCM/Video/DFU等のclass、共通EP0/core/DCDのTinyUSB依存は別作業である。
+
+Device-only/Vendor-copy/CDC-copy/MIDI-packetの4最小buildとnm確認も成功した。
+MIDI未使用ならEspUsbDeviceMidiはリンクされず、全4件ともTinyUSB CDC/Vendor/HID/MIDIと未使用取消しを含まない。
+TinyUSB tree照合は51 file / 15 compiled sourcesで一致。mainはv3の祖先で、旧tests/examplesへの差分はない。

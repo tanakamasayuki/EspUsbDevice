@@ -31,7 +31,7 @@ callback設定も停止中に行い、各`on*()`の戻り値を確認する。
 | --- | --- |
 | rxCapacity / txCapacity | byte stream ringの容量。packet size、transfer sizeとは別 |
 | rxBuffer / txBuffer | 任意の外部ring領域。nullなら自動確保。非DMA・非alignment領域も可。指定領域はbeginからendまで保持 |
-| transferBytes | copy TXの一回の投稿量の上限。実効MPS以上が必要。controller内部のDMA armは必要に応じて分割 |
+| transferBytes | copy TXの一回の投稿量の上限。1 byteから指定でき、controller内部のDMA armは必要に応じて分割 |
 | autoFlush | trueが標準。短いwriteも送出を進める。falseは明示flushでdrainを開始 |
 | streamTermination | FunctionDefaultはVendorでContinue。EndWithShortPacketならcopy送出の末尾も必要に応じZLPで終端 |
 | rxMode | Streamはavailable/read、CallbackはonRxData。Callback/BorrowedではrxCapacity=0としRX ringを作らない |
@@ -40,6 +40,11 @@ TX容量0ではcopy用ringとTX stagingを作らず、borrowed送信だけを使
 外部ringはライブラリでfreeしない。領域の大きさと寿命は利用者の責務で、RX/TXの重複領域は拒否する。
 `configuration()`は要求設定、`readCapacity()/writeCapacity()`は実際の確保量で開始前・終了後は0。
 無効な大きさを黙って縮めない。確保失敗は`device.lastError()`のNoMemoryで識別できる。
+
+copy RX ringもMPS未満を指定できる。入りきらない一packetの残りは既存DMA領域に保持し、
+readがringと保留分を読み出す。全部消費するまで次をarmせず、上書きしない。
+availableは保留分を含むためreadCapacityを超える場合がある。readCapacityはring自体の確保量である。
+MIDIと共通化した転送層で、RX/TX/transfer各1 byteのVendor往復も確認した。
 
 ## 普通のwriteとまとめ書き
 

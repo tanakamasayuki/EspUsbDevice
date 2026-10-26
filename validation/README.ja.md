@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので10 tests。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので11 tests。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -49,12 +49,19 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
-最新の全実行はplugin 1.10.0の`--combo all`による`hid-report-idle-all.xml`、
-10 passed、0 skipped、0 unfinished、520.13秒。全caseで両board STOPPED、panicなし。
-構成IDを含むserial原本は`/tmp/pytest-embedded/2026-10-26_13-02-08-326097/`、
-コピーとtranscriptは`.pytest-results/hid-report-idle-all-serial/`と`hid-report-idle-all-transcript.txt`へ保存した。
-`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/descriptor/registryの200取得点を失敗させて回復を確認する。
-文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stackも含む。
+最新の全実行はplugin 1.10.0の`--combo all`による`runtime-midi-all.xml`、
+11 passed、0 skipped、0 unfinished、586.92秒。最後のMIDI修正後の関連3試験も
+`midi-stream-final.xml`で3 passed、0 skipped、0 unfinished、192.03秒。
+両実行とも全caseで両board STOPPED、panicなし。
+serial原本は全11件が`/tmp/pytest-embedded/2026-10-26_13-53-51-584234/`、
+最終3件が`/tmp/pytest-embedded/2026-10-26_14-12-20-431884/`。
+コピーとtranscriptは`.pytest-results/`内の同じartifact名で保存した。
+`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/descriptor/registryの313取得点を失敗させて回復を確認する。
+文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
+MIDIのqueue/callback/外部ring/片方向/複数instanceも含む。
+`s3/midi_stream`はevent容量1から、外部ring、callback、片方向、2 MIDI、CDC+Keyboard併用、
+manual flush、IN16/OUT1、全helperとSysEx/realtime、誤event除外、並行200 event、送信中endと停止後設定を確認する。
+[MIDI API](../docs/V3_MIDI_API.ja.md)を参照。
 `s3/cdc_stream`は2 CDCのruntime容量・line coding・borrowedと、CDC+Vendor+HIDの構成を検証する。
 `s3/function_registry`は7/8 Function、登録変更、名前、identity、heap回復と7 HID reportの実通信を確認する。
 251 Functionの長い名前とstring index 255、252 Functionの拒否もdescriptor-onlyで確認する。
@@ -67,7 +74,7 @@ UTF-8の日本語/絵文字、長さ境界と不正入力、254 byte文字列/25
 InputのGET_REPORT、Mouseのboot/report切替、relative値をzeroへ戻したidle再送も確認する。
 `s3/hid_report_state`は2 IDのInput/Output/Feature snapshot、アプリからのFeature更新、
 並行更新中の200 GET_REPORT、ID別idleと停止、resetでの状態/Feature保持を確認する。
-通常実行は10 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
+通常実行は11 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -75,7 +82,7 @@ InputのGET_REPORT、Mouseのboot/report切替、relative値をzeroへ戻したi
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`10 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`11 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
@@ -98,5 +105,8 @@ arduino-cli compile --profile s3_device --build-path build/s3_device .
 同じcompile方法で、未使用の`cancelDirect*`/`cancelPump`/`dcd_edpt_abort`がリンクされないことを確認する。
 
 `build_probes/cdc_copy`はCDCのコピー送信だけを使う。Vendor copyと相互に固有処理が
-リンクされず、どちらも未使用取消しとTinyUSB CDC/Vendor/HIDを含まないことをnmで確認する。
-3 probeともHID未使用なので、独自EspUsbHidFunction/EspUsbHidStateもリンクされない。
+リンクされず、どちらも未使用取消しとTinyUSB CDC/Vendor/HID/MIDIを含まないことをnmで確認する。
+4 probeともHID未使用なので、独自EspUsbHidFunction/EspUsbHidStateもリンクされない。
+
+`build_probes/midi_packet`はMIDI helperの送信だけを使い、CDC/Vendor/HID固有処理と未使用取消しを含まないことを確認する。
+MIDI未使用の他3 probeにはEspUsbDeviceMidiもリンクされない。

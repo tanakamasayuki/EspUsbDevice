@@ -1054,6 +1054,12 @@ public:
 
 protected:
   explicit EspUsbDeviceBulkStream(EspUsbDevice &device, uint16_t endpointSize = 64);
+  // Protocol framing hooks. Called under the transport lock; never invoke user
+  // callbacks here. The filter may compact valid bytes, returning at most n.
+  virtual size_t bulkPacketUnit() const { return 1; }
+  virtual size_t filterBulkRx(uint8_t *, size_t n) { return n; }
+  virtual bool validateBulkTx(const uint8_t *, size_t) const { return true; }
+  size_t copyTransferCapacity() const;
   virtual uint16_t openBulkInterface(uint8_t port, const uint8_t *descriptor, uint16_t length,
       uint8_t &in, uint8_t &out, uint16_t &mps) = 0;
   bool openBulkPair(uint8_t port, const uint8_t *endpoints, uint8_t &in, uint8_t &out, uint16_t &mps);
@@ -1326,14 +1332,31 @@ private:
   std::atomic<uint8_t> lastMessageType_{0};
 };
 
-class EspUsbDeviceMidi : public EspUsbDeviceClass
+enum class EspUsbMidiRxMode : uint8_t { Queue, Callback, Disabled };
+struct EspUsbMidiConfig
+{
+  uint8_t inCables = 1, outCables = 1;
+  const char *name = nullptr;
+  size_t rxPackets = 128;
+  size_t txPackets = 128;
+  // 0 chooses one bus packet for the selected controller. A nonzero value
+  // selects complete MIDI events per copied submission, including values < MPS.
+  size_t transferPackets = 0;
+  EspUsbMidiRxMode rxMode = EspUsbMidiRxMode::Queue;
+  bool autoFlush = true;
+  EspUsbStreamTermination streamTermination = EspUsbStreamTermination::FunctionDefault;
+  EspUsbDeviceMidiPacket *rxBuffer = nullptr;
+  EspUsbDeviceMidiPacket *txBuffer = nullptr;
+};
+
+class EspUsbDeviceMidi : public EspUsbDeviceBulkStream
 {
 public:
   // USB MIDI 1.0 addresses cables with a 4-bit field, so one interface carries
   // at most 16.
   static constexpr uint8_t MAX_CABLES = 16;
 
-  // cableCount is clamped to 1..MAX_CABLES. Each cable appears to the host as a
+  // cableCount must be in 1..MAX_CABLES. Each cable appears to the host as a
   // separate MIDI port; they all share one pair of bulk endpoints, multiplexed
   // by the cable number in each packet header.
   explicit EspUsbDeviceMidi(EspUsbDevice &device, uint8_t cableCount = 1);
@@ -1346,7 +1369,17 @@ public:
   ~EspUsbDeviceMidi() override;
 
   bool begin() override;
-  void end() override;
+  using EspUsbDeviceBulkStream::startError;
+  esp_err_t configure(const EspUsbMidiConfig &config);
+  const EspUsbMidiConfig &configuration() const { return midiConfig_; }
+  using PacketCallback = std::function<void(const EspUsbDeviceMidiPacket &)>;
+  esp_err_t onPacket(PacketCallback callback);
+  size_t availablePackets();
+  size_t availableForWritePackets() const;
+  size_t receiveCapacity() const;
+  size_t sendCapacity() const;
+  size_t transferCapacity() const;
+  uint32_t receiveErrors() const { return receiveErrors_.load(std::memory_order_relaxed); }
   bool isHid() const override { return false; }
   bool isMidi() const override { return true; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
@@ -1358,8 +1391,10 @@ public:
   uint8_t endpointCount() const override { return 1; }
 
   // Cables this device sends on / receives on, host-view as above.
-  uint8_t inCableCount() const { return inCableCount_; }
-  uint8_t outCableCount() const { return outCableCount_; }
+  uint8_t inCableCount() const { return midiConfig_.inCables; }
+  uint8_t outCableCount() const { return midiConfig_.outCables; }
+  const char *functionName() const override { return midiConfig_.name; }
+  void assignFunctionIds(uint8_t, uint8_t stringIndex) override { stringIndex_ = stringIndex; }
   // Bytes configurationDescriptor() will write, so callers can size a buffer
   // before asking for the descriptor.
   uint16_t descriptorLength() const;
@@ -1378,12 +1413,42 @@ public:
   bool pitchBend(uint8_t channel, uint16_t value, uint8_t cable = 0);
 
 private:
+  // The public MIDI API deals in complete events. The shared byte transport
+  // remains an implementation detail; even a Print upcast cannot split events.
+  size_t write(uint8_t) override { return 0; }
+  size_t write(const uint8_t *, size_t) override;
+  using EspUsbDeviceBulkStream::read;
+  using EspUsbDeviceBulkStream::available;
+  using EspUsbDeviceBulkStream::writeAvailable;
+  using EspUsbDeviceBulkStream::readCapacity;
+  using EspUsbDeviceBulkStream::writeCapacity;
+  using EspUsbDeviceBulkStream::waitWritable;
+  using EspUsbDeviceBulkStream::onRx;
+  using EspUsbDeviceBulkStream::onRxData;
+  using EspUsbDeviceBulkStream::onTxComplete;
+  using EspUsbDeviceBulkStream::writeDirect;
+  using EspUsbDeviceBulkStream::readDirect;
+  using EspUsbDeviceBulkStream::onDirectTxComplete;
+  using EspUsbDeviceBulkStream::onDirectRxComplete;
+  using EspUsbDeviceBulkStream::cancelDirectTx;
+  using EspUsbDeviceBulkStream::cancelDirectRx;
+  using Print::print;
+  using Print::println;
+  using Print::printf;
+  size_t bulkPacketUnit() const override { return 4; }
+  size_t filterBulkRx(uint8_t *, size_t) override;
+  bool validateBulkTx(const uint8_t *, size_t) const override;
+  bool defaultStreamTermination() const override { return true; }
+  uint16_t openBulkInterface(uint8_t, const uint8_t *, uint16_t,
+      uint8_t &, uint8_t &, uint16_t &) override;
+  EspUsbMidiConfig midiConfig_;
+  PacketCallback packetCallback_;
+  std::atomic<uint32_t> receiveErrors_{0};
   static uint8_t status(uint8_t codeIndex, uint8_t channel);
   static uint8_t clamp7(uint8_t value);
   static uint8_t header(uint8_t codeIndex, uint8_t cable);
 
-  uint8_t inCableCount_ = 1;
-  uint8_t outCableCount_ = 1;
+  uint8_t stringIndex_ = 0;
 };
 
 struct EspUsbAudioFormat
