@@ -1235,18 +1235,38 @@ bool EspUsbDevice::buildStringDescriptors()
 {
   bool network = false;
   for (size_t i = 0; i < classCount_; ++i) network |= classAt(i)->isNet();
+  const size_t nameEnd = FIRST_FUNCTION_STRING_INDEX + classCount_;
+  size_t stringEnd = nameEnd;
+  for (size_t i = 0; i < classCount_; ++i) {
+    const size_t count = classAt(i)->auxiliaryStringCount();
+    if (count > 256 - stringEnd) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+    stringEnd += count;
+  }
   const auto source = [&](size_t index) -> const char * {
     if (index == 1) return config_.manufacturer;
     if (index == 2) return config_.product;
     if (index == 3) return config_.serialNumber;
     if (index == 4) return network ? g_netMacString : nullptr;
-    const char *name = classAt(index - FIRST_FUNCTION_STRING_INDEX)->functionName();
-    return name && *name ? name : nullptr;
+    if (index < nameEnd) {
+      const char *name = classAt(index - FIRST_FUNCTION_STRING_INDEX)->functionName();
+      return name && *name ? name : nullptr;
+    }
+    size_t offset = nameEnd;
+    for (size_t i = 0; i < classCount_; ++i) {
+      const size_t count = classAt(i)->auxiliaryStringCount();
+      if (count > 256 - offset) return nullptr;
+      if (index - offset < count) return classAt(i)->auxiliaryString(index - offset);
+      offset += count;
+    }
+    return nullptr;
   };
   size_t slots = 0, words = 0;
-  for (size_t i = 1; i < FIRST_FUNCTION_STRING_INDEX + classCount_; ++i) {
+  for (size_t i = 1; i < stringEnd; ++i) {
     const char *value = source(i);
-    if (!value) continue;
+    if (!value) {
+      if (i >= nameEnd) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+      continue;
+    }
     size_t units;
     const esp_err_t error = encodeUsbString(value, nullptr, 126, units);
     if (error != ESP_OK) { setLastError(error); return false; }
@@ -1260,7 +1280,10 @@ bool EspUsbDevice::buildStringDescriptors()
   size_t offset = slots;
   for (size_t i = 1; i < slots; ++i) {
     const char *value = source(i);
-    if (!value) continue;
+    if (!value) {
+      if (i >= nameEnd) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+      continue;
+    }
     if (offset >= words) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
     size_t units;
     const esp_err_t error = encodeUsbString(value, stringDescriptors_ + offset + 1,
@@ -1594,6 +1617,7 @@ bool EspUsbDevice::buildDescriptors()
   // driver dispatches by interface number, without TinyUSB CDC instance slots.
   // HID functions are emitted first, but are never counted as CDC ports.
   uint8_t cdcInstance = 0;
+  size_t auxiliaryIndex = FIRST_FUNCTION_STRING_INDEX + classCount_;
   for (size_t i = 0; i < classCount_; i++)
   {
     if (!classAt(i))
@@ -1608,6 +1632,10 @@ bool EspUsbDevice::buildDescriptors()
     }
     classAt(i)->assignFunctionIds(classAt(i)->isCdc() ? cdcInstance++ : 0,
                                    stringIndex);
+    const size_t auxiliaryCount = classAt(i)->auxiliaryStringCount();
+    if (auxiliaryCount > 256 - auxiliaryIndex) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+    classAt(i)->assignAuxiliaryStringIds(auxiliaryCount ? uint8_t(auxiliaryIndex) : 0);
+    auxiliaryIndex += auxiliaryCount;
   }
 
   const bool composite = compositeHid();

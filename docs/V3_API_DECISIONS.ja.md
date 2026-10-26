@@ -329,3 +329,14 @@ imageを渡す用途を含める。byte配列の保持はcallback中まで、途
 失敗/中断時にはabortで片付ける。既定OTAのComplete vetoと自動再起動はcustom backendへ持ち込まない。
 利点は保存先の自由と実state machineのRAM backend検証。不利益はcallback契約と開始失敗、callback自体の費用である。
 非同期flashやUploadの先行設計はしない。まずS3上でGETSTATUSと実control転送の結果を確認する。
+
+
+## 補助文字列をFunction名から分ける
+
+2026-10-27。NCMのMACはinterface名と用途が異なるため、functionNameをMACとして流用しない。
+ClassのauxiliaryStringCount/auxiliaryStringで宣言し、assignAuxiliaryStringIdsで割当てを受ける。
+名前の既存indexを変えず、その後の空間を使う。範囲とUTF-8を検証し、共通のUTF-16領域へcopyする。
+利点は複数NCMを同じglobal MAC indexへ向けずに済むことと、他class固有の文字列にも使えること。
+不利益は派生Functionに3つの任意virtual hookとbegin中の安定性契約が加わることである。
+不要時の追加heap/instance fieldは持たず、begin時のvirtual呼出しは残る。
+MACの実際の移行はNCM driverの独自化と一緒に行い、現段階のlegacy通信制約を隠さない。

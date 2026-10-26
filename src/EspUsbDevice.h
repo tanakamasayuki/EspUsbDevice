@@ -837,6 +837,13 @@ public:
   // tell two identical functions apart. UTF-8 is copied during begin(); the
   // returned pointer must remain valid until begin() returns.
   virtual const char *functionName() const { return nullptr; }
+  // Optional class-specific strings (e.g. an NCM MAC address), separate from
+  // functionName(). Keep count/text stable through begin(); the core snapshots
+  // them as UTF-16. A declared string must be non-null. No storage when unused.
+  virtual size_t auxiliaryStringCount() const { return 0; }
+  virtual const char *auxiliaryString(size_t) const { return nullptr; }
+  // A contiguous range after all function names; first=0 when count=0.
+  virtual void assignAuxiliaryStringIds(uint8_t first) { (void)first; }
   // Called by buildDescriptors() before asking for the descriptor, so a class
   // can emit and address itself correctly.
   //

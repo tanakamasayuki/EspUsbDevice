@@ -140,6 +140,55 @@ bool detached() {
   return ok;
 }
 
+class AuxiliaryControl : public EspUsbDeviceClass {
+public:
+  explicit AuxiliaryControl(EspUsbDevice &d) : EspUsbDeviceClass(d) {}
+  size_t count = 0; const char *text = "aux"; uint8_t first = 0;
+  bool isHid() const override { return false; }
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 0; }
+  size_t auxiliaryStringCount() const override { return count; }
+  const char *auxiliaryString(size_t i) const override { return i < count ? text : nullptr; }
+  void assignAuxiliaryStringIds(uint8_t index) override { first = index; }
+  uint16_t configurationDescriptor(uint8_t *d, uint8_t itf, uint8_t, uint16_t) override {
+    const uint8_t bytes[] = {9,4,itf,0,0,0xff,0,0,0};
+    if (d) memcpy(d,bytes,9); return 9;
+  }
+};
+bool auxiliaryMetadata() {
+  EspUsbDeviceConfig c; c.startTinyUsb = false;
+  bool ok = true;
+  {
+    EspUsbDevice d; AuxiliaryControl a(d), b(d);
+    a.count = 2; a.text = "first"; b.count = 3; b.text = "second";
+    ok &= d.begin(c) && a.first == 7 && b.first == 9;
+    ok &= !d.stringDescriptor(5,0) && !d.stringDescriptor(6,0);
+    const auto *x = d.stringDescriptor(7,0), *y = d.stringDescriptor(11,0);
+    ok &= x && y && x[1] == 'f' && y[1] == 's' && !d.stringDescriptor(12,0);
+    a.text = "mutated"; ok &= d.stringDescriptor(7,0) == x && x[1] == 'f';
+    ok &= d.end() == ESP_OK;
+  }
+  {
+    EspUsbDevice d; AuxiliaryControl a(d);
+    ok &= d.begin(c) && a.first == 0 && !d.stringDescriptor(6,0) && d.end() == ESP_OK;
+    a.count = 250; a.text = "補助";
+    ok &= d.begin(c) && a.first == 6;
+    const auto *x = d.stringDescriptor(255,0);
+    ok &= x && x[0] == 0x0306 && x[1] == 0x88dc && x[2] == 0x52a9 && d.end() == ESP_OK;
+    a.count = 251;
+    ok &= !d.begin(c) && d.lastError() == ESP_ERR_INVALID_SIZE;
+    a.count = SIZE_MAX;
+    ok &= !d.begin(c) && d.lastError() == ESP_ERR_INVALID_SIZE;
+    a.count = 1; a.text = nullptr;
+    ok &= !d.begin(c) && d.lastError() == ESP_ERR_INVALID_ARG;
+    a.text = "\x80";
+    ok &= !d.begin(c) && d.lastError() == ESP_ERR_INVALID_ARG;
+    a.text = "recovered";
+    ok &= d.begin(c) && a.first == 6 && d.end() == ESP_OK;
+  }
+  return ok;
+}
+
 bool textMetadata() {
   EspUsbDevice device;
   EspUsbDeviceConfig config; config.startTinyUsb = false;
@@ -219,7 +268,7 @@ bool textMetadata() {
     config.webusbUrl = empty;
     ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_ARG;
   }
-  return ok && device.end() == ESP_OK;
+  return ok && device.end() == ESP_OK && auxiliaryMetadata();
 }
 
 EspUsbDevice device;
@@ -245,10 +294,15 @@ protected:
   }
 };
 char wireManufacturer[32], wireSerial[127], wireName[16], wireUrl[261];
+char wireMac[13], wireAuxiliary[10];
 class NamedVendor : public EspUsbDeviceVendor {
 public:
   using EspUsbDeviceVendor::EspUsbDeviceVendor;
   const char *functionName() const override { return wireName; }
+  uint8_t firstAuxiliary = 0;
+  size_t auxiliaryStringCount() const override { return 2; }
+  const char *auxiliaryString(size_t i) const override { return i == 0 ? wireMac : i == 1 ? wireAuxiliary : nullptr; }
+  void assignAuxiliaryStringIds(uint8_t first) override { firstAuxiliary = first; }
   void assignFunctionIds(uint8_t, uint8_t index) override { nameIndex_ = index; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t itf, uint8_t ep, uint16_t packet) override {
     const auto bytes = EspUsbDeviceVendor::configurationDescriptor(dst, itf, ep, packet);
@@ -287,16 +341,18 @@ void loop() {
       for (auto &function : hid) { delete function; function = nullptr; }
       named = new NamedVendor(device);
       strcpy(wireManufacturer, "日本語 🧪"); strcpy(wireName, "計測");
+      strcpy(wireMac, "0202846A9600"); strcpy(wireAuxiliary, "auxiliary");
       memset(wireSerial, 's', 126); wireSerial[126] = 0;
       text_probe::makeUrl(wireUrl);
       EspUsbDeviceConfig config; config.product = "v3 descriptor storage";
       config.manufacturer = wireManufacturer; config.serialNumber = wireSerial;
       config.webusbEnabled = true; config.webusbUrl = wireUrl;
       started = device.begin(config);
-      Serial.printf("TEXT_STARTED %u\r\n", unsigned(started));
+      Serial.printf("TEXT_STARTED %u\r\n", unsigned(started && named->firstAuxiliary == 6));
     } else if (command == "mutate_text") {
       memset(wireManufacturer, '?', strlen(wireManufacturer)); memset(wireName, '?', strlen(wireName));
       memset(wireSerial, '?', 126); memset(wireUrl, '?', 260);
+      memset(wireMac, '?', 12); memset(wireAuxiliary, '?', 9);
       Serial.println("TEXT_MUTATED");
     } else if (command == "vendor") {
       padded = new PaddedVendor(device);

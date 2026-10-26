@@ -17,6 +17,12 @@ bool wireText() {
   ok &= getString(3) && actual == 254 && data[0] == 254 && data[1] == 3 && data[254] == 0xa5;
   for (unsigned i = 0; i < 126; ++i) ok &= data[2 + 2 * i] == 's' && data[3 + 2 * i] == 0;
   ok &= getString(5) && actual == 6 && data[0] == 6 && memcmp(data + 2, text_probe::name, 4) == 0;
+  ok &= getString(6) && actual == 26;
+  const char *mac = "0202846A9600";
+  for (unsigned i = 0; i < 12; ++i) ok &= data[2 + 2*i] == mac[i] && data[3 + 2*i] == 0;
+  ok &= getString(7) && actual == 20;
+  for (unsigned i = 0; i < 9; ++i) ok &= data[2 + 2*i] == "auxiliary"[i] && data[3 + 2*i] == 0;
+  ok &= !getString(8) && getString(6);
   ok &= !getString(255) && getString(1);
   ok &= !getString(1, 0x411) && getString(1);
   actual = 0;

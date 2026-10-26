@@ -184,3 +184,21 @@ descriptor/registryと取消し・転送境界を含む。
 serial原本は`/tmp/pytest-embedded/2026-10-26_19-27-27-183733/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-dfu-all*`。
 DFUのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致、
 旧tests/examplesはmainと同一で、mainはv3の祖先。実OTAの適用・再起動と他SoC/HSは未検証。
+
+
+## Function固有の補助文字列
+
+2026-10-27。NCMのMAC文字列をFunction単位へ移す前提として、EspUsbDeviceClassに
+auxiliaryStringCount/auxiliaryString/assignAuxiliaryStringIdsを追加した。
+Function名の後へ連続したindexを割り当て、既存のexact UTF-16 snapshotへ一緒に保存する。
+使用しないFunctionの追加領域はなく、既存の名前indexと251 Functionの上限を保つ。
+countとtextはbeginの処理中に安定していることがwriter契約であり、宣言した文字列のnullptrは拒否する。
+稼働中のUSB応答はsnapshotなので元配列の変更に依存しない。
+
+`function-auxiliary-strings.xml`は**3 passed、0 skipped、0 unfinished、138.04秒**。
+複数Functionの別領域、空の名前、index255、超過/SIZE_MAX/null/不正UTF-8からの回復、
+実USB上の名前5と補助6/7・配列変更後の応答、既存registryと502取得点の失敗/回復を確認した。
+両board STOPPED、panicなし。serial原本は`/tmp/pytest-embedded/2026-10-26_19-51-05-602028/`、コピーとJUnit/transcriptは
+`validation/.pytest-results/function-auxiliary-strings*`。
+通常収集は17件のまま。今回の関連3件は、DFU段階の全17件成功とは別の結果である。
+NCMのclass/NTB pool/MAC globalはまだlegacyのままで、この変更だけで複数NCM通信に対応したとはしない。
