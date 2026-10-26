@@ -217,3 +217,19 @@ HidVendorのサイズをビルド定数へ結び付けず、FSの複数packetで
 開始時の解析・確保は増えるが、未使用時の固定領域とHID driver自体のリンクを避けられる。
 S3の12サイズの実送受信とboot/NKROを確認した。GET_REPORT snapshotとidle自動再送は後続課題。
 契約・移行・検証範囲は[V3_HID_API.ja.md](V3_HID_API.ja.md)に記録した。
+
+## 採用記録: HIDの状態保存、idle再送、停止中設定
+
+GET_REPORTを定義済みID/typeのsnapshotから返し、idleが有効ならInputをID別の周期で自動再送する。
+保存領域は実report長の合計と、必要なrelative maskだけの一括確保にする。
+制御応答用copyにより、別taskのFeature更新中も一つの応答内で値を混在させない。
+FeatureはsetFeatureReportでアプリから更新でき、bus reset越しに保持する。Input/Outputとidleはreset時に初期化する。
+
+Mouse等のrelative Inputは送信完了後にzeroへ戻し、idleで移動量を繰り返さない。
+boot mouseの3 byte形式も扱い、短すぎるboot descriptorはbeginで拒否する。
+Keyboard/Vendor HIDのcallback登録とNKRO設定をesp_err_t返却の停止中APIに揃え、
+稼働中の無言変更とcallback競合を避ける。通常の呼出しの形は維持できるが、void型のmember pointerは移行が必要。
+
+不利益はGET_REPORT/idleを支える保存・応答領域分のRAMである。定義しないOutput/Featureの領域は確保しない。
+2 IDの独立状態、200回の並行読出し、20/100 ms指定の周期、停止とreset、boot/NKRO/MouseをS3で確認した。
+実測と未検証の範囲は[V3_HID_API.ja.md](V3_HID_API.ja.md)を参照する。

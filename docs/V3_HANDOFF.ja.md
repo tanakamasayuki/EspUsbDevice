@@ -90,7 +90,7 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 1. legacy classの固定資源とruntime/APIの制限を整理する。
    Function registry、configuration/HID report/BOS/MS OSと文字列/URLの固定領域は下記で撤去済み。
-   HID classも独自化した。GET_REPORT snapshot、idle自動再送、callback/configの停止中契約は継続する。
+   HID classとGET_REPORT/idleは独自化済み。期限近傍と未完IN中のprotocol変更、OS互換性の追加検証は残る。
 2. CDCのcontrol要求、通知、reset/endと借用取消しの組合せを必要範囲で拡張する。
    Vendor/CDCの共通転送と基本controlは下記で実装・検証済みだが、全OS/control要求の網羅ではない。
 3. Audioの最小周期経路と併用して共通設計を見直し、HIDの残制御と残クラスを独自化する。
@@ -341,7 +341,7 @@ INの複数packet、interrupt OUT組立、control Outputのprefix有無とFeatur
 
 `usbd_control_received_bytes()`を暫定core adapterへ追加し、SET_REPORTの実受信量をDATA時に検証する。
 patch manifest/provenanceへ記録し、tree照合は51 file / 15 compiled sourcesで一致。
-契約と移行は[V3_HID_API.ja.md](V3_HID_API.ja.md)。GET_REPORT snapshotとidle自動再送は未実装。
+契約と移行は[V3_HID_API.ja.md](V3_HID_API.ja.md)。この時点ではGET_REPORT snapshotとidle自動再送は未実装だった。
 
 標準の`runtime-hid-all.xml`は**9 passed、0 skipped、0 unfinished、474.47秒**。
 この時点の確保失敗は176取得点。全caseで両board STOPPED、panicなし。
@@ -355,3 +355,30 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/runtime-hid-all*`
 開始成功時のstartError=ESP_OKを確認する最終HID focusedも1 passed、53.04秒。
 未登録HIDがbeginで共有stateへ参加しないことと、拒否/破棄後の既存7 HID通信を
 `hid-registration-final.xml`の1 passed、44.01秒で確認した。これらのserial/JUnitも`.pytest-results/`へ保存済み。
+
+## GET_REPORT / idleとHIDの設定契約
+
+GET_REPORTを全定義ID/typeの保存状態から応答する。制御応答は独立copyで、並行更新中も混在させない。
+Input保存はsend受理時、Output/Featureは受信完了時、アプリFeatureはsetFeatureReportで更新する。
+Featureはresetで保持、Input/Outputはneutralへ戻す。end/開始失敗は全領域を回収する。
+control bufferはInputも含む最大長に増やし、snapshotとrelative maskは実数分だけ一括確保する。
+最大長のmetadata試験はIN-only 65535 byteで行う。大きい全typeの同時確保は使用可能メモリで制限される。
+
+idleはIDごとの完了時刻を基準に再送し、Hostが有効にした時だけcaller-owned jobを再投稿する。
+Mouse等のrelative項目は完了後にzeroに戻して、同じ移動量を再送しない。
+boot mouseの3 byteと通常4 byte、Keyboardのboot/NKROを確認。短い不整合boot定義はbeginで拒否する。
+Keyboard/Vendorのcallback設定とNKRO設定はesp_err_t・停止中に統一し、protocol値はatomicにした。
+
+新規`validation/s3/hid_report_state`は2 IDの状態、初期値、reset、Feature更新と
+200回の並行読出しを確認する。20/100 ms指定の観測平均は20.873/108.002 msで、
+複数packetのwire時間も含む。ID別/全体の停止も確認した。
+`hid-report-state.xml`は2 passed、127.44秒、relative/Mouseを含む`hid-state-relative.xml`は3 passed、123.33秒。
+確保失敗は200取得点まで拡大し、Feature setterに追加確保がないことも確認した。
+3最小build/nmで未使用HID・取消し・TinyUSB CDC/Vendor/HIDの不在も維持した。
+詳細とRAM増加・移行は[V3_HID_API.ja.md](V3_HID_API.ja.md)。
+
+最終の標準`hid-report-idle-all.xml`は**10 passed、0 skipped、0 unfinished、520.13秒**。
+200取得点の失敗/回復、Feature setterの追加確保なし、短いboot定義の拒否、停止中設定も含む。
+全caseで両board STOPPED、panicなし。serial原本は`/tmp/pytest-embedded/2026-10-26_13-02-08-326097/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/hid-report-idle-all*`。
+TinyUSB tree照合は51 file / 15 sourcesで一致し、旧test/sampleはmainと同一のまま。

@@ -6034,19 +6034,23 @@ EspUsbDeviceKeyboardLayout EspUsbDeviceHidKeyboard::layout() const
   return layout_;
 }
 
-void EspUsbDeviceHidKeyboard::onOutputReport(OutputReportCallback callback)
+esp_err_t EspUsbDeviceHidKeyboard::onOutputReport(OutputReportCallback callback)
 {
-  outputCallback_ = callback;
+  if (hidStarted()) return ESP_ERR_INVALID_STATE;
+  outputCallback_ = std::move(callback);
+  return ESP_OK;
 }
 
-void EspUsbDeviceHidKeyboard::onProtocol(ProtocolCallback callback)
+esp_err_t EspUsbDeviceHidKeyboard::onProtocol(ProtocolCallback callback)
 {
-  protocolCallback_ = callback;
+  if (hidStarted()) return ESP_ERR_INVALID_STATE;
+  protocolCallback_ = std::move(callback);
+  return ESP_OK;
 }
 
 uint8_t EspUsbDeviceHidKeyboard::protocol() const
 {
-  return protocol_;
+  return protocol_.load(std::memory_order_relaxed);
 }
 
 uint16_t EspUsbDeviceHidKeyboard::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
@@ -6085,8 +6089,9 @@ uint16_t EspUsbDeviceHidKeyboard::hidInEndpointSize() const
   return nkroEnabled_ ? 32 : 0;
 }
 
-void EspUsbDeviceHidKeyboard::enableNkro(bool enable)
+esp_err_t EspUsbDeviceHidKeyboard::enableNkro(bool enable)
 {
+  if (hidStarted()) return ESP_ERR_INVALID_STATE;
   nkroEnabled_ = enable;
   if (!enable)
   {
@@ -6094,6 +6099,7 @@ void EspUsbDeviceHidKeyboard::enableNkro(bool enable)
     // report_ carries the held keys instead.
     nkroState_.clear();
   }
+  return ESP_OK;
 }
 
 bool EspUsbDeviceHidKeyboard::nkroEnabled() const
@@ -6211,7 +6217,7 @@ void EspUsbDeviceHidKeyboard::onHidSetProtocol(uint8_t protocol)
   }
   EspUsbDeviceHidProtocolEvent event;
   event.instance = hidInstance_;
-  event.protocol = protocol_;
+  event.protocol = protocol;
   protocolCallback_(event);
 }
 
@@ -6552,14 +6558,18 @@ bool EspUsbDeviceHidVendor::sendInput(const void *data, size_t length, uint32_t 
   return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), data, length, timeoutMs);
 }
 
-void EspUsbDeviceHidVendor::onOutputReport(ReportCallback callback)
+esp_err_t EspUsbDeviceHidVendor::onOutputReport(ReportCallback callback)
 {
-  outputCallback_ = callback;
+  if (hidStarted()) return ESP_ERR_INVALID_STATE;
+  outputCallback_ = std::move(callback);
+  return ESP_OK;
 }
 
-void EspUsbDeviceHidVendor::onFeatureReport(ReportCallback callback)
+esp_err_t EspUsbDeviceHidVendor::onFeatureReport(ReportCallback callback)
 {
-  featureCallback_ = callback;
+  if (hidStarted()) return ESP_ERR_INVALID_STATE;
+  featureCallback_ = std::move(callback);
+  return ESP_OK;
 }
 
 uint16_t EspUsbDeviceHidVendor::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)

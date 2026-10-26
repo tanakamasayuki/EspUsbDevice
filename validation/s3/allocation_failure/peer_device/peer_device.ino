@@ -80,11 +80,11 @@ void loop() {
           if (mode == 7) { config.txCapacity = config.transferBytes = 0; points = 3; }
         }
         if (mode == 10 || mode == 11) {
-          hid[0] = new EspUsbDeviceHidVendor(device, 257); points += 8;
+          hid[0] = new EspUsbDeviceHidVendor(device, 257); points += 9;
           if (mode == 11) { hid[1] = new EspUsbDeviceHidVendor(device, 63); ++points; }
         }
-        if (mode == 12) { inputOnly = new EspUsbDeviceHidCustom(device, inputReport, sizeof(inputReport), 1); points += 5; }
-        if (mode == 13) { inputOnly = new EspUsbDeviceHidCustom(device, pushReport, sizeof(pushReport), 1); points += 6; }
+        if (mode == 12) { inputOnly = new EspUsbDeviceHidCustom(device, inputReport, sizeof(inputReport), 1); points += 7; }
+        if (mode == 13) { inputOnly = new EspUsbDeviceHidCustom(device, pushReport, sizeof(pushReport), 1); points += 8; }
         points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.
         EspUsbDeviceConfig identity;
         if (mode == 8) { identity.webusbEnabled = true; identity.webusbUrl = "https://example.test/日本語"; ++points; }
@@ -102,6 +102,12 @@ void loop() {
           const bool recovered = device.begin(identity);
           if (!recovered || calls != points) Serial.printf("RECOVERY_FAILED mode=%u point=%u expected=%u calls=%u error=%d\r\n", mode, point, points, calls, int(device.lastError()));
           ok &= recovered && calls == points;
+          if (recovered && mode >= 10) {
+            const unsigned beforeFeature = calls;
+            const uint8_t value = 0x5a;
+            for (unsigned update = 0; update < 32 && hid[0]; ++update) ok &= hid[0]->setFeatureReport(&value, 1) == ESP_OK;
+            ok &= calls == beforeFeature;
+          }
           ok &= vendor.configuration().rxCapacity == config.rxCapacity && vendor.configuration().txCapacity == config.txCapacity;
           ok &= device.end() == ESP_OK && outstanding == 0;
           delay(10);

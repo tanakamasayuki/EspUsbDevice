@@ -45,6 +45,23 @@ def test_hid_transport(dut, peers):
             dut.expect_exact(f"INPUT 1 bytes={length}\r\n", timeout=10)
         device.write("drop_keyboard")
         device.expect_exact("KEYBOARD_DROPPED 1 callbacks=1\r\n", timeout=30)
+        dut.write("stop")
+        dut.expect_exact("STOPPED\r\n", timeout=30)
+        device.write("mouse")
+        device.expect_exact("MOUSE_STARTED 1\r\n", timeout=30)
+        dut.write("mouse")
+        dut.expect_exact("HOST_READY 1\r\n", timeout=30)
+        for protocol, length in ((0, 3), (1, 4)):
+            dut.write(f"protocol {protocol}")
+            dut.expect_exact(f"PROTOCOL_SET 1 value={protocol}\r\n", timeout=10)
+            dut.write(f"arm {length}")
+            dut.expect_exact("ARMED\r\n", timeout=5)
+            device.write("move")
+            device.expect_exact("MOVE_SENT 1\r\n", timeout=5)
+            dut.write("input")
+            dut.expect_exact(f"INPUT 1 bytes={length}\r\n", timeout=10)
+            dut.write("mouse_idle")
+            dut.expect_exact("MOUSE_IDLE 1\r\n", timeout=5)
     finally:
         errors = []
         for name, board in (("host", dut), ("device", device)):

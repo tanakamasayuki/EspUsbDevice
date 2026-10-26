@@ -912,11 +912,16 @@ public:
   void end() override;
   esp_err_t startError() const override { return hidStartError_; }
   bool sendHidInput(uint8_t reportId, const void *, size_t, uint32_t timeoutMs) override;
+  // Set current Feature state without sending an interrupt report. Payload
+  // excludes the report ID; 0 selects this Function's unambiguous default ID.
+  // Valid after begin(), including before the host configures the interface.
+  esp_err_t setFeatureReport(const void *data, size_t length, uint8_t reportId = 0);
   // Shared interface capacities, including a report ID byte when declared.
   size_t inputReportCapacity() const;
   size_t outputReportCapacity() const;
   size_t featureReportCapacity() const;
 protected:
+  bool hidStarted() const;
   bool failHidBegin(esp_err_t error) { hidStartError_ = error; return false; }
 private:
   EspUsbHidState *hidState_ = nullptr;
@@ -2309,7 +2314,7 @@ public:
   bool releaseAll(uint32_t timeoutMs = 100);
   void setLayout(EspUsbDeviceKeyboardLayout layout);
   EspUsbDeviceKeyboardLayout layout() const;
-  void onOutputReport(OutputReportCallback callback);
+  esp_err_t onOutputReport(OutputReportCallback callback);
   // Latest LED output report from the host. Updated whether or not an
   // onOutputReport() callback is installed, so a sketch can read Lock state even
   // when an integration layer owns the single callback slot. LEDs are state, not
@@ -2326,7 +2331,7 @@ public:
   // torn combination of fields impossible. EspBle's ledState() returns by value
   // for the same reason.
   EspUsbDeviceHidKeyboardOutputReport ledState() const;
-  void onProtocol(ProtocolCallback callback);
+  esp_err_t onProtocol(ProtocolCallback callback);
   uint8_t protocol() const;
 
   // Opt-in N-key rollover. Call before EspUsbDevice::begin(). When enabled the
@@ -2334,7 +2339,7 @@ public:
   // International/LANG keys, so JIS layouts work), and press/release track any
   // number of simultaneous keys. The boot 6-key format is still sent when the
   // host selects boot protocol (BIOS). Default off (unchanged 6KRO behaviour).
-  void enableNkro(bool enable = true);
+  esp_err_t enableNkro(bool enable = true);
   bool nkroEnabled() const;
 
   // The state the host was last told about (NKRO only; stays cleared while NKRO
@@ -2368,7 +2373,7 @@ private:
 
   EspUsbDeviceBootKeyboardReport report_;
   EspUsbDeviceKeyboardLayout layout_ = ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US;
-  uint8_t protocol_ = 1;
+  std::atomic<uint8_t> protocol_{1};
   bool nkroEnabled_ = false;
   // The held-key state while NKRO is on. Holding the public report type itself
   // keeps the bitmap layout and the modifier routing defined in exactly one
@@ -2455,8 +2460,8 @@ public:
 
   bool begin() override;
   bool sendInput(const void *data, size_t length, uint32_t timeoutMs = 100);
-  void onOutputReport(ReportCallback callback);
-  void onFeatureReport(ReportCallback callback);
+  esp_err_t onOutputReport(ReportCallback callback);
+  esp_err_t onFeatureReport(ReportCallback callback);
 
   // Payload bytes per report, as the report descriptor declares it.
   uint16_t reportSize() const { return reportSize_; }
