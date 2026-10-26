@@ -49,10 +49,10 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
-最新の全実行はplugin 1.10.0の標準`--combo all`による`runtime-msc-all.xml`。
-**14 passed、0 skipped、0 unfinished、772.40秒**。全caseで両board STOPPED、panicなし。
-serial原本は`/tmp/pytest-embedded/2026-10-26_17-57-02-044220/`、コピーとtranscriptは
-`.pytest-results/runtime-msc-all-serial/`と`runtime-msc-all-transcript.txt`へ保存した。
+最新の全実行はplugin 1.10.0の標準`--combo all`による`runtime-audio-all.xml`。
+**16 passed、0 skipped、0 unfinished、823.56秒**。全caseで両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとtranscriptは
+`.pytest-results/runtime-audio-all-serial/`と`runtime-audio-all-transcript.txt`へ保存した。
 `s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/descriptor/registryの438取得点を失敗させて回復を確認する。
 文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
 MIDIのqueue/callback/外部ring/片方向/複数instance、MSCの内部/外部DMA bufferと複数instanceも含む。
@@ -126,7 +126,7 @@ msc_storage/msc_botの手順・Hostの制約・362取得点の失敗/回復は[M
 結果は`.pytest-results/*-msc-nm.txt`へ保存した。
 
 Audio追加後の収集は15件。直近はaudio_events/allocation_failureの関連2件が成功した（77.39秒、413取得点）。
-現在の全15件一括実行済みとはしない。全体の直近成功は上記MSC時点の14件。
+これはeventのみの段階の記録。Audio置換後の全16件は上記runtime-audio-all.xmlを参照。
 
 
 `s3/audio_stream`はUAC1/UAC2の実PCMを検証する。48 kHz/44.1 kHz stereo 16 bit、
@@ -142,4 +142,14 @@ DeviceのみとAudioのみのbuild/nmで、未使用独自Audioと旧TinyUSB Aud
 PCM・event制御・438取得点の失敗/回復を含み、両board STOPPED、panicなし。
 serial原本は/tmp/pytest-embedded/2026-10-26_18-51-19-326855/、コピーとJUnit/transcriptは.pytest-results/audio-pcm-related*。
 Audioのみ/Deviceのみの最小buildとnmも成功し、旧TinyUSB Audioと未使用独自Audioの不在を確認した。
-通常収集は16件。全体の最後の成功はMSC時点の14件であり、今回の関連3件と区別する。
+通常収集は16件。この関連3件の後に実行した全16件の結果は下記を参照。
+
+
+## Audio置換後の全体確認
+
+2026-10-27。標準の`--combo all`で**16 passed、0 skipped、0 unfinished、823.56秒**。
+全16 caseで両board STOPPED、32本のserialにpanicなし。438取得点の確保失敗/回復、
+UAC1/UAC2 PCMとevent、CDC/Vendor/HID/MIDI/MSC、descriptor/registryと取消し・転送境界を含む。
+serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-audio-all*`。
+Audioのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致し、
+旧tests/examplesはmainと同一、mainはv3の祖先。残るclass/core/DCDと他SoC/HSの置換・検証は未完である。

@@ -1,8 +1,11 @@
 # v3 独立試験とAPI整理の引き渡し
 
+最新確認: Audioの独自化は`400d8ec`。標準`--combo all`で16件全て成功（823.56秒）。
+APIと未完範囲は[V3_AUDIO_API.ja.md](V3_AUDIO_API.ja.md)、全体結果は末尾を参照。
+
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
-旧testへの整合維持を最初の目的にしない。Vendorの公開APIとクラス処理を更新した。共通EP0/DCDと他クラスはまだ暫定TinyUSBを使う。
+旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audioのclassを独自化した。NCM/Video/DFUと共通EP0/core/DCDはまだTinyUSBを使う。
 
 ## 作業場所と優先順位
 
@@ -489,7 +492,17 @@ Device仕様をHost不具合に合わせて変えず、Host libraryも変更し�
 PCM・event制御・438取得点の失敗/回復を含み、両board STOPPED、panicなし。
 serial原本は/tmp/pytest-embedded/2026-10-26_18-51-19-326855/、コピーとJUnit/transcriptはvalidation/.pytest-results/audio-pcm-related*。
 Audioのみ/Deviceのみの最小buildとnmも成功し、旧TinyUSB Audioと未使用独自Audioの不在を確認した。
-通常収集は16件。全体の最後の成功はMSC時点の14件であり、今回の関連3件と区別する。
+通常収集は16件。この関連3件の後に実行した全16件の結果は下記を参照。
 
 次は全16件の一括確認と、残るclass/core/DCDの独自化へ進む。Audioの複数format、固定model/control配列、
 外部codec clock feedback、borrowed/callback PCM API、他OS/SoC/HSは未完。詳細はV3_AUDIO_API.ja.md。
+
+
+## Audio置換後の全体確認
+
+2026-10-27。標準の`--combo all`で**16 passed、0 skipped、0 unfinished、823.56秒**。
+全16 caseで両board STOPPED、32本のserialにpanicなし。438取得点の確保失敗/回復、
+UAC1/UAC2 PCMとevent、CDC/Vendor/HID/MIDI/MSC、descriptor/registryと取消し・転送境界を含む。
+serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-audio-all*`。
+Audioのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致し、
+旧tests/examplesはmainと同一、mainはv3の祖先。残るclass/core/DCDと他SoC/HSの置換・検証は未完である。

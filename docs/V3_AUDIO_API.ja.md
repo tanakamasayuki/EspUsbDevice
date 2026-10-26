@@ -51,7 +51,7 @@ Audio全体の制御状態とsetMute/setVolumeの同時更新、endとPCM read/w
 未登録Audioを生成・破棄した後も制御要求が動くこと、稼働中破棄後の停止も確認する。
 
 最初のaudio-events.xmlは1 passed（83.46秒）。
-最終audio-events-related.xmlは**2 passed、0 skipped、0 unfinished、77.39秒**。
+eventのみの段階のaudio-events-related.xmlは**2 passed、0 skipped、0 unfinished、77.39秒**。
 Audio Playback/Capture/両方向、容量0を含む413取得点の確保失敗/回復も確認した。
 全caseで両board STOPPED、panicなし。serial原本は/tmp/pytest-embedded/2026-10-26_18-22-12-899869/、
 JUnit/transcript/serialコピーはvalidation/.pytest-results/audio-events-related*。
@@ -100,4 +100,14 @@ callback/borrowed PCMの所有権API、OS音声アプリ、P4/S2/S31/HSである
 PCM・event制御・438取得点の失敗/回復を含み、両board STOPPED、panicなし。
 serial原本は/tmp/pytest-embedded/2026-10-26_18-51-19-326855/、コピーとJUnit/transcriptはvalidation/.pytest-results/audio-pcm-related*。
 Audioのみ/Deviceのみの最小buildとnmも成功し、旧TinyUSB Audioと未使用独自Audioの不在を確認した。
-通常収集は16件。全体の最後の成功はMSC時点の14件であり、今回の関連3件と区別する。
+通常収集は16件。この関連3件の後に実行した全16件の結果は下記を参照。
+
+
+## Audio置換後の全体確認
+
+2026-10-27。標準の`--combo all`で**16 passed、0 skipped、0 unfinished、823.56秒**。
+全16 caseで両board STOPPED、32本のserialにpanicなし。438取得点の確保失敗/回復、
+UAC1/UAC2 PCMとevent、CDC/Vendor/HID/MIDI/MSC、descriptor/registryと取消し・転送境界を含む。
+serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-audio-all*`。
+Audioのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致し、
+旧tests/examplesはmainと同一、mainはv3の祖先。残るclass/core/DCDと他SoC/HSの置換・検証は未完である。
