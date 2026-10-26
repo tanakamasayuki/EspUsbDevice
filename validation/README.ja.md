@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので11 tests。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので12 tests。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -49,6 +49,9 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
+直近の関連4件は`hid-protocol-related.xml`で4 passed、0 skipped、0 unfinished、171.86秒。
+新規protocol切替と既存HID/313取得点の失敗回復を含み、全caseで両board STOPPED、panicなし。
+全12件の一括実行はまだ行っていない。
 最新の全実行はplugin 1.10.0の`--combo all`による`runtime-midi-all.xml`、
 11 passed、0 skipped、0 unfinished、586.92秒。最後のMIDI修正後の関連3試験も
 `midi-stream-final.xml`で3 passed、0 skipped、0 unfinished、192.03秒。
@@ -74,7 +77,11 @@ UTF-8の日本語/絵文字、長さ境界と不正入力、254 byte文字列/25
 InputのGET_REPORT、Mouseのboot/report切替、relative値をzeroへ戻したidle再送も確認する。
 `s3/hid_report_state`は2 IDのInput/Output/Feature snapshot、アプリからのFeature更新、
 並行更新中の200 GET_REPORT、ID別idleと停止、resetでの状態/Feature保持を確認する。
-通常実行は11 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
+`s3/hid_protocol`はIDFの公開Host APIでINを手動投稿し、旧INを未完了のまま
+boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新packetの完全性を確認する。
+自動pollを止めるための独自pytest hookやHost library patchは使わない。
+手順・範囲は[専用probe](s3/hid_protocol/README.ja.md)を参照。
+通常実行は12 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -82,7 +89,7 @@ InputのGET_REPORT、Mouseのboot/report切替、relative値をzeroへ戻したi
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`11 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`12 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。

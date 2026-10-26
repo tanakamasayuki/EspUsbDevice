@@ -248,3 +248,17 @@ MPS未満のringも一つのDMA packetに残りを保持して取りこぼさず
 TinyUSB直接呼出しとCFG_TUD_MIDI_*設定もpacket API/configへ移行する。
 HS/他SoC/OS音楽アプリの相互接続とMIDI 2.0は今回の検証範囲外。
 実通信、並行終了、313取得点の失敗回復と移行は[MIDIガイド](V3_MIDI_API.ja.md)を参照する。
+
+
+## 採用記録: HID protocol変更時の未完IN排出
+
+boot/reportの形式変更時は旧INをhardware停止し、旧完了eventのFIFO fenceが通過するまで
+明示送信/idleのbuffer再利用を止める。既存worker jobを共用し、新しいheap/taskは増やさない。
+利点はHostが旧reportをまだ読んでいなくても、切替後に旧形式を渡さず送信を再開できること。
+不利益はprotocol変更で未完Inputを破棄することと、fence通過まで一時的に送信が待つことである。
+Input snapshotは既存方針どおり新形式のneutralへ戻す。
+
+番号なしboot-capable Inputは現在の形式の正確な長さを検証する。
+Keyboard helperが形式選択した直後にHostが切り替えた場合も、誤形式を受理せずInvalidSizeで返す。
+通常helperはそのまま使えるが、独自コードが短いboot-capable reportを直接送る場合は修正が必要。
+実験の手順と結果は[HIDガイド](V3_HID_API.ja.md)へ記録する。

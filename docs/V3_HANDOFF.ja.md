@@ -90,7 +90,7 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_03-17-21-500652/test_vendor_roun
 
 1. legacy classの固定資源とruntime/APIの制限を整理する。
    Function registry、configuration/HID report/BOS/MS OSと文字列/URLの固定領域は下記で撤去済み。
-   HID classとGET_REPORT/idle、MIDI classのpacket転送は独自化済み。期限近傍と未完IN中のprotocol変更、OS互換性の追加検証は残る。
+   HID classとGET_REPORT/idle、MIDI classのpacket転送は独自化済み。期限近傍とOS互換性の追加検証は残る。未完IN中のprotocol変更は末尾の専用試験で補強した。
 2. CDCのcontrol要求、通知、reset/endと借用取消しの組合せを必要範囲で拡張する。
    Vendor/CDCの共通転送と基本controlは下記で実装・検証済みだが、全OS/control要求の網羅ではない。
 3. Audioの最小周期経路と併用して共通設計を見直し、HIDの残制御と残クラスを独自化する。
@@ -409,3 +409,25 @@ conftestや独自hookは追加していない。既存test/sampleは設計対象
 Device-only/Vendor-copy/CDC-copy/MIDI-packetの4最小buildとnm確認も成功した。
 MIDI未使用ならEspUsbDeviceMidiはリンクされず、全4件ともTinyUSB CDC/Vendor/HID/MIDIと未使用取消しを含まない。
 TinyUSB tree照合は51 file / 15 compiled sourcesで一致。mainはv3の祖先で、旧tests/examplesへの差分はない。
+
+
+## 未完IN中のHID protocol切替
+
+2026-10-26。SET_PROTOCOLのSETUP時に未完の旧形式INを停止し、旧完了eventのFIFO fenceが通るまで
+明示/idle送信を保留する。endpointのDATA PIDは維持し、既存idle jobでqueue満杯の予約を再試行する。
+boot-capableな番号なしInputは現在の形式の正確な長さを検証し、形式選択と送信の競合を不一致のまま受理しない。
+通常helperの呼出しは維持する。APIの利点/不利益はV3_API_DECISIONS.ja.mdへ記録した。
+
+新規`validation/s3/hid_protocol`は公開IDF Host APIでINを手動投稿し、旧reportをDevice DMAに保留する。
+Keyboard29↔8 byte、Mouse4↔3 byteを各4回切替。二つ目の送信の拒否、切替後30 msの未受信、
+新markerの全byteと長さ、誤形式のInvalidSizeを実通信で確認した。
+初回はCoreで有効な列挙filterのcallback省略によりHost未準備で失敗した。
+診断のINSTALL/CLIENT成功・OPEN未発生とIDFのenum.cを照合し、標準enum_filter_cbで対象VID/PIDを許可して修正した。
+この試験だけmanual Hostを使い、Host libraryへのpatchやpytestの独自fixture/hookは追加していない。
+
+`hid-protocol-related.xml`は**4 passed、0 skipped、0 unfinished、171.86秒**。
+新規probe、既存HID transport/report state、313取得点の確保失敗/回復を含み、全caseで両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-26_14-27-21-836610/`、JUnit/transcript/serialコピーは`.pytest-results/hid-protocol-related*`。
+通常の`--combo all`の対象は12件になったが、今回実行したのは関連4件で、全12件実行済みとはしない。
+人工的な旧完了eventとqueue満杯の組合せ、protocol切替とreset/endの同時実行、他SoC/OSは未検証。
+TinyUSB treeは51 file / 15 compiled sourcesで一致、旧tests/examplesはmainと同一。

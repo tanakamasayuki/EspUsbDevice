@@ -99,6 +99,18 @@ boot mouseは3 byte、通常のMouseは4 byte。Keyboardもboot 8 byte/NKRO 29 b
 protocol変更時のInput保存はneutralへ戻す。独自boot拡張は番号なしreportと必要な長さを持つものに限定し、
 不整合な短いboot descriptorは開始時に拒否する。
 
+SET_PROTOCOLで形式が変わる場合は、未完了の旧INをhardwareで停止してからstatusを返す。
+旧完了eventをcoreのFIFO fenceで排出するまで、明示送信とidle再送の両方を保留する。
+固定時間のdelayやendpointのSTALL/clear-haltでDATA PIDを初期化する方法は使わない。
+fence予約がqueue満杯なら、既存のidle用worker jobで再試行し、bufferを早期再利用しない。
+protocol変更時に追加heapや専用taskを確保しない。
+
+boot-capableな番号なしInputは、現在の形式の正確な長さを要求する。
+例えばNKRO有効時のreport protocolへ8 byteのboot配列を直接送る呼出しはInvalidSizeになる。
+通常のKeyboard helperは形式を自動選択する。形式選択と送信の間にHostが切り替えた場合は、
+不一致のpacketを送らず拒否するため、アプリ側で再試行できる。Mouseの4→3 byte変換は維持する。
+
+
 ## Feature値の更新
 
 ```cpp
@@ -171,3 +183,16 @@ GET_REPORTの状態保存と独立した応答用copyに、定義したreportの
 全caseで両board STOPPED、panicなし。3最小build/nmはHID未使用時のdriver/状態保存/idle処理のリンク除外を維持した。
 
 規格参照: [USB HID 1.11](https://www.usb.org/sites/default/files/documents/hid1_11.pdf)。
+
+新規`validation/s3/hid_protocol`は公開IDF Host APIでINを手動投稿し、旧reportをDevice DMAに保留する。
+Keyboard29↔8 byte、Mouse4↔3 byteを各4回切替。二つ目の送信の拒否、切替後30 msの未受信、
+新markerの全byteと長さ、誤形式のInvalidSizeを実通信で確認した。
+初回はCoreで有効な列挙filterのcallback省略によりHost未準備で失敗した。
+診断のINSTALL/CLIENT成功・OPEN未発生とIDFのenum.cを照合し、標準enum_filter_cbで対象VID/PIDを許可して修正した。
+この試験だけmanual Hostを使い、Host libraryへのpatchやpytestの独自fixture/hookは追加していない。
+
+`hid-protocol-related.xml`は**4 passed、0 skipped、0 unfinished、171.86秒**。
+新規probe、既存HID transport/report state、313取得点の確保失敗/回復を含み、全caseで両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-26_14-27-21-836610/`、JUnit/transcript/serialコピーは`.pytest-results/hid-protocol-related*`。
+通常の`--combo all`の対象は12件になったが、今回実行したのは関連4件で、全12件実行済みとはしない。
+人工的な旧完了eventとqueue満杯の組合せ、protocol切替とreset/endの同時実行、他SoC/OSは未検証。

@@ -3,6 +3,7 @@
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
 #include "device/usbd.h"
+#include "device/usbd_pvt.h"
 #include <algorithm>
 #include <string.h>
 
@@ -73,6 +74,7 @@ struct EspUsbHidState {
   uint8_t rhport = 0, interface = 0xff, in = 0, out = 0, protocol = 1, response = 0, boot = 0;
   uint16_t packetCapacity = 0, packetSize = 0;
   bool stopping = false, busy = false;
+  bool protocolDraining = false, protocolFenceQueued = false;
   explicit EspUsbHidState(EspUsbDevice &owner) : device(owner) {}
   ~EspUsbHidState() {
     espusb::internal::removeTinyUsbRuntimeJob(idleJob);
@@ -108,13 +110,26 @@ struct EspUsbHidState {
     if (usbd_edpt_xfer(rhport, in, input, uint16_t(bytes), false)) return true;
     busy = false; pendingInput = nullptr; usbd_edpt_release(rhport, in); return false;
   }
-  // One caller-owned job, posted only while the host enables an idle period.
+  static void finishProtocolDrain(void *context) {
+    auto *s = static_cast<EspUsbHidState *>(context);
+    portENTER_CRITICAL(&hidLock);
+    s->protocolDraining = s->protocolFenceQueued = false;
+    s->pendingInput = nullptr; s->busy = false;
+    portEXIT_CRITICAL(&hidLock);
+  }
+  // Reuse the existing allocation-free worker job for protocol fence retries.
+  // A full core event queue must not make the old DMA buffer reusable early.
+  // One caller-owned job, posted only while idle or a drain needs work.
   // An IN buffer remains DMA-owned until completion even if idle is disabled.
   static void idlePump(void *context) {
     auto *s = static_cast<EspUsbHidState *>(context);
     bool again = false;
     portENTER_CRITICAL(&hidLock);
     if (!s->stopping) {
+      if (s->protocolDraining && !s->protocolFenceQueued) {
+        s->protocolFenceQueued = usbd_try_defer_func(finishProtocolDrain, s);
+        again = !s->protocolFenceQueued;
+      }
       const uint32_t now = millis();
       Report *due = nullptr;
       for (size_t i = 0; i < s->reportCount; ++i) {
@@ -123,7 +138,7 @@ struct EspUsbHidState {
         again = true;
         if (int32_t(now - r.due) >= 0 && (!due || int32_t(r.due - due->due) < 0)) due = &r;
       }
-      if (due && !s->busy && s->in && tud_ready() && usbd_edpt_claim(s->rhport, s->in)) {
+      if (due && !s->protocolDraining && !s->busy && s->in && tud_ready() && usbd_edpt_claim(s->rhport, s->in)) {
         memcpy(s->input, s->saved(*due, 0), due->length[0]);
         if (!s->startInput(*due, due->length[0])) due->due = now + uint32_t(due->interval) * 4;
       }
@@ -252,6 +267,7 @@ struct EspUsbHidState {
     portENTER_CRITICAL(&hidLock);
     interface = 0xff; in = out = 0; busy = false; assembled = 0; protocol = 1; hidDescriptor = nullptr;
     pendingInput = nullptr;
+    protocolDraining = protocolFenceQueued; // a queued fence still owns this state
     for (size_t i = 0; i < reportCount; ++i) {
       auto &r = reports[i];
       r.idle = r.interval = 0; r.pendingIdle = false; r.lastSent = millis();
@@ -360,16 +376,24 @@ struct EspUsbHidState {
       return stage != CONTROL_STAGE_SETUP || tud_control_xfer(port, r, &s->response, 1);
     }
     if (s->boot && r->bmRequestType == 0x21 && r->bRequest == 11 && r->wValue <= 1 && !r->wLength) {
-      if (stage == CONTROL_STAGE_SETUP) return tud_control_status(port, r);
-      if (stage == CONTROL_STAGE_ACK) {
+      if (stage == CONTROL_STAGE_SETUP) {
         portENTER_CRITICAL(&hidLock);
         if (s->protocol != r->wValue) {
+          if (s->busy && !s->protocolDraining) {
+            // Stop old-format hardware before acknowledging the request. Old
+            // completion events may remain queued, so block all new IN arms
+            // until a FIFO fence has passed them. Preserve the endpoint PID.
+            if (!usbd_edpt_abort(port, s->in)) { portEXIT_CRITICAL(&hidLock); return false; }
+            s->protocolDraining = true;
+            espusb::internal::postTinyUsbRuntimeJob(s->idleJob);
+          }
           s->protocol = uint8_t(r->wValue);
           for (size_t i = 0; i < s->reportCount; ++i) s->neutral(s->reports[i], 0);
         }
         portEXIT_CRITICAL(&hidLock);
-        s->device.handleHidSetProtocol(0, s->protocol);
+        return tud_control_status(port, r);
       }
+      if (stage == CONTROL_STAGE_ACK) s->device.handleHidSetProtocol(0, s->protocol);
       return true;
     }
     return false;
@@ -380,6 +404,7 @@ struct EspUsbHidState {
     if (!s) return false;
     if (s->in == endpoint) {
       portENTER_CRITICAL(&hidLock);
+      if (s->protocolDraining) { portEXIT_CRITICAL(&hidLock); return true; }
       if (s->pendingInput) {
         auto &r = *s->pendingInput;
         if (result == XFER_RESULT_SUCCESS && r.relativeOffset) {
@@ -476,17 +501,17 @@ bool EspUsbHidFunction::sendHidInput(uint8_t id, const void *data, size_t length
     }
     // Boot mouse reports omit the wheel; boot keyboard formatting is performed
     // by the Keyboard Function. Both formats still use report ID zero.
-    if (!s->protocol && s->boot == 2 && !id && length == 4) length = 3;
-    const size_t bytes = length + (id ? 1 : 0);
+    const size_t payloadBytes = !s->protocol && s->boot == 2 && !id && length == 4 ? 3 : length;
+    const size_t bytes = payloadBytes + (id ? 1 : 0);
     const size_t maximum = !s->protocol && s->boot && !id ? (s->boot == 1 ? 8 : 3) : report ? report->bytes(0) : 0;
-    if (!data || !length || !report || !report->bits[0] || bytes > maximum || bytes > s->capacity[0]) {
+    if (!data || !length || !report || !report->bits[0] || bytes > maximum || bytes > s->capacity[0] || (s->boot && !id && bytes != maximum)) {
       portEXIT_CRITICAL(&hidLock); device_.setLastError(ESP_ERR_INVALID_SIZE); return false;
     }
-    if (!s->busy && usbd_edpt_claim(s->rhport, s->in)) {
+    if (!s->protocolDraining && !s->busy && usbd_edpt_claim(s->rhport, s->in)) {
       if (id) s->input[0] = id;
-      memcpy(s->input + (id ? 1 : 0), data, length);
+      memcpy(s->input + (id ? 1 : 0), data, payloadBytes);
       const bool sent = s->startInput(*report, bytes);
-      if (sent) s->save(*report, 0, static_cast<const uint8_t *>(data), length);
+      if (sent) s->save(*report, 0, static_cast<const uint8_t *>(data), payloadBytes);
       portEXIT_CRITICAL(&hidLock); device_.setLastError(sent ? ESP_OK : ESP_FAIL); return sent;
     }
     portEXIT_CRITICAL(&hidLock);
