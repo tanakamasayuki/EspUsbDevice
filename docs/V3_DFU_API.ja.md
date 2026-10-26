@@ -93,4 +93,15 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_19-25-20-261549/`、コピーと
 DFUのみ/Deviceのみの最小build/nmで、旧TinyUSB DFUと未使用独自DFUの不在を確認した。
 試験は公開IDF Host APIのRAM backendで行い、conftestや独自pytest hookを使わない。
 Coreのenum filterが有効なため、Hostは対象VID/PIDのfilterを明示する。
-通常収集は17件。今回の関連2件は直近の全16件成功とは別である。
+通常収集は17件。関連2件の後に行った全17件の結果は下記を参照。
+
+
+## DFU置換後の全体確認
+
+2026-10-27。標準`--combo all`は**17 passed、0 skipped、0 unfinished、841.47秒**。
+全17 caseで両board STOPPED、34本のserialにpanicなし。502取得点の確保失敗/回復、
+DFUの最大block/複数interface/manifestationと、従来のAudio/CDC/Vendor/HID/MIDI/MSC、
+descriptor/registryと取消し・転送境界を含む。
+serial原本は`/tmp/pytest-embedded/2026-10-26_19-27-27-183733/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-dfu-all*`。
+DFUのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致、
+旧tests/examplesはmainと同一で、mainはv3の祖先。実OTAの適用・再起動と他SoC/HSは未検証。

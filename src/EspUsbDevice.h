@@ -2305,8 +2305,8 @@ private:
 
 enum class EspUsbDeviceDfuMode : uint8_t
 {
-  // Advertise that the device can be put into DFU mode, and answer exactly one
-  // request: DFU_DETACH. `dfu-util -e` sends it. The default action is to
+  // Advertise Runtime DFU, report its status/state, and accept DFU_DETACH.
+  // `dfu-util -e` sends DETACH. The default action is to
   // restart into the chip's ROM download loader, so a host tool can ask for
   // boot mode without a protocol of this library's own.
   Runtime,

@@ -1,11 +1,11 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新確認: Audioの独自化は`400d8ec`。標準`--combo all`で16件全て成功（823.56秒）。
-APIと未完範囲は[V3_AUDIO_API.ja.md](V3_AUDIO_API.ja.md)、全体結果は末尾を参照。
+最新確認: DFUの独自化は`29044fc`。標準`--combo all`で17件全て成功（841.47秒）。
+APIと未完範囲は[V3_DFU_API.ja.md](V3_DFU_API.ja.md)、全体結果は末尾を参照。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
-旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audioのclassを独自化した。NCM/Video/DFUと共通EP0/core/DCDはまだTinyUSBを使う。
+旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audio/DFUのclassを独自化した。NCM/Videoと共通EP0/core/DCDはまだTinyUSBを使う。
 
 ## 作業場所と優先順位
 
@@ -528,8 +528,25 @@ serial原本は`/tmp/pytest-embedded/2026-10-26_19-25-20-261549/`、コピーと
 DFUのみ/Deviceのみの最小build/nmで、旧TinyUSB DFUと未使用独自DFUの不在を確認した。
 試験は公開IDF Host APIのRAM backendで行い、conftestや独自pytest hookを使わない。
 Coreのenum filterが有効なため、Hostは対象VID/PIDのfilterを明示する。
-通常収集は17件。今回の関連2件は直近の全16件成功とは別である。
+通常収集は17件。関連2件の後に行った全17件の結果は下記を参照。
 
 残るclassはNCM/Video。共通EP0/core/DCDは暫定TinyUSBのままで、全置換の完了ではない。
 実OTA/再起動とdfu-util、block周回、EP0途中切断・実書込み中reset、他SoC/HSは未検証。
 Runtimeのみでも共通driverのDownload/OTA codeがリンクされ得る点は、後続の費用整理に残す。
+
+
+## DFU置換後の全体確認
+
+2026-10-27。標準`--combo all`は**17 passed、0 skipped、0 unfinished、841.47秒**。
+全17 caseで両board STOPPED、34本のserialにpanicなし。502取得点の確保失敗/回復、
+DFUの最大block/複数interface/manifestationと、従来のAudio/CDC/Vendor/HID/MIDI/MSC、
+descriptor/registryと取消し・転送境界を含む。
+serial原本は`/tmp/pytest-embedded/2026-10-26_19-27-27-183733/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-dfu-all*`。
+DFUのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致、
+旧tests/examplesはmainと同一で、mainはv3の祖先。実OTAの適用・再起動と他SoC/HSは未検証。
+
+次のclass置換はNCM。src/class/net/ncm_device.cの固定NTB poolだけでなく、EspUsbDevice.cppの
+g_activeNet・tud_network_mac_address/g_netMacString・NET_TX_SLOTSとFreeRTOS queue、
+MAC文字列の固定indexとbeginNetworkのnetif glueもFunctionごとに整理する。
+Hostにはnetwork raw-frame APIがあるため、S3対向でEthernet frameとNTB control要求から検証する。
+Videoの後には共通EP0/core/DCDの独自化が残る。DFUのRuntimeだけのflash費用分離も未完。
