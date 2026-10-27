@@ -4,7 +4,7 @@
 #include "internal/EspUsbDeviceRestart.h"
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
-#include "device/usbd.h"
+#include "internal/EspUsbDeviceBus.h"
 #include <string.h>
 #include <utility>
 namespace {
@@ -73,10 +73,10 @@ struct EspUsbDfuState {
     if (stage == CONTROL_STAGE_SETUP) { s->receiving = false; s->dataReady = false; }
     if (r->bmRequestType == 0x81 && r->bRequest == 10 && !r->wValue && r->wLength == 1) {
       if (stage != CONTROL_STAGE_SETUP) return true;
-      s->reply[0] = 0; return tud_control_xfer(port, r, s->reply, 1);
+      s->reply[0] = 0; return espusb_device_control_transfer(port, r, s->reply, 1);
     }
     if (r->bmRequestType == 1 && r->bRequest == 11 && !r->wValue && !r->wLength) {
-      if (stage == CONTROL_STAGE_SETUP) return tud_control_status(port, r);
+      if (stage == CONTROL_STAGE_SETUP) return espusb_device_control_status(port, r);
       if (stage == CONTROL_STAGE_ACK) s->reset();
       return true;
     }
@@ -96,7 +96,7 @@ struct EspUsbDfuState {
         s->reply[0] = uint8_t(s->status);
         for (unsigned i = 0; i < 3; ++i) s->reply[i + 1] = uint8_t(poll >> (8 * i));
         s->reply[4] = s->statusNext; s->reply[5] = 0;
-        return tud_control_xfer(port, r, s->reply, 6);
+        return espusb_device_control_transfer(port, r, s->reply, 6);
       }
       if (stage == CONTROL_STAGE_ACK) {
         s->state = s->statusNext;
@@ -109,11 +109,11 @@ struct EspUsbDfuState {
     if (r->bRequest == 5 && r->bmRequestType == 0xa1 && !r->wValue && r->wLength == 1) {
       if (s->state == DownloadBusy || s->state == Manifest) return s->reject();
       if (stage != CONTROL_STAGE_SETUP) return true;
-      s->reply[0] = s->state; return tud_control_xfer(port, r, s->reply, 1);
+      s->reply[0] = s->state; return espusb_device_control_transfer(port, r, s->reply, 1);
     }
     if (o.mode_ == EspUsbDeviceDfuMode::Runtime) {
       if (r->bRequest != 0 || r->bmRequestType != 0x21 || r->wLength || s->state != AppIdle) return false;
-      if (stage == CONTROL_STAGE_SETUP) return tud_control_status(port, r);
+      if (stage == CONTROL_STAGE_SETUP) return espusb_device_control_status(port, r);
       if (stage == CONTROL_STAGE_ACK) {
         s->state = AppDetach;
         const uint16_t ms = r->wValue < o.config_.detachTimeoutMs ? r->wValue : o.config_.detachTimeoutMs;
@@ -123,12 +123,12 @@ struct EspUsbDfuState {
       return true;
     }
     if (r->bRequest == 4 && r->bmRequestType == 0x21 && !r->wValue && !r->wLength && s->state == Error) {
-      if (stage == CONTROL_STAGE_SETUP) return tud_control_status(port, r);
+      if (stage == CONTROL_STAGE_SETUP) return espusb_device_control_status(port, r);
       if (stage == CONTROL_STAGE_ACK) s->reset(); return true;
     }
     if (r->bRequest == 6 && r->bmRequestType == 0x21 && !r->wValue && !r->wLength &&
         (s->state == Idle || s->state == DownloadSync || s->state == DownloadIdle || s->state == ManifestSync)) {
-      if (stage == CONTROL_STAGE_SETUP) return tud_control_status(port, r);
+      if (stage == CONTROL_STAGE_SETUP) return espusb_device_control_status(port, r);
       if (stage == CONTROL_STAGE_ACK) s->reset(); return true;
     }
     if (r->bRequest != 1 || r->bmRequestType != 0x21 ||
@@ -136,16 +136,16 @@ struct EspUsbDfuState {
     if (r->wValue != s->nextBlock) return s->reject(Status::NotDone);
     if (!r->wLength) {
       if (s->state != DownloadIdle) return s->reject(Status::NotDone);
-      if (stage == CONTROL_STAGE_SETUP) return tud_control_status(port, r);
+      if (stage == CONTROL_STAGE_SETUP) return espusb_device_control_status(port, r);
       if (stage == CONTROL_STAGE_ACK) { s->state = ManifestSync; s->workPending = true; }
       return true;
     }
     if (stage == CONTROL_STAGE_SETUP) {
       s->receiving = true; s->block = r->wValue; s->bytes = r->wLength;
-      return tud_control_xfer(port, r, s->buffer, s->bytes);
+      return espusb_device_control_transfer(port, r, s->buffer, s->bytes);
     }
     if (stage == CONTROL_STAGE_DATA) {
-      if (!s->receiving || usbd_control_received_bytes() != s->bytes) return s->reject();
+      if (!s->receiving || espusb_device_control_received_bytes() != s->bytes) return s->reject();
       s->dataReady = true;
     } else if (stage == CONTROL_STAGE_ACK) {
       if (!s->receiving || !s->dataReady) return s->reject();

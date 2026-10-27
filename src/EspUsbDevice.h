@@ -630,10 +630,8 @@ public:
   // USB Serial/JTAG port, which is not the high-speed OTG connector. See
   // docs/ota-over-usb.md.
   //
-  // Arduino-ESP32's usb_persist_restart() does the same job and cannot be used
-  // from a sketch that links this library - it drags esp32-hal-tinyusb.c in,
-  // which defines tud_descriptor_bos_cb() and tud_vendor_control_xfer_cb() a
-  // second time - and is a no-op on ESP32-P4 in any case.
+  // Sets ROM download mode directly, including the shared PHY routing needed
+  // for USB Serial/JTAG on S3. It does not initialize Arduino's USB stack.
   bool rebootToBootloader();
   // Restart into the ROM's DFU device on USB-OTG instead of its serial loader,
   // for a host that drives dfu-util rather than esptool. ESP32-S2 and ESP32-S3

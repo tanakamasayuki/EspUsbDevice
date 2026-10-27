@@ -1,12 +1,12 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装は独自controller境界への移行。vendor DCD/private・OS/FIFO・umbrella headerと
-無効slave/FIFO経路を撤去し、選択vendorを24→17 filesへ減らした。
-標準combo allは**全31件成功（1402.90秒）**。62 serial log全てSTOPPED、panicなし。
-774確保点の失敗/回復も成功。S2/P4 HSはcompile-only成功、実機確認はS3–S3のみ。
-直前のnative class登録表独自化は`82f247f`、DWC2 DMA停止・latched IRQ対策は`0fd005c`。
-[core APIと未完の境界](V3_CORE_API.ja.md)を参照。TinyUSBのコンパイル対象はDWC2関連2本、
-wire/protocol type、device向け残存headerとDWC2 register/port実装の依存は残る。
+最新実装はnative bus/endpoint APIとCDC/MIDI記述子生成の独自化。
+旧`tud_*`/`usbd_*`互換入口とdevice/Audio/CDC/MIDI headerを撤去し、vendorは17→13 files。
+標準combo allは**全31件成功（1502.57秒）**。62 serial log全てSTOPPED、panicなし。
+774確保点の失敗/回復、S2/P4 HS compile-onlyも成功。実機確認はS3–S3のみ。
+直前のcontroller境界独自化は`4ba57fe`。
+[core APIと未完の境界](V3_CORE_API.ja.md)を参照。残るcompiled sourceはDWC2関連2本、
+wire type・HID table・DWC2 register/port/sourceとcapability定義の依存は続けて置換する。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
@@ -1005,3 +1005,18 @@ Arduino SDK自身の別ソースが持つTinyUSB依存と、古いbuild director
 vendor検証17 files/2 sources、updater dry run差分0。旧tests/examplesはmainとの差分なし。
 残るdevice向けheader、wire/protocol type、DWC2 register/port実装、全EP0順序・class HALT競合、
 S2/P4/S31とHSの実機検証は未完了。APIの最終整理とv3 sample整備も引き続き必要。
+
+## native busとCDC/MIDI記述子移行後の全体確認
+
+2026-10-28。標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1502.57秒**。
+774確保点の失敗/回復が成功し、heapは試験前後で同量。62 serial log全てSTOPPED、panicなし。
+CDCの列挙・制御・通信、MIDIの対称1/16 cableとIN16/OUT1非対称構成を含む。
+原本`/tmp/pytest-embedded/2026-10-27_15-28-37-180106/`、JUnit/transcript/serialコピーは`validation/.pytest-results/native-bus-all*`。
+S2/P4 HSのcompile-onlyも成功し、`native-bus-{s2,p4}-build.txt`へ記録した。
+S3 Vendor/S2/P4 ELFに旧`tud_*`/`usbd_*`/`dcd_*` symbolはなく、独自bus/endpointが存在する。
+S3 Vendor-onlyでは未使用class stateも不在。各targetのライブラリ28ソースのcompiler依存記録に、
+削除したdevice/Audio/CDC/MIDI headerやSDK同名headerへのfallbackはない。
+各nmと`native-bus-audit.txt`を保存した。vendor検証13 files/2 sources、updater dry run差分0。
+旧tests/examplesはmainとの差分なし。
+wire type・HID table・DWC2とcapability定義、HALT競合・全EP0順序・他SoC/HS実機、
+最終API/sampleの整理は未完了。逆向きIN1/OUT16の追加試験はこの全体結果には含めない。

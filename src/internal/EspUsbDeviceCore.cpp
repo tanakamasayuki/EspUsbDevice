@@ -1,5 +1,4 @@
-// Independent device/EP0 engine. The temporary C ABI below connects existing
-// first-party classes and the remaining TinyUSB DWC2 adapter. See
+// Independent device/EP0 engine with native class and controller boundaries. See
 // third_party/tinyusb/PROVENANCE.md for the adapter's MIT-licensed origins.
 #include "EspUsbDeviceCore.h"
 #include "EspUsbDeviceAppDriver.h"
@@ -7,7 +6,7 @@
 #include "EspUsbDwc2Runtime.h"
 #include "EspUsbMemory.h"
 #include "EspUsbController.h"
-#include "device/usbd.h"
+#include "EspUsbDeviceBus.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include <algorithm>
@@ -55,7 +54,6 @@ struct Core {
   std::atomic<tusb_speed_t> speed{TUSB_SPEED_INVALID};
   bool addressed = false, selfPowered = false;
   std::atomic<bool> remoteWakeup{false}, recovering{false}, stopping{false};
-  std::atomic<uint8_t> sofConsumers{0};
   Endpoint *endpoint(uint8_t address) {
     if ((address & 0x70) || (address & 15) >= endpointCount) return nullptr;
     return endpoints + (address & 15)*2 + (address >> 7);
@@ -85,7 +83,7 @@ struct Core {
   }
   void resetDrivers() {
     configurationEpoch.fetch_add(1);
-    configuration.store(0); remoteWakeup = selfPowered = false; sofConsumers = 0;
+    configuration.store(0); remoteWakeup = selfPowered = false;
     control = {};
     for (unsigned i=0;i<unsigned(endpointCount)*2;++i) {
       endpoints[i].driver=Invalid; endpoints[i].type=0; endpoints[i].interfaceNumber=Invalid; endpoints[i].opened.store(false); endpoints[i].flags.store(0);
@@ -102,7 +100,7 @@ struct Core {
     if (!currentControl() || (control.phase!=Control::Phase::Setup && control.phase!=Control::Phase::Data)) return false;
     control.phase = Control::Phase::Status;
     const uint8_t ep = control.request.wLength && (control.request.bmRequestType & 128) ? 0 : 128;
-    return usbd_edpt_xfer(port,ep,nullptr,0,false);
+    return espusb_device_edpt_xfer(port,ep,nullptr,0,false);
   }
   bool data() {
     if (!currentControl() || control.transferred > control.capacity) return false;
@@ -110,7 +108,7 @@ struct Core {
     const bool input = control.request.bmRequestType & 128;
     if (input && control.armed) memcpy(packet,control.buffer+control.transferred,control.armed);
     control.phase = Control::Phase::Data;
-    return usbd_edpt_xfer(port,input ? 128 : 0,control.armed ? packet : nullptr,control.armed,false);
+    return espusb_device_edpt_xfer(port,input ? 128 : 0,control.armed ? packet : nullptr,control.armed,false);
   }
   void completedControl(const Event &event) {
     auto &c=control; const auto &x=event.data.xfer_complete;
@@ -124,7 +122,7 @@ struct Core {
       if (x.ep_addr != statusEp || x.len) { stallControl(); return; }
       c.phase = Control::Phase::Idle;
       if (c.request.bmRequestType==0 && c.request.bRequest==5) addressed = c.request.wValue != 0;
-      espusb_controller_edpt0_status_complete(port,&c.request);
+      espusb_device_control_acknowledged(port,&c.request);
       if (c.callback) c.callback(port,CONTROL_STAGE_ACK,&c.request);
       return;
     }
@@ -157,25 +155,25 @@ struct Core {
     switch (type) {
     case 1:
       if (index || r.wIndex) return false;
-      p=tud_descriptor_device_cb(); if (p) bytes=p[0]; break;
+      p=espusb_device_descriptor_device(); if (p) bytes=p[0]; break;
     case 2: case 7:
       if (r.wIndex) return false;
-      p=type==2 ? tud_descriptor_configuration_cb(index) : tud_descriptor_other_speed_configuration_cb(index);
+      p=type==2 ? espusb_device_descriptor_configuration(index) : espusb_device_descriptor_other_speed_configuration(index);
       if (p) bytes=uint16_t(p[2]) | uint16_t(p[3])<<8; break;
     case 3:
-      p=reinterpret_cast<const uint8_t *>(tud_descriptor_string_cb(index,r.wIndex)); if (p) bytes=p[0]; break;
+      p=reinterpret_cast<const uint8_t *>(espusb_device_descriptor_string(index,r.wIndex)); if (p) bytes=p[0]; break;
     case 6:
       if (index || r.wIndex) return false;
-      p=tud_descriptor_device_qualifier_cb(); if (p) bytes=p[0]; break;
+      p=espusb_device_descriptor_device_qualifier(); if (p) bytes=p[0]; break;
     case 15:
       if (index || r.wIndex) return false;
-      p=tud_descriptor_bos_cb(); if (p) bytes=uint16_t(p[2]) | uint16_t(p[3])<<8; break;
+      p=espusb_device_descriptor_bos(); if (p) bytes=uint16_t(p[2]) | uint16_t(p[3])<<8; break;
     default: return false;
     }
     return p && bytes >= 2 && reply(p,bytes);
   }
   bool configure(uint8_t value) {
-    const auto *p=tud_descriptor_configuration_cb(0);
+    const auto *p=espusb_device_descriptor_configuration(0);
     if (!p || p[0]!=9 || p[1]!=2 || (value && value!=p[5])) return false;
     const uint16_t length=uint16_t(p[2]) | uint16_t(p[3])<<8;
     // Even reselecting the same configuration resets endpoints and alternates.
@@ -183,7 +181,7 @@ struct Core {
     const Control pending=control;
     espusb_controller_sof_enable(port,false); espusb_controller_edpt_close_all(port);
     resetDrivers(); control=pending;
-    if (!value) { tud_umount_cb(); return true; }
+    if (!value) { espusb_device_on_unmount(); return true; }
     configuration.store(value); selfPowered = p[7]&64;
     size_t offset=9;
     while (offset+2 <= length) {
@@ -217,7 +215,7 @@ struct Core {
     }
     if (offset!=length) return false;
     for (unsigned i=0;i<interfaceCount;++i) if (interfaces[i]==Invalid) return false;
-    tud_mount_cb(); return true;
+    espusb_device_on_mount(); return true;
   }
   bool standardDevice() {
     const auto &r=control.request;
@@ -227,7 +225,7 @@ struct Core {
       uint8_t state[2]={uint8_t(unsigned(selfPowered) | unsigned(remoteWakeup)<<1),0}; return reply(state,2);
     }
     case 1: case 3: {
-      const auto *p=tud_descriptor_configuration_cb(0);
+      const auto *p=espusb_device_descriptor_configuration(0);
       if (r.bmRequestType || r.wValue!=1 || r.wIndex || r.wLength || !configuration.load() || !p || !(p[7]&32)) return false;
       remoteWakeup=r.bRequest==3; return status();
     }
@@ -242,7 +240,7 @@ struct Core {
     }
     case 9:
       if (r.bmRequestType || r.wValue>255 || r.wIndex || r.wLength || !addressed) return false;
-      { const auto *cfg=tud_descriptor_configuration_cb(0);
+      { const auto *cfg=espusb_device_descriptor_configuration(0);
         if (!cfg || (r.wValue && r.wValue!=cfg[5])) return false; }
       if (!configure(uint8_t(r.wValue))) {
         const Control pending=control; espusb_controller_edpt_close_all(port); resetDrivers(); control=pending; return false;
@@ -255,7 +253,7 @@ struct Core {
     const auto &r=control.request;
     const unsigned type=(r.bmRequestType>>5)&3, recipient=r.bmRequestType&31;
     if (type==3) return false;
-    if (type==2) { control.callback=tud_vendor_control_xfer_cb; return control.callback(port,CONTROL_STAGE_SETUP,&r); }
+    if (type==2) { control.callback=espusb_device_vendor_control; return control.callback(port,CONTROL_STAGE_SETUP,&r); }
     if (recipient==0) {
       if (!type) return standardDevice();
       const unsigned itf=uint8_t(r.wIndex);
@@ -289,7 +287,7 @@ struct Core {
         uint8_t state[2]={uint8_t(bool(ep->flags&Halted)),0}; return reply(state,2);
       }
       if ((r.bRequest!=1 && r.bRequest!=3) || r.bmRequestType!=2 || r.wValue || r.wLength || !(r.wIndex&15) || !d || ep->type==1) return false;
-      if (r.bRequest==1) usbd_edpt_clear_stall(port,uint8_t(r.wIndex)); else usbd_edpt_stall(port,uint8_t(r.wIndex));
+      if (r.bRequest==1) espusb_device_edpt_clear_stall(port,uint8_t(r.wIndex)); else espusb_device_edpt_stall(port,uint8_t(r.wIndex));
       invoke(d); control.callback=nullptr;
       return control.phase!=Control::Phase::Setup || status();
     }
@@ -301,7 +299,7 @@ struct Core {
     recovering=true;
     espusb_controller_int_disable(port); espusb_controller_disconnect(port); espusb_controller_edpt_close_all(port);
     connected.store(false); suspended.store(false); addressed=false;
-    resetDrivers(); tud_umount_cb();
+    resetDrivers(); espusb_device_on_unmount();
     Event old;
     // Let old fences retire their own queued bookkeeping after reset. Posting
     // new fences is refused until recovery ends; other old events are obsolete.
@@ -319,7 +317,7 @@ namespace espusb { namespace internal {
 esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   if (core) return ESP_ERR_INVALID_STATE;
   if (!queueDepth) return ESP_ERR_INVALID_SIZE;
-  const auto *cfg=tud_descriptor_configuration_cb(0);
+  const auto *cfg=espusb_device_descriptor_configuration(0);
   if (!cfg || cfg[0]!=9 || cfg[1]!=2) return ESP_ERR_INVALID_STATE;
   const unsigned count=cfg[4]; const uint16_t length=uint16_t(cfg[2]) | uint16_t(cfg[3])<<8;
   unsigned epCount=1; uint16_t outMask=1, inMask=1;
@@ -362,7 +360,7 @@ void stopUsbDeviceCore() {
   s->stopping=true; espusb_controller_int_disable(s->port); espusb_controller_disconnect(s->port); espusb_controller_deinit(s->port);
   const bool mounted=s->configuration.exchange(0)!=0;
   for(unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].deinit)s->drivers[i].deinit();
-  if(mounted)tud_umount_cb();
+  if(mounted)espusb_device_on_unmount();
   espusb_dwc2_runtime_release();
   vQueueDelete(s->queue); core=nullptr; s->~Core(); freeUsbMemory(s);
 }
@@ -396,7 +394,7 @@ void runUsbDeviceCore(uint32_t milliseconds) {
       s->resetDrivers();break;
     case ESPUSB_CONTROLLER_EVENT_UNPLUGGED:
       s->workerBus.store(event.bus);
-      s->addressed=false;s->connected.store(false);s->suspended.store(false);s->resetDrivers();tud_umount_cb();break;
+      s->addressed=false;s->connected.store(false);s->suspended.store(false);s->resetDrivers();espusb_device_on_unmount();break;
     case ESPUSB_CONTROLLER_EVENT_SETUP_RECEIVED:
       if(event.setup!=s->setup.load())break;
       s->connected.store(true);s->endpoints[0].flags=s->endpoints[1].flags=0;
@@ -413,39 +411,29 @@ void runUsbDeviceCore(uint32_t milliseconds) {
       else {const auto *d=s->driver(ep->driver);if(d && d->xfer_cb)d->xfer_cb(s->port,e.xfer_complete.ep_addr,xfer_result_t(e.xfer_complete.result),e.xfer_complete.len);}
       break;
     }
-    case ESPUSB_CONTROLLER_EVENT_SUSPEND: if(s->connected.load())tud_suspend_cb(s->remoteWakeup);break;
-    case ESPUSB_CONTROLLER_EVENT_RESUME: if(s->connected.load())tud_resume_cb();break;
-    case ESPUSB_CONTROLLER_EVENT_SOF: if(s->sofConsumers&1)tud_sof_cb(e.sof.frame_count);break;
     default:break;
     }
   }
 }
 } }
 
-// Transitional class/DWC2 ABI. There is one active core, no legacy fallback.
+// Native device/controller entry points. There is one active core.
 extern "C" {
 void espusb_controller_lock(bool) {portENTER_CRITICAL(&hardwareLock);}
 void espusb_controller_unlock(bool) {portEXIT_CRITICAL(&hardwareLock);}
-bool tud_inited() {return core!=nullptr;}
-bool tud_rhport_init(uint8_t port,const tusb_rhport_init_t *init) {return init && espusb::internal::startUsbDeviceCore(port,init->speed==TUSB_SPEED_HIGH,16)==ESP_OK;}
-bool tud_deinit(uint8_t) {espusb::internal::stopUsbDeviceCore();return true;}
-tusb_speed_t tud_speed_get() {return core ? core->speed.load() : TUSB_SPEED_INVALID;}
-bool tud_connected() {return core && core->connected.load();}
-bool tud_mounted() {return core && core->configuration.load();}
-bool tud_suspended() {return core && core->suspended.load();}
-bool tud_remote_wakeup() {if(!core || !core->suspended.load() || !core->remoteWakeup)return false;espusb_controller_remote_wakeup(core->port);return true;}
-bool tud_connect() {if(!core)return false;espusb_controller_connect(core->port);return true;}
-bool tud_disconnect() {if(!core)return false;espusb_controller_disconnect(core->port);return true;}
-void tud_task_ext(uint32_t milliseconds,bool) {espusb::internal::runUsbDeviceCore(milliseconds);}
-bool tud_task_event_ready() {return core && (core->overflow.load() || uxQueueMessagesWaiting(core->queue));}
-uint16_t usbd_control_received_bytes() {return espusb::internal::usbControlTransferredBytes();}
-bool tud_control_xfer(uint8_t port,const tusb_control_request_t *request,void *buffer,uint16_t bytes) {
+tusb_speed_t espusb_device_speed() {return core ? core->speed.load() : TUSB_SPEED_INVALID;}
+bool espusb_device_mounted() {return core && core->configuration.load();}
+bool espusb_device_suspended() {return core && core->suspended.load();}
+bool espusb_device_disconnect() {if(!core)return false;espusb_controller_disconnect(core->port);return true;}
+bool espusb_device_events_pending() {return core && (core->overflow.load() || uxQueueMessagesWaiting(core->queue));}
+uint16_t espusb_device_control_received_bytes() {return espusb::internal::usbControlTransferredBytes();}
+bool espusb_device_control_transfer(uint8_t port,const tusb_control_request_t *request,void *buffer,uint16_t bytes) {
   return core && port==core->port && request && !memcmp(request,&core->control.request,sizeof(*request)) && core->reply(buffer,bytes);
 }
-bool tud_control_status(uint8_t port,const tusb_control_request_t *request) {
+bool espusb_device_control_status(uint8_t port,const tusb_control_request_t *request) {
   return core && port==core->port && request && !request->wLength && core->control.phase==Control::Phase::Setup && !memcmp(request,&core->control.request,sizeof(*request)) && core->status();
 }
-bool usbd_edpt_open(uint8_t port,const tusb_desc_endpoint_t *descriptor) {
+bool espusb_device_edpt_open(uint8_t port,const tusb_desc_endpoint_t *descriptor) {
   if(!core || port!=core->port || !descriptor || descriptor->bLength<7 || descriptor->bDescriptorType!=5)return false;
   auto *ep=core->endpoint(descriptor->bEndpointAddress);if(!ep || !(descriptor->bEndpointAddress&15))return false;
   const unsigned type=descriptor->bmAttributes.xfer, packet=tu_edpt_packet_size(descriptor);
@@ -455,16 +443,16 @@ bool usbd_edpt_open(uint8_t port,const tusb_desc_endpoint_t *descriptor) {
   if(!espusb_controller_edpt_open(port,descriptor))return false;
   ep->opened=true;ep->type=uint8_t(type);ep->flags=0;return true;
 }
-bool usbd_edpt_claim(uint8_t port,uint8_t address) {
+bool espusb_device_edpt_claim(uint8_t port,uint8_t address) {
   if(!core || port!=core->port || core->stopping || core->recovering)return false;
   auto *ep=core->endpoint(address);if(!ep || ((address&15) && !ep->opened))return false;
   portENTER_CRITICAL(&endpointLock);bool ok=!(ep->flags&(Busy|Claimed|Halted));if(ok)ep->flags|=Claimed;portEXIT_CRITICAL(&endpointLock);return ok;
 }
-bool usbd_edpt_release(uint8_t port,uint8_t address) {
+bool espusb_device_edpt_release(uint8_t port,uint8_t address) {
   if(!core || port!=core->port)return false;auto *ep=core->endpoint(address);if(!ep)return false;
   portENTER_CRITICAL(&endpointLock);bool ok=(ep->flags&Claimed) && !(ep->flags&Busy);if(ok)ep->flags &= uint8_t(~Claimed);portEXIT_CRITICAL(&endpointLock);return ok;
 }
-bool usbd_edpt_xfer(uint8_t port,uint8_t address,uint8_t *buffer,uint16_t bytes,bool inIsr) {
+bool espusb_device_edpt_xfer(uint8_t port,uint8_t address,uint8_t *buffer,uint16_t bytes,bool inIsr) {
   if(!core || port!=core->port || core->stopping || core->recovering || (bytes && !buffer))return false;
   if((address&15) && (core->workerBus.load()!=core->bus.load() || !core->configuration.load()))return false;
   auto *ep=core->endpoint(address);if(!ep || ((address&15) && !ep->opened))return false;
@@ -473,34 +461,28 @@ bool usbd_edpt_xfer(uint8_t port,uint8_t address,uint8_t *buffer,uint16_t bytes,
   if(espusb_controller_edpt_xfer(port,address,buffer,bytes,inIsr))return true;
   portENTER_CRITICAL(&endpointLock);ep->flags &= uint8_t(~(Busy|Claimed));portEXIT_CRITICAL(&endpointLock);return false;
 }
-bool usbd_edpt_busy(uint8_t port,uint8_t address) {auto *ep=core && port==core->port ? core->endpoint(address):nullptr;return ep && (ep->flags&Busy);}
-bool usbd_edpt_stalled(uint8_t port,uint8_t address) {auto *ep=core && port==core->port ? core->endpoint(address):nullptr;return ep && (ep->flags&Halted);}
-void usbd_edpt_stall(uint8_t port,uint8_t address) {
+bool espusb_device_edpt_busy(uint8_t port,uint8_t address) {auto *ep=core && port==core->port ? core->endpoint(address):nullptr;return ep && (ep->flags&Busy);}
+bool espusb_device_edpt_stalled(uint8_t port,uint8_t address) {auto *ep=core && port==core->port ? core->endpoint(address):nullptr;return ep && (ep->flags&Halted);}
+void espusb_device_edpt_stall(uint8_t port,uint8_t address) {
   auto *ep=core && port==core->port ? core->endpoint(address):nullptr;if(!ep)return;
   espusb_controller_edpt_stall(port,address);ep->flags |= Busy|Halted;
 }
-void usbd_edpt_clear_stall(uint8_t port,uint8_t address) {
+void espusb_device_edpt_clear_stall(uint8_t port,uint8_t address) {
   auto *ep=core && port==core->port ? core->endpoint(address):nullptr;if(!ep)return;
   espusb_controller_edpt_clear_stall(port,address);ep->flags &= (ep->flags&Halted) ? 0 : Claimed;
 }
-bool usbd_edpt_abort_supported() {return espusb_controller_edpt_abort_supported();}
-bool usbd_edpt_abort(uint8_t port,uint8_t address) {
+bool espusb_device_edpt_abort_supported() {return espusb_controller_edpt_abort_supported();}
+bool espusb_device_edpt_abort(uint8_t port,uint8_t address) {
   auto *ep=core && port==core->port ? core->endpoint(address):nullptr;
   if(!ep || !(address&15) || !espusb_controller_edpt_abort(port,address))return false;
   ep->flags=(ep->flags&Halted) ? Busy|Halted : 0;return true;
 }
-bool usbd_edpt_iso_alloc(uint8_t,uint8_t,uint16_t) {return false;}
-bool usbd_try_defer_func(void (*function)(void *),void *context) {
+bool espusb_device_try_defer(void (*function)(void *),void *context) {
   if(!core || !function || core->recovering || core->stopping)return false;
   Event event={};event.data.rhport=core->port;event.data.event_id=DeferredCall;event.data.func_call.func=function;event.data.func_call.param=context;
   return core->post(event,false);
 }
-uint16_t usbd_event_queue_capacity() {return core ? core->queueDepth : 0;}
-void tud_sof_cb_enable(bool enabled) {
-  if(!core)return;
-  core->sofConsumers=enabled ? 1 : 0;
-  espusb_controller_sof_enable(core->port,enabled);
-}
+uint16_t espusb_device_queue_capacity() {return core ? core->queueDepth : 0;}
 void espusb_controller_event(const EspUsbControllerEvent *data,bool inIsr) {
   auto *s=core;if(!s || !data || data->rhport!=s->port || s->stopping ||
       data->event_id<=ESPUSB_CONTROLLER_EVENT_INVALID || data->event_id>=ESPUSB_CONTROLLER_EVENT_COUNT)return;
@@ -515,17 +497,14 @@ void espusb_controller_event(const EspUsbControllerEvent *data,bool inIsr) {
   if(data->event_id==ESPUSB_CONTROLLER_EVENT_SOF) {
     for(unsigned i=0;i<s->driverCount;++i)if(s->drivers[i].sof)s->drivers[i].sof(s->port,data->sof.frame_count);
     if(s->suspended.exchange(false)) {EspUsbControllerEvent resume={};resume.rhport=s->port;resume.event_id=ESPUSB_CONTROLLER_EVENT_RESUME;espusb_controller_event(&resume,inIsr);}
-    if(!(s->sofConsumers&1))return;
+    return; // Class SOF callbacks above have already run in interrupt context.
   }
   Event event={};event.data=*data;event.bus=s->bus.load();event.setup=s->setup.load();event.configurationEpoch=s->configurationEpoch.load();
   if(!s->post(event,inIsr))s->overflow.store(true);
-  tud_event_hook_cb(data->rhport,data->event_id,inIsr);
+  espusb_device_event_hook(data->rhport,data->event_id,inIsr);
 }
-// Optional integration hooks retained until the remaining DWC2 ABI is replaced.
-__attribute__((weak)) void tud_event_hook_cb(uint8_t,uint32_t,bool) {}
-__attribute__((weak)) void tud_sof_cb(uint32_t) {}
-__attribute__((weak)) void tud_suspend_cb(bool) {}
-__attribute__((weak)) void tud_resume_cb() {}
+// Private observer for adversarial event probes; no public callback contract.
+__attribute__((weak)) void espusb_device_event_hook(uint8_t,uint32_t,bool) {}
 __attribute__((weak)) bool espusb_controller_dcache_clean(const void *,uint32_t) {return true;}
 __attribute__((weak)) bool espusb_controller_dcache_invalidate(const void *,uint32_t) {return true;}
 __attribute__((weak)) bool espusb_controller_dcache_clean_invalidate(const void *,uint32_t) {return true;}

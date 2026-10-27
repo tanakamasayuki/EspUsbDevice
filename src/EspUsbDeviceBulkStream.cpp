@@ -12,7 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "internal/EspUsbDeviceEndpoint.h"
-#include "device/usbd.h"
+#include "internal/EspUsbDeviceBus.h"
 
 namespace {
 portMUX_TYPE bulkLock = portMUX_INITIALIZER_UNLOCKED;
@@ -115,22 +115,22 @@ struct EspUsbBulkState {
   void receive() {
     if (owner.config_.rxMode == EspUsbBulkRxMode::Borrowed || owner.config_.rxMode == EspUsbBulkRxMode::Disabled || stopping || cancelRx || !epOut || rxBusy ||
         (owner.config_.rxMode == EspUsbBulkRxMode::Stream && (rxPendingLength || rx.used == rx.capacity))) return;
-    if (!usbd_edpt_claim(rhport, epOut)) return;
+    if (!espusb_device_edpt_claim(rhport, epOut)) return;
     rxBusy = true;
-    if (!usbd_edpt_xfer(rhport, epOut, rxPacket, packetSize, false)) {
-      rxBusy = false; usbd_edpt_release(rhport, epOut);
+    if (!espusb_device_edpt_xfer(rhport, epOut, rxPacket, packetSize, false)) {
+      rxBusy = false; espusb_device_edpt_release(rhport, epOut);
     }
   }
   void transmit() {
     if (stopping || cancelTx || !epIn || txBusy || directBuffer || !flushing || !tx.used) return;
-    if (!usbd_edpt_claim(rhport, epIn)) return;
+    if (!espusb_device_edpt_claim(rhport, epIn)) return;
     // The adapter splits hardware arms internally; its call length is 16-bit.
     size_t n = std::min(tx.used, size_t(owner.config_.transferBytes));
     if (packetUnit > 1) n -= n % packetUnit;
     tx.peek(txPacket, n);
     txBusy = true;
-    if (usbd_edpt_xfer(rhport, epIn, txPacket, uint16_t(n), false)) tx.drop(n);
-    else { txBusy = false; usbd_edpt_release(rhport, epIn); }
+    if (espusb_device_edpt_xfer(rhport, epIn, txPacket, uint16_t(n), false)) tx.drop(n);
+    else { txBusy = false; espusb_device_edpt_release(rhport, epIn); }
   }
   void reset() {
     portENTER_CRITICAL(&bulkLock);
@@ -154,7 +154,7 @@ struct EspUsbBulkState {
     // checking the loan and posting its allocation-free worker job.
     if (stopping || (input ? !directBuffer : !directRxBuffer)) return ESP_ERR_INVALID_STATE;
     if (id && id != (input ? txId : rxId)) return ESP_ERR_INVALID_STATE;
-    if (!usbd_edpt_abort_supported()) return ESP_ERR_NOT_SUPPORTED;
+    if (!espusb_device_edpt_abort_supported()) return ESP_ERR_NOT_SUPPORTED;
     bool &pending = input ? cancelTx : cancelRx;
     if (pending) return ESP_OK;
     pending = true;
@@ -177,7 +177,7 @@ struct EspUsbBulkState {
     (input ? resetTxPid : resetRxPid) = resetPid;
     const uint8_t endpoint = input ? epIn : epOut;
     bool &aborted = input ? abortedTx : abortedRx;
-    aborted = endpoint && usbd_edpt_abort(rhport, endpoint);
+    aborted = endpoint && espusb_device_edpt_abort(rhport, endpoint);
     if (input) { tx.clear(); flushing = copyZlp = false; }
     else { rx.clear(); rxPendingOffset = rxPendingLength = 0; }
     cancelJob.run = cancelPump; cancelJob.context = this;
@@ -188,12 +188,12 @@ struct EspUsbBulkState {
     auto *s = static_cast<EspUsbBulkState *>(context);
     portENTER_CRITICAL(&bulkLock);
     if (!s->stopping) {
-      if (s->cancelTx && !s->abortedTx && s->epIn) s->abortedTx = usbd_edpt_abort(s->rhport, s->epIn);
-      if (s->cancelRx && !s->abortedRx && s->epOut) s->abortedRx = usbd_edpt_abort(s->rhport, s->epOut);
+      if (s->cancelTx && !s->abortedTx && s->epIn) s->abortedTx = espusb_device_edpt_abort(s->rhport, s->epIn);
+      if (s->cancelRx && !s->abortedRx && s->epOut) s->abortedRx = espusb_device_edpt_abort(s->rhport, s->epOut);
       // A FIFO fence runs after already-queued completion events. Keep the
       // loan blocked until then. A full event queue is retried, never dropped.
-      if (s->cancelTx && s->abortedTx && !s->fenceTx) s->fenceTx = usbd_try_defer_func(finishCancelTx, s);
-      if (s->cancelRx && s->abortedRx && !s->fenceRx) s->fenceRx = usbd_try_defer_func(finishCancelRx, s);
+      if (s->cancelTx && s->abortedTx && !s->fenceTx) s->fenceTx = espusb_device_try_defer(finishCancelTx, s);
+      if (s->cancelRx && s->abortedRx && !s->fenceRx) s->fenceRx = espusb_device_try_defer(finishCancelRx, s);
       if ((s->cancelTx && !s->fenceTx) || (s->cancelRx && !s->fenceRx))
         espusb::internal::postTinyUsbRuntimeJob(s->cancelJob);
     }
@@ -206,13 +206,13 @@ struct EspUsbBulkState {
     portENTER_CRITICAL(&bulkLock);
     if (s->stopping) { portEXIT_CRITICAL(&bulkLock); return; }
     if (input && s->cancelTx) {
-      if (s->resetTxPid && s->epIn) usbd_edpt_clear_stall(s->rhport, s->epIn);
+      if (s->resetTxPid && s->epIn) espusb_device_edpt_clear_stall(s->rhport, s->epIn);
       s->resetTxPid = false;
       result = s->takeDirect(s->cancelTxStatus, 0, false);
       s->cancelTx = s->abortedTx = s->fenceTx = s->txBusy = false;
       s->transmit();
     } else if (!input && s->cancelRx) {
-      if (s->resetRxPid && s->epOut) usbd_edpt_clear_stall(s->rhport, s->epOut);
+      if (s->resetRxPid && s->epOut) espusb_device_edpt_clear_stall(s->rhport, s->epOut);
       s->resetRxPid = false;
       result = s->takeReceive(s->cancelRxStatus, 0, false);
       s->cancelRx = s->abortedRx = s->fenceRx = s->rxBusy = false;
@@ -251,7 +251,7 @@ struct EspUsbBulkState {
         const bool output = s->changeEndpoint(false, true, EspUsbTransferStatus::Cancelled);
         portEXIT_CRITICAL(&bulkLock);
         if (!input || !output) return espusb::internal::rejectUsbControl();
-        return tud_control_status(port, request);
+        return espusb_device_control_status(port, request);
       }
     }
     if (request->bmRequestType == 2 && (request->bRequest == 1 || request->bRequest == 3) && !request->wValue && !request->wLength) {
@@ -293,9 +293,9 @@ struct EspUsbBulkState {
           completion = s->takeDirect(EspUsbTransferStatus::TransferError, 0, false);
         } else if (s->needZlp && !s->sendingZlp) {
           s->sendingZlp = true;
-          if (usbd_edpt_claim(s->rhport, s->epIn)) {
-            s->txBusy = usbd_edpt_xfer(s->rhport, s->epIn, nullptr, 0, false);
-            if (!s->txBusy) usbd_edpt_release(s->rhport, s->epIn);
+          if (espusb_device_edpt_claim(s->rhport, s->epIn)) {
+            s->txBusy = espusb_device_edpt_xfer(s->rhport, s->epIn, nullptr, 0, false);
+            if (!s->txBusy) espusb_device_edpt_release(s->rhport, s->epIn);
           }
           if (!s->txBusy) completion = s->takeDirect(EspUsbTransferStatus::TransferError, n, true);
         } else {
@@ -308,9 +308,9 @@ struct EspUsbBulkState {
         copied = true;
         if (result == XFER_RESULT_SUCCESS && n && n % s->packetSize == 0 && !s->tx.used &&
             s->terminateCopy &&
-            usbd_edpt_claim(s->rhport, s->epIn)) {
-          s->copyZlp = s->txBusy = usbd_edpt_xfer(s->rhport, s->epIn, nullptr, 0, false);
-          if (!s->txBusy) usbd_edpt_release(s->rhport, s->epIn);
+            espusb_device_edpt_claim(s->rhport, s->epIn)) {
+          s->copyZlp = s->txBusy = espusb_device_edpt_xfer(s->rhport, s->epIn, nullptr, 0, false);
+          if (!s->txBusy) espusb_device_edpt_release(s->rhport, s->epIn);
         }
       }
       s->transmit();
@@ -452,7 +452,7 @@ size_t EspUsbDeviceBulkStream::write(uint8_t b) { return write(&b, 1); }
 size_t EspUsbDeviceBulkStream::write(const uint8_t *buffer, size_t n) {
   if (!buffer) return 0;
   portENTER_CRITICAL(&bulkLock);
-  if (!state_ || state_->stopping || state_->cancelTx || !state_->epIn || state_->directBuffer || usbd_edpt_stalled(state_->rhport, state_->epIn)) n = 0;
+  if (!state_ || state_->stopping || state_->cancelTx || !state_->epIn || state_->directBuffer || espusb_device_edpt_stalled(state_->rhport, state_->epIn)) n = 0;
   else {
     n = std::min(n, state_->tx.capacity - state_->tx.used);
     if (state_->packetUnit > 1) {
@@ -466,7 +466,7 @@ size_t EspUsbDeviceBulkStream::write(const uint8_t *buffer, size_t n) {
 }
 size_t EspUsbDeviceBulkStream::writeAvailable() const {
   portENTER_CRITICAL(&bulkLock);
-  const size_t n = state_ && !state_->stopping && !state_->cancelTx && state_->epIn && !state_->directBuffer && !usbd_edpt_stalled(state_->rhport, state_->epIn) ? state_->tx.capacity - state_->tx.used : 0;
+  const size_t n = state_ && !state_->stopping && !state_->cancelTx && state_->epIn && !state_->directBuffer && !espusb_device_edpt_stalled(state_->rhport, state_->epIn) ? state_->tx.capacity - state_->tx.used : 0;
   portEXIT_CRITICAL(&bulkLock);
   return n;
 }
@@ -531,7 +531,7 @@ EspUsbTransferSubmission EspUsbDeviceBulkStream::writeDirect(const void *buffer,
   portENTER_CRITICAL(&bulkLock);
   if (error == EspUsbTransferError::None) {
     if (!state_ || state_->stopping || !state_->epIn) error = EspUsbTransferError::NotMounted;
-    else if (state_->cancelTx || state_->directBuffer || state_->txBusy || state_->tx.used || !usbd_edpt_claim(state_->rhport, state_->epIn))
+    else if (state_->cancelTx || state_->directBuffer || state_->txBusy || state_->tx.used || !espusb_device_edpt_claim(state_->rhport, state_->epIn))
       error = EspUsbTransferError::Busy;
     else {
       state_->directBuffer = buffer; state_->directLength = n;
@@ -539,10 +539,10 @@ EspUsbTransferSubmission EspUsbDeviceBulkStream::writeDirect(const void *buffer,
       state_->txId = id = nextTransferId_;
       state_->needZlp = termination == EspUsbTransferTermination::EndWithShortPacket && n % state_->packetSize == 0;
       state_->txBusy = true;
-      if (!usbd_edpt_xfer(state_->rhport, state_->epIn, static_cast<uint8_t *>(const_cast<void *>(buffer)), uint16_t(n), false)) {
+      if (!espusb_device_edpt_xfer(state_->rhport, state_->epIn, static_cast<uint8_t *>(const_cast<void *>(buffer)), uint16_t(n), false)) {
         state_->takeDirect(EspUsbTransferStatus::TransferError, 0, false);
         state_->txBusy = false;
-        usbd_edpt_release(state_->rhport, state_->epIn);
+        espusb_device_edpt_release(state_->rhport, state_->epIn);
         error = EspUsbTransferError::TransferFailed;
       }
     }
@@ -580,15 +580,15 @@ EspUsbTransferSubmission EspUsbDeviceBulkStream::readDirect(void *buffer, size_t
     else if (!directRxCompleteCallback_) error = EspUsbTransferError::BadArgument;
     else if (capacity % state_->packetSize)
       error = EspUsbTransferError::BadArgument;
-    else if (state_->cancelRx || state_->directRxBuffer || state_->rxBusy || !usbd_edpt_claim(state_->rhport, state_->epOut))
+    else if (state_->cancelRx || state_->directRxBuffer || state_->rxBusy || !espusb_device_edpt_claim(state_->rhport, state_->epOut))
       error = EspUsbTransferError::Busy;
     else {
       state_->directRxBuffer = buffer; state_->directRxCapacity = capacity; state_->rxBusy = true;
       if (++nextTransferId_ == 0) ++nextTransferId_;
       state_->rxId = id = nextTransferId_;
-      if (!usbd_edpt_xfer(state_->rhport, state_->epOut, static_cast<uint8_t *>(buffer), uint16_t(capacity), false)) {
+      if (!espusb_device_edpt_xfer(state_->rhport, state_->epOut, static_cast<uint8_t *>(buffer), uint16_t(capacity), false)) {
         state_->takeReceive(EspUsbTransferStatus::TransferError, 0, false);
-        state_->rxBusy = false; usbd_edpt_release(state_->rhport, state_->epOut);
+        state_->rxBusy = false; espusb_device_edpt_release(state_->rhport, state_->epOut);
         error = EspUsbTransferError::TransferFailed;
       }
     }
@@ -644,6 +644,6 @@ bool EspUsbDeviceBulkStream::openBulkPair(uint8_t port, const uint8_t *p, uint8_
     else out = ep->bEndpointAddress;
   }
   if (!in || !out) return false;
-  return usbd_edpt_open(port, reinterpret_cast<const tusb_desc_endpoint_t *>(first)) &&
-      usbd_edpt_open(port, reinterpret_cast<const tusb_desc_endpoint_t *>(first + sizeof(tusb_desc_endpoint_t)));
+  return espusb_device_edpt_open(port, reinterpret_cast<const tusb_desc_endpoint_t *>(first)) &&
+      espusb_device_edpt_open(port, reinterpret_cast<const tusb_desc_endpoint_t *>(first + sizeof(tusb_desc_endpoint_t)));
 }

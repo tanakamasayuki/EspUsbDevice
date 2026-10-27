@@ -11,10 +11,10 @@ DWC2と一部wire/protocol定義は暫定依存として残る。
 
 - Pinと選定理由: `UPSTREAM.json`。full commit SHAへ固定する。
 - License: MIT、`LICENSE`と残存fileのcopyright/SPDX表示を保持する。
-- 現在の選択: `BUILD_FILES.txt`の17 file（2 source、15 header）。
+- 現在の選択: `BUILD_FILES.txt`の13 file（2 source、11 header）。
 - 残るsource: `portable/synopsys/dwc2/dcd_dwc2.c`、`portable/synopsys/dwc2/dwc2_common.c`。
-- `class/`以下には現在利用するAudio/CDC/HID/MIDIのprotocol定義headerだけを残す。
-  DFU/MSC/NCM/Videoの未使用定義headerも削除した。
+- `class/`以下にはHID protocol/key tableだけを残す。CDC/MIDIは独自実装でruntime記述子を生成し、
+  Audio/CDC/MIDIとdevice `usbd.h`のheaderは撤去した。
 - `src/tusb_config.h`と`src/internal/EspUsbTinyUsbConfig.h`は独自integration。
   legacy classの再有効化は拒否し、独自driverとの二重claimを防ぐ。
 
@@ -66,3 +66,11 @@ ESP adapterは従来のinternal DMAへ限定し、未使用のslave/FIFO経路�
 coreはqueue/fence容量とFreeRTOS同期を直接所有する。updaterは削除したDCD/private、OS/FIFO、
 umbrella headerを復元しない。DWC2 register/port実装とwire/protocol定義は上流由来のままで、
 この境界移行をDWC2完全置換とは扱わない。
+
+
+native bus/control/endpointは`espusb_device_*` symbolを使い、旧`tud_*`/`usbd_*`入口をexportしない。
+未使用の旧bootstrap・task pump・user SOF hookを撤去し、選択classのSOF callbackはcontroller eventで維持する。
+CDC/MIDIのbyte layoutは旧TinyUSB `device/usbd.h`のtemplateから移行した
+（Copyright (c) 2019 Ha Thach、MIT、本directoryにlicenseを保持）。
+MIDIはruntime cable graphと長さを直接生成し、対称/単一cable macroの結果を上書きしない。
+wire typeとDWC2 sourceの完全置換は別途継続する。

@@ -3,7 +3,7 @@
 #include "esp_heap_caps.h"
 #include <atomic>
 #if defined(ESPUSB_CANCEL_FENCE_FAULT) || defined(ESPUSB_CANCEL_LIFECYCLE_FAULT)
-#include "../../../../src/device/usbd.h"
+#include "../../../../src/internal/EspUsbDeviceBus.h"
 #include "../../../../src/internal/EspUsbDeviceEndpoint.h"
 #include "../../../../src/internal/EspUsbController.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
@@ -47,13 +47,13 @@ std::atomic<bool> faultSaturated{false};
 void faultNoop(void *) {}
 void fillFenceQueue(void *) {
   // Force the first fence enqueue to fail without blocking the USB worker.
-  while (usbd_try_defer_func(faultNoop, nullptr)) {}
+  while (espusb_device_try_defer(faultNoop, nullptr)) {}
   faultSaturated.store(true);
 }
 espusb::internal::TinyUsbRuntimeJob faultFillJob{fillFenceQueue, nullptr};
 void injectCancelFence(void *) {
   // Queue old completions on the worker before it can execute the abort job.
-  if (tud_task_event_ready() || usbd_event_queue_capacity() < 4) { faultDone.store(true); return; }
+  if (espusb_device_events_pending() || espusb_device_queue_capacity() < 4) { faultDone.store(true); return; }
   const uint8_t *descriptor = device.configurationDescriptor(0);
   const unsigned length = descriptor[2] | (unsigned(descriptor[3]) << 8);
   uint8_t in = 0, out = 0;
@@ -71,9 +71,9 @@ void injectCancelFence(void *) {
     // This callback consumes one event of the per-run budget, leaving at
     // least one old completion queued when the worker first services abort.
     const auto port = espusb::internal::tinyUsbRuntimeRhport();
-    for (unsigned i = 0; i < usbd_event_queue_capacity(); ++i)
+    for (unsigned i = 0; i < espusb_device_queue_capacity(); ++i)
       espusb_controller_event_xfer_complete(port, i & 1 ? out : in, 0, XFER_RESULT_SUCCESS, false);
-    faultEvents.store(usbd_event_queue_capacity());
+    faultEvents.store(espusb_device_queue_capacity());
   }
   faultDone.store(true);
 }
@@ -87,7 +87,7 @@ std::atomic<unsigned> lifecycleResets{0};
 unsigned lifecycleResetMark = 0;
 std::atomic<bool> lifecycleEndDone{false};
 std::atomic<int> lifecycleEndResult{-1}, lifecycleTx{-1}, lifecycleRx{-1};
-extern "C" void tud_event_hook_cb(uint8_t, uint32_t event, bool) {
+extern "C" void espusb_device_event_hook(uint8_t, uint32_t event, bool) {
   if (event == ESPUSB_CONTROLLER_EVENT_BUS_RESET) lifecycleResets.fetch_add(1);
 }
 void parkLifecycle(void *) {
@@ -249,7 +249,7 @@ void loop() {
       chainAfterCancel.store(true); chainRequested.store(true);
       staleTxId = lastTxId; staleRxId = lastRxId;
       faultDone.store(false); faultEvents.store(0); faultTx.store(-1); faultRx.store(-1); faultSaturated.store(false);
-      Serial.printf("FAULT_REQUESTED %u\r\n", unsigned(usbd_try_defer_func(injectCancelFence, nullptr)));
+      Serial.printf("FAULT_REQUESTED %u\r\n", unsigned(espusb_device_try_defer(injectCancelFence, nullptr)));
     } else if (command == "fault_status") {
       const uint32_t deadline = millis() + 3000;
       while ((!faultDone.load() || !faultSaturated.load()) && int32_t(deadline - millis()) > 0) delay(1);
@@ -260,7 +260,7 @@ void loop() {
       lifecycleRelease.store(false); lifecycleParked.store(false); lifecycleTimedOut.store(false);
       lifecycleResetMark = lifecycleResets.load();
       staleTxId = lastTxId; staleRxId = lastRxId;
-      const bool queued = usbd_try_defer_func(command == "fault_park" ? parkLifecycle : cancelThenPark, nullptr);
+      const bool queued = espusb_device_try_defer(command == "fault_park" ? parkLifecycle : cancelThenPark, nullptr);
       const uint32_t deadline = millis() + 3000;
       while (queued && !lifecycleParked.load() && int32_t(deadline - millis()) > 0) delay(1);
       Serial.printf("LIFECYCLE_PARKED %u\r\n", unsigned(queued && lifecycleParked.load()));

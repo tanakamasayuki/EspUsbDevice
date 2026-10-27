@@ -1,8 +1,7 @@
 #pragma once
 
-// TinyUSB is compiled once for the capabilities of the selected SoC. The USB
-// controller, root-hub port, and negotiated bus speed are selected later by the
-// EspUsbDevice runtime through tusb_rhport_init().
+// Temporary capability definitions for the remaining DWC2/register and USB
+// wire headers. The native runtime selects the controller, port and bus speed.
 
 #if __has_include("sdkconfig.h")
 #include "sdkconfig.h"
@@ -15,7 +14,7 @@
 #elif defined(CONFIG_IDF_TARGET_ESP32P4)
 #define CFG_TUSB_MCU OPT_MCU_ESP32P4
 #else
-#error "EspUsbDevice v2 TinyUSB supports ESP32-S2, ESP32-S3, and ESP32-P4"
+#error "EspUsbDevice DWC2 adapter supports ESP32-S2, ESP32-S3, and ESP32-P4"
 #endif
 
 #define CFG_TUSB_OS OPT_OS_FREERTOS
@@ -36,36 +35,11 @@
 
 #define CFG_TUSB_MEM_SECTION
 #define CFG_TUD_ENDPOINT0_SIZE 64
-// DWC2 transfer mode. Slave mode has the CPU push every packet into the
-// controller's TxFIFO, refilling it from the FIFO-empty interrupt that
-// handle_epin_slave() disarms as soon as the last byte is written. A sustained
-// bulk IN stream can end up with the endpoint enabled, packets still
-// outstanding, an empty FIFO and that interrupt already cleared - a transfer
-// nothing can feed again, which killed CDC-NCM device-to-host traffic within
-// seconds. DMA mode does not use that path.
-//
-// Cache coherency is upstream's problem here and upstream solves it: P4 is the
-// only target of the three that reaches internal SRAM through an L1 data cache,
-// and tusb_mcu.h turns dcache maintenance on for it precisely when DMA is on
-// (CFG_TUD_MEM_DCACHE_ENABLE_DEFAULT = CFG_TUD_DWC2_DMA_ENABLE, line size 64,
-// matching CONFIG_CACHE_L1_CACHE_LINE_SIZE). TUD_EPBUF_TYPE_DEF then aligns and
-// pads every endpoint buffer to a whole cache line, so no DMA buffer shares a
-// line with anything else. S2/S3 have no such cache and need none of it.
-//
-// The two modes are mutually exclusive by construction, not merely by
-// preference: tusb_option.h derives CFG_TUD_EDPT_DEDICATED_HWFIFO from
-// CFG_TUD_DWC2_SLAVE_ENABLE, and that flag decides whether the shared
-// tu_edpt_stream layer (CDC, MIDI, Vendor) hands the driver a real buffer or a
-// tu_fifo. Leaving slave mode on while the controller actually runs DMA makes
-// those classes call usbd_edpt_xfer_fifo(), whose xfer->buffer is NULL, so the
-// endpoint DMAs from address 0 and the host receives garbage. Enable exactly
-// one.
-//
-// Every target here has the internal DMA that dma_device_enabled() looks for:
-// ESP-IDF records each core's configuration in soc/usb_dwc_cfg.h, and S2 and S3
-// both carry OTG_ARCHITECTURE 2, which is GHWCFG2_ARCH_INTERNAL_DMA. S3 and P4
-// are measured on hardware; S2 has only that constant and a compile check
-// behind it.
+// The remaining ESP adapter uses internal DMA only. Native classes own their
+// buffers; vendor stream/FIFO and CPU-fed slave paths have been removed.
+// Internal DMA/cache capabilities still come from the pinned MCU definitions.
+// P4 cache synchronization and 64-byte isolation remain mandatory; software
+// fallback cache hooks are no-ops only on targets without this data cache.
 #define CFG_TUD_DWC2_DMA_ENABLE 1
 #define CFG_TUD_DWC2_SLAVE_ENABLE 0
 

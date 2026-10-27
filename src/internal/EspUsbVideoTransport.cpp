@@ -4,7 +4,7 @@
 #include "EspUsbDeviceAppDriver.h"
 #include "EspUsbMemory.h"
 #include "EspUsbTinyUsbRuntime.h"
-#include "device/usbd.h"
+#include "EspUsbDeviceBus.h"
 #include "esp_memory_utils.h"
 #include <algorithm>
 #include <string.h>
@@ -88,7 +88,7 @@ struct EspUsbVideoState {
     // reconfiguration. The fence excludes every queued old completion.
     retireKnown = draining ? retireKnown : !busy;
     retireStatus=status; resetPid|=pid; draining=true; ++epoch;
-    if (opened && !usbd_edpt_abort(port,endpoint)) return false;
+    if (opened && !espusb_device_edpt_abort(port,endpoint)) return false;
     return espusb::internal::postTinyUsbRuntimeJob(job);
   }
   static void fence(void *context) {
@@ -98,7 +98,7 @@ struct EspUsbVideoState {
       VideoGuard guard; s->fenceQueued=false;
       if (s->owner.stopping_.load()) return;
       if (s->fenceEpoch!=s->epoch) { espusb::internal::postTinyUsbRuntimeJob(s->job); return; }
-      if (s->resetPid && s->opened) usbd_edpt_clear_stall(s->port,s->endpoint);
+      if (s->resetPid && s->opened) espusb_device_edpt_clear_stall(s->port,s->endpoint);
       s->resetPid=false; s->busy=s->zlp=false; s->draining=false;
       status=s->retireStatus; known=s->retireKnown;
     }
@@ -111,7 +111,7 @@ struct EspUsbVideoState {
     armedData=uint16_t(std::min(length-done,payload-2)); armed=armedData+2;
     packet[0]=2; packet[1]=uint8_t(0x80|fid|(done+armedData==length ? 2 : 0));
     memcpy(packet+2,frame+done,armedData); busy=true; zlp=false;
-    if (!usbd_edpt_xfer(port,endpoint,packet,armed,false)) {
+    if (!espusb_device_edpt_xfer(port,endpoint,packet,armed,false)) {
       busy=false; streamError=3;
       requestFence(EspUsbTransferStatus::TransferError,false);
     }
@@ -122,7 +122,7 @@ struct EspUsbVideoState {
     if (s->cancelRequested && !s->draining) s->requestFence(EspUsbTransferStatus::Cancelled,false);
     if (s->draining) {
       if (s->fenceQueued) return;
-      s->fenceEpoch=s->epoch; s->fenceQueued=usbd_try_defer_func(fence,s);
+      s->fenceEpoch=s->epoch; s->fenceQueued=espusb_device_try_defer(fence,s);
       if (!s->fenceQueued) espusb::internal::postTinyUsbRuntimeJob(s->job);
       return;
     }
@@ -150,7 +150,7 @@ struct EspUsbVideoState {
       if (d[1]==5) {
         const unsigned kind=s->owner.bulkStreaming() ? 2 : 1;
         if (d[0]!=7 || !(d[2]&0x80) || (d[3]&3)!=kind || endpoint) return 0;
-        if (!usbd_edpt_open(port,reinterpret_cast<const tusb_desc_endpoint_t *>(d))) return 0;
+        if (!espusb_device_edpt_open(port,reinterpret_cast<const tusb_desc_endpoint_t *>(d))) return 0;
         s->endpoint=d[2]; s->packetSize=get16(d+4); endpoint=true;
       }
       offset+=d[0];
@@ -167,15 +167,15 @@ struct EspUsbVideoState {
     if (stage==CONTROL_STAGE_SETUP) s->pendingValid=false;
     if (r->bmRequestType==0x81 && r->bRequest==10 && !r->wValue && r->wLength==1) {
       if (stage!=CONTROL_STAGE_SETUP) return true;
-      s->scratch[0]=streamingInterface ? s->alternate : 0; return tud_control_xfer(port,r,s->scratch,1);
+      s->scratch[0]=streamingInterface ? s->alternate : 0; return espusb_device_control_transfer(port,r,s->scratch,1);
     }
     if (r->bmRequestType==1 && r->bRequest==11 && !r->wLength) {
       const uint16_t max=streamingInterface && !s->owner.bulkStreaming() ? 1 : 0;
       if (r->wValue>max) return s->reject(4);
       if (stage!=CONTROL_STAGE_SETUP) return true;
-      if (!streamingInterface) return tud_control_status(port,r);
+      if (!streamingInterface) return espusb_device_control_status(port,r);
       VideoGuard guard; s->alternate=uint8_t(r->wValue);
-      return s->requestFence(EspUsbTransferStatus::Cancelled,s->owner.bulkStreaming()) && tud_control_status(port,r);
+      return s->requestFence(EspUsbTransferStatus::Cancelled,s->owner.bulkStreaming()) && espusb_device_control_status(port,r);
     }
     if (r->bmRequestType!=0xa1 && r->bmRequestType!=0x21) return false;
     if (r->wValue&255) return s->reject(6);
@@ -183,11 +183,11 @@ struct EspUsbVideoState {
     if ((!streamingInterface && selector==2) || (streamingInterface && selector==6)) {
       if (r->bmRequestType!=0xa1 || !r->wLength) return s->reject(7);
       if (r->bRequest==0x81) {
-        if (stage==CONTROL_STAGE_SETUP) { s->scratch[0]=streamingInterface ? s->streamError : s->error; return tud_control_xfer(port,r,s->scratch,1); }
+        if (stage==CONTROL_STAGE_SETUP) { s->scratch[0]=streamingInterface ? s->streamError : s->error; return espusb_device_control_transfer(port,r,s->scratch,1); }
         if (stage==CONTROL_STAGE_ACK) { if (streamingInterface) s->streamError=0; else s->error=0; }
         return true;
       }
-      if (r->bRequest==0x86 && stage==CONTROL_STAGE_SETUP) { s->scratch[0]=1; return tud_control_xfer(port,r,s->scratch,1); }
+      if (r->bRequest==0x86 && stage==CONTROL_STAGE_SETUP) { s->scratch[0]=1; return espusb_device_control_transfer(port,r,s->scratch,1); }
       return stage!=CONTROL_STAGE_SETUP ? true : s->reject(7);
     }
     if (!streamingInterface || (selector!=1 && selector!=2)) return s->reject(6);
@@ -208,12 +208,12 @@ struct EspUsbVideoState {
       case 0x86: s->scratch[0]=3; source=s->scratch; bytes=1; break;
       default: return s->reject(7);
       }
-      return tud_control_xfer(port,r,const_cast<uint8_t *>(source),bytes);
+      return espusb_device_control_transfer(port,r,const_cast<uint8_t *>(source),bytes);
     }
     if (r->bRequest!=1 || (r->wLength!=26 && r->wLength!=34 && r->wLength!=48)) return s->reject(7);
-    if (stage==CONTROL_STAGE_SETUP) { memset(s->scratch,0,48); return tud_control_xfer(port,r,s->scratch,r->wLength); }
+    if (stage==CONTROL_STAGE_SETUP) { memset(s->scratch,0,48); return espusb_device_control_transfer(port,r,s->scratch,r->wLength); }
     if (stage==CONTROL_STAGE_DATA) {
-      if (usbd_control_received_bytes()!=r->wLength) return s->reject(7);
+      if (espusb_device_control_received_bytes()!=r->wLength) return s->reject(7);
       s->pendingValid=s->normalize(s->pending,s->scratch,selector==2); return s->pendingValid;
     }
     if (stage==CONTROL_STAGE_ACK) {
@@ -244,7 +244,7 @@ struct EspUsbVideoState {
         const bool needsZlp=!s->zlp && s->owner.bulkStreaming() && s->armed%s->packetSize==0 && s->armed<get32(s->commit+22);
         if (needsZlp) {
           s->zlp=true; s->busy=true;
-          if (!usbd_edpt_xfer(s->port,s->endpoint,nullptr,0,false)) { s->busy=false; s->requestFence(EspUsbTransferStatus::TransferError,false); }
+          if (!espusb_device_edpt_xfer(s->port,s->endpoint,nullptr,0,false)) { s->busy=false; s->requestFence(EspUsbTransferStatus::TransferError,false); }
           return true;
         }
         s->zlp=false; finished=s->done==s->length;

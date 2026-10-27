@@ -561,3 +561,26 @@ controllerにinternal DMAがなければ初期化を明示的に拒否する。�
 型や名前を変更しただけでDWC2が独自実装になったとは扱わない。MIT由来は維持し、
 vendor選択は24→17 files、compiled sourceは2本のまま。wire/protocol定義、device向け残存headerと
 DWC2 register/port処理の置換は続く。
+
+## native bus APIとruntime CDC/MIDI記述子
+
+class/core間の宣言を`EspUsbDeviceBus.h`と`EspUsbDeviceEndpoint.h`へ限定し、
+内部symbolを`espusb_device_*`へ移した。vendor `device/usbd.h`の旧init/deinit/task pump、
+固定queue深さ16の互換入口、使われないuser SOF/suspend/resume hookは残さない。
+classのSOF callbackは従来どおりISRから呼び、借用bufferの完了/取消しはworkerで返す。
+control ACK observerはcontrollerからのhookではなく独自EP0 engineのbus契約へ移した。
+通常のDevice/Function/config/begin、公開control observerや送受信APIに変更はない。
+旧TinyUSB内部APIへ直接依存する利用はv3で継続保証しない。
+この内部symbolの分離は、同じcontrollerで二つのUSB stackを同時稼働できるという意味ではない。
+
+CDCはIAD/control/data/endpoint descriptorをinstanceのinterface/string/endpoint番号から直接生成する。
+MIDIは1～16 cableの方向別jack graphをruntime設定から生成する。入力/出力のcable数が異なっても、
+必要なjackだけを生成し、MS長を最初から確定する。旧macro結果への長さ・文字列番号の後書きをなくす。
+対称1/16、16対1、複数instance、FSの既存通信試験を維持し、public配置とwire layoutは保つ。
+既存DescriptorBufferへ書き込み、記述子生成中のheap取得点を追加しない。
+
+利点はclass設定がvendor descriptor macroの前提から離れ、不要な定義や旧stackの入口も減ること。
+代償はCDC/MIDI descriptorのfield定義を独自側で保守すること。MITの由来はPROVENANCEへ記録する。
+利用者の移行操作はない。private TinyUSB hookを使っていた独自拡張は見直しが必要となる。
+Audio/CDC/MIDIとdevice headerを撤去し、vendor選択は17→13 files、compiled sourceはDWC2の2本を維持する。
+wire type、HID table、DWC2 register/port/sourceとcapability定義は引き続き置換対象。

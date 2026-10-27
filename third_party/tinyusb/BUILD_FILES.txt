@@ -1,14 +1,10 @@
-class/audio/audio.h
-class/cdc/cdc.h
 class/hid/hid.h
-class/midi/midi.h
 common/tusb_common.h
 common/tusb_compiler.h
 common/tusb_debug.h
 common/tusb_mcu.h
 common/tusb_types.h
 common/tusb_verify.h
-device/usbd.h
 portable/synopsys/dwc2/dcd_dwc2.c
 portable/synopsys/dwc2/dwc2_common.c
 portable/synopsys/dwc2/dwc2_common.h

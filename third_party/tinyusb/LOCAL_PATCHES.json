@@ -288,11 +288,5 @@
       "before": "  const tusb_role_t role = (tusb_role_t) tu_u16_high((uint16_t)(uintptr_t)arg);\n#if CFG_TUD_ENABLED\n  if (role == TUSB_ROLE_DEVICE) {\n    dcd_int_handler(rhport);\n  }\n#endif\n#if CFG_TUH_ENABLED && !CFG_TUH_MAX3421\n",
       "after": "  const tusb_role_t role = (tusb_role_t) tu_u16_high((uint16_t)(uintptr_t)arg);\n#if CFG_TUD_ENABLED\n  if (role == TUSB_ROLE_DEVICE) {\n    espusb_controller_int_handler(rhport);\n  }\n#endif\n#if CFG_TUH_ENABLED && !CFG_TUH_MAX3421\n"
     }
-  ],
-  "device/usbd.h": [
-    {
-      "before": "\n// Check if there is pending events need processing by tud_task()\nbool tud_task_event_ready(void);\n\n#ifndef TUSB_DCD_H_\nextern void dcd_int_handler(uint8_t rhport);\n#endif\n\n// Interrupt handler, name alias to DCD\n#define tud_int_handler   dcd_int_handler\n\n// Get current bus speed\ntusb_speed_t tud_speed_get(void);\n",
-      "after": "\n// Check if there is pending events need processing by tud_task()\nbool tud_task_event_ready(void);\n\n// Get current bus speed\ntusb_speed_t tud_speed_get(void);\n"
-    }
   ]
 }

@@ -4,7 +4,7 @@
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
 #include "internal/EspUsbNetLock.h"
-#include "device/usbd.h"
+#include "internal/EspUsbDeviceBus.h"
 #include "esp_memory_utils.h"
 #include "esp_mac.h"
 #include <algorithm>
@@ -96,7 +96,7 @@ struct EspUsbNetState {
       auto *s = &slots[c.txBuffers + i];
       if (s->phase != NetSlot::Free) continue;
       s->phase = NetSlot::Hardware; rx = s;
-      if (!usbd_edpt_xfer(port,out,s->data,rxArm,false)) { s->phase = NetSlot::Free; rx = nullptr; espusb::internal::postTinyUsbRuntimeJob(job); }
+      if (!espusb_device_edpt_xfer(port,out,s->data,rxArm,false)) { s->phase = NetSlot::Free; rx = nullptr; espusb::internal::postTinyUsbRuntimeJob(job); }
       return;
     }
   }
@@ -104,7 +104,7 @@ struct EspUsbNetState {
     if (stopping.load() || !active || draining || tx || !head) return;
     tx = head; head = head->next; if (!head) tail = nullptr;
     tx->phase = NetSlot::Hardware; put16(tx->data + 6,sequence++);
-    if (!usbd_edpt_xfer(port,in,tx->data,tx->used,false)) {
+    if (!espusb_device_edpt_xfer(port,in,tx->data,tx->used,false)) {
       tx->phase = NetSlot::Queued; tx->next = head; head = tx;
       if (!tail) tail = tx; tx = nullptr;
       espusb::internal::postTinyUsbRuntimeJob(job);
@@ -117,16 +117,16 @@ struct EspUsbNetState {
     const uint16_t bytes = notificationStage == 0 ? 16 : 8;
     if (notificationStage == 0) {
       notification[1] = 0x2a; put16(notification+6,8);
-      const uint32_t speed = tud_speed_get() == TUSB_SPEED_HIGH ? 480000000 : 12000000;
+      const uint32_t speed = espusb_device_speed() == TUSB_SPEED_HIGH ? 480000000 : 12000000;
       put32(notification+8,speed); put32(notification+12,speed);
     } else { notification[1] = 0; put16(notification+2,active ? 1 : 0); }
-    notifyBusy = usbd_edpt_xfer(port,notify,notification,bytes,false);
+    notifyBusy = espusb_device_edpt_xfer(port,notify,notification,bytes,false);
     if (!notifyBusy) espusb::internal::postTinyUsbRuntimeJob(job);
   }
   bool change(uint8_t alternate, bool resetData = false, bool resetNotify = false) {
     resetDataPid |= resetData; resetNotifyPid |= resetNotify;
     active = false; desired = alternate; draining = true; ++epoch;
-    if (!usbd_edpt_abort(port,in) || !usbd_edpt_abort(port,out) || !usbd_edpt_abort(port,notify)) return false;
+    if (!espusb_device_edpt_abort(port,in) || !espusb_device_edpt_abort(port,out) || !espusb_device_edpt_abort(port,notify)) return false;
     return espusb::internal::postTinyUsbRuntimeJob(job);
   }
   static void fence(void *context) {
@@ -135,8 +135,8 @@ struct EspUsbNetState {
     if (s->stopping.load()) return;
     if (s->epoch != s->fenceEpoch) { espusb::internal::postTinyUsbRuntimeJob(s->job); return; }
     s->clear(); s->notifyBusy = false;
-    if (s->resetDataPid) { usbd_edpt_clear_stall(s->port,s->in); usbd_edpt_clear_stall(s->port,s->out); }
-    if (s->resetNotifyPid) usbd_edpt_clear_stall(s->port,s->notify);
+    if (s->resetDataPid) { espusb_device_edpt_clear_stall(s->port,s->in); espusb_device_edpt_clear_stall(s->port,s->out); }
+    if (s->resetNotifyPid) espusb_device_edpt_clear_stall(s->port,s->notify);
     s->resetDataPid = s->resetNotifyPid = false; s->draining = false; s->active = s->desired == 1;
     s->notificationStage = s->active ? 0 : 1;
     s->armNotification(); s->armRx(); s->armTx();
@@ -147,12 +147,12 @@ struct EspUsbNetState {
     if (s->draining) {
       if (s->fenceQueued) return;
       s->fenceEpoch = s->epoch;
-      s->fenceQueued = usbd_try_defer_func(fence,s);
+      s->fenceQueued = espusb_device_try_defer(fence,s);
       if (!s->fenceQueued) espusb::internal::postTinyUsbRuntimeJob(s->job);
       return;
     }
     if (s->zlpPending) {
-      s->zlpPending = !usbd_edpt_xfer(s->port,s->in,nullptr,0,false);
+      s->zlpPending = !espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);
       if (s->zlpPending) espusb::internal::postTinyUsbRuntimeJob(s->job);
     }
     s->armTx(); s->armRx(); s->armNotification();
@@ -223,7 +223,7 @@ struct EspUsbNetState {
         if ((d[3]&3) == 3 && (address&0x80)) s->notify = address;
         else if ((d[3]&3) == 2) { if (address&0x80) s->in = address; else s->out = address; s->packet = get16(d+4); }
         else return 0;
-        if (!usbd_edpt_open(port,reinterpret_cast<const tusb_desc_endpoint_t *>(d))) return 0;
+        if (!espusb_device_edpt_open(port,reinterpret_cast<const tusb_desc_endpoint_t *>(d))) return 0;
       }
       offset += d[0];
     }
@@ -239,13 +239,13 @@ struct EspUsbNetState {
     if (r->bmRequestType == 0x81 && r->bRequest == 10 && !r->wValue && r->wLength == 1) {
       if (stage != CONTROL_STAGE_SETUP) return true;
       s->control[0] = r->wIndex == s->controlInterface ? 0 : s->desired;
-      return tud_control_xfer(port,r,s->control,1);
+      return espusb_device_control_transfer(port,r,s->control,1);
     }
     if (r->bmRequestType == 1 && r->bRequest == 11 && r->wValue <= 1 && !r->wLength) {
       if (stage != CONTROL_STAGE_SETUP) return true;
       NetGuard guard;
-      if (r->wIndex == s->controlInterface) return !r->wValue && s->change(s->desired,false,true) && tud_control_status(port,r);
-      return s->change(uint8_t(r->wValue),true) && tud_control_status(port,r);
+      if (r->wIndex == s->controlInterface) return !r->wValue && s->change(s->desired,false,true) && espusb_device_control_status(port,r);
+      return s->change(uint8_t(r->wValue),true) && espusb_device_control_status(port,r);
     }
     if (r->wIndex != s->controlInterface || (r->bmRequestType != 0xa1 && r->bmRequestType != 0x21)) return false;
     if (r->bmRequestType == 0xa1 && !r->wValue && r->wLength) {
@@ -263,19 +263,19 @@ struct EspUsbNetState {
       case 0x83: case 0x89: n = 2; break;
       default: return false;
       }
-      return tud_control_xfer(port,r,s->control,n);
+      return espusb_device_control_transfer(port,r,s->control,n);
     }
     if (r->bmRequestType != 0x21) return false;
     if (!r->wLength && (r->bRequest == 0x43 || ((r->bRequest == 0x84 || r->bRequest == 0x8a) && !r->wValue))) {
       if (r->bRequest == 0x43 && (r->wValue&~0x1f)) return false;
       if (stage != CONTROL_STAGE_SETUP) return true;
-      return tud_control_status(port,r);
+      return espusb_device_control_status(port,r);
     }
     if (r->bRequest != 0x86 || r->wValue || (r->wLength != 4 && r->wLength != 8)) return false;
-    if (stage == CONTROL_STAGE_SETUP) { memset(s->control,0,8); return tud_control_xfer(port,r,s->control,r->wLength); }
+    if (stage == CONTROL_STAGE_SETUP) { memset(s->control,0,8); return espusb_device_control_transfer(port,r,s->control,r->wLength); }
     if (stage == CONTROL_STAGE_DATA) {
       const uint32_t size = get32(s->control);
-      if (usbd_control_received_bytes() != r->wLength || size < 2048 || size > s->owner.netConfig_.ntbInBytes || size < uint32_t(s->owner.netConfig_.maxFrameBytes)+28) return false;
+      if (espusb_device_control_received_bytes() != r->wLength || size < 2048 || size > s->owner.netConfig_.ntbInBytes || size < uint32_t(s->owner.netConfig_.maxFrameBytes)+28) return false;
       NetGuard guard; s->limits(uint16_t(size),r->wLength == 8 ? get16(s->control+4) : 0);
       if (s->desired) return s->change(s->desired);
     }
@@ -294,7 +294,7 @@ struct EspUsbNetState {
         if (!s->tx) return true;
         if (!s->zlp && result == XFER_RESULT_SUCCESS && s->tx->used % s->packet == 0 && s->tx->used < s->maxIn) {
           s->zlp = true;
-          s->zlpPending = !usbd_edpt_xfer(s->port,s->in,nullptr,0,false);
+          s->zlpPending = !espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);
           if (s->zlpPending) espusb::internal::postTinyUsbRuntimeJob(s->job);
           return true;
         }

@@ -31,10 +31,9 @@
 #endif
 
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
-#include "device/usbd.h"
-// usbd_edpt_claim() / usbd_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
+#include "internal/EspUsbDeviceBus.h"
+// espusb_device_edpt_claim() / espusb_device_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
 #include "internal/EspUsbDeviceEndpoint.h"
-#include "internal/EspUsbController.h"
 #if __has_include("esp_memory_utils.h")
 #include "esp_memory_utils.h"
 #define ESP_USB_DEVICE_HAS_DMA_CAPABLE_CHECK 1
@@ -460,25 +459,25 @@ static void recordDescriptorResponse(uint16_t wValue, uint16_t wIndex, uint16_t 
   }
 }
 
-extern "C" uint8_t const *tud_descriptor_device_cb(void)
+extern "C" uint8_t const *espusb_device_descriptor_device(void)
 {
   const uint8_t *descriptor = g_activeDevice ? g_activeDevice->deviceDescriptor() : nullptr;
   recordDescriptorResponse(0x0100, 0, descriptor ? descriptor[0] : 0);
   return descriptor;
 }
 
-extern "C" uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
+extern "C" uint8_t const *espusb_device_descriptor_configuration(uint8_t index)
 {
   const uint8_t *descriptor =
       g_activeDevice ? g_activeDevice->configurationDescriptorForSpeed(
-                           index, tud_speed_get() == TUSB_SPEED_HIGH)
+                           index, espusb_device_speed() == TUSB_SPEED_HIGH)
                      : nullptr;
   recordDescriptorResponse(static_cast<uint16_t>(0x0200 | index), 0,
                            descriptor ? static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8)) : 0);
   return descriptor;
 }
 
-extern "C" uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
+extern "C" uint16_t const *espusb_device_descriptor_string(uint8_t index, uint16_t langid)
 {
   const uint16_t *descriptor =
       g_activeDevice ? g_activeDevice->stringDescriptor(index, langid) : nullptr;
@@ -487,7 +486,7 @@ extern "C" uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t lang
   return descriptor;
 }
 
-extern "C" uint8_t const *tud_descriptor_bos_cb(void)
+extern "C" uint8_t const *espusb_device_descriptor_bos(void)
 {
   const uint8_t *descriptor = g_activeDevice ? g_activeDevice->bosDescriptor() : nullptr;
   recordDescriptorResponse(0x0f00, 0,
@@ -495,18 +494,18 @@ extern "C" uint8_t const *tud_descriptor_bos_cb(void)
   return descriptor;
 }
 
-extern "C" uint8_t const *tud_descriptor_device_qualifier_cb(void)
+extern "C" uint8_t const *espusb_device_descriptor_device_qualifier(void)
 {
   const uint8_t *descriptor = g_activeDevice ? g_activeDevice->deviceQualifierDescriptor() : nullptr;
   recordDescriptorResponse(0x0600, 0, descriptor ? descriptor[0] : 0);
   return descriptor;
 }
 
-extern "C" uint8_t const *tud_descriptor_other_speed_configuration_cb(uint8_t index)
+extern "C" uint8_t const *espusb_device_descriptor_other_speed_configuration(uint8_t index)
 {
   const uint8_t *descriptor =
       g_activeDevice ? g_activeDevice->otherSpeedConfigurationDescriptor(
-                           index, tud_speed_get() == TUSB_SPEED_HIGH)
+                           index, espusb_device_speed() == TUSB_SPEED_HIGH)
                      : nullptr;
   recordDescriptorResponse(static_cast<uint16_t>(0x0700 | index), 0,
                            descriptor ? static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8)) : 0);
@@ -516,7 +515,7 @@ extern "C" uint8_t const *tud_descriptor_other_speed_configuration_cb(uint8_t in
 // The independent EP0 engine reports acknowledged standard/class/vendor
 // requests here. Stalled requests have no status stage; the vendor SETUP path
 // reports them separately when a control observer is registered.
-extern "C" void espusb_controller_edpt0_status_complete(uint8_t rhport, const tusb_control_request_t *request)
+extern "C" void espusb_device_control_acknowledged(uint8_t rhport, const tusb_control_request_t *request)
 {
   if (!g_activeDevice || !request || !g_activeDevice->hasControlObserver())
   {
@@ -538,7 +537,7 @@ extern "C" void espusb_controller_edpt0_status_complete(uint8_t rhport, const tu
 
 
 
-void tud_mount_cb(void)
+void espusb_device_on_mount(void)
 {
   if (g_activeDevice)
   {
@@ -546,7 +545,7 @@ void tud_mount_cb(void)
   }
 }
 
-void tud_umount_cb(void)
+void espusb_device_on_unmount(void)
 {
   if (g_activeDevice)
   {
@@ -576,7 +575,7 @@ static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
       observation->responseLength = url[0];
       observation->handled = true;
     }
-    return tud_control_xfer(rhport, request, const_cast<uint8_t *>(url), url[0]);
+    return espusb_device_control_transfer(rhport, request, const_cast<uint8_t *>(url), url[0]);
   }
   if (g_activeDevice && request &&
       request->bRequest == MICROSOFT_OS_20_VENDOR_CODE &&
@@ -592,7 +591,7 @@ static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
       observation->responseLength = g_activeDevice->microsoftOs20DescriptorLength();
       observation->handled = true;
     }
-    return tud_control_xfer(
+    return espusb_device_control_transfer(
         rhport, request,
         const_cast<uint8_t *>(g_activeDevice->microsoftOs20Descriptor()),
         g_activeDevice->microsoftOs20DescriptorLength());
@@ -606,7 +605,7 @@ static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
   return handled;
 }
 
-extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
+extern "C" bool espusb_device_vendor_control(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
 {
   // Every vendor request is reported at SETUP, before the library decides what
   // to do with it, so a sketch can tell "the host never asked" from "the host
@@ -916,7 +915,7 @@ bool EspUsbDevice::ready() const
 #if ESP_USB_DEVICE_HAS_TINYUSB
   if (tinyusbStarted_)
   {
-    return tud_mounted();
+    return espusb_device_mounted();
   }
 #endif
   return ready_;
@@ -2102,10 +2101,10 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
 //
 // The DWC2 shares one small SPRAM between the receive FIFO, one transmit FIFO
 // per IN endpoint and, in DMA mode, two words per endpoint of endpoint-info.
-// dcd_edpt_open() allocates downward and refuses when the space is gone, which
+// The DWC2 endpoint allocator allocates downward and refuses when the space is gone, which
 // for a bulk or interrupt endpoint surfaces as a failed enumeration. For an
 // isochronous endpoint it does not: the allocation happens up front, through
-// usbd_edpt_iso_alloc(), and an ESP32-S3 measured on 2026-09-16 programmed
+// the old ISO allocation path. An ESP32-S3 measured on 2026-09-16 programmed
 // DIEPTXF1 with 256 words at offset 512 - past the end of a 242-word area -
 // without complaint. The device then enumerated, bound its host driver,
 // reported frames going out, and delivered nothing.
@@ -2148,7 +2147,7 @@ bool EspUsbDevice::transmitFifoFits(bool highSpeed) const
   const uint16_t fifoDepthWords = highSpeed ? 1024 : 256;
   const uint8_t endpointCount = highSpeed ? 16 : 7;
 #else
-  // An unrepresented target is not second-guessed: dcd_edpt_open() still has
+  // An unrepresented target is not second-guessed: the endpoint allocator still has
   // the final say, and refusing to start here would be worse than letting it.
   (void)highSpeed;
   return true;
@@ -3474,7 +3473,7 @@ static void espUsbDeviceDeferredRestartTask(void *argument)
   {
     device->rebootToBootloader();
   }
-  tud_disconnect();
+  espusb_device_disconnect();
   vTaskDelay(pdMS_TO_TICKS(20));
   esp_restart();
   vTaskDelete(nullptr);
@@ -3508,7 +3507,7 @@ bool EspUsbDevice::rebootToBootloader()
   // usbd task and would therefore never return when called from it.
   if (tinyusbStarted_)
   {
-    tud_disconnect();
+    espusb_device_disconnect();
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 #endif
@@ -3578,7 +3577,7 @@ bool EspUsbDevice::rebootToRomDfu()
 #if ESP_USB_DEVICE_HAS_TINYUSB
   if (tinyusbStarted_)
   {
-    tud_disconnect();
+    espusb_device_disconnect();
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 #endif

@@ -4,7 +4,7 @@
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
-#include "device/usbd.h"
+#include "internal/EspUsbDeviceBus.h"
 #include "esp_memory_utils.h"
 #include <algorithm>
 #include <string.h>
@@ -44,26 +44,26 @@ struct EspUsbMscState {
   bool arm(uint8_t ep, uint32_t bytes) {
     armed = bytes;
     if (stopping.load()) return false;
-    if (usbd_edpt_xfer(port, ep, buffer, uint16_t(bytes), false)) return true;
+    if (espusb_device_edpt_xfer(port, ep, buffer, uint16_t(bytes), false)) return true;
     needReset(); return false;
   }
   void commandReady() {
     stage = Stage::Command;
-    if (!usbd_edpt_stalled(port, out)) arm(out, 31);
+    if (!espusb_device_edpt_stalled(port, out)) arm(out, 31);
   }
   void needReset() {
     stage = Stage::NeedReset;
-    usbd_edpt_stall(port, in); usbd_edpt_stall(port, out);
+    espusb_device_edpt_stall(port, in); espusb_device_edpt_stall(port, out);
   }
   void sendStatus() {
     stage = Stage::Status;
-    if (usbd_edpt_stalled(port, in)) return;
+    if (espusb_device_edpt_stalled(port, in)) return;
     putLe32(buffer, 0x53425355); putLe32(buffer + 4, tag);
     putLe32(buffer + 8, hostBytes - done); buffer[12] = status;
     stage = Stage::StatusSent; arm(in, 13);
   }
   void finishData() {
-    if (hostBytes > done) usbd_edpt_stall(port, hostIn ? in : out);
+    if (hostBytes > done) espusb_device_edpt_stall(port, hostIn ? in : out);
     sendStatus();
   }
   // One command owns the single DMA buffer until data and status finish.
@@ -154,12 +154,12 @@ struct EspUsbMscState {
     }
     if (s->stopping.load() || s->stage != Stage::Recovery) return;
     if (s->interfaceReset) {
-      const bool haltIn = usbd_edpt_stalled(s->port, s->in), haltOut = usbd_edpt_stalled(s->port, s->out);
-      usbd_edpt_clear_stall(s->port, s->in); usbd_edpt_clear_stall(s->port, s->out);
+      const bool haltIn = espusb_device_edpt_stalled(s->port, s->in), haltOut = espusb_device_edpt_stalled(s->port, s->out);
+      espusb_device_edpt_clear_stall(s->port, s->in); espusb_device_edpt_clear_stall(s->port, s->out);
       // SET_INTERFACE resets endpoint toggles, but must not bypass the
       // outstanding CLEAR_FEATURE steps of an ongoing BOT Reset Recovery.
-      if (haltIn && !s->clearIn) usbd_edpt_stall(s->port, s->in);
-      if (haltOut && !s->clearOut) usbd_edpt_stall(s->port, s->out);
+      if (haltIn && !s->clearIn) espusb_device_edpt_stall(s->port, s->in);
+      if (haltOut && !s->clearOut) espusb_device_edpt_stall(s->port, s->out);
       s->interfaceReset = false;
     }
     if (s->needsBotReset) s->needReset();
@@ -169,7 +169,7 @@ struct EspUsbMscState {
     auto *s = static_cast<EspUsbMscState *>(context);
     if (!s->stopping.load() && s->stage == Stage::Recovery && !s->resetFence) {
       s->fenceEpoch = s->resetEpoch;
-      s->resetFence = usbd_try_defer_func(finishRecovery, s);
+      s->resetFence = espusb_device_try_defer(finishRecovery, s);
       if (!s->resetFence) espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob);
     }
   }
@@ -191,7 +191,7 @@ struct EspUsbMscState {
     uint8_t in = 0, out = 0; uint16_t packetSize = 0;
     for (unsigned i = 0; i < 2; ++i) {
       const auto *ep = reinterpret_cast<const tusb_desc_endpoint_t *>(reinterpret_cast<const uint8_t *>(itf) + 9 + 7 * i);
-      if (ep->bLength != 7 || ep->bDescriptorType != 5 || ep->bmAttributes.xfer != TUSB_XFER_BULK || !tu_edpt_packet_size(ep) || tu_edpt_packet_size(ep) > s->owner.config_.transferBytes || !usbd_edpt_open(port, ep)) return 0;
+      if (ep->bLength != 7 || ep->bDescriptorType != 5 || ep->bmAttributes.xfer != TUSB_XFER_BULK || !tu_edpt_packet_size(ep) || tu_edpt_packet_size(ep) > s->owner.config_.transferBytes || !espusb_device_edpt_open(port, ep)) return 0;
       if (packetSize && packetSize != tu_edpt_packet_size(ep)) return 0;
       packetSize = tu_edpt_packet_size(ep);
       if (ep->bEndpointAddress & 0x80) in = ep->bEndpointAddress; else out = ep->bEndpointAddress;
@@ -206,20 +206,20 @@ struct EspUsbMscState {
       while (s && s->in != r->wIndex && s->out != r->wIndex) s = s->next;
       if (!s || r->bRequest != 1 || r->wValue || r->wLength) return false;
       if (phase != CONTROL_STAGE_SETUP) return true;
-      if (s->stage == Stage::NeedReset || s->needsBotReset) usbd_edpt_stall(port, uint8_t(r->wIndex));
+      if (s->stage == Stage::NeedReset || s->needsBotReset) espusb_device_edpt_stall(port, uint8_t(r->wIndex));
       else if (s->stage == Stage::Recovery) {
         (r->wIndex == s->in ? s->clearIn : s->clearOut) = true;
         if (s->clearIn && s->clearOut && !s->resetFence && !s->recoveryJob.queued) s->commandReady();
       } else if (r->wIndex == s->in && s->stage == Stage::Status) s->sendStatus();
-      else if (r->wIndex == s->out && s->stage == Stage::Command && !usbd_edpt_busy(port, s->out)) s->commandReady();
+      else if (r->wIndex == s->out && s->stage == Stage::Command && !espusb_device_edpt_busy(port, s->out)) s->commandReady();
       return true;
     }
     while (s && s->interface != r->wIndex) s = s->next;
     if (!s || r->wValue) return false;
     if (r->bmRequestType == 1 && r->bRequest == 11 && !r->wLength) {
       if (phase != CONTROL_STAGE_SETUP) return true;
-      const bool input = usbd_edpt_abort(port, s->in);
-      const bool output = usbd_edpt_abort(port, s->out);
+      const bool input = espusb_device_edpt_abort(port, s->in);
+      const bool output = espusb_device_edpt_abort(port, s->out);
       if (!input || !output) return espusb::internal::rejectUsbControl();
       // A new interface selection cancels normal transport, but it cannot
       // replace BOT Reset Recovery after an invalid CBW or a phase error.
@@ -227,18 +227,18 @@ struct EspUsbMscState {
       if (s->stage != Stage::Recovery) s->clearIn = s->clearOut = true;
       ++s->resetEpoch; s->interfaceReset = true; s->stage = Stage::Recovery;
       if (!espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob)) return espusb::internal::rejectUsbControl();
-      return tud_control_status(port, r);
+      return espusb_device_control_status(port, r);
     }
     if (r->bmRequestType == 0xa1 && r->bRequest == 254 && r->wLength == 1)
-      return phase != CONTROL_STAGE_SETUP || tud_control_xfer(port, r, &s->maxLun, 1);
+      return phase != CONTROL_STAGE_SETUP || espusb_device_control_transfer(port, r, &s->maxLun, 1);
     if (r->bmRequestType == 0x21 && r->bRequest == 255 && !r->wLength) {
       if (phase != CONTROL_STAGE_SETUP) return true;
-      if (!usbd_edpt_abort(port, s->in) || !usbd_edpt_abort(port, s->out)) return false;
+      if (!espusb_device_edpt_abort(port, s->in) || !espusb_device_edpt_abort(port, s->out)) return false;
       ++s->resetEpoch;
       s->stage = Stage::Recovery; s->clearIn = s->clearOut = s->needsBotReset = false;
       s->key = s->asc = s->ascq = 0;
       espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob);
-      return tud_control_status(port, r);
+      return espusb_device_control_status(port, r);
     }
     return false;
   }
@@ -337,7 +337,7 @@ size_t EspUsbDeviceMsc::transferCapacity() const {
   portENTER_CRITICAL(&mscLock); size_t n = state_ ? config_.transferBytes : 0; portEXIT_CRITICAL(&mscLock); return n;
 }
 bool EspUsbDeviceMsc::mounted() const {
-  portENTER_CRITICAL(&mscLock); bool value = state_ && !state_->stopping.load() && tud_ready(); portEXIT_CRITICAL(&mscLock); return value;
+  portENTER_CRITICAL(&mscLock); bool value = state_ && !state_->stopping.load() && espusb_device_ready(); portEXIT_CRITICAL(&mscLock); return value;
 }
 
 uint16_t EspUsbDeviceMsc::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)

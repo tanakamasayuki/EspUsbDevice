@@ -4,7 +4,7 @@
 #include "EspUsbDeviceAppDriver.h"
 #include "EspUsbMemory.h"
 #include "EspUsbTinyUsbRuntime.h"
-#include "device/usbd.h"
+#include "EspUsbDeviceBus.h"
 #include <algorithm>
 #include <string.h>
 namespace {
@@ -86,7 +86,7 @@ struct EspUsbAudioState {
     return true;
   }
   void armPlayback() {
-    if (!stopping && playback.active) usbd_edpt_xfer(port, playback.endpoint, playback.packet, playback.packetSize, false);
+    if (!stopping && playback.active) espusb_device_edpt_xfer(port, playback.endpoint, playback.packet, playback.packetSize, false);
   }
   void armCapture() {
     if (stopping || !capture.active) return;
@@ -100,7 +100,7 @@ struct EspUsbAudioState {
       owner.capture_.underrunCount_.fetch_add(1, std::memory_order_relaxed);
       owner.capture_.underrunBytes_.fetch_add(bytes - copied, std::memory_order_relaxed);
     }
-    usbd_edpt_xfer(port, capture.endpoint, capture.packet, uint16_t(bytes), false);
+    espusb_device_edpt_xfer(port, capture.endpoint, capture.packet, uint16_t(bytes), false);
   }
   void armFeedback() {
     if (stopping || !playback.active || !feedbackEndpoint) return;
@@ -108,12 +108,12 @@ struct EspUsbAudioState {
     // codec-clock feedback needs a separate consumption/clock API.
     const uint32_t value = uint32_t((uint64_t(owner.currentSampleRate()) << 16) / intervals);
     for (unsigned i = 0; i < 4; ++i) feedback[i] = uint8_t(value >> (8 * i));
-    usbd_edpt_xfer(port, feedbackEndpoint, feedback, 4, false);
+    espusb_device_edpt_xfer(port, feedbackEndpoint, feedback, 4, false);
   }
   bool change(AudioPacketStream &stream, uint8_t alternate, bool isPlayback) {
     stream.discard |= stream.active || !alternate;
     stream.active = false; stream.desired = alternate; stream.draining = true;
-    if (!usbd_edpt_abort(port, stream.endpoint) || (isPlayback && feedbackEndpoint && !usbd_edpt_abort(port, feedbackEndpoint))) return false;
+    if (!espusb_device_edpt_abort(port, stream.endpoint) || (isPlayback && feedbackEndpoint && !espusb_device_edpt_abort(port, feedbackEndpoint))) return false;
     ++epoch;
     return espusb::internal::postTinyUsbRuntimeJob(changeJob);
   }
@@ -135,7 +135,7 @@ struct EspUsbAudioState {
     auto *s = static_cast<EspUsbAudioState *>(context); AudioGuard guard;
     if (s->stopping || s->fenceQueued || (!s->playback.draining && !s->capture.draining)) return;
     s->fenceEpoch = s->epoch;
-    s->fenceQueued = usbd_try_defer_func(finishChange, s);
+    s->fenceQueued = espusb_device_try_defer(finishChange, s);
     if (!s->fenceQueued) espusb::internal::postTinyUsbRuntimeJob(s->changeJob);
   }
   static void init() {}
@@ -178,13 +178,13 @@ struct EspUsbAudioState {
         } else if (d[2] == s->owner.graph_.playback.feedbackEndpoint && s->feedback && size == 4) s->feedbackEndpoint = d[2];
         else return 0;
         tusb_desc_endpoint_t endpoint; memcpy(&endpoint, d, 7); endpoint.bLength = 7;
-        if (!usbd_edpt_open(port, &endpoint)) return 0;
+        if (!espusb_device_edpt_open(port, &endpoint)) return 0;
       }
       offset += d[0];
     }
     if ((s->owner.playbackEnabled_ && !s->playback.endpoint) || (s->owner.captureEnabled_ && !s->capture.endpoint)) return 0;
     s->port = port; s->controlInterface = itf->bInterfaceNumber;
-    s->intervals = tud_speed_get() == TUSB_SPEED_HIGH ? 8000 : 1000;
+    s->intervals = espusb_device_speed() == TUSB_SPEED_HIGH ? 8000 : 1000;
     return uint16_t(offset);
   }
   static EspUsbAudioState *forRequest(const tusb_control_request_t *r) {
@@ -201,24 +201,24 @@ struct EspUsbAudioState {
       if (phase != CONTROL_STAGE_SETUP) return true;
       AudioGuard guard;
       AudioPacketStream *stream = s->owner.playbackEnabled_ && r->wIndex == s->owner.graph_.playback.interfaceNumber ? &s->playback : s->owner.captureEnabled_ && r->wIndex == s->owner.graph_.capture.interfaceNumber ? &s->capture : nullptr;
-      if (!stream) return !r->wValue && tud_control_status(port, r);
+      if (!stream) return !r->wValue && espusb_device_control_status(port, r);
       if (!s->change(*stream, uint8_t(r->wValue), stream == &s->playback)) return false;
       s->owner.handleSetInterface(r);
-      return tud_control_status(port, r);
+      return espusb_device_control_status(port, r);
     }
     if (r->bmRequestType == 0x81 && r->bRequest == 10 && !r->wValue && r->wLength == 1 && !(r->wIndex >> 8)) {
       if (phase != CONTROL_STAGE_SETUP) return true;
       s->alternateResponse = r->wIndex == s->owner.graph_.playback.interfaceNumber ? s->playback.desired : r->wIndex == s->owner.graph_.capture.interfaceNumber ? s->capture.desired : 0;
-      return tud_control_xfer(port, r, &s->alternateResponse, 1);
+      return espusb_device_control_transfer(port, r, &s->alternateResponse, 1);
     }
     if (r->bmRequestType == 0xa1 || r->bmRequestType == 0xa2) {
       if (phase != CONTROL_STAGE_SETUP) return true;
       return r->bmRequestType == 0xa1 ? s->owner.handleGetEntityRequest(port, r) : s->owner.handleGetEndpointRequest(port, r);
     }
     if ((r->bmRequestType == 0x21 || r->bmRequestType == 0x22) && r->wLength && r->wLength <= 4) {
-      if (phase == CONTROL_STAGE_SETUP) return tud_control_xfer(port, r, s->control, r->wLength);
+      if (phase == CONTROL_STAGE_SETUP) return espusb_device_control_transfer(port, r, s->control, r->wLength);
       if (phase == CONTROL_STAGE_DATA) {
-        if (usbd_control_received_bytes() != r->wLength) return false;
+        if (espusb_device_control_received_bytes() != r->wLength) return false;
         return r->bmRequestType == 0x21 ? s->owner.handleSetEntityRequest(r, s->control) : s->owner.handleSetEndpointRequest(r, s->control);
       }
       return true;
@@ -334,6 +334,6 @@ bool AudioTransport::reply(EspUsbAudioFunction &owner, uint8_t port, const void 
   AudioGuard guard; auto *s = owner.state_;
   if (!s || s->stopping || bytes > sizeof(s->control)) return false;
   memcpy(s->control, data, bytes);
-  return tud_control_xfer(port, static_cast<const tusb_control_request_t *>(request), s->control, uint16_t(bytes));
+  return espusb_device_control_transfer(port, static_cast<const tusb_control_request_t *>(request), s->control, uint16_t(bytes));
 }
 } }

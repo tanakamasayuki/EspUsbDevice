@@ -19,10 +19,10 @@ struct TinyUsbRuntimeOptions {
   uint16_t eventQueueDepth = 16;
   // Bitmap of IN endpoint numbers whose DWC2 transmit FIFO should hold two
   // packets instead of one. Only bulk endpoints are affected; the controller
-  // ignores the rest. Applied through tud_configure() before tusb_init(),
-  // which is the only point at which it can be set.
+  // ignores the rest. Applied to the native controller before initialization;
+  // change it after end(), before the next begin().
   uint16_t bulkInDoubleBuffered = 0;
-  // Core to pin the usbd task to, or -1 to leave it unpinned as before.
+  // Core to pin the device worker to, or -1 to leave it unpinned as before.
   int8_t taskCoreId = -1;
 };
 

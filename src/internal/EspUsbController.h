@@ -74,7 +74,6 @@ void espusb_controller_remote_wakeup(uint8_t port);
 void espusb_controller_connect(uint8_t port);
 void espusb_controller_disconnect(uint8_t port);
 void espusb_controller_sof_enable(uint8_t port, bool enabled);
-void espusb_controller_edpt0_status_complete(uint8_t port, const tusb_control_request_t *);
 bool espusb_controller_edpt_open(uint8_t port, const tusb_desc_endpoint_t *);
 // Return only after non-control DMA and endpoint IRQ state are quiescent.
 void espusb_controller_edpt_close_all(uint8_t port);

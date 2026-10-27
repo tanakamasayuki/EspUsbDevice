@@ -1,6 +1,6 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceCore.h"
-#include "device/usbd.h"
+#include "internal/EspUsbDeviceBus.h"
 #include <algorithm>
 #include <string.h>
 
@@ -52,6 +52,6 @@ bool EspUsbDeviceVendor::handleControlRequest(uint8_t port, uint8_t stage, const
 bool EspUsbDeviceVendor::sendControlResponse(const EspUsbDeviceVendorControlRequest &request, const void *data, size_t n) {
   const auto *r = static_cast<const tusb_control_request_t *>(request.rawRequest);
   if (!r || n > UINT16_MAX) return false;
-  if (!r->wLength) return tud_control_status(request.rhport, r);
-  return (!n || data) && tud_control_xfer(request.rhport, r, const_cast<void *>(data), uint16_t(n));
+  if (!r->wLength) return espusb_device_control_status(request.rhport, r);
+  return (!n || data) && espusb_device_control_transfer(request.rhport, r, const_cast<void *>(data), uint16_t(n));
 }

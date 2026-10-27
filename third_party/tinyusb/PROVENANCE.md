@@ -12,11 +12,12 @@ completion of the stack migration.
 
 - Pin and rationale: `UPSTREAM.json`, using a full commit SHA.
 - License: MIT. Keep `LICENSE` and copyright/SPDX notices on remaining files.
-- Selection: `BUILD_FILES.txt`, 17 files (2 sources and 15 headers).
+- Selection: `BUILD_FILES.txt`, 13 files (2 sources and 11 headers).
 - Sources: `portable/synopsys/dwc2/dcd_dwc2.c` and
   `portable/synopsys/dwc2/dwc2_common.c`.
-- Only the currently used Audio/CDC/HID/MIDI protocol headers remain under
-  `class/`. Unused DFU/MSC/NCM/Video definitions were also removed.
+- Only the HID protocol/key tables remain under `class/`. CDC and MIDI now
+  build runtime descriptors in their native implementations; the Audio, CDC,
+  MIDI and device `usbd.h` headers have been removed.
 - `src/tusb_config.h` and `src/internal/EspUsbTinyUsbConfig.h` are first-party
   integration. Enabling the legacy class drivers is rejected.
 
@@ -84,3 +85,13 @@ The core still owns queue/fence capacity and FreeRTOS synchronization directly.
 The pinned updater cannot restore removed device/private, OS/FIFO or umbrella
 headers. DWC2 register/port sources and wire/protocol definitions remain derived
 upstream dependencies; this boundary change is not full DWC2 replacement.
+
+
+The native bus/control/endpoint boundary uses `espusb_device_*` symbols rather
+than exporting the old `tud_*`/`usbd_*` entry points. Unused legacy bootstrap,
+task-pump and user-SOF hooks were removed; selected class SOF callbacks still
+run in the controller event path. CDC/MIDI descriptor layouts were migrated
+from the former TinyUSB templates in `device/usbd.h` (Copyright (c) 2019
+Ha Thach, MIT; license retained here). MIDI builds its runtime cable graph and
+length directly rather than patching a symmetric single-cable macro result.
+This does not complete replacement of the shared wire types or DWC2 sources.

@@ -5,7 +5,7 @@
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
 #include "internal/EspUsbDeviceEndpoint.h"
-#include "device/usbd.h"
+#include "internal/EspUsbDeviceBus.h"
 #include <algorithm>
 #include <string.h>
 #include <utility>
@@ -115,19 +115,19 @@ struct EspUsbCcidState {
     owner.response_=nullptr;
   }
   void receive() {
-    if(!stopping && !draining && !txBusy && out)usbd_edpt_xfer(port,out,packet,packetSize,false);
+    if(!stopping && !draining && !txBusy && out)espusb_device_edpt_xfer(port,out,packet,packetSize,false);
   }
   bool send(size_t bytes) {
-    if(stopping || draining || !in || txBusy || bytes>owner.config_.messageBytes || !usbd_edpt_claim(port,in))return false;
+    if(stopping || draining || !in || txBusy || bytes>owner.config_.messageBytes || !espusb_device_edpt_claim(port,in))return false;
     txBusy=true;zlp=bytes%packetSize==0;
-    if(usbd_edpt_xfer(port,in,owner.response_,uint16_t(bytes),false))return true;
-    txBusy=zlp=false;usbd_edpt_release(port,in);return false;
+    if(espusb_device_edpt_xfer(port,in,owner.response_,uint16_t(bytes),false))return true;
+    txBusy=zlp=false;espusb_device_edpt_release(port,in);return false;
   }
   static void finishDrain(void *context) {
     auto *s=static_cast<EspUsbCcidState *>(context);s->fenceQueued=false;
     if(s->stopping || !s->draining)return;
     if(s->epoch!=s->fenceEpoch){espusb::internal::postTinyUsbRuntimeJob(s->job);return;}
-    for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)usbd_edpt_clear_stall(s->port,ep);
+    for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)espusb_device_edpt_clear_stall(s->port,ep);
     s->received=s->stored=0;s->txBusy=s->zlp=s->draining=false;
     s->receive();s->owner.notifySlotState();
   }
@@ -135,15 +135,15 @@ struct EspUsbCcidState {
     auto *s=static_cast<EspUsbCcidState *>(context);
     if(s->stopping)return;
     if(s->draining) {
-      if(!s->fenceQueued){s->fenceEpoch=s->epoch;s->fenceQueued=usbd_try_defer_func(finishDrain,s);if(!s->fenceQueued)espusb::internal::postTinyUsbRuntimeJob(s->job);}
+      if(!s->fenceQueued){s->fenceEpoch=s->epoch;s->fenceQueued=espusb_device_try_defer(finishDrain,s);if(!s->fenceQueued)espusb::internal::postTinyUsbRuntimeJob(s->job);}
       return;
     }
-    if(s->interrupt && s->owner.notifyPending_.load() && usbd_edpt_claim(s->port,s->interrupt)) {
+    if(s->interrupt && s->owner.notifyPending_.load() && espusb_device_edpt_claim(s->port,s->interrupt)) {
       portENTER_CRITICAL(&ccidLock);
       s->owner.notifyPending_=false;
       s->notify[0]=0x50;s->notify[1]=uint8_t((s->owner.cardPresent_ ? 1:0)|2);
       portEXIT_CRITICAL(&ccidLock);
-      if(!usbd_edpt_xfer(s->port,s->interrupt,s->notify,2,false)){s->owner.notifyPending_=true;usbd_edpt_release(s->port,s->interrupt);}
+      if(!espusb_device_edpt_xfer(s->port,s->interrupt,s->notify,2,false)){s->owner.notifyPending_=true;espusb_device_edpt_release(s->port,s->interrupt);}
     }
   }
   static void init() {}
@@ -172,7 +172,7 @@ struct EspUsbCcidState {
       } else if(ep->bmAttributes.xfer==TUSB_XFER_INTERRUPT && (ep->bEndpointAddress&128) && mps<=8 && s->notify) {
         if(s->interrupt)return 0;s->interrupt=ep->bEndpointAddress;
       } else return 0;
-      if(!usbd_edpt_open(port,ep))return 0;
+      if(!espusb_device_edpt_open(port,ep))return 0;
     }
     if(!s->in || !s->out)return 0;s->receive();return needed;
   }
@@ -180,14 +180,14 @@ struct EspUsbCcidState {
     auto *s=first;while(s && s->interface!=r->wIndex)s=s->next;if(!s)return false;
     if(r->bmRequestType==1 && r->bRequest==11 && !r->wValue && !r->wLength) {
       if(stage!=CONTROL_STAGE_SETUP)return true;
-      bool ok=true;for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)ok &= usbd_edpt_abort(port,ep);
+      bool ok=true;for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)ok &= espusb_device_edpt_abort(port,ep);
       if(!ok)return espusb::internal::rejectUsbControl();
       ++s->epoch;s->draining=true;s->owner.aborted_=false;
       if(!espusb::internal::postTinyUsbRuntimeJob(s->job))return espusb::internal::rejectUsbControl();
-      return tud_control_status(port,r);
+      return espusb_device_control_status(port,r);
     }
     if(r->bmRequestType!=0x21 || r->bRequest!=1 || r->wLength || uint8_t(r->wValue))return false;
-    if(stage==CONTROL_STAGE_SETUP)return tud_control_status(port,r);
+    if(stage==CONTROL_STAGE_SETUP)return espusb_device_control_status(port,r);
     if(stage==CONTROL_STAGE_ACK)s->owner.handleAbort(uint8_t(r->wValue),uint8_t(r->wValue>>8));
     return true;
   }
@@ -196,7 +196,7 @@ struct EspUsbCcidState {
     if(s->stopping || s->draining)return true;
     if(ep==s->interrupt){s->owner.handleNotifyComplete();return true;}
     if(ep==s->in) {
-      if(result==XFER_RESULT_SUCCESS && s->zlp){s->zlp=false;usbd_edpt_xfer(s->port,s->in,nullptr,0,false);return true;}
+      if(result==XFER_RESULT_SUCCESS && s->zlp){s->zlp=false;espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);return true;}
       s->txBusy=s->zlp=false;s->receive();return true;
     }
     if(result!=XFER_RESULT_SUCCESS || bytes>s->packetSize){s->received=s->stored=0;s->receive();return true;}
@@ -395,7 +395,7 @@ esp_err_t EspUsbDeviceCcid::onPower(PowerCallback callback) {
 
 bool EspUsbDeviceCcid::mounted() const
 {
-  portENTER_CRITICAL(&ccidLock);bool ready=state_ && !state_->stopping && state_->in && tud_ready();portEXIT_CRITICAL(&ccidLock);return ready;
+  portENTER_CRITICAL(&ccidLock);bool ready=state_ && !state_->stopping && state_->in && espusb_device_ready();portEXIT_CRITICAL(&ccidLock);return ready;
 }
 
 uint32_t EspUsbDeviceCcid::commandCount() const

@@ -615,3 +615,18 @@ Arduino SDK自身の別ソースが持つTinyUSB依存と、古いbuild director
 vendor検証17 files/2 sources、updater dry run差分0。旧tests/examplesはmainとの差分なし。
 残るdevice向けheader、wire/protocol type、DWC2 register/port実装、全EP0順序・class HALT競合、
 S2/P4/S31とHSの実機検証は未完了。APIの最終整理とv3 sample整備も引き続き必要。
+
+## native busとCDC/MIDI記述子移行後の全体確認
+
+2026-10-28。標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1502.57秒**。
+774確保点の失敗/回復が成功し、heapは試験前後で同量。62 serial log全てSTOPPED、panicなし。
+CDCの列挙・制御・通信、MIDIの対称1/16 cableとIN16/OUT1非対称構成を含む。
+原本`/tmp/pytest-embedded/2026-10-27_15-28-37-180106/`、JUnit/transcript/serialコピーは`validation/.pytest-results/native-bus-all*`。
+S2/P4 HSのcompile-onlyも成功し、`native-bus-{s2,p4}-build.txt`へ記録した。
+S3 Vendor/S2/P4 ELFに旧`tud_*`/`usbd_*`/`dcd_*` symbolはなく、独自bus/endpointが存在する。
+S3 Vendor-onlyでは未使用class stateも不在。各targetのライブラリ28ソースのcompiler依存記録に、
+削除したdevice/Audio/CDC/MIDI headerやSDK同名headerへのfallbackはない。
+各nmと`native-bus-audit.txt`を保存した。vendor検証13 files/2 sources、updater dry run差分0。
+旧tests/examplesはmainとの差分なし。
+wire type・HID table・DWC2とcapability定義、HALT競合・全EP0順序・他SoC/HS実機、
+最終API/sampleの整理は未完了。逆向きIN1/OUT16の追加試験はこの全体結果には含めない。

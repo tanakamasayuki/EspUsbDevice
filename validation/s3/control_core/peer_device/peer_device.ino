@@ -25,7 +25,7 @@ std::atomic<unsigned> inputs{0},outputs{0},empty{0},bad{0},successes{0},resets{0
 uint64_t ticket=0;
 void noop(void *) {}
 void overflow(void *) {
-  while(usbd_try_defer_func(noop,nullptr)) {}
+  while(espusb_device_try_defer(noop,nullptr)) {}
   // Fill the hardware reserve, then exceed physical queue capacity.
   for(unsigned i=0;i<2;++i)espusb_controller_event_bus_signal(espusb::internal::tinyUsbRuntimeRhport(),ESPUSB_CONTROLLER_EVENT_RESUME,false);
 }
@@ -86,7 +86,7 @@ bool metadata() {
   }
   for (unsigned n:{1u,4u,16u,31u}) {
     cfg.eventQueueDepth=n;
-    ok &= device.begin(cfg) && usbd_event_queue_capacity()==n && espusb_dwc2_runtime_transfers()==4 && device.end()==ESP_OK && !usbd_event_queue_capacity() && !espusb_dwc2_runtime_bytes();
+    ok &= device.begin(cfg) && espusb_device_queue_capacity()==n && espusb_dwc2_runtime_transfers()==4 && device.end()==ESP_OK && !espusb_device_queue_capacity() && !espusb_dwc2_runtime_bytes();
     delay(10); // FreeRTOS idle task reclaims self-deleted worker TCBs.
   }
   return ok;
@@ -138,7 +138,7 @@ void loop() {
   } else if(c.startsWith("start ")) {
     inputs=outputs=empty=bad=successes=resets=stops=0;
     EspUsbDeviceConfig cfg;cfg.selfPowered=true;cfg.eventQueueDepth=c.substring(6).toInt();
-    bool ok=device.begin(cfg) && usbd_event_queue_capacity()==cfg.eventQueueDepth;
+    bool ok=device.begin(cfg) && espusb_device_queue_capacity()==cfg.eventQueueDepth;
     Serial.printf("STARTED %u\r\n",unsigned(ok));
   } else if(c=="queue") {
     auto r=vendor.writeDirect(direct,64,EspUsbTransferTermination::EndWithShortPacket);ticket=r.id;
