@@ -49,10 +49,10 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
-最新の全実行はplugin 1.10.0の標準`--combo all`による`runtime-dfu-all.xml`。
-**17 passed、0 skipped、0 unfinished、841.47秒**。全caseで両board STOPPED、panicなし。
-serial原本は`/tmp/pytest-embedded/2026-10-26_19-27-27-183733/`、コピーとtranscriptは
-`.pytest-results/runtime-dfu-all-serial/`と`runtime-dfu-all-transcript.txt`へ保存した。
+最新の全実行はplugin 1.10.0の標準`--combo all`による`runtime-ncm-all.xml`。
+**19 passed、0 skipped、0 unfinished、1080.50秒**。全caseで両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-27_01-02-46-482679/`、コピーとtranscriptは
+`.pytest-results/runtime-ncm-all-serial/`と`runtime-ncm-all-transcript.txt`へ保存した。
 `s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/DFU/NCM/descriptor/registryの605取得点を失敗させて回復を確認する。
 文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
 MIDIのqueue/callback/外部ring/片方向/複数instance、MSCの内部/外部DMA bufferと複数instanceも含む。
@@ -227,4 +227,15 @@ serial原本は`/tmp/pytest-embedded/2026-10-27_00-57-48-429795/`。
 両実行とも各case両board STOPPED、panicなし。コピーとJUnit/transcriptは
 `validation/.pytest-results/ncm-driver-related*`と`ncm-ip-related*`。
 Netのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
-通常収集は19件で、直近の全17件成功はDFU時点。今回の関連結果と全19件一括を混同しない。
+通常収集は19件。関連試験の後に行った一括試験の結果は下記を参照。
+
+
+## NCM置換後の全体確認
+
+2026-10-27。標準`--combo all`は**19 passed、0 skipped、0 unfinished、1080.50秒**。
+全19 caseで両board STOPPED、38本のserialにpanicなし。NCMのraw/control/2 interface、
+DHCP/TCPとIP回収、605取得点の確保失敗/回復、および既存の全USB経路を含む。
+serial原本は`/tmp/pytest-embedded/2026-10-27_01-02-46-482679/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-ncm-all*`。
+NCMのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
+TinyUSB treeは51 file / 15 compiled sourcesで一致。旧tests/examplesはmainと同一で、mainはv3の祖先。
+残るlegacy classはVideo。共通EP0/core/DCDと他SoC/HSの置換・実機検証は未完。

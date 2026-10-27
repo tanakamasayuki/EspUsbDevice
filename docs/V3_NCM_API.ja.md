@@ -107,4 +107,15 @@ serial原本は`/tmp/pytest-embedded/2026-10-27_00-57-48-429795/`。
 両実行とも各case両board STOPPED、panicなし。コピーとJUnit/transcriptは
 `validation/.pytest-results/ncm-driver-related*`と`ncm-ip-related*`。
 Netのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
-通常収集は19件で、直近の全17件成功はDFU時点。今回の関連結果と全19件一括を混同しない。
+通常収集は19件。関連試験の後に行った一括試験の結果は下記を参照。
+
+
+## NCM置換後の全体確認
+
+2026-10-27。標準`--combo all`は**19 passed、0 skipped、0 unfinished、1080.50秒**。
+全19 caseで両board STOPPED、38本のserialにpanicなし。NCMのraw/control/2 interface、
+DHCP/TCPとIP回収、605取得点の確保失敗/回復、および既存の全USB経路を含む。
+serial原本は`/tmp/pytest-embedded/2026-10-27_01-02-46-482679/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-ncm-all*`。
+NCMのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
+TinyUSB treeは51 file / 15 compiled sourcesで一致。旧tests/examplesはmainと同一で、mainはv3の祖先。
+残るlegacy classはVideo。共通EP0/core/DCDと他SoC/HSの置換・実機検証は未完。
