@@ -308,7 +308,7 @@ struct EspUsbHidState {
   static void init() {}
   static void resetAll(uint8_t) { for (auto *s = first; s; s = s->next) s->reset(); }
   static bool deinit() { resetAll(0); return true; }
-  static uint16_t open(uint8_t port, const tusb_desc_interface_t *itf, uint16_t available) {
+  static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t available) {
     if (itf->bInterfaceClass != 3 || available < 18 || itf->bLength != 9) return 0;
     auto *s = first;
     while (s && !s->device.config().startTinyUsb) s = s->next;
@@ -322,10 +322,10 @@ struct EspUsbHidState {
     if (required > available || !itf->bNumEndpoints || itf->bNumEndpoints > 2) return 0;
     uint8_t in = 0, out = 0; uint16_t packetSize = 0;
     for (unsigned n = 0; n < itf->bNumEndpoints; ++n) {
-      const auto *ep = reinterpret_cast<const tusb_desc_endpoint_t *>(d + 18 + 7 * n);
-      if (ep->bLength != 7 || ep->bDescriptorType != 5 || ep->bmAttributes.xfer != TUSB_XFER_INTERRUPT) return 0;
+      const auto *ep = reinterpret_cast<const EspUsbEndpointDescriptor *>(d + 18 + 7 * n);
+      if (ep->bLength != 7 || ep->bDescriptorType != 5 || espusb_endpoint_type(ep) != ESPUSB_XFER_INTERRUPT) return 0;
       if (ep->bEndpointAddress & 0x80) { if (in) return 0; in = ep->bEndpointAddress; }
-      else { if (out) return 0; out = ep->bEndpointAddress; packetSize = tu_edpt_packet_size(ep); }
+      else { if (out) return 0; out = ep->bEndpointAddress; packetSize = espusb_endpoint_packet_size(ep); }
       if (!espusb_device_edpt_open(port, ep)) return 0;
     }
     if (!in || (out && s->capacity[1] && packetSize > s->packetCapacity)) return 0;
@@ -337,13 +337,13 @@ struct EspUsbHidState {
     s->receive(); portEXIT_CRITICAL(&hidLock);
     return uint16_t(required);
   }
-  static bool controlRequest(uint8_t port, uint8_t stage, const tusb_control_request_t *r) {
+  static bool controlRequest(uint8_t port, uint8_t stage, const EspUsbControlRequest *r) {
     auto *s = first;
     const bool endpointRequest = (r->bmRequestType & 31) == 2;
     while (s && (endpointRequest ? (s->in != r->wIndex && s->out != r->wIndex) : s->interface != r->wIndex)) s = s->next;
     if (!s) return false;
     if (r->bmRequestType == 1 && r->bRequest == 11 && !r->wValue && !r->wLength) {
-      if (stage != CONTROL_STAGE_SETUP) return true;
+      if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       portENTER_CRITICAL(&hidLock);
       const bool input = s->changeEndpoint(true, true);
       const bool output = s->changeEndpoint(false, true);
@@ -352,14 +352,14 @@ struct EspUsbHidState {
       return espusb_device_control_status(port, r);
     }
     if (r->bmRequestType == 2 && (r->bRequest == 1 || r->bRequest == 3) && !r->wValue && !r->wLength) {
-      if (stage != CONTROL_STAGE_SETUP) return true;
+      if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       portENTER_CRITICAL(&hidLock);
       const bool changed = s->changeEndpoint(r->wIndex == s->in, r->bRequest == 1);
       portEXIT_CRITICAL(&hidLock);
       return changed || espusb::internal::rejectUsbControl();
     }
     if (r->bmRequestType == 0x81 && r->bRequest == 6 && !(r->wValue & 0xff)) {
-      if (stage != CONTROL_STAGE_SETUP) return true;
+      if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       if (r->wValue == 0x2100) return s->hidDescriptor && espusb_device_control_transfer(port, r, const_cast<uint8_t *>(s->hidDescriptor), 9);
       if (r->wValue == 0x2200) return espusb_device_control_transfer(port, r, const_cast<uint8_t *>(s->device.hidReportDescriptor(0)), s->device.hidReportDescriptorLength(0));
       return false;
@@ -368,7 +368,7 @@ struct EspUsbHidState {
     Report *report = s->find(id);
     if (r->bmRequestType == 0xa1 && r->bRequest == 1) {
       if (!report || type < 1 || type > 3 || !report->bits[type - 1] || !r->wLength) return false;
-      if (stage != CONTROL_STAGE_SETUP) return true;
+      if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       portENTER_CRITICAL(&hidLock);
       const uint16_t bytes = report->length[type - 1];
       memcpy(s->control, s->saved(*report, type - 1), bytes);
@@ -377,13 +377,13 @@ struct EspUsbHidState {
     }
     if (r->bmRequestType == 0x21 && r->bRequest == 9) {
       if (!report || type < 2 || type > 3 || !report->bits[type - 1] || !r->wLength || r->wLength > report->bytes(type - 1) || !s->control) return false;
-      if (stage == CONTROL_STAGE_SETUP) {
+      if (stage == ESPUSB_CONTROL_STAGE_SETUP) {
         memset(s->control, 0, r->wLength);
         return espusb_device_control_transfer(port, r, s->control, r->wLength);
       }
-      if (stage == CONTROL_STAGE_DATA && (espusb_device_control_received_bytes() != r->wLength ||
+      if (stage == ESPUSB_CONTROL_STAGE_DATA && (espusb_device_control_received_bytes() != r->wLength ||
           (id && r->wLength == report->bytes(type - 1) && s->control[0] != id))) return false;
-      if (stage == CONTROL_STAGE_ACK) {
+      if (stage == ESPUSB_CONTROL_STAGE_ACK) {
         const bool prefixed = id && r->wLength == report->bytes(type - 1) && s->control[0] == id;
         if (id && r->wLength == report->bytes(type - 1) && !prefixed) return false;
         portENTER_CRITICAL(&hidLock);
@@ -395,11 +395,11 @@ struct EspUsbHidState {
     }
     if (r->bmRequestType == 0xa1 && r->bRequest == 2 && !type && r->wLength == 1 && report && report->bits[0]) {
       s->response = report->idle;
-      return stage != CONTROL_STAGE_SETUP || espusb_device_control_transfer(port, r, &s->response, 1);
+      return stage != ESPUSB_CONTROL_STAGE_SETUP || espusb_device_control_transfer(port, r, &s->response, 1);
     }
     if (r->bmRequestType == 0x21 && r->bRequest == 10 && !r->wLength && (!id || (report && report->bits[0]))) {
-      if (stage == CONTROL_STAGE_SETUP) return espusb_device_control_status(port, r);
-      if (stage == CONTROL_STAGE_ACK) {
+      if (stage == ESPUSB_CONTROL_STAGE_SETUP) return espusb_device_control_status(port, r);
+      if (stage == ESPUSB_CONTROL_STAGE_ACK) {
         const uint32_t now = millis();
         portENTER_CRITICAL(&hidLock);
         for (size_t i = 0; i < s->reportCount; ++i) {
@@ -419,10 +419,10 @@ struct EspUsbHidState {
     }
     if (s->boot && r->bmRequestType == 0xa1 && r->bRequest == 3 && !r->wValue && r->wLength == 1) {
       s->response = s->protocol;
-      return stage != CONTROL_STAGE_SETUP || espusb_device_control_transfer(port, r, &s->response, 1);
+      return stage != ESPUSB_CONTROL_STAGE_SETUP || espusb_device_control_transfer(port, r, &s->response, 1);
     }
     if (s->boot && r->bmRequestType == 0x21 && r->bRequest == 11 && r->wValue <= 1 && !r->wLength) {
-      if (stage == CONTROL_STAGE_SETUP) {
+      if (stage == ESPUSB_CONTROL_STAGE_SETUP) {
         portENTER_CRITICAL(&hidLock);
         if (s->protocol != r->wValue) {
           if (s->busy && !s->inputDraining) {
@@ -437,12 +437,12 @@ struct EspUsbHidState {
         portEXIT_CRITICAL(&hidLock);
         return espusb_device_control_status(port, r);
       }
-      if (stage == CONTROL_STAGE_ACK) s->device.handleHidSetProtocol(0, s->protocol);
+      if (stage == ESPUSB_CONTROL_STAGE_ACK) s->device.handleHidSetProtocol(0, s->protocol);
       return true;
     }
     return false;
   }
-  static bool complete(uint8_t, uint8_t endpoint, xfer_result_t result, uint32_t length) {
+  static bool complete(uint8_t, uint8_t endpoint, EspUsbControllerResult result, uint32_t length) {
     auto *s = first;
     while (s && s->in != endpoint && s->out != endpoint) s = s->next;
     if (!s) return false;
@@ -451,7 +451,7 @@ struct EspUsbHidState {
       if (s->inputDraining) { portEXIT_CRITICAL(&hidLock); return true; }
       if (s->pendingInput) {
         auto &r = *s->pendingInput;
-        if (result == XFER_RESULT_SUCCESS && r.relativeOffset) {
+        if (result == ESPUSB_TRANSFER_SUCCESS && r.relativeOffset) {
           auto *current = s->saved(r, 0) + (r.id ? 1 : 0);
           for (size_t i = 0; i < (r.bits[0] + 7) / 8; ++i) current[i] &= uint8_t(~s->snapshots[r.relativeOffset + i]);
         }
@@ -464,7 +464,7 @@ struct EspUsbHidState {
     }
     if (s->outputDraining) return true;
     bool deliver = false; uint8_t id = 0; size_t bytes = 0;
-    if (result == XFER_RESULT_SUCCESS && length <= s->packetSize && s->output && length <= s->capacity[1] - s->assembled) {
+    if (result == ESPUSB_TRANSFER_SUCCESS && length <= s->packetSize && s->output && length <= s->capacity[1] - s->assembled) {
       memcpy(s->output + s->assembled, s->packet, length); s->assembled += length;
       id = s->reportCount && s->reports[0].id ? (s->assembled ? s->output[0] : 0) : 0;
       const auto *report = s->find(id);

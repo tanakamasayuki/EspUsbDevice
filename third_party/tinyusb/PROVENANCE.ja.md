@@ -11,10 +11,10 @@ DWC2と一部wire/protocol定義は暫定依存として残る。
 
 - Pinと選定理由: `UPSTREAM.json`。full commit SHAへ固定する。
 - License: MIT、`LICENSE`と残存fileのcopyright/SPDX表示を保持する。
-- 現在の選択: `BUILD_FILES.txt`の13 file（2 source、11 header）。
+- 現在の選択: `BUILD_FILES.txt`の12 file（2 source、10 header）。
 - 残るsource: `portable/synopsys/dwc2/dcd_dwc2.c`、`portable/synopsys/dwc2/dwc2_common.c`。
-- `class/`以下にはHID protocol/key tableだけを残す。CDC/MIDIは独自実装でruntime記述子を生成し、
-  Audio/CDC/MIDIとdevice `usbd.h`のheaderは撤去した。
+- vendor class headerは残さない。必要なUS keyboard table行だけを
+  `src/keymap/keymap_en_us.h`へMIT帰属付きで移し、HIDの未使用定義やtemplateを撤去した。
 - `src/tusb_config.h`と`src/internal/EspUsbTinyUsbConfig.h`は独自integration。
   legacy classの再有効化は拒否し、独自driverとの二重claimを防ぐ。
 
@@ -74,3 +74,10 @@ CDC/MIDIのbyte layoutは旧TinyUSB `device/usbd.h`のtemplateから移行した
 （Copyright (c) 2019 Ha Thach、MIT、本directoryにlicenseを保持）。
 MIDIはruntime cable graphと長さを直接生成し、対称/単一cable macroの結果を上書きしない。
 wire typeとDWC2 sourceの完全置換は別途継続する。
+
+
+native core/classは独自`src/internal/EspUsbWire.h`の要求・interface・endpoint型、
+raw byte属性とLE読み取り、native speed/resultを使う。vendor型へのaliasは作らない。
+残るDWC2 adapterも境界では同型を使うが、内部のregister/common helperは上流由来のまま。
+US key tableはTinyUSB HID_KEYCODE_TO_ASCII由来（Copyright (c) 2019 Ha Thach、MIT）。
+VBUS policyは`EspUsbDeviceConfig::vbusSensing`からruntimeで渡し、旧build flagは拒否する。

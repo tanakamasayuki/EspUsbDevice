@@ -227,7 +227,7 @@ struct EspUsbBulkState {
   static void init() {}
   static void resetAll(uint8_t) { for (auto *s = first; s; s = s->next) s->reset(); }
   static bool deinit() { resetAll(0); return true; }
-  static uint16_t open(uint8_t port, const tusb_desc_interface_t *itf, uint16_t length) {
+  static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t length) {
     auto *s = first;
     while (s && s->owner.interfaceNumber_ != itf->bInterfaceNumber) s = s->next;
     if (!s) return 0;
@@ -241,11 +241,11 @@ struct EspUsbBulkState {
     portEXIT_CRITICAL(&bulkLock);
     return required;
   }
-  static bool control(uint8_t port, uint8_t stage, const tusb_control_request_t *request) {
+  static bool control(uint8_t port, uint8_t stage, const EspUsbControlRequest *request) {
     if (request->bmRequestType == 1 && request->bRequest == 11 && !request->wValue && !request->wLength) {
       for (auto *s = first; s; s = s->next) {
         if (!s->epIn || espusb::internal::usbEndpointInterface(port, s->epIn) != request->wIndex) continue;
-        if (stage != CONTROL_STAGE_SETUP) return true;
+        if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
         portENTER_CRITICAL(&bulkLock);
         const bool input = s->changeEndpoint(true, true, EspUsbTransferStatus::Cancelled);
         const bool output = s->changeEndpoint(false, true, EspUsbTransferStatus::Cancelled);
@@ -257,7 +257,7 @@ struct EspUsbBulkState {
     if (request->bmRequestType == 2 && (request->bRequest == 1 || request->bRequest == 3) && !request->wValue && !request->wLength) {
       for (auto *s = first; s; s = s->next) {
         if (request->wIndex != s->epIn && request->wIndex != s->epOut) continue;
-        if (stage != CONTROL_STAGE_SETUP) return true;
+        if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
         const bool clear = request->bRequest == 1;
         portENTER_CRITICAL(&bulkLock);
         const bool changed = s->changeEndpoint(request->wIndex == s->epIn, clear,
@@ -270,7 +270,7 @@ struct EspUsbBulkState {
       if (s->owner.onBulkControl(port, stage, request)) return true;
     return false;
   }
-  static bool complete(uint8_t, uint8_t ep, xfer_result_t result, uint32_t n) {
+  static bool complete(uint8_t, uint8_t ep, EspUsbControllerResult result, uint32_t n) {
     auto *s = first;
     while (s && s->epIn != ep && s->epOut != ep) s = s->next;
     if (!s) {
@@ -289,7 +289,7 @@ struct EspUsbBulkState {
     if (input) {
       s->txBusy = false;
       if (s->directBuffer) {
-        if (result != XFER_RESULT_SUCCESS) {
+        if (result != ESPUSB_TRANSFER_SUCCESS) {
           completion = s->takeDirect(EspUsbTransferStatus::TransferError, 0, false);
         } else if (s->needZlp && !s->sendingZlp) {
           s->sendingZlp = true;
@@ -306,7 +306,7 @@ struct EspUsbBulkState {
         s->copyZlp = false;
       } else {
         copied = true;
-        if (result == XFER_RESULT_SUCCESS && n && n % s->packetSize == 0 && !s->tx.used &&
+        if (result == ESPUSB_TRANSFER_SUCCESS && n && n % s->packetSize == 0 && !s->tx.used &&
             s->terminateCopy &&
             espusb_device_edpt_claim(s->rhport, s->epIn)) {
           s->copyZlp = s->txBusy = espusb_device_edpt_xfer(s->rhport, s->epIn, nullptr, 0, false);
@@ -317,17 +317,17 @@ struct EspUsbBulkState {
       if (!s->txBusy && !s->tx.used) s->flushing = false;
     } else {
       s->rxBusy = false;
-      if (result == XFER_RESULT_SUCCESS && n <= s->packetSize && s->packetUnit > 1 &&
+      if (result == ESPUSB_TRANSFER_SUCCESS && n <= s->packetSize && s->packetUnit > 1 &&
           (s->owner.config_.rxMode == EspUsbBulkRxMode::Stream || s->owner.config_.rxMode == EspUsbBulkRxMode::Callback)) {
         const size_t filtered = s->owner.filterBulkRx(s->rxPacket, n);
         n = filtered <= n ? uint32_t(filtered) : 0;
       }
       if (s->owner.config_.rxMode == EspUsbBulkRxMode::Borrowed && s->directRxBuffer) {
-        const bool success = result == XFER_RESULT_SUCCESS && n <= s->directRxCapacity;
+        const bool success = result == ESPUSB_TRANSFER_SUCCESS && n <= s->directRxCapacity;
         received = s->takeReceive(success ? EspUsbTransferStatus::Success : EspUsbTransferStatus::TransferError,
                                   success ? n : 0, success);
       } else if (s->owner.config_.rxMode == EspUsbBulkRxMode::Stream) {
-        if (result == XFER_RESULT_SUCCESS && n <= s->packetSize) {
+        if (result == ESPUSB_TRANSFER_SUCCESS && n <= s->packetSize) {
           s->rxPendingOffset = 0; s->rxPendingLength = n; s->fillReceiveRing();
         }
         s->receive();
@@ -337,7 +337,7 @@ struct EspUsbBulkState {
     // No internal lock is held when ownership is returned to the application.
     if (completion.buffer && s->owner.directTxCompleteCallback_) s->owner.directTxCompleteCallback_(completion);
     if (received.buffer && s->owner.directRxCompleteCallback_) s->owner.directRxCompleteCallback_(received);
-    if (result == XFER_RESULT_SUCCESS) {
+    if (result == ESPUSB_TRANSFER_SUCCESS) {
       if (input && copied) s->owner.handleTxComplete(n);
       else if (!input && (s->owner.config_.rxMode == EspUsbBulkRxMode::Stream || s->owner.config_.rxMode == EspUsbBulkRxMode::Callback) && n <= s->packetSize) s->owner.handleRx(s->owner.config_.rxMode == EspUsbBulkRxMode::Callback ? s->rxPacket : nullptr, n);
     }
@@ -633,17 +633,17 @@ void EspUsbDeviceBulkStream::handleTxComplete(size_t n) { if (txCompleteCallback
 bool EspUsbDeviceBulkStream::openBulkPair(uint8_t port, const uint8_t *p, uint8_t &in, uint8_t &out, uint16_t &mps) {
   if (!state_) return false;
   const uint8_t *first = p;
-  for (unsigned i = 0; i < 2; ++i, p += sizeof(tusb_desc_endpoint_t)) {
-    const auto *ep = reinterpret_cast<const tusb_desc_endpoint_t *>(p);
-    const uint16_t size = tu_edpt_packet_size(ep);
-    if (ep->bLength != sizeof(*ep) || ep->bDescriptorType != TUSB_DESC_ENDPOINT ||
-        ep->bmAttributes.xfer != TUSB_XFER_BULK || !size || size > state_->packetCapacity ||
+  for (unsigned i = 0; i < 2; ++i, p += sizeof(EspUsbEndpointDescriptor)) {
+    const auto *ep = reinterpret_cast<const EspUsbEndpointDescriptor *>(p);
+    const uint16_t size = espusb_endpoint_packet_size(ep);
+    if (ep->bLength != sizeof(*ep) || ep->bDescriptorType != ESPUSB_DESC_ENDPOINT ||
+        espusb_endpoint_type(ep) != ESPUSB_XFER_BULK || !size || size > state_->packetCapacity ||
         (mps && mps != size)) return false;
     mps = size;
-    if (tu_edpt_dir(ep->bEndpointAddress) == TUSB_DIR_IN) in = ep->bEndpointAddress;
+    if (espusb_endpoint_direction(ep->bEndpointAddress) == ESPUSB_DIR_IN) in = ep->bEndpointAddress;
     else out = ep->bEndpointAddress;
   }
   if (!in || !out) return false;
-  return espusb_device_edpt_open(port, reinterpret_cast<const tusb_desc_endpoint_t *>(first)) &&
-      espusb_device_edpt_open(port, reinterpret_cast<const tusb_desc_endpoint_t *>(first + sizeof(tusb_desc_endpoint_t)));
+  return espusb_device_edpt_open(port, reinterpret_cast<const EspUsbEndpointDescriptor *>(first)) &&
+      espusb_device_edpt_open(port, reinterpret_cast<const EspUsbEndpointDescriptor *>(first + sizeof(EspUsbEndpointDescriptor)));
 }

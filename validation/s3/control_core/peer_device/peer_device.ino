@@ -6,6 +6,7 @@
 #include "../../../../src/internal/EspUsbDwc2Runtime.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #include <atomic>
+#include "soc/usb_dwc_struct.h"
 // S3 has no cache on internal DMA RAM. Replace its no-op backend hooks to
 // verify synchronization failure cleanup without adding product test switches.
 unsigned cacheFailure=0,cacheClean=0,cacheInvalidate=0,cacheBad=0;
@@ -77,9 +78,23 @@ bool cacheFailures() {
   }
   return ok;
 }
+bool vbusPolicy() {
+  bool ok=true;
+  for(bool sensing:{false,true,false}) {
+    EspUsbDeviceConfig config;config.vbusSensing=sensing;
+    ok &= device.begin(config);
+    usb_dwc_gotgctl_reg_t status={};status.val=USB_DWC.gotgctl_reg.val;
+    ok &= bool(status.bvalidoven)==!sensing;
+    if(!sensing)ok &= bool(status.bvalidovval);
+    ok &= device.end()==ESP_OK;
+    delay(10);
+  }
+  Serial.printf("VBUS_POLICY %u\r\n",unsigned(ok));
+  return ok;
+}
 bool metadata() {
   EspUsbDeviceConfig cfg;
-  bool ok=selectedStorage() && cacheFailures();
+  bool ok=selectedStorage() && cacheFailures() && vbusPolicy();
   for (unsigned n:{0u}) {
     cfg.eventQueueDepth=n;
     ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_SIZE && device.end()==ESP_OK;

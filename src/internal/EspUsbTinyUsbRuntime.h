@@ -22,6 +22,7 @@ struct TinyUsbRuntimeOptions {
   // ignores the rest. Applied to the native controller before initialization;
   // change it after end(), before the next begin().
   uint16_t bulkInDoubleBuffered = 0;
+  bool vbusSensing = false;
   // Core to pin the device worker to, or -1 to leave it unpinned as before.
   int8_t taskCoreId = -1;
 };

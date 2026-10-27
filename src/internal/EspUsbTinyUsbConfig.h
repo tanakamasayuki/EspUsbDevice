@@ -34,7 +34,11 @@
 #endif
 
 #define CFG_TUSB_MEM_SECTION
-#define CFG_TUD_ENDPOINT0_SIZE 64
+#include "EspUsbWire.h"
+#define CFG_TUD_ENDPOINT0_SIZE ESPUSB_CONTROL_PACKET_BYTES
+#if defined(CFG_TUD_VBUS_DETECT_HW) || defined(CFG_TUD_VBUS_DETECT_HW_DEFAULT)
+#error "VBUS policy uses EspUsbDeviceConfig::vbusSensing; remove TinyUSB VBUS flags"
+#endif
 // The remaining ESP adapter uses internal DMA only. Native classes own their
 // buffers; vendor stream/FIFO and CPU-fed slave paths have been removed.
 // Internal DMA/cache capabilities still come from the pinned MCU definitions.

@@ -14,7 +14,7 @@
 
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
 
-#include "common/tusb_common.h"
+#include "EspUsbWire.h"
 
 namespace espusb { namespace internal {
 // Control/transfer callbacks run on the device worker; sof runs in interrupt context.
@@ -23,9 +23,9 @@ struct UsbClassDriver {
   void (*init)();
   bool (*deinit)();
   void (*reset)(uint8_t port);
-  uint16_t (*open)(uint8_t port, const tusb_desc_interface_t *, uint16_t available);
-  bool (*control_xfer_cb)(uint8_t port, uint8_t stage, const tusb_control_request_t *);
-  bool (*xfer_cb)(uint8_t port, uint8_t address, xfer_result_t, uint32_t bytes);
+  uint16_t (*open)(uint8_t port, const EspUsbInterfaceDescriptor *, uint16_t available);
+  bool (*control_xfer_cb)(uint8_t port, uint8_t stage, const EspUsbControlRequest *);
+  bool (*xfer_cb)(uint8_t port, uint8_t address, EspUsbControllerResult, uint32_t bytes);
   void (*sof)(uint8_t port, uint32_t frame);
 };
 // Borrowed until stop; registration/removal must not race an active core.

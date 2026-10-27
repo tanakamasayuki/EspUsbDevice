@@ -584,3 +584,34 @@ MIDIは1～16 cableの方向別jack graphをruntime設定から生成する。�
 利用者の移行操作はない。private TinyUSB hookを使っていた独自拡張は見直しが必要となる。
 Audio/CDC/MIDIとdevice headerを撤去し、vendor選択は17→13 files、compiled sourceはDWC2の2本を維持する。
 wire type、HID table、DWC2 register/port/sourceとcapability定義は引き続き置換対象。
+
+## native USB wire型とruntime VBUS policy
+
+`internal/EspUsbWire.h`がSETUP 8 byte、interface 9 byte、endpoint 7 byteのlayoutと
+byte単位のLE読み取りを定義する。request type/recipient、endpoint typeはmaskで読み、
+vendor bitfield・type alias・config/compiler headerをnative core/classへ引き込まない。
+controller speed/resultはwire byteではなく内部enum。公開の借用結果型EspUsbTransferResultは維持し、
+低位の完了結果は別のEspUsbControllerResultへ分ける。C/C++双方でsizeof/offsetをcompile時確認する。
+
+DWC2境界のdescriptor/requestも同じ独自型へ移した。残存DWC2内のregisterと一般helperは
+まだvendorに依存するため、完全撤去とは区別する。US keyboard tableは必要なlookup行だけを
+MIT表示付きで保持し、最後のvendor HID headerを削除した。表の値と基本keyboard APIは変えない。
+vendor選択は13→12 files、compiled sourceはDWC2関連2本のまま。
+
+`EspUsbDeviceConfig::vbusSensing`を追加した。既定falseは従来どおりB-session validを強制し、
+trueはboardのhardware VBUS-valid判定を使う。既存のselfPowered、消費電力の記述とは独立する。
+変更はend後、次のbegin前に行う。board側の検出回路と信号routingが必要であり、
+このboolはGPIOの割り当てや検出回路を自動追加しない。実ケーブル抜去による検出は別途の実機検証対象。
+旧CFG_TUD_VBUS_DETECT_HW/DEFAULTによる指定は明示拒否し、APIへ移す。
+
+```cpp
+// 旧: build_opt.h / build flagsでCFG_TUD_VBUS_DETECT_HW=1
+EspUsbDeviceConfig config;
+config.vbusSensing = true;  // 検出回路・routingがあるboardだけで選ぶ
+if (!device.begin(config)) { /* lastError()を処理する */ }
+```
+
+利点は同じbinaryでpolicyを選べることと、classの型がvendor configから離れること。
+代償は独自layoutとlookupの保守、configのbool一つ、旧private type/build flag依存利用の修正。
+公開の要求field・sendControlResponseなどの操作は維持する。rawRequestをTinyUSB型へcastする拡張は
+v3で継続保証せず、公開fieldと返信APIを使う。転送時heapや新たな取得点は増やさない。

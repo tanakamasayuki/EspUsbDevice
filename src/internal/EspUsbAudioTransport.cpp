@@ -152,7 +152,7 @@ struct EspUsbAudioState {
     }
   }
   static bool deinit() { resetAll(0); return true; }
-  static uint16_t open(uint8_t port, const tusb_desc_interface_t *itf, uint16_t available) {
+  static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t available) {
     if (available < 9 || itf->bLength != 9 || itf->bInterfaceClass != 1 || itf->bInterfaceSubClass != 1) return 0;
     auto *s = first;
     while (s && (s->owner.graph_.controlInterface != itf->bInterfaceNumber || !s->owner.device_.config().startTinyUsb)) s = s->next;
@@ -169,7 +169,7 @@ struct EspUsbAudioState {
         current = d[2];
       }
       if (d[1] == 5) {
-        if (d[0] < 7 || (d[3] & 3) != TUSB_XFER_ISOCHRONOUS) return 0;
+        if (d[0] < 7 || (d[3] & 3) != ESPUSB_XFER_ISOCHRONOUS) return 0;
         const uint16_t size = uint16_t(d[4] | uint16_t(d[5]) << 8);
         AudioPacketStream *stream = d[2] == s->owner.graph_.playback.dataEndpoint ? &s->playback : d[2] == s->owner.graph_.capture.dataEndpoint ? &s->capture : nullptr;
         if (stream) {
@@ -177,17 +177,17 @@ struct EspUsbAudioState {
           stream->descriptor = d; stream->endpoint = d[2]; stream->packetSize = size;
         } else if (d[2] == s->owner.graph_.playback.feedbackEndpoint && s->feedback && size == 4) s->feedbackEndpoint = d[2];
         else return 0;
-        tusb_desc_endpoint_t endpoint; memcpy(&endpoint, d, 7); endpoint.bLength = 7;
+        EspUsbEndpointDescriptor endpoint; memcpy(&endpoint, d, 7); endpoint.bLength = 7;
         if (!espusb_device_edpt_open(port, &endpoint)) return 0;
       }
       offset += d[0];
     }
     if ((s->owner.playbackEnabled_ && !s->playback.endpoint) || (s->owner.captureEnabled_ && !s->capture.endpoint)) return 0;
     s->port = port; s->controlInterface = itf->bInterfaceNumber;
-    s->intervals = espusb_device_speed() == TUSB_SPEED_HIGH ? 8000 : 1000;
+    s->intervals = espusb_device_speed() == ESPUSB_SPEED_HIGH ? 8000 : 1000;
     return uint16_t(offset);
   }
-  static EspUsbAudioState *forRequest(const tusb_control_request_t *r) {
+  static EspUsbAudioState *forRequest(const EspUsbControlRequest *r) {
     for (auto *s = first; s; s = s->next) {
       const uint8_t recipient = r->bmRequestType & 31;
       if (recipient == 1 && (uint8_t(r->wIndex) == s->controlInterface || (s->owner.playbackEnabled_ && uint8_t(r->wIndex) == s->owner.graph_.playback.interfaceNumber) || (s->owner.captureEnabled_ && uint8_t(r->wIndex) == s->owner.graph_.capture.interfaceNumber))) return s;
@@ -195,10 +195,10 @@ struct EspUsbAudioState {
     }
     return nullptr;
   }
-  static bool controlRequest(uint8_t port, uint8_t phase, const tusb_control_request_t *r) {
+  static bool controlRequest(uint8_t port, uint8_t phase, const EspUsbControlRequest *r) {
     auto *s = forRequest(r); if (!s || s->stopping) return false;
     if (r->bmRequestType == 1 && r->bRequest == 11 && r->wValue <= 1 && !r->wLength && !(r->wIndex >> 8)) {
-      if (phase != CONTROL_STAGE_SETUP) return true;
+      if (phase != ESPUSB_CONTROL_STAGE_SETUP) return true;
       AudioGuard guard;
       AudioPacketStream *stream = s->owner.playbackEnabled_ && r->wIndex == s->owner.graph_.playback.interfaceNumber ? &s->playback : s->owner.captureEnabled_ && r->wIndex == s->owner.graph_.capture.interfaceNumber ? &s->capture : nullptr;
       if (!stream) return !r->wValue && espusb_device_control_status(port, r);
@@ -207,17 +207,17 @@ struct EspUsbAudioState {
       return espusb_device_control_status(port, r);
     }
     if (r->bmRequestType == 0x81 && r->bRequest == 10 && !r->wValue && r->wLength == 1 && !(r->wIndex >> 8)) {
-      if (phase != CONTROL_STAGE_SETUP) return true;
+      if (phase != ESPUSB_CONTROL_STAGE_SETUP) return true;
       s->alternateResponse = r->wIndex == s->owner.graph_.playback.interfaceNumber ? s->playback.desired : r->wIndex == s->owner.graph_.capture.interfaceNumber ? s->capture.desired : 0;
       return espusb_device_control_transfer(port, r, &s->alternateResponse, 1);
     }
     if (r->bmRequestType == 0xa1 || r->bmRequestType == 0xa2) {
-      if (phase != CONTROL_STAGE_SETUP) return true;
+      if (phase != ESPUSB_CONTROL_STAGE_SETUP) return true;
       return r->bmRequestType == 0xa1 ? s->owner.handleGetEntityRequest(port, r) : s->owner.handleGetEndpointRequest(port, r);
     }
     if ((r->bmRequestType == 0x21 || r->bmRequestType == 0x22) && r->wLength && r->wLength <= 4) {
-      if (phase == CONTROL_STAGE_SETUP) return espusb_device_control_transfer(port, r, s->control, r->wLength);
-      if (phase == CONTROL_STAGE_DATA) {
+      if (phase == ESPUSB_CONTROL_STAGE_SETUP) return espusb_device_control_transfer(port, r, s->control, r->wLength);
+      if (phase == ESPUSB_CONTROL_STAGE_DATA) {
         if (espusb_device_control_received_bytes() != r->wLength) return false;
         return r->bmRequestType == 0x21 ? s->owner.handleSetEntityRequest(r, s->control) : s->owner.handleSetEndpointRequest(r, s->control);
       }
@@ -225,7 +225,7 @@ struct EspUsbAudioState {
     }
     return false;
   }
-  static bool complete(uint8_t, uint8_t endpoint, xfer_result_t result, uint32_t bytes) {
+  static bool complete(uint8_t, uint8_t endpoint, EspUsbControllerResult result, uint32_t bytes) {
     AudioGuard guard;
     auto *s = first;
     while (s && endpoint != s->playback.endpoint && endpoint != s->capture.endpoint && endpoint != s->feedbackEndpoint) s = s->next;
@@ -233,7 +233,7 @@ struct EspUsbAudioState {
     if (s->stopping) return true;
     if (endpoint == s->playback.endpoint && s->playback.active && !s->playback.draining) {
       auto &stream = s->playback;
-      if (result == XFER_RESULT_SUCCESS && bytes <= stream.packetSize) {
+      if (result == ESPUSB_TRANSFER_SUCCESS && bytes <= stream.packetSize) {
         const size_t framed = bytes - bytes % stream.frameBytes;
         const size_t copied = stream.ring.push(stream.packet, framed);
         if (copied < bytes) {
@@ -244,7 +244,7 @@ struct EspUsbAudioState {
       }
       s->armPlayback();
     } else if (endpoint == s->capture.endpoint && s->capture.active && !s->capture.draining) {
-      if (result == XFER_RESULT_SUCCESS) s->owner.handleCaptureTransfer(uint16_t(bytes), 1);
+      if (result == ESPUSB_TRANSFER_SUCCESS) s->owner.handleCaptureTransfer(uint16_t(bytes), 1);
       s->armCapture();
     } else if (endpoint == s->feedbackEndpoint && s->playback.active && !s->playback.draining) s->armFeedback();
     return true;
@@ -334,6 +334,6 @@ bool AudioTransport::reply(EspUsbAudioFunction &owner, uint8_t port, const void 
   AudioGuard guard; auto *s = owner.state_;
   if (!s || s->stopping || bytes > sizeof(s->control)) return false;
   memcpy(s->control, data, bytes);
-  return espusb_device_control_transfer(port, static_cast<const tusb_control_request_t *>(request), s->control, uint16_t(bytes));
+  return espusb_device_control_transfer(port, static_cast<const EspUsbControlRequest *>(request), s->control, uint16_t(bytes));
 }
 } }

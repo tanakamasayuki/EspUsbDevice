@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 namespace espusb { namespace internal {
-// The DWC2 adapter still shares transitional USB wire types. This is the
+// The DWC2 adapter shares native USB wire types. This is the
 // independent core's lifecycle boundary, not a selectable second backend.
 esp_err_t startUsbDeviceCore(uint8_t port, bool highSpeed, uint16_t eventQueueDepth);
 void stopUsbDeviceCore();

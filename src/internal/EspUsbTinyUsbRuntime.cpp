@@ -134,13 +134,10 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
 
   g_rhport = selected == UsbController::HighSpeed ? 1 : 0;
 
-  // Configure before starting the independent core: DWC2 reads this once at
-  // dfifo_device_init(), and the transmit FIFO sizes are fixed from then on.
-  // vbus_sensing keeps the value the default configuration would have used,
-  // because this call replaces the whole structure rather than merging into it.
+  // The native controller snapshots runtime FIFO/VBUS policy before init.
   const EspUsbControllerConfig dwc2Config = {
       .bulkInDoubleBuffered = options.bulkInDoubleBuffered,
-      .vbusSensing = CFG_TUD_VBUS_DETECT_HW,
+      .vbusSensing = options.vbusSensing,
   };
   if (!espusb_controller_configure(g_rhport, &dwc2Config))
   {

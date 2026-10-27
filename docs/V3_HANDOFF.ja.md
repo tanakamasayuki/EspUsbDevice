@@ -1,13 +1,12 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はnative bus/endpoint APIとCDC/MIDI記述子生成の独自化。
-旧`tud_*`/`usbd_*`互換入口とdevice/Audio/CDC/MIDI headerを撤去し、vendorは17→13 files。
-標準combo allは**全31件成功（1502.57秒）**。62 serial log全てSTOPPED、panicなし。
-774確保点の失敗/回復、S2/P4 HS compile-onlyも成功。実機確認はS3–S3のみ。
-製品実装`c67fe1c`はそのまま、追加したMIDI IN1/OUT16を含む11 modeが別実行で成功（43.28秒）。
-直前のcontroller境界独自化は`4ba57fe`。
-[core APIと未完の境界](V3_CORE_API.ja.md)を参照。残るcompiled sourceはDWC2関連2本、
-wire type・HID table・DWC2 register/port/sourceとcapability定義の依存は続けて置換する。
+最新実装は独自USB wire型とruntime VBUS設定。native core/classはvendorの型・configを引かず、
+最後のHID headerも必要なUS key lookupだけを保持して撤去した。vendorは13→12 files。
+標準combo allは**全31件成功（1479.82秒）**。MIDIの両方向の非対称構成を含む。
+62 serial log全てSTOPPED、panicなし。774確保点の失敗/回復、S2/P4 HS compile-onlyも成功。
+実機確認はS3–S3のみ。VBUSの設定反映/再開始は確認済み、実ケーブル抜去検出は未検証。
+[core APIと未完の境界](V3_CORE_API.ja.md)を参照。native C++ 26ソースにvendor header依存はなく、
+DWC2のC 2ソースとregister/common/capability依存の撤去を続ける。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
@@ -1034,3 +1033,24 @@ OUTのcable 1～15はINには存在しないため、そのままechoする期�
 JUnit/transcript/serialコピーは`validation/.pytest-results/native-midi-asym*`。
 全体31件の一括成功は追加前の`c67fe1c`であり、追加後はMIDIのみ再実行した。
 製品コードは全体試験時と同一。S2/P4の追加実機確認を行った意味ではない。
+
+## native USB型とVBUS設定の全体確認
+
+2026-10-28。最終版の標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1479.82秒**。
+MIDIの追加IN1/OUT16を含む11 modeも同じ一括実行で成功した。
+774確保点の失敗/回復が成功し、heapは前後で同量。62 serial log全てSTOPPED、panicなし。
+S3のVBUS policyはfalse→true→falseでB-valid overrideを実registerから確認し、その後の通常通信も成功。
+単独のcontrol_coreも1 passed（48.04秒）。検出回路を使った実ケーブル抜去の試験は行っていない。
+原本`/tmp/pytest-embedded/2026-10-27_16-05-17-748180/`、JUnit/transcript/serialコピーは`validation/.pytest-results/native-wire-all*`。
+S2/P4 HSはcompile-only成功。nmとcompiler依存記録を`native-wire-{s2,p4}-*`へ保存した。
+S3 Vendor-onlyにも旧wire/stack symbol、未使用class state/keymapはない。
+S3/S2/P4のnative C++ 26ソースはvendor header/configやSDK同名headerへの依存なし。
+DWC2のC 2ソースだけはregister/common helperに依存しており、完全撤去とは区別する。
+記録は`native-wire-audit.txt`と各nm。vendor検証12 files/2 sources、updater dry run差分0。
+旧tests/examplesはmainとの差分なし。
+
+初回のprobe buildではvolatile registerのコピーと公開結果型との名前衝突を修正した。
+公開EspUsbTransferResultは維持し、内部結果enumをEspUsbControllerResultへ分離してから実機試験した。
+初回build失敗は`native-wire-vbus-probe-build-failed.txt`、`native-wire-type-name-build-failed.txt`へ保存し、
+実機の不合格/合格結果に数えていない。残るDWC2/common/capability、HALT競合・全EP0順序、
+他SoC/HS実機と最終API/sampleは継続対象。

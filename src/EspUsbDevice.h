@@ -188,6 +188,10 @@ struct EspUsbDeviceConfig
   // One additional slot is reserved for hardware events, excluded from fences.
   uint16_t eventQueueDepth = 16;
   EspUsbController controller = EspUsbController::Auto;
+  // Use the board's hardware VBUS-valid signal instead of forcing B-session
+  // valid. Requires actual VBUS sensing/routing on the board. Reconfigure after
+  // end(), before begin(); false keeps the default for boards without sensing.
+  bool vbusSensing = false;
   EspUsbBulkInBuffering bulkInBuffering = EspUsbBulkInBuffering::Auto;
   // Core to run the USB device task on, or -1 to leave the scheduler to place
   // it (the default, and what every release before this did).

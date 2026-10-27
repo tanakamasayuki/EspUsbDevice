@@ -136,7 +136,7 @@ struct EspUsbVideoState {
     for (auto *s=first;s;s=s->next) { s->reset(EspUsbTransferStatus::Stopped); s->interface=255; }
     return true;
   }
-  static uint16_t open(uint8_t port,const tusb_desc_interface_t *itf,uint16_t available) {
+  static uint16_t open(uint8_t port,const EspUsbInterfaceDescriptor *itf,uint16_t available) {
     if (available<9 || itf->bLength!=9 || itf->bInterfaceClass!=14 || itf->bInterfaceSubClass!=1) return 0;
     auto *s=first;
     while (s && (s->owner.instance_!=itf->bInterfaceNumber || !s->owner.device_.config().startTinyUsb)) s=s->next;
@@ -150,7 +150,7 @@ struct EspUsbVideoState {
       if (d[1]==5) {
         const unsigned kind=s->owner.bulkStreaming() ? 2 : 1;
         if (d[0]!=7 || !(d[2]&0x80) || (d[3]&3)!=kind || endpoint) return 0;
-        if (!espusb_device_edpt_open(port,reinterpret_cast<const tusb_desc_endpoint_t *>(d))) return 0;
+        if (!espusb_device_edpt_open(port,reinterpret_cast<const EspUsbEndpointDescriptor *>(d))) return 0;
         s->endpoint=d[2]; s->packetSize=get16(d+4); endpoint=true;
       }
       offset+=d[0];
@@ -159,20 +159,20 @@ struct EspUsbVideoState {
     VideoGuard guard; s->port=port; s->interface=itf->bInterfaceNumber; s->opened=true;
     s->defaults(s->probe); memcpy(s->commit,s->probe,48); return uint16_t(offset);
   }
-  static bool control(uint8_t port,uint8_t stage,const tusb_control_request_t *r) {
+  static bool control(uint8_t port,uint8_t stage,const EspUsbControlRequest *r) {
     auto *s=first;
     while (s && r->wIndex!=s->interface && r->wIndex!=s->interface+1) s=s->next;
     if (!s || s->owner.stopping_.load()) return false;
     const bool streamingInterface=r->wIndex==s->interface+1;
-    if (stage==CONTROL_STAGE_SETUP) s->pendingValid=false;
+    if (stage==ESPUSB_CONTROL_STAGE_SETUP) s->pendingValid=false;
     if (r->bmRequestType==0x81 && r->bRequest==10 && !r->wValue && r->wLength==1) {
-      if (stage!=CONTROL_STAGE_SETUP) return true;
+      if (stage!=ESPUSB_CONTROL_STAGE_SETUP) return true;
       s->scratch[0]=streamingInterface ? s->alternate : 0; return espusb_device_control_transfer(port,r,s->scratch,1);
     }
     if (r->bmRequestType==1 && r->bRequest==11 && !r->wLength) {
       const uint16_t max=streamingInterface && !s->owner.bulkStreaming() ? 1 : 0;
       if (r->wValue>max) return s->reject(4);
-      if (stage!=CONTROL_STAGE_SETUP) return true;
+      if (stage!=ESPUSB_CONTROL_STAGE_SETUP) return true;
       if (!streamingInterface) return espusb_device_control_status(port,r);
       VideoGuard guard; s->alternate=uint8_t(r->wValue);
       return s->requestFence(EspUsbTransferStatus::Cancelled,s->owner.bulkStreaming()) && espusb_device_control_status(port,r);
@@ -183,17 +183,17 @@ struct EspUsbVideoState {
     if ((!streamingInterface && selector==2) || (streamingInterface && selector==6)) {
       if (r->bmRequestType!=0xa1 || !r->wLength) return s->reject(7);
       if (r->bRequest==0x81) {
-        if (stage==CONTROL_STAGE_SETUP) { s->scratch[0]=streamingInterface ? s->streamError : s->error; return espusb_device_control_transfer(port,r,s->scratch,1); }
-        if (stage==CONTROL_STAGE_ACK) { if (streamingInterface) s->streamError=0; else s->error=0; }
+        if (stage==ESPUSB_CONTROL_STAGE_SETUP) { s->scratch[0]=streamingInterface ? s->streamError : s->error; return espusb_device_control_transfer(port,r,s->scratch,1); }
+        if (stage==ESPUSB_CONTROL_STAGE_ACK) { if (streamingInterface) s->streamError=0; else s->error=0; }
         return true;
       }
-      if (r->bRequest==0x86 && stage==CONTROL_STAGE_SETUP) { s->scratch[0]=1; return espusb_device_control_transfer(port,r,s->scratch,1); }
-      return stage!=CONTROL_STAGE_SETUP ? true : s->reject(7);
+      if (r->bRequest==0x86 && stage==ESPUSB_CONTROL_STAGE_SETUP) { s->scratch[0]=1; return espusb_device_control_transfer(port,r,s->scratch,1); }
+      return stage!=ESPUSB_CONTROL_STAGE_SETUP ? true : s->reject(7);
     }
     if (!streamingInterface || (selector!=1 && selector!=2)) return s->reject(6);
     if (r->bmRequestType==0xa1) {
       if (!r->wLength) return s->reject(7);
-      if (stage!=CONTROL_STAGE_SETUP) return true;
+      if (stage!=ESPUSB_CONTROL_STAGE_SETUP) return true;
       const uint8_t *source=nullptr; uint16_t bytes=48;
       switch (r->bRequest) {
       case 0x81: source=selector==1 ? s->probe : s->commit; break;
@@ -211,12 +211,12 @@ struct EspUsbVideoState {
       return espusb_device_control_transfer(port,r,const_cast<uint8_t *>(source),bytes);
     }
     if (r->bRequest!=1 || (r->wLength!=26 && r->wLength!=34 && r->wLength!=48)) return s->reject(7);
-    if (stage==CONTROL_STAGE_SETUP) { memset(s->scratch,0,48); return espusb_device_control_transfer(port,r,s->scratch,r->wLength); }
-    if (stage==CONTROL_STAGE_DATA) {
+    if (stage==ESPUSB_CONTROL_STAGE_SETUP) { memset(s->scratch,0,48); return espusb_device_control_transfer(port,r,s->scratch,r->wLength); }
+    if (stage==ESPUSB_CONTROL_STAGE_DATA) {
       if (espusb_device_control_received_bytes()!=r->wLength) return s->reject(7);
       s->pendingValid=s->normalize(s->pending,s->scratch,selector==2); return s->pendingValid;
     }
-    if (stage==CONTROL_STAGE_ACK) {
+    if (stage==ESPUSB_CONTROL_STAGE_ACK) {
       if (!s->pendingValid) return false;
       if (selector==1) { memcpy(s->probe,s->pending,48); s->pendingValid=false; return true; }
       EspUsbDeviceVideoCommit value;
@@ -230,7 +230,7 @@ struct EspUsbVideoState {
     }
     return true;
   }
-  static bool complete(uint8_t,uint8_t ep,xfer_result_t result,uint32_t bytes) {
+  static bool complete(uint8_t,uint8_t ep,EspUsbControllerResult result,uint32_t bytes) {
     EspUsbVideoState *s; bool finished=false, known=true; EspUsbTransferStatus status=EspUsbTransferStatus::Success;
     {
       VideoGuard guard; s=first; while (s && ep!=s->endpoint) s=s->next;
@@ -238,7 +238,7 @@ struct EspUsbVideoState {
       if (s->draining || !s->busy) return true;
       s->busy=false;
       if (!s->frame) return true;
-      if (result!=XFER_RESULT_SUCCESS || bytes!=(s->zlp ? 0 : s->armed)) { status=EspUsbTransferStatus::TransferError; s->streamError=3; known=false; finished=true; }
+      if (result!=ESPUSB_TRANSFER_SUCCESS || bytes!=(s->zlp ? 0 : s->armed)) { status=EspUsbTransferStatus::TransferError; s->streamError=3; known=false; finished=true; }
       else {
         if (!s->zlp) s->done+=s->armedData;
         const bool needsZlp=!s->zlp && s->owner.bulkStreaming() && s->armed%s->packetSize==0 && s->armed<get32(s->commit+22);

@@ -12,12 +12,12 @@ completion of the stack migration.
 
 - Pin and rationale: `UPSTREAM.json`, using a full commit SHA.
 - License: MIT. Keep `LICENSE` and copyright/SPDX notices on remaining files.
-- Selection: `BUILD_FILES.txt`, 13 files (2 sources and 11 headers).
+- Selection: `BUILD_FILES.txt`, 12 files (2 sources and 10 headers).
 - Sources: `portable/synopsys/dwc2/dcd_dwc2.c` and
   `portable/synopsys/dwc2/dwc2_common.c`.
-- Only the HID protocol/key tables remain under `class/`. CDC and MIDI now
-  build runtime descriptors in their native implementations; the Audio, CDC,
-  MIDI and device `usbd.h` headers have been removed.
+- No vendor class headers remain. The required US keyboard lookup rows were
+  extracted into `src/keymap/keymap_en_us.h` with MIT attribution; unused HID
+  protocol definitions and templates were removed.
 - `src/tusb_config.h` and `src/internal/EspUsbTinyUsbConfig.h` are first-party
   integration. Enabling the legacy class drivers is rejected.
 
@@ -95,3 +95,13 @@ from the former TinyUSB templates in `device/usbd.h` (Copyright (c) 2019
 Ha Thach, MIT; license retained here). MIDI builds its runtime cable graph and
 length directly rather than patching a symmetric single-cable macro result.
 This does not complete replacement of the shared wire types or DWC2 sources.
+
+
+Native core/classes now use `src/internal/EspUsbWire.h`: explicit request,
+interface and endpoint layouts, raw-byte request/endpoint attributes, LE reads,
+and native controller speed/results. There are no aliases to vendor wire types.
+The remaining DWC2 adapter consumes these native boundary types, but retains
+upstream register/common helpers internally. The US key table is derived from
+TinyUSB HID_KEYCODE_TO_ASCII (Copyright (c) 2019 Ha Thach, MIT).
+VBUS policy is passed from EspUsbDeviceConfig::vbusSensing at runtime; legacy
+VBUS build flags are rejected by the temporary capability integration.

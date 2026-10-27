@@ -439,3 +439,55 @@ OUTのcable 1～15はINには存在しないため、そのままechoする期�
 JUnit/transcript/serialコピーは`validation/.pytest-results/native-midi-asym*`。
 全体31件の一括成功は追加前の`c67fe1c`であり、追加後はMIDIのみ再実行した。
 製品コードは全体試験時と同一。S2/P4の追加実機確認を行った意味ではない。
+
+## native USB wire型とruntime VBUS policy
+
+`internal/EspUsbWire.h`がSETUP 8 byte、interface 9 byte、endpoint 7 byteのlayoutと
+byte単位のLE読み取りを定義する。request type/recipient、endpoint typeはmaskで読み、
+vendor bitfield・type alias・config/compiler headerをnative core/classへ引き込まない。
+controller speed/resultはwire byteではなく内部enum。公開の借用結果型EspUsbTransferResultは維持し、
+低位の完了結果は別のEspUsbControllerResultへ分ける。C/C++双方でsizeof/offsetをcompile時確認する。
+
+DWC2境界のdescriptor/requestも同じ独自型へ移した。残存DWC2内のregisterと一般helperは
+まだvendorに依存するため、完全撤去とは区別する。US keyboard tableは必要なlookup行だけを
+MIT表示付きで保持し、最後のvendor HID headerを削除した。表の値と基本keyboard APIは変えない。
+vendor選択は13→12 files、compiled sourceはDWC2関連2本のまま。
+
+`EspUsbDeviceConfig::vbusSensing`を追加した。既定falseは従来どおりB-session validを強制し、
+trueはboardのhardware VBUS-valid判定を使う。既存のselfPowered、消費電力の記述とは独立する。
+変更はend後、次のbegin前に行う。board側の検出回路と信号routingが必要であり、
+このboolはGPIOの割り当てや検出回路を自動追加しない。実ケーブル抜去による検出は別途の実機検証対象。
+旧CFG_TUD_VBUS_DETECT_HW/DEFAULTによる指定は明示拒否し、APIへ移す。
+
+```cpp
+// 旧: build_opt.h / build flagsでCFG_TUD_VBUS_DETECT_HW=1
+EspUsbDeviceConfig config;
+config.vbusSensing = true;  // 検出回路・routingがあるboardだけで選ぶ
+if (!device.begin(config)) { /* lastError()を処理する */ }
+```
+
+利点は同じbinaryでpolicyを選べることと、classの型がvendor configから離れること。
+代償は独自layoutとlookupの保守、configのbool一つ、旧private type/build flag依存利用の修正。
+公開の要求field・sendControlResponseなどの操作は維持する。rawRequestをTinyUSB型へcastする拡張は
+v3で継続保証せず、公開fieldと返信APIを使う。転送時heapや新たな取得点は増やさない。
+
+## native USB型とVBUS設定の全体確認
+
+2026-10-28。最終版の標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1479.82秒**。
+MIDIの追加IN1/OUT16を含む11 modeも同じ一括実行で成功した。
+774確保点の失敗/回復が成功し、heapは前後で同量。62 serial log全てSTOPPED、panicなし。
+S3のVBUS policyはfalse→true→falseでB-valid overrideを実registerから確認し、その後の通常通信も成功。
+単独のcontrol_coreも1 passed（48.04秒）。検出回路を使った実ケーブル抜去の試験は行っていない。
+原本`/tmp/pytest-embedded/2026-10-27_16-05-17-748180/`、JUnit/transcript/serialコピーは`validation/.pytest-results/native-wire-all*`。
+S2/P4 HSはcompile-only成功。nmとcompiler依存記録を`native-wire-{s2,p4}-*`へ保存した。
+S3 Vendor-onlyにも旧wire/stack symbol、未使用class state/keymapはない。
+S3/S2/P4のnative C++ 26ソースはvendor header/configやSDK同名headerへの依存なし。
+DWC2のC 2ソースだけはregister/common helperに依存しており、完全撤去とは区別する。
+記録は`native-wire-audit.txt`と各nm。vendor検証12 files/2 sources、updater dry run差分0。
+旧tests/examplesはmainとの差分なし。
+
+初回のprobe buildではvolatile registerのコピーと公開結果型との名前衝突を修正した。
+公開EspUsbTransferResultは維持し、内部結果enumをEspUsbControllerResultへ分離してから実機試験した。
+初回build失敗は`native-wire-vbus-probe-build-failed.txt`、`native-wire-type-name-build-failed.txt`へ保存し、
+実機の不合格/合格結果に数えていない。残るDWC2/common/capability、HALT競合・全EP0順序、
+他SoC/HS実機と最終API/sampleは継続対象。

@@ -470,7 +470,7 @@ extern "C" uint8_t const *espusb_device_descriptor_configuration(uint8_t index)
 {
   const uint8_t *descriptor =
       g_activeDevice ? g_activeDevice->configurationDescriptorForSpeed(
-                           index, espusb_device_speed() == TUSB_SPEED_HIGH)
+                           index, espusb_device_speed() == ESPUSB_SPEED_HIGH)
                      : nullptr;
   recordDescriptorResponse(static_cast<uint16_t>(0x0200 | index), 0,
                            descriptor ? static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8)) : 0);
@@ -505,7 +505,7 @@ extern "C" uint8_t const *espusb_device_descriptor_other_speed_configuration(uin
 {
   const uint8_t *descriptor =
       g_activeDevice ? g_activeDevice->otherSpeedConfigurationDescriptor(
-                           index, espusb_device_speed() == TUSB_SPEED_HIGH)
+                           index, espusb_device_speed() == ESPUSB_SPEED_HIGH)
                      : nullptr;
   recordDescriptorResponse(static_cast<uint16_t>(0x0700 | index), 0,
                            descriptor ? static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8)) : 0);
@@ -515,7 +515,7 @@ extern "C" uint8_t const *espusb_device_descriptor_other_speed_configuration(uin
 // The independent EP0 engine reports acknowledged standard/class/vendor
 // requests here. Stalled requests have no status stage; the vendor SETUP path
 // reports them separately when a control observer is registered.
-extern "C" void espusb_device_control_acknowledged(uint8_t rhport, const tusb_control_request_t *request)
+extern "C" void espusb_device_control_acknowledged(uint8_t rhport, const EspUsbControlRequest *request)
 {
   if (!g_activeDevice || !request || !g_activeDevice->hasControlObserver())
   {
@@ -556,14 +556,14 @@ void espusb_device_on_unmount(void)
 // The vendor-request handling itself. `observation`, when not null, collects
 // what this decided so the caller can report it.
 static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
-                                    tusb_control_request_t const *request,
+                                    EspUsbControlRequest const *request,
                                     EspUsbDeviceControlRequestInfo *observation)
 {
   if (g_activeDevice && request &&
       request->bRequest == WEBUSB_VENDOR_CODE &&
       g_activeDevice->config().webusbEnabled)
   {
-    if (stage != CONTROL_STAGE_SETUP)
+    if (stage != ESPUSB_CONTROL_STAGE_SETUP)
     {
       return true;
     }
@@ -582,7 +582,7 @@ static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
       request->wIndex == MICROSOFT_OS_20_DESCRIPTOR_INDEX &&
       g_activeDevice->microsoftOs20Descriptor())
   {
-    if (stage != CONTROL_STAGE_SETUP)
+    if (stage != ESPUSB_CONTROL_STAGE_SETUP)
     {
       return true;
     }
@@ -605,7 +605,7 @@ static bool handleVendorControlXfer(uint8_t rhport, uint8_t stage,
   return handled;
 }
 
-extern "C" bool espusb_device_vendor_control(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
+extern "C" bool espusb_device_vendor_control(uint8_t rhport, uint8_t stage, EspUsbControlRequest const *request)
 {
   // Every vendor request is reported at SETUP, before the library decides what
   // to do with it, so a sketch can tell "the host never asked" from "the host
@@ -613,7 +613,7 @@ extern "C" bool espusb_device_vendor_control(uint8_t rhport, uint8_t stage, tusb
   // refuses to bind WinUSB to a vendor interface. SETUP rather than ACK because
   // a request the device stalls never reaches a status stage.
   const bool observing = g_activeDevice && request &&
-                         stage == CONTROL_STAGE_SETUP &&
+                         stage == ESPUSB_CONTROL_STAGE_SETUP &&
                          g_activeDevice->hasControlObserver();
   EspUsbDeviceControlRequestInfo observation;
   if (observing)
@@ -801,6 +801,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     }
 
     runtimeOptions.bulkInDoubleBuffered = bulkInDoubleBuffered_;
+    runtimeOptions.vbusSensing = config_.vbusSensing;
     runtimeOptions.taskCoreId = config_.taskCoreId;
     runtimeOptions.eventQueueDepth = config_.eventQueueDepth;
 
@@ -1997,7 +1998,7 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
 
   // The DWC2 port's own geometry, from _dwc2_controller[] in dwc2_esp32.h.
   // Mirrored rather than read back because the decision has to be made before
-  // tusb_init(), which is where those tables first become reachable.
+  // core startup, which is where those tables first become reachable.
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
   (void)highSpeed;
   constexpr uint16_t fifoDepthWords = 256;
@@ -2040,8 +2041,8 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
 
   // EP0 IN is allocated before any class endpoint, and its packet size sets the
   // receive FIFO's floor.
-  uint32_t inWords = packetWords(CFG_TUD_ENDPOINT0_SIZE);
-  uint16_t largestOutPacket = CFG_TUD_ENDPOINT0_SIZE;
+  uint32_t inWords = packetWords(ESPUSB_CONTROL_PACKET_BYTES);
+  uint16_t largestOutPacket = ESPUSB_CONTROL_PACKET_BYTES;
   uint16_t candidateMask = 0;
   uint32_t candidateWords = 0;
 
@@ -2138,7 +2139,7 @@ bool EspUsbDevice::hasIsochronousInEndpoint(bool highSpeed) const
 bool EspUsbDevice::transmitFifoFits(bool highSpeed) const
 {
   // Same geometry as bulkInDoubleBufferMask(), from _dwc2_controller[] in
-  // dwc2_esp32.h, mirrored because the decision precedes tusb_init().
+  // dwc2_esp32.h, mirrored because the decision precedes controller startup.
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
   (void)highSpeed;
   constexpr uint16_t fifoDepthWords = 256;
@@ -2172,8 +2173,8 @@ bool EspUsbDevice::transmitFifoFits(bool highSpeed) const
   // floor. Alternate settings of the same interface reuse one endpoint number,
   // so an address is counted once, at its largest packet size.
   uint16_t inPacket[16] = {};
-  inPacket[0] = CFG_TUD_ENDPOINT0_SIZE;
-  uint16_t largestOutPacket = CFG_TUD_ENDPOINT0_SIZE;
+  inPacket[0] = ESPUSB_CONTROL_PACKET_BYTES;
+  uint16_t largestOutPacket = ESPUSB_CONTROL_PACKET_BYTES;
   uint16_t offset = 0;
   while (offset + 2 <= total && descriptor[offset] > 0)
   {

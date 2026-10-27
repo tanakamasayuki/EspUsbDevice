@@ -78,7 +78,7 @@ void loop() {
   } else if(s=="inject") {
     uint32_t until=millis()+3000;while(setups.load()==setupMark && int32_t(until-millis())>0)delay(1);
     bool ok=parked.load() && setups.load()>setupMark && espusb_device_try_defer(armNew,nullptr);
-    if(ok)for(uint8_t ep:{input,output})espusb_controller_event_xfer_complete(espusb::internal::tinyUsbRuntimeRhport(),ep,64,XFER_RESULT_SUCCESS,false);
+    if(ok)for(uint8_t ep:{input,output})espusb_controller_event_xfer_complete(espusb::internal::tinyUsbRuntimeRhport(),ep,64,ESPUSB_TRANSFER_SUCCESS,false);
     released=true;Serial.printf("INJECTED %u\r\n",unsigned(ok));
   } else if(s=="pending" || s=="result") {
     uint32_t until=millis()+3000;

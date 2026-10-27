@@ -22,7 +22,7 @@ namespace {
 
 #if ESP_USB_AUDIO_HAS_USB_CORE
 espusb::internal::Uac2EntityRequest
-toEntityRequest(const tusb_control_request_t *request)
+toEntityRequest(const EspUsbControlRequest *request)
 {
   espusb::internal::Uac2EntityRequest result;
   result.request = request->bRequest;
@@ -546,7 +546,7 @@ bool EspUsbAudioFunction::handleGetEntityRequest(uint8_t rhport,
   espusb::internal::AudioGuard guard;
 #if ESP_USB_AUDIO_HAS_USB_CORE
   const auto *request =
-      static_cast<const tusb_control_request_t *>(rawRequest);
+      static_cast<const EspUsbControlRequest *>(rawRequest);
   if (protocol_ == EspUsbAudioProtocol::Uac1)
   {
     if (!request)
@@ -637,7 +637,7 @@ bool EspUsbAudioFunction::handleSetEntityRequest(const void *rawRequest,
   espusb::internal::AudioGuard guard;
 #if ESP_USB_AUDIO_HAS_USB_CORE
   const auto *request =
-      static_cast<const tusb_control_request_t *>(rawRequest);
+      static_cast<const EspUsbControlRequest *>(rawRequest);
   if (protocol_ == EspUsbAudioProtocol::Uac1)
   {
     if (!request || !data || request->bRequest != 0x01)
@@ -714,7 +714,7 @@ bool EspUsbAudioFunction::handleGetEndpointRequest(uint8_t rhport,
     return false;
   }
   const auto *request =
-      static_cast<const tusb_control_request_t *>(rawRequest);
+      static_cast<const EspUsbControlRequest *>(rawRequest);
   const uint8_t endpoint = static_cast<uint8_t>(request->wIndex & 0xff);
   const uint8_t selector = static_cast<uint8_t>(request->wValue >> 8);
   const espusb::internal::AudioPcmFormat *format = nullptr;
@@ -757,7 +757,7 @@ bool EspUsbAudioFunction::handleSetEndpointRequest(const void *rawRequest,
     return false;
   }
   const auto *request =
-      static_cast<const tusb_control_request_t *>(rawRequest);
+      static_cast<const EspUsbControlRequest *>(rawRequest);
   const uint8_t endpoint = static_cast<uint8_t>(request->wIndex & 0xff);
   const uint8_t selector = static_cast<uint8_t>(request->wValue >> 8);
   const espusb::internal::AudioPcmFormat *format = nullptr;
@@ -799,7 +799,7 @@ bool EspUsbAudioFunction::handleSetInterface(const void *rawRequest)
     return false;
   }
   const auto *request =
-      static_cast<const tusb_control_request_t *>(rawRequest);
+      static_cast<const EspUsbControlRequest *>(rawRequest);
   const uint8_t interfaceNumber =
       static_cast<uint8_t>(request->wIndex & 0xff);
   const uint8_t alternateSetting =

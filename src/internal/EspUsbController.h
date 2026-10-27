@@ -4,12 +4,12 @@
  * See third_party/tinyusb/LICENSE and PROVENANCE.md.
  */
 #pragma once
-#include "common/tusb_common.h"
+#include "EspUsbWire.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// ESP device controller boundary. Wire/descriptor types remain transitional;
+// ESP device controller boundary using native wire/descriptor types;
 // device stack registration, FIFO and OS abstractions are not part of this API.
 typedef enum {
   ESPUSB_CONTROLLER_EVENT_INVALID = 0,    // 0
@@ -23,14 +23,14 @@ typedef enum {
   ESPUSB_CONTROLLER_EVENT_COUNT
 } EspUsbControllerEventKind;
 
-typedef struct TU_ATTR_ALIGNED(4) {
+typedef struct __attribute__((aligned(4))) {
   uint8_t rhport;
   uint8_t event_id;
 
   union {
     // BUS RESET
     struct {
-      tusb_speed_t speed;
+      EspUsbSpeed speed;
     } bus_reset;
 
     // SOF
@@ -39,7 +39,7 @@ typedef struct TU_ATTR_ALIGNED(4) {
     }sof;
 
     // SETUP_RECEIVED
-    tusb_control_request_t setup_received;
+    EspUsbControlRequest setup_received;
 
     // XFER_COMPLETE
     struct {
@@ -74,7 +74,7 @@ void espusb_controller_remote_wakeup(uint8_t port);
 void espusb_controller_connect(uint8_t port);
 void espusb_controller_disconnect(uint8_t port);
 void espusb_controller_sof_enable(uint8_t port, bool enabled);
-bool espusb_controller_edpt_open(uint8_t port, const tusb_desc_endpoint_t *);
+bool espusb_controller_edpt_open(uint8_t port, const EspUsbEndpointDescriptor *);
 // Return only after non-control DMA and endpoint IRQ state are quiescent.
 void espusb_controller_edpt_close_all(uint8_t port);
 bool espusb_controller_edpt_xfer(uint8_t port, uint8_t address, uint8_t *, uint16_t bytes, bool inIsr);
@@ -83,9 +83,9 @@ bool espusb_controller_edpt_abort(uint8_t port, uint8_t address);
 void espusb_controller_edpt_stall(uint8_t port, uint8_t address);
 void espusb_controller_edpt_clear_stall(uint8_t port, uint8_t address);
 bool espusb_controller_edpt_iso_alloc(uint8_t port, uint8_t address, uint16_t largestPacketBytes);
-bool espusb_controller_edpt_iso_activate(uint8_t port, const tusb_desc_endpoint_t *);
+bool espusb_controller_edpt_iso_activate(uint8_t port, const EspUsbEndpointDescriptor *);
 #if CFG_TUD_TEST_MODE
-void espusb_controller_enter_test_mode(uint8_t port, tusb_feature_test_mode_t selector);
+void espusb_controller_enter_test_mode(uint8_t port, uint8_t selector);
 #endif
 bool espusb_controller_dcache_clean(const void *, uint32_t bytes);
 bool espusb_controller_dcache_invalidate(const void *, uint32_t bytes);
@@ -95,7 +95,7 @@ void espusb_controller_lock(bool inIsr);
 void espusb_controller_unlock(bool inIsr);
 void espusb_controller_event(const EspUsbControllerEvent *, bool inIsr);
 // helper to send bus signal event
-TU_ATTR_ALWAYS_INLINE static inline void espusb_controller_event_bus_signal (uint8_t rhport, EspUsbControllerEventKind eid, bool in_isr) {
+static inline void espusb_controller_event_bus_signal (uint8_t rhport, EspUsbControllerEventKind eid, bool in_isr) {
   EspUsbControllerEvent event = {0};
   event.rhport = rhport;
   event.event_id = eid;
@@ -103,7 +103,7 @@ TU_ATTR_ALWAYS_INLINE static inline void espusb_controller_event_bus_signal (uin
 }
 
 // helper to send bus reset event
-TU_ATTR_ALWAYS_INLINE static inline  void espusb_controller_event_bus_reset (uint8_t rhport, tusb_speed_t speed, bool in_isr) {
+static inline  void espusb_controller_event_bus_reset (uint8_t rhport, EspUsbSpeed speed, bool in_isr) {
   EspUsbControllerEvent event = {0};
   event.rhport = rhport;
   event.event_id = ESPUSB_CONTROLLER_EVENT_BUS_RESET;
@@ -112,21 +112,16 @@ TU_ATTR_ALWAYS_INLINE static inline  void espusb_controller_event_bus_reset (uin
 }
 
 // helper to send setup received
-TU_ATTR_ALWAYS_INLINE static inline void espusb_controller_event_setup_received(uint8_t rhport, uint8_t const * setup, bool in_isr) {
+static inline void espusb_controller_event_setup_received(uint8_t rhport, uint8_t const * setup, bool in_isr) {
   EspUsbControllerEvent event = {0};
   event.rhport = rhport;
   event.event_id = ESPUSB_CONTROLLER_EVENT_SETUP_RECEIVED;
-  (void) memcpy(&event.setup_received, setup, sizeof(tusb_control_request_t));
-  // USB wire format is little-endian. Convert multi-byte fields to host byte order
-  // so the stack always sees correct values regardless of CPU endianness.
-  event.setup_received.wValue  = tu_le16toh(event.setup_received.wValue);
-  event.setup_received.wIndex  = tu_le16toh(event.setup_received.wIndex);
-  event.setup_received.wLength = tu_le16toh(event.setup_received.wLength);
+  event.setup_received = espusb_decode_setup(setup);
   espusb_controller_event(&event, in_isr);
 }
 
 // helper to send transfer complete event
-TU_ATTR_ALWAYS_INLINE static inline void espusb_controller_event_xfer_complete (uint8_t rhport, uint8_t ep_addr, uint32_t xferred_bytes, uint8_t result, bool in_isr) {
+static inline void espusb_controller_event_xfer_complete (uint8_t rhport, uint8_t ep_addr, uint32_t xferred_bytes, uint8_t result, bool in_isr) {
   EspUsbControllerEvent event = {0};
   event.rhport = rhport;
   event.event_id = ESPUSB_CONTROLLER_EVENT_XFER_COMPLETE;
@@ -136,7 +131,7 @@ TU_ATTR_ALWAYS_INLINE static inline void espusb_controller_event_xfer_complete (
   espusb_controller_event(&event, in_isr);
 }
 
-TU_ATTR_ALWAYS_INLINE static inline void espusb_controller_event_sof(uint8_t rhport, uint32_t frame_count, bool in_isr) {
+static inline void espusb_controller_event_sof(uint8_t rhport, uint32_t frame_count, bool in_isr) {
   EspUsbControllerEvent event = {0};
   event.rhport = rhport;
   event.event_id = ESPUSB_CONTROLLER_EVENT_SOF;

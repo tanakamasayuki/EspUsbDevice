@@ -154,7 +154,7 @@ struct EspUsbCcidState {
     }
   }
   static bool deinit(){resetAll(0);return true;}
-  static uint16_t open(uint8_t port,const tusb_desc_interface_t *itf,uint16_t bytes) {
+  static uint16_t open(uint8_t port,const EspUsbInterfaceDescriptor *itf,uint16_t bytes) {
     if(itf->bLength!=9 || itf->bInterfaceClass!=11 || itf->bInterfaceSubClass || itf->bInterfaceProtocol)return 0;
     auto *s=first;while(s && s->owner.interfaceNumber_!=itf->bInterfaceNumber)s=s->next;if(!s)return 0;
     const unsigned count=s->owner.config_.removable ? 3:2,needed=63+7*count;
@@ -163,23 +163,23 @@ struct EspUsbCcidState {
     if(d[9]!=54 || d[10]!=0x21 || ccidRead32(d+9+44)!=s->owner.config_.messageBytes)return 0;
     s->port=port;s->interface=itf->bInterfaceNumber;
     for(unsigned n=0;n<count;++n) {
-      const auto *ep=reinterpret_cast<const tusb_desc_endpoint_t *>(d+63+7*n);
+      const auto *ep=reinterpret_cast<const EspUsbEndpointDescriptor *>(d+63+7*n);
       if(ep->bLength!=7 || ep->bDescriptorType!=5)return 0;
-      const uint16_t mps=tu_edpt_packet_size(ep);
-      if(ep->bmAttributes.xfer==TUSB_XFER_BULK && mps<=s->packetCapacity) {
+      const uint16_t mps=espusb_endpoint_packet_size(ep);
+      if(espusb_endpoint_type(ep)==ESPUSB_XFER_BULK && mps<=s->packetCapacity) {
         if(ep->bEndpointAddress&128){if(s->in)return 0;s->in=ep->bEndpointAddress;}
         else {if(s->out)return 0;s->out=ep->bEndpointAddress;s->packetSize=mps;}
-      } else if(ep->bmAttributes.xfer==TUSB_XFER_INTERRUPT && (ep->bEndpointAddress&128) && mps<=8 && s->notify) {
+      } else if(espusb_endpoint_type(ep)==ESPUSB_XFER_INTERRUPT && (ep->bEndpointAddress&128) && mps<=8 && s->notify) {
         if(s->interrupt)return 0;s->interrupt=ep->bEndpointAddress;
       } else return 0;
       if(!espusb_device_edpt_open(port,ep))return 0;
     }
     if(!s->in || !s->out)return 0;s->receive();return needed;
   }
-  static bool control(uint8_t port,uint8_t stage,const tusb_control_request_t *r) {
+  static bool control(uint8_t port,uint8_t stage,const EspUsbControlRequest *r) {
     auto *s=first;while(s && s->interface!=r->wIndex)s=s->next;if(!s)return false;
     if(r->bmRequestType==1 && r->bRequest==11 && !r->wValue && !r->wLength) {
-      if(stage!=CONTROL_STAGE_SETUP)return true;
+      if(stage!=ESPUSB_CONTROL_STAGE_SETUP)return true;
       bool ok=true;for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)ok &= espusb_device_edpt_abort(port,ep);
       if(!ok)return espusb::internal::rejectUsbControl();
       ++s->epoch;s->draining=true;s->owner.aborted_=false;
@@ -187,19 +187,19 @@ struct EspUsbCcidState {
       return espusb_device_control_status(port,r);
     }
     if(r->bmRequestType!=0x21 || r->bRequest!=1 || r->wLength || uint8_t(r->wValue))return false;
-    if(stage==CONTROL_STAGE_SETUP)return espusb_device_control_status(port,r);
-    if(stage==CONTROL_STAGE_ACK)s->owner.handleAbort(uint8_t(r->wValue),uint8_t(r->wValue>>8));
+    if(stage==ESPUSB_CONTROL_STAGE_SETUP)return espusb_device_control_status(port,r);
+    if(stage==ESPUSB_CONTROL_STAGE_ACK)s->owner.handleAbort(uint8_t(r->wValue),uint8_t(r->wValue>>8));
     return true;
   }
-  static bool complete(uint8_t,uint8_t ep,xfer_result_t result,uint32_t bytes) {
+  static bool complete(uint8_t,uint8_t ep,EspUsbControllerResult result,uint32_t bytes) {
     auto *s=first;while(s && s->in!=ep && s->out!=ep && s->interrupt!=ep)s=s->next;if(!s)return false;
     if(s->stopping || s->draining)return true;
     if(ep==s->interrupt){s->owner.handleNotifyComplete();return true;}
     if(ep==s->in) {
-      if(result==XFER_RESULT_SUCCESS && s->zlp){s->zlp=false;espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);return true;}
+      if(result==ESPUSB_TRANSFER_SUCCESS && s->zlp){s->zlp=false;espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);return true;}
       s->txBusy=s->zlp=false;s->receive();return true;
     }
-    if(result!=XFER_RESULT_SUCCESS || bytes>s->packetSize){s->received=s->stored=0;s->receive();return true;}
+    if(result!=ESPUSB_TRANSFER_SUCCESS || bytes>s->packetSize){s->received=s->stored=0;s->receive();return true;}
     s->received+=bytes;
     const size_t copy=std::min(size_t(bytes),s->owner.config_.messageBytes-s->stored);
     memcpy(s->message+s->stored,s->packet,copy);s->stored+=copy;

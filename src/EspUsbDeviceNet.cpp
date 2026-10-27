@@ -117,7 +117,7 @@ struct EspUsbNetState {
     const uint16_t bytes = notificationStage == 0 ? 16 : 8;
     if (notificationStage == 0) {
       notification[1] = 0x2a; put16(notification+6,8);
-      const uint32_t speed = espusb_device_speed() == TUSB_SPEED_HIGH ? 480000000 : 12000000;
+      const uint32_t speed = espusb_device_speed() == ESPUSB_SPEED_HIGH ? 480000000 : 12000000;
       put32(notification+8,speed); put32(notification+12,speed);
     } else { notification[1] = 0; put16(notification+2,active ? 1 : 0); }
     notifyBusy = espusb_device_edpt_xfer(port,notify,notification,bytes,false);
@@ -206,7 +206,7 @@ struct EspUsbNetState {
   static void init() {}
   static void resetAll(uint8_t) { NetGuard guard; for (auto *s = first; s; s = s->next) { s->reset(); s->controlInterface = 255; } }
   static bool deinit() { resetAll(0); return true; }
-  static uint16_t open(uint8_t port, const tusb_desc_interface_t *itf, uint16_t available) {
+  static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t available) {
     if (available < 77 || itf->bLength != 9 || itf->bInterfaceClass != 2 || itf->bInterfaceSubClass != 0x0d) return 0;
     auto *s = first;
     while (s && (s->owner.interface_ != itf->bInterfaceNumber || !s->owner.device_.config().startTinyUsb)) s = s->next;
@@ -223,7 +223,7 @@ struct EspUsbNetState {
         if ((d[3]&3) == 3 && (address&0x80)) s->notify = address;
         else if ((d[3]&3) == 2) { if (address&0x80) s->in = address; else s->out = address; s->packet = get16(d+4); }
         else return 0;
-        if (!espusb_device_edpt_open(port,reinterpret_cast<const tusb_desc_endpoint_t *>(d))) return 0;
+        if (!espusb_device_edpt_open(port,reinterpret_cast<const EspUsbEndpointDescriptor *>(d))) return 0;
       }
       offset += d[0];
     }
@@ -232,24 +232,24 @@ struct EspUsbNetState {
     s->rxArm = uint16_t(aligned(s->owner.netConfig_.ntbOutBytes,s->packet));
     return uint16_t(offset);
   }
-  static bool controlRequest(uint8_t port, uint8_t stage, const tusb_control_request_t *r) {
+  static bool controlRequest(uint8_t port, uint8_t stage, const EspUsbControlRequest *r) {
     auto *s = first;
     while (s && r->wIndex != s->controlInterface && r->wIndex != s->controlInterface+1) s = s->next;
     if (!s || s->stopping.load()) return false;
     if (r->bmRequestType == 0x81 && r->bRequest == 10 && !r->wValue && r->wLength == 1) {
-      if (stage != CONTROL_STAGE_SETUP) return true;
+      if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       s->control[0] = r->wIndex == s->controlInterface ? 0 : s->desired;
       return espusb_device_control_transfer(port,r,s->control,1);
     }
     if (r->bmRequestType == 1 && r->bRequest == 11 && r->wValue <= 1 && !r->wLength) {
-      if (stage != CONTROL_STAGE_SETUP) return true;
+      if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       NetGuard guard;
       if (r->wIndex == s->controlInterface) return !r->wValue && s->change(s->desired,false,true) && espusb_device_control_status(port,r);
       return s->change(uint8_t(r->wValue),true) && espusb_device_control_status(port,r);
     }
     if (r->wIndex != s->controlInterface || (r->bmRequestType != 0xa1 && r->bmRequestType != 0x21)) return false;
     if (r->bmRequestType == 0xa1 && !r->wValue && r->wLength) {
-      if (stage != CONTROL_STAGE_SETUP) return true;
+      if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       NetGuard guard; memset(s->control,0,sizeof(s->control)); uint16_t n = 0;
       switch (r->bRequest) {
       case 0x80:
@@ -268,12 +268,12 @@ struct EspUsbNetState {
     if (r->bmRequestType != 0x21) return false;
     if (!r->wLength && (r->bRequest == 0x43 || ((r->bRequest == 0x84 || r->bRequest == 0x8a) && !r->wValue))) {
       if (r->bRequest == 0x43 && (r->wValue&~0x1f)) return false;
-      if (stage != CONTROL_STAGE_SETUP) return true;
+      if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       return espusb_device_control_status(port,r);
     }
     if (r->bRequest != 0x86 || r->wValue || (r->wLength != 4 && r->wLength != 8)) return false;
-    if (stage == CONTROL_STAGE_SETUP) { memset(s->control,0,8); return espusb_device_control_transfer(port,r,s->control,r->wLength); }
-    if (stage == CONTROL_STAGE_DATA) {
+    if (stage == ESPUSB_CONTROL_STAGE_SETUP) { memset(s->control,0,8); return espusb_device_control_transfer(port,r,s->control,r->wLength); }
+    if (stage == ESPUSB_CONTROL_STAGE_DATA) {
       const uint32_t size = get32(s->control);
       if (espusb_device_control_received_bytes() != r->wLength || size < 2048 || size > s->owner.netConfig_.ntbInBytes || size < uint32_t(s->owner.netConfig_.maxFrameBytes)+28) return false;
       NetGuard guard; s->limits(uint16_t(size),r->wLength == 8 ? get16(s->control+4) : 0);
@@ -281,7 +281,7 @@ struct EspUsbNetState {
     }
     return true;
   }
-  static bool complete(uint8_t, uint8_t ep, xfer_result_t result, uint32_t bytes) {
+  static bool complete(uint8_t, uint8_t ep, EspUsbControllerResult result, uint32_t bytes) {
     EspUsbNetState *s; NetSlot *received = nullptr;
     {
       NetGuard guard; s = first;
@@ -292,20 +292,20 @@ struct EspUsbNetState {
       if (!s->active) return true;
       if (ep == s->in) {
         if (!s->tx) return true;
-        if (!s->zlp && result == XFER_RESULT_SUCCESS && s->tx->used % s->packet == 0 && s->tx->used < s->maxIn) {
+        if (!s->zlp && result == ESPUSB_TRANSFER_SUCCESS && s->tx->used % s->packet == 0 && s->tx->used < s->maxIn) {
           s->zlp = true;
           s->zlpPending = !espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);
           if (s->zlpPending) espusb::internal::postTinyUsbRuntimeJob(s->job);
           return true;
         }
-        if (result == XFER_RESULT_SUCCESS) s->txFrames += s->tx->count;
+        if (result == ESPUSB_TRANSFER_SUCCESS) s->txFrames += s->tx->count;
         s->tx->phase = NetSlot::Free; s->tx = nullptr; s->zlp = false; s->armTx(); return true;
       }
       received = s->rx;
       if (!received) return true;
       received->phase = NetSlot::Processing; s->rx = nullptr; s->armRx();
     }
-    if (result != XFER_RESULT_SUCCESS || bytes > s->rxArm || !s->parse(received->data,bytes)) ++s->invalidNtbs;
+    if (result != ESPUSB_TRANSFER_SUCCESS || bytes > s->rxArm || !s->parse(received->data,bytes)) ++s->invalidNtbs;
     { NetGuard guard; received->phase = NetSlot::Free; s->armRx(); }
     return true;
   }

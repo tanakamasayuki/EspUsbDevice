@@ -1,4 +1,3 @@
-class/hid/hid.h
 common/tusb_common.h
 common/tusb_compiler.h
 common/tusb_debug.h

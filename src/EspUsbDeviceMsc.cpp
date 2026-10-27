@@ -183,29 +183,29 @@ struct EspUsbMscState {
     }
   }
   static bool deinit() { resetAll(0); return true; }
-  static uint16_t open(uint8_t port, const tusb_desc_interface_t *itf, uint16_t bytes) {
+  static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t bytes) {
     if (bytes < 23 || itf->bLength != 9 || itf->bInterfaceClass != 8 || itf->bInterfaceSubClass != 6 || itf->bInterfaceProtocol != 0x50 || itf->bNumEndpoints != 2) return 0;
     auto *s = first;
     while (s && s->owner.interfaceNumber_ != itf->bInterfaceNumber) s = s->next;
     if (!s) return 0;
     uint8_t in = 0, out = 0; uint16_t packetSize = 0;
     for (unsigned i = 0; i < 2; ++i) {
-      const auto *ep = reinterpret_cast<const tusb_desc_endpoint_t *>(reinterpret_cast<const uint8_t *>(itf) + 9 + 7 * i);
-      if (ep->bLength != 7 || ep->bDescriptorType != 5 || ep->bmAttributes.xfer != TUSB_XFER_BULK || !tu_edpt_packet_size(ep) || tu_edpt_packet_size(ep) > s->owner.config_.transferBytes || !espusb_device_edpt_open(port, ep)) return 0;
-      if (packetSize && packetSize != tu_edpt_packet_size(ep)) return 0;
-      packetSize = tu_edpt_packet_size(ep);
+      const auto *ep = reinterpret_cast<const EspUsbEndpointDescriptor *>(reinterpret_cast<const uint8_t *>(itf) + 9 + 7 * i);
+      if (ep->bLength != 7 || ep->bDescriptorType != 5 || espusb_endpoint_type(ep) != ESPUSB_XFER_BULK || !espusb_endpoint_packet_size(ep) || espusb_endpoint_packet_size(ep) > s->owner.config_.transferBytes || !espusb_device_edpt_open(port, ep)) return 0;
+      if (packetSize && packetSize != espusb_endpoint_packet_size(ep)) return 0;
+      packetSize = espusb_endpoint_packet_size(ep);
       if (ep->bEndpointAddress & 0x80) in = ep->bEndpointAddress; else out = ep->bEndpointAddress;
     }
     if (!in || !out) return 0;
     s->port = port; s->interface = itf->bInterfaceNumber; s->in = in; s->out = out; s->packetSize = packetSize;
     s->commandReady(); return 23;
   }
-  static bool control(uint8_t port, uint8_t phase, const tusb_control_request_t *r) {
+  static bool control(uint8_t port, uint8_t phase, const EspUsbControlRequest *r) {
     auto *s = first;
     if (r->bmRequestType == 2) {
       while (s && s->in != r->wIndex && s->out != r->wIndex) s = s->next;
       if (!s || r->bRequest != 1 || r->wValue || r->wLength) return false;
-      if (phase != CONTROL_STAGE_SETUP) return true;
+      if (phase != ESPUSB_CONTROL_STAGE_SETUP) return true;
       if (s->stage == Stage::NeedReset || s->needsBotReset) espusb_device_edpt_stall(port, uint8_t(r->wIndex));
       else if (s->stage == Stage::Recovery) {
         (r->wIndex == s->in ? s->clearIn : s->clearOut) = true;
@@ -217,7 +217,7 @@ struct EspUsbMscState {
     while (s && s->interface != r->wIndex) s = s->next;
     if (!s || r->wValue) return false;
     if (r->bmRequestType == 1 && r->bRequest == 11 && !r->wLength) {
-      if (phase != CONTROL_STAGE_SETUP) return true;
+      if (phase != ESPUSB_CONTROL_STAGE_SETUP) return true;
       const bool input = espusb_device_edpt_abort(port, s->in);
       const bool output = espusb_device_edpt_abort(port, s->out);
       if (!input || !output) return espusb::internal::rejectUsbControl();
@@ -230,9 +230,9 @@ struct EspUsbMscState {
       return espusb_device_control_status(port, r);
     }
     if (r->bmRequestType == 0xa1 && r->bRequest == 254 && r->wLength == 1)
-      return phase != CONTROL_STAGE_SETUP || espusb_device_control_transfer(port, r, &s->maxLun, 1);
+      return phase != ESPUSB_CONTROL_STAGE_SETUP || espusb_device_control_transfer(port, r, &s->maxLun, 1);
     if (r->bmRequestType == 0x21 && r->bRequest == 255 && !r->wLength) {
-      if (phase != CONTROL_STAGE_SETUP) return true;
+      if (phase != ESPUSB_CONTROL_STAGE_SETUP) return true;
       if (!espusb_device_edpt_abort(port, s->in) || !espusb_device_edpt_abort(port, s->out)) return false;
       ++s->resetEpoch;
       s->stage = Stage::Recovery; s->clearIn = s->clearOut = s->needsBotReset = false;
@@ -242,11 +242,11 @@ struct EspUsbMscState {
     }
     return false;
   }
-  static bool complete(uint8_t, uint8_t ep, xfer_result_t result, uint32_t bytes) {
+  static bool complete(uint8_t, uint8_t ep, EspUsbControllerResult result, uint32_t bytes) {
     auto *s = first; while (s && ep != s->in && ep != s->out) s = s->next;
     if (!s) return false;
     if (s->stopping.load() || s->stage == Stage::Recovery || s->stage == Stage::NeedReset) return true;
-    if (result != XFER_RESULT_SUCCESS) { s->needReset(); return true; }
+    if (result != ESPUSB_TRANSFER_SUCCESS) { s->needReset(); return true; }
     if (s->stage == Stage::Command && ep == s->out) s->receivedCommand(bytes);
     else if (s->stage == Stage::StatusSent && ep == s->in) {
       if (s->status == 2) s->needReset(); else s->commandReady();

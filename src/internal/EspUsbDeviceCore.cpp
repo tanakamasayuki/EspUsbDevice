@@ -32,7 +32,7 @@ struct Event {
 };
 struct Control {
   enum class Phase : uint8_t { Idle, Setup, Data, Status, Stalled } phase = Phase::Idle;
-  tusb_control_request_t request = {};
+  EspUsbControlRequest request = {};
   uint8_t *buffer = nullptr;
   uint16_t capacity = 0, transferred = 0, armed = 0;
   uint32_t serial = 0, bus = 0;
@@ -51,7 +51,7 @@ struct Core {
   std::atomic<uint32_t> bus{0}, setup{0}, workerBus{0}, configurationEpoch{0};
   std::atomic<bool> overflow{false}, connected{false}, suspended{false};
   std::atomic<uint8_t> configuration{0};
-  std::atomic<tusb_speed_t> speed{TUSB_SPEED_INVALID};
+  std::atomic<EspUsbSpeed> speed{ESPUSB_SPEED_INVALID};
   bool addressed = false, selfPowered = false;
   std::atomic<bool> remoteWakeup{false}, recovering{false}, stopping{false};
   Endpoint *endpoint(uint8_t address) {
@@ -116,21 +116,21 @@ struct Core {
     // A completed status packet commits the old request even if a new SETUP
     // has arrived since. Old data must never arm more traffic after new SETUP.
     if (c.phase != Control::Phase::Status && !currentControl()) return;
-    if (x.result != XFER_RESULT_SUCCESS) { stallControl(); return; }
+    if (x.result != ESPUSB_TRANSFER_SUCCESS) { stallControl(); return; }
     const uint8_t statusEp = c.request.wLength && (c.request.bmRequestType&128) ? 0 : 128;
     if (c.phase == Control::Phase::Status) {
       if (x.ep_addr != statusEp || x.len) { stallControl(); return; }
       c.phase = Control::Phase::Idle;
       if (c.request.bmRequestType==0 && c.request.bRequest==5) addressed = c.request.wValue != 0;
       espusb_device_control_acknowledged(port,&c.request);
-      if (c.callback) c.callback(port,CONTROL_STAGE_ACK,&c.request);
+      if (c.callback) c.callback(port,ESPUSB_CONTROL_STAGE_ACK,&c.request);
       return;
     }
     if (c.phase != Control::Phase::Data || x.ep_addr == statusEp || x.len > c.armed) { stallControl(); return; }
     if (!(c.request.bmRequestType&128) && x.len) memcpy(c.buffer+c.transferred,packet,x.len);
     c.transferred += uint16_t(x.len);
     if (c.transferred == c.request.wLength || x.len < PacketBytes) {
-      if (c.callback && !c.callback(port,CONTROL_STAGE_DATA,&c.request)) { stallControl(); return; }
+      if (c.callback && !c.callback(port,ESPUSB_CONTROL_STAGE_DATA,&c.request)) { stallControl(); return; }
       if (!status() && currentControl()) stallControl();
     } else if (!data() && currentControl()) stallControl();
   }
@@ -145,7 +145,7 @@ struct Core {
   }
   bool invoke(const espusb::internal::UsbClassDriver *d) {
     control.callback = d ? d->control_xfer_cb : nullptr;
-    return control.callback && control.callback(port,CONTROL_STAGE_SETUP,&control.request);
+    return control.callback && control.callback(port,ESPUSB_CONTROL_STAGE_SETUP,&control.request);
   }
   bool descriptor() {
     const auto &r=control.request;
@@ -191,7 +191,7 @@ struct Core {
       bool found=false;
       for (unsigned i=0;i<driverCount && !found;++i) {
         if (!drivers[i].open) continue;
-        const uint16_t used=drivers[i].open(port,reinterpret_cast<const tusb_desc_interface_t *>(p+offset),uint16_t(length-offset));
+        const uint16_t used=drivers[i].open(port,reinterpret_cast<const EspUsbInterfaceDescriptor *>(p+offset),uint16_t(length-offset));
         if (!used) continue;
         if (used<9 || used>length-offset) return false;
         size_t n=0; uint8_t interfaceNumber=Invalid;
@@ -253,7 +253,7 @@ struct Core {
     const auto &r=control.request;
     const unsigned type=(r.bmRequestType>>5)&3, recipient=r.bmRequestType&31;
     if (type==3) return false;
-    if (type==2) { control.callback=espusb_device_vendor_control; return control.callback(port,CONTROL_STAGE_SETUP,&r); }
+    if (type==2) { control.callback=espusb_device_vendor_control; return control.callback(port,ESPUSB_CONTROL_STAGE_SETUP,&r); }
     if (recipient==0) {
       if (!type) return standardDevice();
       const unsigned itf=uint8_t(r.wIndex);
@@ -408,7 +408,7 @@ void runUsbDeviceCore(uint32_t milliseconds) {
       auto *ep=s->endpoint(e.xfer_complete.ep_addr);if(!ep)break;
       {portENTER_CRITICAL(&endpointLock);ep->flags &= uint8_t(~(Busy|Claimed));portEXIT_CRITICAL(&endpointLock);}
       if(!(e.xfer_complete.ep_addr&15))s->completedControl(event);
-      else {const auto *d=s->driver(ep->driver);if(d && d->xfer_cb)d->xfer_cb(s->port,e.xfer_complete.ep_addr,xfer_result_t(e.xfer_complete.result),e.xfer_complete.len);}
+      else {const auto *d=s->driver(ep->driver);if(d && d->xfer_cb)d->xfer_cb(s->port,e.xfer_complete.ep_addr,EspUsbControllerResult(e.xfer_complete.result),e.xfer_complete.len);}
       break;
     }
     default:break;
@@ -421,25 +421,25 @@ void runUsbDeviceCore(uint32_t milliseconds) {
 extern "C" {
 void espusb_controller_lock(bool) {portENTER_CRITICAL(&hardwareLock);}
 void espusb_controller_unlock(bool) {portEXIT_CRITICAL(&hardwareLock);}
-tusb_speed_t espusb_device_speed() {return core ? core->speed.load() : TUSB_SPEED_INVALID;}
+EspUsbSpeed espusb_device_speed() {return core ? core->speed.load() : ESPUSB_SPEED_INVALID;}
 bool espusb_device_mounted() {return core && core->configuration.load();}
 bool espusb_device_suspended() {return core && core->suspended.load();}
 bool espusb_device_disconnect() {if(!core)return false;espusb_controller_disconnect(core->port);return true;}
 bool espusb_device_events_pending() {return core && (core->overflow.load() || uxQueueMessagesWaiting(core->queue));}
 uint16_t espusb_device_control_received_bytes() {return espusb::internal::usbControlTransferredBytes();}
-bool espusb_device_control_transfer(uint8_t port,const tusb_control_request_t *request,void *buffer,uint16_t bytes) {
+bool espusb_device_control_transfer(uint8_t port,const EspUsbControlRequest *request,void *buffer,uint16_t bytes) {
   return core && port==core->port && request && !memcmp(request,&core->control.request,sizeof(*request)) && core->reply(buffer,bytes);
 }
-bool espusb_device_control_status(uint8_t port,const tusb_control_request_t *request) {
+bool espusb_device_control_status(uint8_t port,const EspUsbControlRequest *request) {
   return core && port==core->port && request && !request->wLength && core->control.phase==Control::Phase::Setup && !memcmp(request,&core->control.request,sizeof(*request)) && core->status();
 }
-bool espusb_device_edpt_open(uint8_t port,const tusb_desc_endpoint_t *descriptor) {
+bool espusb_device_edpt_open(uint8_t port,const EspUsbEndpointDescriptor *descriptor) {
   if(!core || port!=core->port || !descriptor || descriptor->bLength<7 || descriptor->bDescriptorType!=5)return false;
   auto *ep=core->endpoint(descriptor->bEndpointAddress);if(!ep || !(descriptor->bEndpointAddress&15))return false;
-  const unsigned type=descriptor->bmAttributes.xfer, packet=tu_edpt_packet_size(descriptor);
-  if(!packet || type==0 || (type==2 && (core->speed==TUSB_SPEED_HIGH ? packet!=512 : (packet!=8 && packet!=16 && packet!=32 && packet!=64))) ||
-      (type==1 && packet>(core->speed==TUSB_SPEED_HIGH ? 1024u : 1023u)) ||
-      (type==3 && packet>(core->speed==TUSB_SPEED_HIGH ? 1024u : 64u)))return false;
+  const unsigned type=espusb_endpoint_type(descriptor), packet=espusb_endpoint_packet_size(descriptor);
+  if(!packet || type==0 || (type==2 && (core->speed==ESPUSB_SPEED_HIGH ? packet!=512 : (packet!=8 && packet!=16 && packet!=32 && packet!=64))) ||
+      (type==1 && packet>(core->speed==ESPUSB_SPEED_HIGH ? 1024u : 1023u)) ||
+      (type==3 && packet>(core->speed==ESPUSB_SPEED_HIGH ? 1024u : 64u)))return false;
   if(!espusb_controller_edpt_open(port,descriptor))return false;
   ep->opened=true;ep->type=uint8_t(type);ep->flags=0;return true;
 }

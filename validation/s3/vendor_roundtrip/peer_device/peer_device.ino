@@ -59,7 +59,7 @@ void injectCancelFence(void *) {
   uint8_t in = 0, out = 0;
   for (unsigned i = 0; i + 2 <= length && descriptor[i] >= 2; i += descriptor[i]) {
     if (i + descriptor[i] > length) break;
-    if (descriptor[i + 1] == TUSB_DESC_ENDPOINT && descriptor[i] >= 7) {
+    if (descriptor[i + 1] == ESPUSB_DESC_ENDPOINT && descriptor[i] >= 7) {
       if (descriptor[i + 2] & 0x80) in = descriptor[i + 2];
       else out = descriptor[i + 2];
     }
@@ -72,7 +72,7 @@ void injectCancelFence(void *) {
     // least one old completion queued when the worker first services abort.
     const auto port = espusb::internal::tinyUsbRuntimeRhport();
     for (unsigned i = 0; i < espusb_device_queue_capacity(); ++i)
-      espusb_controller_event_xfer_complete(port, i & 1 ? out : in, 0, XFER_RESULT_SUCCESS, false);
+      espusb_controller_event_xfer_complete(port, i & 1 ? out : in, 0, ESPUSB_TRANSFER_SUCCESS, false);
     faultEvents.store(espusb_device_queue_capacity());
   }
   faultDone.store(true);
