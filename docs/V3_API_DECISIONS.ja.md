@@ -368,3 +368,18 @@ MJPEGにYUY2の幅制約を持ち込まず、fpsの上限を255とwireのbit rat
 利点は破棄後のDMA参照の防止と不正descriptorの早期拒否、不要なサイズ/fps制約の削減。
 不利益は稼働中破棄がDevice全体を停止し、不正な上限申告を従来どおり受け付けなくなる点。
 payload容量やtransfer方式はまだbuild flagなので、これだけをVideoの独自化完了とはしない。
+
+
+## Videoのpayload/方式をFunction設定へ移す
+
+2026-10-27。Videoの単一global ownerと固定stagingを撤去し、EspUsbVideoConfigで
+ISO/Bulk、payload容量、ISO packet、任意の外部DMA領域をFunctionごとに設定する。
+下位EP0/core/DCDはまだTinyUSBだが、Video classは独自app driverで扱い、legacy flagを拒否する。
+利点は同一binaryでの構成変更、選択Functionだけの資源確保、共通の借用frame返却契約。
+不利益はbegin時の確保失敗、外部DMA spanと借用frameの寿命管理、static照会APIの変更である。
+
+sendFrameと成功専用onFrameCompleteの操作は維持する。submitFrameのticketとcancelFrame、
+onFrameResultを加え、中断/reset/停止でも借用bufferを返す。callback登録は開始後に変更できない。
+取消しとalt/recommitではDMA停止後のevent fenceを通し、古い完了が次frameを返すことを防ぐ。
+Probe/Commitは広告した一形式・一固定frame intervalの範囲で受け付け、payload上限を実資源に合わせる。
+複数formatや可変intervalを未実装のままAPIで約束しない。詳細と移行例は[Videoガイド](V3_VIDEO_API.ja.md)。

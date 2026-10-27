@@ -1,32 +1,16 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbVideoTransport.h"
 
 #include <string.h>
+#include <algorithm>
+#include <utility>
 
-#if __has_include("soc/soc_caps.h")
-#include "soc/soc_caps.h"
-#endif
-
-#if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
-#include "tusb.h"
-#include "class/video/video_device.h"
-#define ESP_USB_VIDEO_HAS_TINYUSB 1
-#else
-#define ESP_USB_VIDEO_HAS_TINYUSB 0
-#endif
-
-// USB Video Class camera.
-//
-// The descriptor is written here rather than through the TUD_VIDEO_DESC_*
-// macros because those take their frame size, rate and bit rate as macro
-// arguments, and this class decides them at begin() from what the sketch set.
-// The bytes are the same; tests/single/video_descriptor pins them against a
-// macro-built reference so the two cannot drift.
+// Runtime-sized UVC descriptors for one selected format and frame size.
 
 namespace
 {
 
-EspUsbDeviceVideo *g_activeVideo = nullptr;
 
 constexpr uint8_t DESC_CS_INTERFACE = 0x24;
 constexpr uint8_t DESC_INTERFACE = 0x04;
@@ -119,40 +103,6 @@ struct Writer
 
 } // namespace
 
-#if ESP_USB_VIDEO_HAS_TINYUSB
-extern "C" void tud_video_frame_xfer_complete_cb(uint_fast8_t ctl_idx, uint_fast8_t stm_idx)
-{
-  (void)ctl_idx;
-  (void)stm_idx;
-  if (g_activeVideo)
-  {
-    g_activeVideo->handleFrameComplete();
-  }
-}
-
-extern "C" int tud_video_commit_cb(uint_fast8_t ctl_idx, uint_fast8_t stm_idx,
-                                   video_probe_and_commit_control_t const *parameters)
-{
-  (void)ctl_idx;
-  (void)stm_idx;
-  if (g_activeVideo && parameters)
-  {
-    EspUsbDeviceVideoCommit commit;
-    commit.formatIndex = parameters->bFormatIndex;
-    commit.frameIndex = parameters->bFrameIndex;
-    commit.frameInterval = parameters->dwFrameInterval;
-    commit.maxVideoFrameSize = parameters->dwMaxVideoFrameSize;
-    commit.maxPayloadTransferSize = parameters->dwMaxPayloadTransferSize;
-    g_activeVideo->handleCommit(commit);
-  }
-  // VIDEO_ERROR_NONE. Accepting whatever the host committed to is right for a
-  // device that advertises one format at one size: the host can only have
-  // chosen it, and the frame interval it asks for is a pacing hint this device
-  // is free to miss.
-  return 0;
-}
-#endif
-
 EspUsbDeviceVideo::EspUsbDeviceVideo(EspUsbDevice &device, const char *name)
     : EspUsbDeviceClass(device), name_(name)
 {
@@ -213,43 +163,20 @@ uint32_t EspUsbDeviceVideo::maxFrameSize() const
                                                   : (uncompressed / 8u);
 }
 
-uint16_t EspUsbDeviceVideo::payloadBufferSize()
-{
-#if ESP_USB_VIDEO_HAS_TINYUSB
-  return CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE;
-#else
-  return 0;
-#endif
+esp_err_t EspUsbDeviceVideo::configure(const EspUsbVideoConfig &c) {
+  if (running_) return ESP_ERR_INVALID_STATE;
+  if (c.transport != EspUsbVideoTransport::Isochronous && c.transport != EspUsbVideoTransport::Bulk) return ESP_ERR_INVALID_ARG;
+  if (c.payloadBytes < 3 || c.payloadBytes > 65535 ||
+      (c.transport == EspUsbVideoTransport::Isochronous && c.payloadBytes > 1024) ||
+      (c.isochronousPacketBytes && (c.isochronousPacketBytes < 3 || c.isochronousPacketBytes > 1024))) return ESP_ERR_INVALID_SIZE;
+  videoConfig_ = c; return ESP_OK;
 }
-
-uint16_t EspUsbDeviceVideo::isochronousPacketSize(bool highSpeed)
-{
-  // Full speed reserves one packet per 1 ms frame and caps it at 1023 bytes;
-  // high speed reserves one per 125 us microframe and caps it at 1024. The
-  // per-transaction opportunities a high-bandwidth endpoint would add are not
-  // used here: TinyUSB's video driver arms one transfer per interval.
-  //
-  // The endpoint must be at least as large as the payload the class driver
-  // commits to, which is capped by CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE - so
-  // that buffer is the floor here. Advertising less would leave the host
-  // unable to open the streaming alternate setting.
-  const uint16_t limit = highSpeed ? 1024 : 1023;
-#if ESP_USB_VIDEO_HAS_TINYUSB
-  const uint16_t staging = CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE;
-  return staging > limit ? limit : (staging > 64 ? staging : limit);
-#else
-  return limit;
-#endif
+size_t EspUsbDeviceVideo::payloadBufferSize() const { return espusb::internal::VideoTransport::capacity(*this); }
+uint16_t EspUsbDeviceVideo::isochronousPacketSize(bool highSpeed) const {
+  const size_t wanted = videoConfig_.isochronousPacketBytes ? videoConfig_.isochronousPacketBytes : videoConfig_.payloadBytes;
+  return uint16_t(std::min(wanted,size_t(highSpeed ? 1024 : 1023)));
 }
-
-bool EspUsbDeviceVideo::bulkStreaming()
-{
-#if ESP_USB_VIDEO_HAS_TINYUSB && CFG_TUD_VIDEO_STREAMING_BULK
-  return true;
-#else
-  return false;
-#endif
-}
+bool EspUsbDeviceVideo::bulkStreaming() const { return videoConfig_.transport == EspUsbVideoTransport::Bulk; }
 
 uint16_t EspUsbDeviceVideo::descriptorLength(bool highSpeed) const
 {
@@ -279,6 +206,7 @@ uint16_t EspUsbDeviceVideo::configurationDescriptorForSpeed(
     return 0;
   }
 
+  instance_ = interfaceNumber;
   if (!dst) return descriptorLength(highSpeed);
 
   const uint8_t vcInterface = interfaceNumber;
@@ -319,8 +247,7 @@ uint16_t EspUsbDeviceVideo::configurationDescriptorForSpeed(
   w.u8(stringIndex_);
 
   // Class-specific VC header. wTotalLength covers this descriptor and the two
-  // terminals below, and TinyUSB reads it to find where the control interface
-  // ends, so it has to be exact.
+  // terminals below.
   w.u8(13);
   w.u8(DESC_CS_INTERFACE);
   w.u8(VC_HEADER);
@@ -502,115 +429,33 @@ uint16_t EspUsbDeviceVideo::configurationDescriptor(uint8_t *dst, uint8_t interf
                                          endpointSize > 64);
 }
 
-bool EspUsbDeviceVideo::begin()
-{
+bool EspUsbDeviceVideo::begin() {
   if (!registered_ || running_ || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   if (!validVideoParameters(format_,width_,height_,frameRate_,maxFrameSize_)) { startError_ = ESP_ERR_INVALID_ARG; return false; }
-#if ESP_USB_VIDEO_HAS_TINYUSB
-  // One camera per device: TinyUSB's video driver is built with CFG_TUD_VIDEO
-  // control interfaces, and the callbacks above have one destination.
-  if (g_activeVideo && g_activeVideo != this) { startError_ = ESP_ERR_INVALID_STATE; return false; }
-  g_activeVideo = this;
-#endif
-  inFlight_.store(false);
-  commit_ = EspUsbDeviceVideoCommit{};
-  stopping_.store(false); running_ = true; startError_ = ESP_OK;
-  return true;
+  startError_ = configure(videoConfig_); if (startError_ != ESP_OK) return false;
+  commit_ = {}; inFlight_.store(false); stopping_.store(false);
+  startError_ = espusb::internal::VideoTransport::begin(*this);
+  running_.store(startError_ == ESP_OK); return running_.load();
 }
-
 void EspUsbDeviceVideo::prepareToStop() { stopping_.store(true); }
-
-void EspUsbDeviceVideo::end()
-{
-#if ESP_USB_VIDEO_HAS_TINYUSB
-  if (g_activeVideo == this && device_.tinyusbStarted_) { device_.end(); return; }
-#endif
-  running_ = false;
-  inFlight_.store(false);
-#if ESP_USB_VIDEO_HAS_TINYUSB
-  if (g_activeVideo == this)
-  {
-    g_activeVideo = nullptr;
-  }
-#endif
+void EspUsbDeviceVideo::end() {
+  if (state_ && device_.tinyusbStarted_) { device_.end(); return; }
+  espusb::internal::VideoTransport::end(*this);
+  running_.store(false); inFlight_.store(false); commit_ = {};
 }
-
-bool EspUsbDeviceVideo::streaming() const
-{
-#if ESP_USB_VIDEO_HAS_TINYUSB
-  return running_ && !stopping_.load() && tud_video_n_streaming(instance_, 0);
-#else
-  return false;
-#endif
+bool EspUsbDeviceVideo::streaming() const { return espusb::internal::VideoTransport::streaming(*this); }
+esp_err_t EspUsbDeviceVideo::submitFrame(const void *frame, size_t length, uint64_t &id) { return espusb::internal::VideoTransport::submit(*this,frame,length,id); }
+bool EspUsbDeviceVideo::sendFrame(const void *frame, size_t length) { uint64_t id; return submitFrame(frame,length,id) == ESP_OK; }
+esp_err_t EspUsbDeviceVideo::cancelFrame(uint64_t id) { return espusb::internal::VideoTransport::cancel(*this,id); }
+esp_err_t EspUsbDeviceVideo::onFrameResult(FrameResultCallback c) { if (running_) return ESP_ERR_INVALID_STATE; frameResultCallback_ = std::move(c); return ESP_OK; }
+esp_err_t EspUsbDeviceVideo::onFrameComplete(FrameCompleteCallback c) { if (running_) return ESP_ERR_INVALID_STATE; frameCompleteCallback_ = std::move(c); return ESP_OK; }
+esp_err_t EspUsbDeviceVideo::onCommit(CommitCallback c) { if (running_) return ESP_ERR_INVALID_STATE; commitCallback_ = std::move(c); return ESP_OK; }
+EspUsbDeviceVideoCommit EspUsbDeviceVideo::commit() const { espusb::internal::VideoGuard guard; return commit_; }
+void EspUsbDeviceVideo::handleFrameResult(const EspUsbTransferResult &result) {
+  if (frameResultCallback_) frameResultCallback_(result);
+  if (result.status == EspUsbTransferStatus::Success && frameCompleteCallback_) frameCompleteCallback_();
 }
-
-bool EspUsbDeviceVideo::sendFrame(const void *frame, size_t length)
-{
-#if ESP_USB_VIDEO_HAS_TINYUSB
-  if (!frame || length == 0 || !streaming())
-  {
-    return false;
-  }
-  // The class driver walks the buffer with a 32-bit offset and the host was
-  // told an upper bound; a frame beyond either is a sketch bug worth failing
-  // rather than truncating.
-  if (length > maxFrameSize())
-  {
-    return false;
-  }
-  // Take the slot before touching the driver. Two tasks reaching here at once
-  // - a completion callback arming the next frame while the sketch's loop
-  // arms one too - would otherwise both call into TinyUSB, whose frame
-  // pointer, size and offset are one unguarded structure.
-  bool expected = false;
-  if (!inFlight_.compare_exchange_strong(expected, true))
-  {
-    return false;
-  }
-  // const_cast: TinyUSB's signature is non-const because a bufferless sketch
-  // may hand it a scratch buffer, but this path only reads from it.
-  if (!tud_video_n_frame_xfer(instance_, 0, const_cast<void *>(frame), length))
-  {
-    inFlight_.store(false);
-    return false;
-  }
-  return true;
-#else
-  (void)frame;
-  (void)length;
-  return false;
-#endif
-}
-
-void EspUsbDeviceVideo::onFrameComplete(FrameCompleteCallback callback)
-{
-  frameCompleteCallback_ = callback;
-}
-
-void EspUsbDeviceVideo::onCommit(CommitCallback callback)
-{
-  commitCallback_ = callback;
-}
-
-EspUsbDeviceVideoCommit EspUsbDeviceVideo::commit() const
-{
-  return commit_;
-}
-
-void EspUsbDeviceVideo::handleFrameComplete()
-{
-  inFlight_.store(false);
-  if (frameCompleteCallback_)
-  {
-    frameCompleteCallback_();
-  }
-}
-
-void EspUsbDeviceVideo::handleCommit(const EspUsbDeviceVideoCommit &commit)
-{
-  commit_ = commit;
-  if (commitCallback_)
-  {
-    commitCallback_(commit);
-  }
+void EspUsbDeviceVideo::handleCommit(const EspUsbDeviceVideoCommit &value) {
+  { espusb::internal::VideoGuard guard; commit_ = value; }
+  if (commitCallback_) commitCallback_(value);
 }

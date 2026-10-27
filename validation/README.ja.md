@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので20 tests。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので25 tests（Videoの6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -238,7 +238,7 @@ DHCP/TCPとIP回収、605取得点の確保失敗/回復、および既存の全
 serial原本は`/tmp/pytest-embedded/2026-10-27_01-02-46-482679/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-ncm-all*`。
 NCMのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
 TinyUSB treeは51 file / 15 compiled sourcesで一致。旧tests/examplesはmainと同一で、mainはv3の祖先。
-残るlegacy classはVideo。共通EP0/core/DCDと他SoC/HSの置換・実機検証は未完。
+このNCM時点ではVideoがlegacy classだった。後述のVideo独自化後も、共通EP0/core/DCDと他SoC/HSの置換・実機検証は未完。
 
 
 ## Video独自化前の設定・寿命の修正
@@ -266,3 +266,19 @@ Probe/Commit検証、reset/alt/end時のframe所有権通知、callback context�
 
 `s3/video_lifecycle`は新規のS3–S3 ISO probe。設定拒否と実frame、送信中破棄を検証する。
 現段階の範囲は[Videoガイド](../docs/V3_VIDEO_API.ja.md)。
+
+## Videoの独自driverとruntime構成
+
+2026-10-27の独自Video driver最終関連試験: `video-driver-cancel.xml`、
+**7 passed、0 skipped、0 unfinished、212.48秒**。
+ISO/Bulk各64/65/512-byte payloadの6構成を同一binaryの実行時APIで選び、
+各構成で4 frameの全byte一致、成功結果のpointer/id/byte数、64 KiB frameの取消しと古いticket拒否、
+取消し直後の再投稿、送信中破棄によるStopped一度だけの返却を確認した。
+65-byte構成は64-byte alignment・128-byte以上の外部DMA領域を利用する。
+既存の独立descriptor probeを含む。14 serial log全てSTOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-27_01-53-40-022879/`、コピー/JUnit/transcriptは`validation/.pytest-results/video-driver-cancel*`。
+VideoOnlyとDeviceOnlyの最小buildも成功し、nmでTinyUSB Video symbol不在、
+DeviceOnlyには独自Video実装もリンクされないことを確認した（`*-video-nm.txt`）。
+通常収集は25件。全体の直近成功はNCM時点の19件で、今回の関連7件と区別する。
+Videoの確保失敗・複数Function・不正control・cancel/reset/recommit競合は後続の試験対象。
+共通EP0/core/DCDと他SoC/HSは未完了であり、v3全体の完成ではない。

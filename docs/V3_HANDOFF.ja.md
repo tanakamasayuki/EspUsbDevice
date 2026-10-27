@@ -1,11 +1,12 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新確認: NCMの独自化は`ebeb3aa`。標準`--combo all`で19件全て成功（1080.50秒）。
-APIと未完範囲は[V3_NCM_API.ja.md](V3_NCM_API.ja.md)、全体結果は末尾を参照。
+最新確認: Video classも独自driverへ移行し、関連7件成功（212.48秒）。
+[Video APIと未確認範囲](V3_VIDEO_API.ja.md)を参照。標準`--combo all`の直近全成功はNCM時点の19件（1080.50秒）。
+現在の通常収集は25件。全件と今回の関連試験を混同しない。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
-旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCMのclassを独自化した。Videoと共通EP0/core/DCDはまだTinyUSBを使う。
+旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/Videoのclassを独自化した。共通EP0/core/DCDはまだTinyUSBを使う。
 
 ## 作業場所と優先順位
 
@@ -636,3 +637,22 @@ serial原本は`/tmp/pytest-embedded/2026-10-27_01-30-16-696638/`、コピーと
 Videoのclass/FIFO/global ownerはまだTinyUSBのまま。payload容量/ISO・BulkのAPI化と独自driver、
 Probe/Commit検証、reset/alt/end時のframe所有権通知、callback contextの統一は次の実装対象。
 今回の実転送はsynthetic MJPEG payloadのUSB転送検証であり、JPEG decode・PC/OS・他SoC/HSの検証ではない。
+
+## Video独自化の引き渡し
+
+2026-10-27の独自Video driver最終関連試験: `video-driver-cancel.xml`、
+**7 passed、0 skipped、0 unfinished、212.48秒**。
+ISO/Bulk各64/65/512-byte payloadの6構成を同一binaryの実行時APIで選び、
+各構成で4 frameの全byte一致、成功結果のpointer/id/byte数、64 KiB frameの取消しと古いticket拒否、
+取消し直後の再投稿、送信中破棄によるStopped一度だけの返却を確認した。
+65-byte構成は64-byte alignment・128-byte以上の外部DMA領域を利用する。
+既存の独立descriptor probeを含む。14 serial log全てSTOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-27_01-53-40-022879/`、コピー/JUnit/transcriptは`validation/.pytest-results/video-driver-cancel*`。
+VideoOnlyとDeviceOnlyの最小buildも成功し、nmでTinyUSB Video symbol不在、
+DeviceOnlyには独自Video実装もリンクされないことを確認した（`*-video-nm.txt`）。
+通常収集は25件。全体の直近成功はNCM時点の19件で、今回の関連7件と区別する。
+Videoの確保失敗・複数Function・不正control・cancel/reset/recommit競合は後続の試験対象。
+共通EP0/core/DCDと他SoC/HSは未完了であり、v3全体の完成ではない。
+
+次はVideoの確保失敗・複数instance・EP0/取消し競合の追加検証を行い、標準combo allで全件を確認する。
+その後、共通EP0/core/DCDの置換へ進む。新APIを旧test/exampleに合わせて戻さない。

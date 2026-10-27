@@ -1743,13 +1743,23 @@ enum class EspUsbDeviceVideoFormat : uint8_t
   Yuy2,
 };
 
+enum class EspUsbVideoTransport : uint8_t { Isochronous, Bulk };
+struct EspUsbVideoConfig {
+  EspUsbVideoTransport transport = EspUsbVideoTransport::Isochronous;
+  size_t payloadBytes = 512; // Includes the two-byte UVC header.
+  uint16_t isochronousPacketBytes = 0; // 0: derive from payloadBytes and speed.
+  uint8_t *payloadBuffer = nullptr; // Optional internal DMA RAM, 64-byte aligned.
+  size_t payloadBufferBytes = 0;
+};
+struct EspUsbVideoState;
+namespace espusb { namespace internal { struct VideoTransport; } }
+
 // What the host actually committed to after negotiating with the device.
 //
 // UVC calls this probe/commit: the host proposes parameters, the device may
 // adjust them, and the committed set is what streaming then uses. The values
-// can differ from what was advertised - a host is allowed to ask for a slower
-// frame interval - so a sketch that cares should read them here rather than
-// assume its own configuration was taken.
+// expose the accepted payload limit; this implementation advertises one fixed
+// format, frame size and frame interval.
 struct EspUsbDeviceVideoCommit
 {
   uint8_t formatIndex = 0;
@@ -1758,7 +1768,7 @@ struct EspUsbDeviceVideoCommit
   uint32_t frameInterval = 0;
   uint32_t maxVideoFrameSize = 0;
   // Most the host will accept in one transfer, payload header included.
-  // TinyUSB caps its own payloads at CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE.
+  // Bounded by configuration().payloadBytes and the selected ISO packet size.
   uint32_t maxPayloadTransferSize = 0;
 };
 
@@ -1767,15 +1777,12 @@ struct EspUsbDeviceVideoCommit
 //
 // The device is the source; there is no host-to-device direction. Give it a
 // frame with sendFrame() and the class driver paces the payloads out of the
-// isochronous endpoint, calling the completion callback when the last one has
+// selected endpoint, calling the completion callback when the last one has
 // gone. One frame is in flight at a time.
 //
-// Speed is the thing to decide first. Full speed (S2, S3, and P4 in FS mode)
-// gives about 1 MB/s of isochronous bandwidth, so 320x240 YUY2 runs at about
-// 6 fps and only MJPEG reaches a usable rate; high speed (P4) gives about
-// 24 MB/s. Neither is a reason not to enumerate: a UVC device that streams
-// slowly is still a UVC device, and Windows binds usbvideo.sys to it with no
-// driver to install.
+// Available throughput depends on USB speed, endpoint packet size and the
+// controller FIFO budget. Advertising a frame rate does not guarantee that
+// an encoder or the selected transport can sustain it.
 class EspUsbDeviceVideo : public EspUsbDeviceClass
 {
 public:
@@ -1800,6 +1807,8 @@ public:
   // the uncompressed size for Yuy2, and an eighth of it for Mjpeg.
   bool setMaxFrameSize(uint32_t bytes);
 
+  esp_err_t configure(const EspUsbVideoConfig &config);
+  const EspUsbVideoConfig &configuration() const { return videoConfig_; }
   bool begin() override;
   esp_err_t startError() const override { return startError_; }
   void prepareToStop() override;
@@ -1827,34 +1836,25 @@ public:
   // wMaxPacketSize this function asks for at the given speed. Isochronous
   // bandwidth is reserved per frame interval, so this number is the streaming
   // rate: 1023 B/ms at full speed, 1024 B/125 us at high speed.
-  static uint16_t isochronousPacketSize(bool highSpeed);
-  // The class driver's payload staging buffer
-  // (CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE), which is the cap on the payload size
-  // committed to the host and therefore the floor for the endpoint above.
-  // Reported by the library rather than read from the macro so a sketch sees
-  // what the library was built with, not what its own command line says.
-  static uint16_t payloadBufferSize();
-  // True when the build streams over bulk instead of isochronous
-  // (CFG_TUD_VIDEO_STREAMING_BULK), which changes the descriptor shape and the
-  // bandwidth guarantee, not this API.
-  static bool bulkStreaming();
+  uint16_t isochronousPacketSize(bool highSpeed) const;
+  // Actual logical staging capacity, or zero before begin()/after end().
+  size_t payloadBufferSize() const;
+  // Per-Function runtime selection; configure while stopped, then begin().
+  bool bulkStreaming() const;
 
-  // The host selected a streaming alternate setting and is reading frames.
-  // False between commit and the alternate setting, and after unplug.
+  // True after commit and (for ISO) streaming alternate selection. False
+  // during cancellation/reconfiguration fences, stop and unplug.
   bool streaming() const;
-  // Hand one whole frame to the class driver. The buffer must stay valid and
-  // unmodified until the completion callback runs - it is read payload by
-  // payload, not copied. Fails while a frame is still in flight, before the
-  // host has started streaming, or on a null or oversized buffer.
-  //
-  // Call it from one context. TinyUSB's video driver keeps the frame pointer,
-  // size and offset in one unguarded structure, so two tasks arming frames at
-  // once is not something the endpoint claim alone makes safe. The claim here
-  // is atomic, so the second caller is refused rather than let through, but a
-  // sketch that arms from both its loop and the completion callback is racing
-  // over which frame goes next even when nothing breaks.
+  // Borrows one frame until onFrameResult returns ownership, on every terminal
+  // status. Keep it valid and unchanged until then. YUY2 requires the exact
+  // configured frame size; MJPEG accepts 1..maxFrameSize() bytes.
+  // Concurrent callers are serialized; a second pending frame is refused.
   bool sendFrame(const void *frame, size_t length);
-  // True between sendFrame() and its completion callback.
+  esp_err_t submitFrame(const void *frame, size_t length, uint64_t &id);
+  // Asynchronous: ownership returns through onFrameResult, not this call.
+  // A stale/zero ticket returns ESP_ERR_NOT_FOUND.
+  esp_err_t cancelFrame(uint64_t id);
+  // True while the driver borrows a frame, including a cancellation fence.
   bool frameInFlight() const { return inFlight_.load(); }
 
   using FrameCompleteCallback = std::function<void()>;
@@ -1862,21 +1862,26 @@ public:
   // Runs on the USB device task when the last payload of a frame has gone.
   // Arming the next frame from inside it is the intended shape and is what
   // keeps the endpoint busy; keep everything else out of it.
-  void onFrameComplete(FrameCompleteCallback callback);
-  // Runs when the host commits its streaming parameters, before the first
-  // frame is asked for. A camera that can change resolution reads the
-  // committed frame index here.
-  void onCommit(CommitCallback callback);
+  // Receives Success, Cancelled, BusReset, TransferError or Stopped.
+  // actualBytes excludes UVC headers; actualBytesKnown can be false on abort.
+  // Callbacks run on the USB worker; registration is refused while started.
+  using FrameResultCallback = std::function<void(const EspUsbTransferResult &)>;
+  esp_err_t onFrameResult(FrameResultCallback callback);
+  esp_err_t onFrameComplete(FrameCompleteCallback callback);
+  // Runs when the host commits parameters. Recommit can cancel an old frame;
+  // only its result callback returns ownership, even after this callback.
+  esp_err_t onCommit(CommitCallback callback);
   // What the host committed to, or a zeroed struct before it has.
   EspUsbDeviceVideoCommit commit() const;
 
-  // TinyUSB's video callbacks land here. Public for the same reason
-  // EspUsbDevice::handleHidSetReport() is: the callbacks are extern "C" free
-  // functions, which cannot be befriended cleanly. Not part of the sketch API.
-  void handleFrameComplete();
-  void handleCommit(const EspUsbDeviceVideoCommit &commit);
-
 private:
+  friend struct EspUsbVideoState;
+  friend struct espusb::internal::VideoTransport;
+  void handleFrameResult(const EspUsbTransferResult &result);
+  void handleCommit(const EspUsbDeviceVideoCommit &commit);
+  EspUsbVideoConfig videoConfig_;
+  EspUsbVideoState *state_ = nullptr;
+  FrameResultCallback frameResultCallback_;
   const char *name_ = nullptr;
   uint8_t stringIndex_ = 0;
   uint8_t instance_ = 0;
@@ -1887,8 +1892,7 @@ private:
   uint32_t maxFrameSize_ = 0;
   std::atomic<bool> running_{false}, stopping_{false};
   esp_err_t startError_ = ESP_OK;
-  // Owned by whoever wins the exchange in sendFrame(), released by the
-  // completion callback. Atomic because those two run on different tasks.
+  // Published under the transport lock and read from application tasks.
   std::atomic<bool> inFlight_{false};
   FrameCompleteCallback frameCompleteCallback_;
   CommitCallback commitCallback_;
