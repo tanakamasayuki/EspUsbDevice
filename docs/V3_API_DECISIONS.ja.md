@@ -427,3 +427,13 @@ DATA段階で実長7 byteを要求する。公開API、追加heap、通知の正
 不正な短い設定を従来受理していたHostにはSTALLとなるが、不完全な値を採用しないことを優先する。
 要求長・不正設定値の拒否と設定/callback維持はS3–S3で検証した。
 Host SDKが送信量とwLengthの不一致を拒否するため、物理short OUTの実測は残課題とする。
+
+
+## Vendor control実量をcallbackへ渡す
+
+HostのwLengthと実受信量は同じとは限らず、アプリが内部関数を呼ぶ必要があった。
+EspUsbDeviceVendorControlRequestにactualBytesを追加し、SETUP=0、DATA/ACK=実data量とする。
+INの切り詰め/short/ZLPも同じ定義にし、方向ごとに別の問い合わせAPIを増やさない。
+利点はcallbackの値だけで長さを検証でき、TinyUSB由来のprivate headerを利用側から外せること。
+追加heapはなく、代償はcallback構造体の拡大と位置指定aggregate初期化への影響である。
+通常のcallback登録とsendControlResponseの呼出しは維持する。

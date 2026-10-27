@@ -354,6 +354,7 @@ uint8_t usbEndpointInterface(uint8_t port,uint8_t address) {
   auto *ep=core && core->port==port ? core->endpoint(address) : nullptr;
   return ep ? ep->interfaceNumber : Invalid;
 }
+uint16_t usbControlTransferredBytes() {return core ? core->control.transferred : 0;}
 bool rejectUsbControl() {
   if(core && core->currentControl())core->stallControl();
   return false;
@@ -420,7 +421,7 @@ bool tud_disconnect() {if(!core)return false;dcd_disconnect(core->port);return t
 void tud_task_ext(uint32_t milliseconds,bool) {espusb::internal::runUsbDeviceCore(milliseconds);}
 bool tud_task_event_ready() {return core && (core->overflow.load() || uxQueueMessagesWaiting(core->queue));}
 uint8_t *usbd_get_ctrl_buf() {return core ? core->packet : nullptr;}
-uint16_t usbd_control_received_bytes() {return core ? core->control.transferred : 0;}
+uint16_t usbd_control_received_bytes() {return espusb::internal::usbControlTransferredBytes();}
 bool tud_control_xfer(uint8_t port,const tusb_control_request_t *request,void *buffer,uint16_t bytes) {
   return core && port==core->port && request && !memcmp(request,&core->control.request,sizeof(*request)) && core->reply(buffer,bytes);
 }

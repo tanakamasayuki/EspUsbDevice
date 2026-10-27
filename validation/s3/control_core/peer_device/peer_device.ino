@@ -38,20 +38,24 @@ void setup() {
   for(unsigned i=0;i<sizeof(direct);++i)direct[i]=uint8_t(i*17+7);
   vendor.onControlRequest([](const EspUsbDeviceVendorControlRequest &r) {
     if (r.bRequest==0x60 && r.bmRequestType==0xc0 && r.wValue<=sizeof(controlIn)) {
+      const uint16_t actual=r.stage==ESP_USB_DEVICE_CONTROL_STAGE_SETUP ? 0 : std::min(r.wValue,r.wLength);
+      if(r.actualBytes!=actual)++bad;
       if(r.stage==ESP_USB_DEVICE_CONTROL_STAGE_SETUP)return vendor.sendControlResponse(r,controlIn,r.wValue);
       if(r.stage==ESP_USB_DEVICE_CONTROL_STAGE_ACK)++inputs;
       return true;
     }
     if(r.bRequest==0x61 && r.bmRequestType==0x40 && r.wLength && r.wLength<=sizeof(controlOut)) {
+      if(r.actualBytes!=(r.stage==ESP_USB_DEVICE_CONTROL_STAGE_SETUP ? 0:r.wLength))++bad;
       if(r.stage==ESP_USB_DEVICE_CONTROL_STAGE_SETUP)return vendor.sendControlResponse(r,controlOut,r.wLength);
       if(r.stage==ESP_USB_DEVICE_CONTROL_STAGE_DATA) {
-        if(usbd_control_received_bytes()!=r.wLength)return false;
+        if(r.actualBytes!=r.wLength)return false;
         for(unsigned i=0;i<r.wLength;++i)if(controlOut[i]!=uint8_t(i*37+13))++bad;
       }
       if(r.stage==ESP_USB_DEVICE_CONTROL_STAGE_ACK)++outputs;
       return true;
     }
     if(r.bRequest==0x62 && !r.wLength && (r.bmRequestType==0x40 || r.bmRequestType==0xc0)) {
+      if(r.actualBytes)++bad;
       if(r.stage==ESP_USB_DEVICE_CONTROL_STAGE_SETUP)return vendor.sendControlResponse(r);
       if(r.stage==ESP_USB_DEVICE_CONTROL_STAGE_ACK)++empty;
       return true;

@@ -512,6 +512,9 @@ struct EspUsbDeviceVendorControlRequest
   uint16_t wValue = 0;
   uint16_t wIndex = 0;
   uint16_t wLength = 0;
+  // Data-stage bytes transferred so far; 0 at SETUP. DATA/ACK report the
+  // actual total in either direction, excluding SETUP/status packets and ZLPs.
+  uint16_t actualBytes = 0;
   const void *rawRequest = nullptr;
 };
 

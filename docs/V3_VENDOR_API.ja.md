@@ -201,3 +201,33 @@ Vendorの独自control callbackでこの必須処理を置き換えることを�
 この回復処理にはcopy専用構成でもabort/fenceのコードが必要となる。
 取消しごとのheap確保は増やさず、使わない公開cancelDirectTx/cancelDirectRxは最小buildでリンクされない。
 以前の「copy専用ではabortもリンクされない」という測定条件は、この標準要求対応で変更した。
+
+
+## control callbackの実byte数
+
+`EspUsbDeviceVendorControlRequest::actualBytes`でdata段階の転送実量を読む。
+SETUPでは0、DATAとACKではその要求で転送した合計を示す。IN/OUTの両方向が対象で、
+SETUP/status packetや末尾ZLPをbyte数へ加えない。wLengthはHostの要求量のまま残る。
+INの応答をHost要求長で切り詰めた場合や短い返信も、この値で区別できる。
+追加heapやbufferは不要で、既存coreの計数値をcallbackの値へコピーする。
+
+```cpp
+vendor.onControlRequest([&](const EspUsbDeviceVendorControlRequest &r) {
+  if (r.bmRequestType != 0x40 || r.bRequest != 0x61 ||
+      !r.wLength || r.wLength > sizeof(commandBuffer)) return false;
+  if (r.stage == ESP_USB_DEVICE_CONTROL_STAGE_SETUP)
+    return vendor.sendControlResponse(r, commandBuffer, r.wLength);
+  if (r.stage == ESP_USB_DEVICE_CONTROL_STAGE_DATA)
+    return r.actualBytes == r.wLength && validateCommand(commandBuffer, r.actualBytes);
+  if (r.stage == ESP_USB_DEVICE_CONTROL_STAGE_ACK)
+    applyCommand(commandBuffer, r.actualBytes);
+  return true;
+});
+```
+
+受理条件の検査はDATA、成功した要求の適用はACKで行う。SETUP/DATAでfalseを返すと拒否する。
+ACKは成功後の通知であり、その戻り値で完了済みの要求を取り消せない。
+従来内部の`usbd_control_received_bytes()`を使っていた利用は`r.actualBytes`へ移し、
+アプリのためだけに追加した内部headerのincludeを外せる。
+callback引数へのfield追加のため通常の登録方法は維持するが、構造体の位置指定aggregate初期化は見直す。
+rawRequestは返信用の暫定内部参照で、保存して後から返信するための寿命保証は追加していない。

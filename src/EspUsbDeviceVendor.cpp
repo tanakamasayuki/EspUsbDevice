@@ -1,4 +1,5 @@
 #include "EspUsbDevice.h"
+#include "internal/EspUsbDeviceCore.h"
 #include "tusb.h"
 #include <algorithm>
 #include <string.h>
@@ -44,7 +45,7 @@ bool EspUsbDeviceVendor::handleControlRequest(uint8_t port, uint8_t stage, const
   EspUsbDeviceVendorControlRequest event;
   event.rhport = port; event.stage = stage; event.bmRequestType = r->bmRequestType;
   event.bRequest = r->bRequest; event.wValue = r->wValue; event.wIndex = r->wIndex;
-  event.wLength = r->wLength; event.rawRequest = r;
+  event.wLength = r->wLength; event.actualBytes = espusb::internal::usbControlTransferredBytes(); event.rawRequest = r;
   return controlRequestCallback_(event);
 }
 

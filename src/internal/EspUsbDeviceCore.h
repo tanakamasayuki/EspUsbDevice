@@ -10,4 +10,5 @@ void runUsbDeviceCore(uint32_t timeoutMilliseconds);
 bool usbDeviceCoreReadyForJobs();
 uint8_t usbEndpointInterface(uint8_t port, uint8_t address);
 bool rejectUsbControl();
+uint16_t usbControlTransferredBytes();
 } }

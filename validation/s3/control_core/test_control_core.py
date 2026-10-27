@@ -9,7 +9,7 @@ def test_control_core(dut, peers):
         board.expect_exact(reply + "\r\n", timeout=timeout)
 
     def stats(success, reset):
-        command(device, "stats", f"STATS input=11 output=7 empty=2 success={success} reset={reset} stop=0 bad=0")
+        command(device, "stats", f"STATS input=12 output=7 empty=2 success={success} reset={reset} stop=0 bad=0")
 
     try:
         device.write("metadata")

@@ -118,3 +118,17 @@ SET_INTERFACEとHALT/CLEAR_FEATUREで転送を停止し、fence後の返却とDA
 指定interfaceをendpoint metadataに保持し、CDCのcontrol/data interfaceと複数Functionを区別する。
 関連10件と最終4件のS3–S3試験は[試験記録](../validation/README.ja.md#vendorcdc標準要求の回復)を参照。
 全体27件の記録はこの補強前の実装に対する結果であり、現在の全28件を再実行した結果ではない。
+
+
+## Vendor controlの公開actualBytes
+
+2026-10-27。callback引数にactualBytesを追加し、実data量の取得にprivate headerを要求しない形にした。
+control_coreはSETUP=0、DATA/ACKのIN/OUT実量、0 byte返信、short返信、末尾ZLP、
+129 byte応答をHost要求の5 byteへ切り詰める条件を確認する。
+各キュー深さでVendor controlは21回（IN12、OUT7、no-data2）となった。
+`vendor-control-actual.xml`はcontrol_core、vendor_roundtrip、bulk_standardの
+**3 passed、0 skipped、0 unfinished、347.35秒**。6 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_07-36-13-108957/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/vendor-control-actual*`。
+short OUTの物理検証や、全28件の一括再試験はこの結果に含まない。
+TinyUSB manifestは24 file / 2 compiled sourcesで一致し、旧tests/examplesはmainと同じ。

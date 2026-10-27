@@ -97,6 +97,8 @@ void loop(){
       ok &= request(0xc0,0x60,n,0,n+1,n);
       for(unsigned i=0;i<n;++i)ok &= control->data_buffer[8+i]==uint8_t(i*37+13);
     }
+    ok &= request(0xc0,0x60,129,0,5,5);
+    for(unsigned i=0;i<5;++i)ok &= control->data_buffer[8+i]==uint8_t(i*37+13);
     ok &= request(0x40,0x62,0,0,0) && request(0xc0,0x62,0,0,0);
     Serial.printf("DATA %u\r\n",unsigned(ok));
   } else if(c=="errors") {

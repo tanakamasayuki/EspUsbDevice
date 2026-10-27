@@ -1,6 +1,7 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はVendor/CDCのSET_INTERFACE・HALT/CLEAR_FEATUREでの回復。関連10件と最終4件が成功。
+最新実装はVendor controlの公開actualBytesとCDCの受信長検査。各関連3件が成功。
+直前のVendor/CDC標準要求の回復は関連10件と最終4件が成功。
 全体試験の最新記録は共通core/EP0独自化`ce6a444`の全27件成功（1743.12秒）で、補強後の全28件は未実行。
 [core APIと未完の境界](V3_CORE_API.ja.md)を参照。TinyUSBのコンパイル対象はDWC2関連2本、
 vendor選択は24 file。C ABI/headerとDWC2への依存は残る。
@@ -768,3 +769,17 @@ GET_LINE_CODINGの値とcallback回数を維持することを確認した。
 wLength=7のまま実送信を0～6 byteにする実験はHost SDKが送信前に拒否したため、
 物理short OUTのDevice側挙動は未検証。`cdc-short-before*`はその失敗記録であり、Deviceの不具合再現結果ではない。
 受信長guard自体のshort経路を実機で通した証拠として、上の正常・不正SETUP/設定値試験を扱わない。
+
+
+## Vendor controlの公開actualBytes
+
+2026-10-27。callback引数にactualBytesを追加し、実data量の取得にprivate headerを要求しない形にした。
+control_coreはSETUP=0、DATA/ACKのIN/OUT実量、0 byte返信、short返信、末尾ZLP、
+129 byte応答をHost要求の5 byteへ切り詰める条件を確認する。
+各キュー深さでVendor controlは21回（IN12、OUT7、no-data2）となった。
+`vendor-control-actual.xml`はcontrol_core、vendor_roundtrip、bulk_standardの
+**3 passed、0 skipped、0 unfinished、347.35秒**。6 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_07-36-13-108957/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/vendor-control-actual*`。
+short OUTの物理検証や、全28件の一括再試験はこの結果に含まない。
+TinyUSB manifestは24 file / 2 compiled sourcesで一致し、旧tests/examplesはmainと同じ。
