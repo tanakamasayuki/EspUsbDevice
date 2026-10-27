@@ -1,39 +1,17 @@
-// USB CCID (smart card reader) device function.
-//
-// TinyUSB has no CCID class driver, and the copy under src/ is vendored
-// upstream-verbatim (tools/verify_tinyusb_vendor.py), so the driver cannot live
-// in src/class/. It is registered instead through the application driver hook
-// TinyUSB provides for exactly this, by way of internal/EspUsbDeviceAppDriver -
-// see there for why the driver is not named by usbd_app_driver_get_cb directly.
-// Nothing outside this file references it, so a sketch without a card reader
-// links none of it, and the message buffers are allocated in begin() rather than
-// reserved in .bss.
-
+// Independent, per-Function CCID transport. The temporary DWC2 ABI remains internal.
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceAppDriver.h"
-
-#include <stdlib.h>
-#include <string.h>
-
-#if __has_include("soc/soc_caps.h")
-#include "soc/soc_caps.h"
-#endif
-
-#if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
-#include "tusb.h"
+#include "internal/EspUsbDeviceCore.h"
+#include "internal/EspUsbMemory.h"
+#include "internal/EspUsbTinyUsbRuntime.h"
 #include "device/usbd_pvt.h"
-#define ESP_USB_DEVICE_CCID_HAS_TINYUSB 1
-#if __has_include("esp_heap_caps.h")
-#include "esp_heap_caps.h"
-#define ESP_USB_DEVICE_CCID_HAS_HEAP_CAPS 1
-#else
-#define ESP_USB_DEVICE_CCID_HAS_HEAP_CAPS 0
-#endif
-#else
-#define ESP_USB_DEVICE_CCID_HAS_TINYUSB 0
-#define ESP_USB_DEVICE_CCID_HAS_HEAP_CAPS 0
-#endif
-
+#include "device/usbd.h"
+#include <algorithm>
+#include <string.h>
+#include <utility>
+namespace {
+portMUX_TYPE ccidLock = portMUX_INITIALIZER_UNLOCKED;
+extern const usbd_class_driver_t ccidDriver;
 static constexpr uint8_t USB_DESC_INTERFACE = 0x04;
 static constexpr uint8_t USB_DESC_ENDPOINT = 0x05;
 // CCID functional descriptor. Shares its number with the HID descriptor, which
@@ -71,19 +49,9 @@ static constexpr uint8_t CCID_COMMAND_FAILED = 1;
 static constexpr uint8_t CCID_REQUEST_ABORT = 0x01;
 
 static constexpr size_t CCID_HEADER_SIZE = 10;
-static constexpr size_t CCID_MESSAGE_SIZE = ESP_USB_DEVICE_CCID_BUFFER_SIZE;
 static constexpr uint16_t CCID_BULK_ENDPOINT_SIZE = 64;
 static constexpr uint16_t CCID_INTERRUPT_ENDPOINT_SIZE = 8;
 static constexpr uint8_t CCID_INTERRUPT_INTERVAL_MS = 16;
-// A full-speed bulk endpoint is 64 bytes, but buildDescriptors() rewrites bulk
-// packet sizes to 512 for the High Speed descriptor set, so a P4 build has to be
-// able to receive a 512-byte packet.
-#if ESP_USB_DEVICE_CCID_HAS_TINYUSB && (CFG_TUD_MAX_SPEED == OPT_MODE_HIGH_SPEED)
-static constexpr size_t CCID_EP_OUT_CAPACITY = 512;
-#else
-static constexpr size_t CCID_EP_OUT_CAPACITY = 64;
-#endif
-
 // T=1 parameters reported by GetParameters / SetParameters / ResetParameters.
 // Fixed: the slot is emulated, so there is no real convention to negotiate.
 static const uint8_t CCID_T1_PARAMETERS[7] = {
@@ -96,7 +64,12 @@ static const uint8_t CCID_T1_PARAMETERS[7] = {
     0x00, // bNadValue
 };
 
-static EspUsbDeviceCcid *g_activeCcid = nullptr;
+static uint8_t ccidResponseType(uint8_t request) {
+  if(request==CCID_PC_TO_RDR_XFR_BLOCK || request==CCID_PC_TO_RDR_ICC_POWER_ON)return CCID_RDR_TO_PC_DATA_BLOCK;
+  if(request==CCID_PC_TO_RDR_ESCAPE)return CCID_RDR_TO_PC_ESCAPE;
+  if(request==CCID_PC_TO_RDR_GET_PARAMETERS || request==CCID_PC_TO_RDR_SET_PARAMETERS || request==CCID_PC_TO_RDR_RESET_PARAMETERS)return CCID_RDR_TO_PC_PARAMETERS;
+  return CCID_RDR_TO_PC_SLOT_STATUS;
+}
 
 static uint32_t ccidRead32(const uint8_t *src)
 {
@@ -120,434 +93,185 @@ static void ccidWrite32(uint8_t *dst, uint32_t value)
   dst[3] = static_cast<uint8_t>((value >> 24) & 0xff);
 }
 
-#if ESP_USB_DEVICE_CCID_HAS_TINYUSB
+}
 
-//--------------------------------------------------------------------+
-// TinyUSB class driver
-//--------------------------------------------------------------------+
-
-namespace
-{
-
-struct CcidDriverState
-{
-  uint8_t rhport = 0;
-  uint8_t interfaceNumber = 0xff;
-  uint8_t endpointIn = 0;
-  uint8_t endpointOut = 0;
-  uint8_t endpointNotify = 0;
-  uint16_t endpointInSize = 0;
-  uint16_t endpointOutSize = 0;
-  // Assembly of one PC_to_RDR message. A message is longer than one packet, so
-  // `received` counts everything the host sent for it (including the part that
-  // did not fit) and `stored` counts what is in the buffer.
-  uint32_t received = 0;
-  uint32_t stored = 0;
-  // The last IN transfer ended on a packet boundary, so a ZLP still has to
-  // follow before the host sees the transfer as complete.
-  bool zlpPending = false;
+struct EspUsbCcidState {
+  static EspUsbCcidState *first;
+  EspUsbCcidState *next=nullptr;
+  EspUsbDeviceCcid &owner;
+  uint8_t *packet=nullptr,*message=nullptr,*notify=nullptr;
+  uint8_t port=0,interface=255,in=0,out=0,interrupt=0;
+  uint16_t packetCapacity=64,packetSize=0;
+  uint64_t received=0;
+  size_t stored=0;
+  bool txBusy=false,zlp=false,draining=false,fenceQueued=false;
+  std::atomic<bool> stopping{false};
+  uint32_t epoch=0,fenceEpoch=0;
+  espusb::internal::TinyUsbRuntimeJob job{pump,this};
+  explicit EspUsbCcidState(EspUsbDeviceCcid &o):owner(o) {}
+  ~EspUsbCcidState() {
+    espusb::internal::removeTinyUsbRuntimeJob(job);
+    for(auto *p:{packet,message,notify,owner.response_})espusb::internal::freeUsbMemory(p);
+    owner.response_=nullptr;
+  }
+  void receive() {
+    if(!stopping && !draining && !txBusy && out)usbd_edpt_xfer(port,out,packet,packetSize,false);
+  }
+  bool send(size_t bytes) {
+    if(stopping || draining || !in || txBusy || bytes>owner.config_.messageBytes || !usbd_edpt_claim(port,in))return false;
+    txBusy=true;zlp=bytes%packetSize==0;
+    if(usbd_edpt_xfer(port,in,owner.response_,uint16_t(bytes),false))return true;
+    txBusy=zlp=false;usbd_edpt_release(port,in);return false;
+  }
+  static void finishDrain(void *context) {
+    auto *s=static_cast<EspUsbCcidState *>(context);s->fenceQueued=false;
+    if(s->stopping || !s->draining)return;
+    if(s->epoch!=s->fenceEpoch){espusb::internal::postTinyUsbRuntimeJob(s->job);return;}
+    for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)usbd_edpt_clear_stall(s->port,ep);
+    s->received=s->stored=0;s->txBusy=s->zlp=s->draining=false;
+    s->receive();s->owner.notifySlotState();
+  }
+  static void pump(void *context) {
+    auto *s=static_cast<EspUsbCcidState *>(context);
+    if(s->stopping)return;
+    if(s->draining) {
+      if(!s->fenceQueued){s->fenceEpoch=s->epoch;s->fenceQueued=usbd_try_defer_func(finishDrain,s);if(!s->fenceQueued)espusb::internal::postTinyUsbRuntimeJob(s->job);}
+      return;
+    }
+    if(s->interrupt && s->owner.notifyPending_.load() && usbd_edpt_claim(s->port,s->interrupt)) {
+      portENTER_CRITICAL(&ccidLock);
+      s->owner.notifyPending_=false;
+      s->notify[0]=0x50;s->notify[1]=uint8_t((s->owner.cardPresent_ ? 1:0)|2);
+      portEXIT_CRITICAL(&ccidLock);
+      if(!usbd_edpt_xfer(s->port,s->interrupt,s->notify,2,false)){s->owner.notifyPending_=true;usbd_edpt_release(s->port,s->interrupt);}
+    }
+  }
+  static void init() {}
+  static void resetAll(uint8_t) {
+    for(auto *s=first;s;s=s->next) {
+      ++s->epoch;s->in=s->out=s->interrupt=0;s->interface=255;
+      s->received=s->stored=0;s->txBusy=s->zlp=false;s->draining=s->fenceQueued;
+    }
+  }
+  static bool deinit(){resetAll(0);return true;}
+  static uint16_t open(uint8_t port,const tusb_desc_interface_t *itf,uint16_t bytes) {
+    if(itf->bLength!=9 || itf->bInterfaceClass!=11 || itf->bInterfaceSubClass || itf->bInterfaceProtocol)return 0;
+    auto *s=first;while(s && s->owner.interfaceNumber_!=itf->bInterfaceNumber)s=s->next;if(!s)return 0;
+    const unsigned count=s->owner.config_.removable ? 3:2,needed=63+7*count;
+    if(bytes<needed || itf->bNumEndpoints!=count)return 0;
+    const auto *d=reinterpret_cast<const uint8_t *>(itf);
+    if(d[9]!=54 || d[10]!=0x21 || ccidRead32(d+9+44)!=s->owner.config_.messageBytes)return 0;
+    s->port=port;s->interface=itf->bInterfaceNumber;
+    for(unsigned n=0;n<count;++n) {
+      const auto *ep=reinterpret_cast<const tusb_desc_endpoint_t *>(d+63+7*n);
+      if(ep->bLength!=7 || ep->bDescriptorType!=5)return 0;
+      const uint16_t mps=tu_edpt_packet_size(ep);
+      if(ep->bmAttributes.xfer==TUSB_XFER_BULK && mps<=s->packetCapacity) {
+        if(ep->bEndpointAddress&128){if(s->in)return 0;s->in=ep->bEndpointAddress;}
+        else {if(s->out)return 0;s->out=ep->bEndpointAddress;s->packetSize=mps;}
+      } else if(ep->bmAttributes.xfer==TUSB_XFER_INTERRUPT && (ep->bEndpointAddress&128) && mps<=8 && s->notify) {
+        if(s->interrupt)return 0;s->interrupt=ep->bEndpointAddress;
+      } else return 0;
+      if(!usbd_edpt_open(port,ep))return 0;
+    }
+    if(!s->in || !s->out)return 0;s->receive();return needed;
+  }
+  static bool control(uint8_t port,uint8_t stage,const tusb_control_request_t *r) {
+    auto *s=first;while(s && s->interface!=r->wIndex)s=s->next;if(!s)return false;
+    if(r->bmRequestType==1 && r->bRequest==11 && !r->wValue && !r->wLength) {
+      if(stage!=CONTROL_STAGE_SETUP)return true;
+      bool ok=true;for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)ok &= usbd_edpt_abort(port,ep);
+      if(!ok)return espusb::internal::rejectUsbControl();
+      ++s->epoch;s->draining=true;s->owner.aborted_=false;
+      if(!espusb::internal::postTinyUsbRuntimeJob(s->job))return espusb::internal::rejectUsbControl();
+      return tud_control_status(port,r);
+    }
+    if(r->bmRequestType!=0x21 || r->bRequest!=1 || r->wLength || uint8_t(r->wValue))return false;
+    if(stage==CONTROL_STAGE_SETUP)return tud_control_status(port,r);
+    if(stage==CONTROL_STAGE_ACK)s->owner.handleAbort(uint8_t(r->wValue),uint8_t(r->wValue>>8));
+    return true;
+  }
+  static bool complete(uint8_t,uint8_t ep,xfer_result_t result,uint32_t bytes) {
+    auto *s=first;while(s && s->in!=ep && s->out!=ep && s->interrupt!=ep)s=s->next;if(!s)return false;
+    if(s->stopping || s->draining)return true;
+    if(ep==s->interrupt){s->owner.handleNotifyComplete();return true;}
+    if(ep==s->in) {
+      if(result==XFER_RESULT_SUCCESS && s->zlp){s->zlp=false;usbd_edpt_xfer(s->port,s->in,nullptr,0,false);return true;}
+      s->txBusy=s->zlp=false;s->receive();return true;
+    }
+    if(result!=XFER_RESULT_SUCCESS || bytes>s->packetSize){s->received=s->stored=0;s->receive();return true;}
+    s->received+=bytes;
+    const size_t copy=std::min(size_t(bytes),s->owner.config_.messageBytes-s->stored);
+    memcpy(s->message+s->stored,s->packet,copy);s->stored+=copy;
+    if(s->stored>=10) {
+      const uint64_t wanted=uint64_t(ccidRead32(s->message+1))+10;
+      if(s->received>=wanted || bytes<s->packetSize) {
+        if(s->received!=wanted || wanted>s->owner.config_.messageBytes)s->owner.handleOverrun(s->message[0],s->message[5],s->message[6]);
+        else s->owner.handleMessage(s->message,size_t(wanted));
+        s->received=s->stored=0;
+      }
+    } else if(bytes<s->packetSize)s->received=s->stored=0;
+    s->receive();return true;
+  }
 };
-
-CcidDriverState g_driver;
-
-// Endpoint and assembly buffers. Heap-allocated in espUsbCcidDriverAttach() so
-// that they exist only for a sketch that actually instantiates the class, and
-// aligned because a DMA-capable port may transfer straight out of them.
-uint8_t *g_epOutBuffer = nullptr;
-uint8_t *g_epInBuffer = nullptr;
-uint8_t *g_epNotifyBuffer = nullptr;
-uint8_t *g_messageBuffer = nullptr;
-
-void *ccidAlloc(size_t size)
-{
-  const size_t alignment = 64;
-  const size_t rounded = ((size + alignment - 1) / alignment) * alignment;
-#if ESP_USB_DEVICE_CCID_HAS_HEAP_CAPS
-  return heap_caps_aligned_alloc(alignment, rounded,
-                                 MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-#else
-  return aligned_alloc(alignment, rounded);
+EspUsbCcidState *EspUsbCcidState::first=nullptr;
+namespace {
+const usbd_class_driver_t ccidDriver={.name="EspCcid",.init=EspUsbCcidState::init,.deinit=EspUsbCcidState::deinit,
+.reset=EspUsbCcidState::resetAll,.open=EspUsbCcidState::open,.control_xfer_cb=EspUsbCcidState::control,.xfer_cb=EspUsbCcidState::complete,.sof=nullptr};
+}
+EspUsbDeviceCcid::EspUsbDeviceCcid(EspUsbDevice &d):EspUsbDeviceClass(d) {}
+EspUsbDeviceCcid::~EspUsbDeviceCcid(){end();}
+esp_err_t EspUsbDeviceCcid::configure(const EspUsbCcidConfig &c) {
+  if(state_)return ESP_ERR_INVALID_STATE;
+  if(c.messageBytes<64 || c.messageBytes>UINT16_MAX)return ESP_ERR_INVALID_SIZE;
+  config_=c;return ESP_OK;
+}
+size_t EspUsbDeviceCcid::messageCapacity() const {
+  portENTER_CRITICAL(&ccidLock);size_t n=state_ ? config_.messageBytes:0;portEXIT_CRITICAL(&ccidLock);return n;
+}
+bool EspUsbDeviceCcid::begin() {
+  if(state_ || !registered_){startError_=ESP_ERR_INVALID_STATE;return false;}
+  startError_=configure(config_);if(startError_!=ESP_OK)return false;
+  if(!config_.removable && !cardPresent_){startError_=ESP_ERR_INVALID_STATE;return false;}
+  uint16_t mps=64;
+#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
+  if(device_.config().controller!=EspUsbController::FullSpeed)mps=512;
 #endif
+  if(config_.messageBytes<mps){startError_=ESP_ERR_INVALID_SIZE;return false;}
+  auto *s=espusb::internal::newUsbObject<EspUsbCcidState>(*this);
+  if(s) {
+    s->packetCapacity=mps;
+    s->packet=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(mps,64,true));
+    s->message=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(config_.messageBytes));
+    response_=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(config_.messageBytes,64,true));
+    if(config_.removable)s->notify=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(8,64,true));
+  }
+  if(!s || !s->packet || !s->message || !response_ || (config_.removable && !s->notify) ||
+      (!EspUsbCcidState::first && !espUsbDeviceRegisterAppDrivers(&ccidDriver,1))) {
+    espusb::internal::deleteUsbObject(s);startError_=ESP_ERR_NO_MEM;return false;
+  }
+  portENTER_CRITICAL(&ccidLock);s->next=EspUsbCcidState::first;EspUsbCcidState::first=s;state_=s;portEXIT_CRITICAL(&ccidLock);
+  cardPowered_=false;aborted_=false;startError_=ESP_OK;return true;
+}
+void EspUsbDeviceCcid::prepareToStop(){portENTER_CRITICAL(&ccidLock);if(state_)state_->stopping=true;portEXIT_CRITICAL(&ccidLock);}
+void EspUsbDeviceCcid::end() {
+  if(state_ && device_.tinyusbStarted_){device_.end();return;}
+  portENTER_CRITICAL(&ccidLock);
+  auto *s=state_;state_=nullptr;auto **link=&EspUsbCcidState::first;while(*link && *link!=s)link=&(*link)->next;if(*link)*link=s->next;
+  bool empty=!EspUsbCcidState::first;portEXIT_CRITICAL(&ccidLock);
+  espusb::internal::deleteUsbObject(s);if(empty)espUsbDeviceUnregisterAppDrivers(&ccidDriver,1);
 }
 
-void ccidFreeBuffers()
-{
-  free(g_epOutBuffer);
-  free(g_epInBuffer);
-  free(g_epNotifyBuffer);
-  free(g_messageBuffer);
-  g_epOutBuffer = nullptr;
-  g_epInBuffer = nullptr;
-  g_epNotifyBuffer = nullptr;
-  g_messageBuffer = nullptr;
-}
-
-bool ccidAllocBuffers()
-{
-  if (g_messageBuffer)
-  {
-    return true;
-  }
-  g_epOutBuffer = static_cast<uint8_t *>(ccidAlloc(CCID_EP_OUT_CAPACITY));
-  g_epInBuffer = static_cast<uint8_t *>(ccidAlloc(CCID_MESSAGE_SIZE));
-  g_epNotifyBuffer = static_cast<uint8_t *>(ccidAlloc(CCID_INTERRUPT_ENDPOINT_SIZE));
-  g_messageBuffer = static_cast<uint8_t *>(ccidAlloc(CCID_MESSAGE_SIZE));
-  if (!g_epOutBuffer || !g_epInBuffer || !g_epNotifyBuffer || !g_messageBuffer)
-  {
-    ccidFreeBuffers();
-    return false;
-  }
-  return true;
-}
-
-bool ccidArmReceive()
-{
-  if (!g_driver.endpointOut || !g_epOutBuffer)
-  {
-    return false;
-  }
-  return usbd_edpt_xfer(g_driver.rhport, g_driver.endpointOut, g_epOutBuffer,
-                        g_driver.endpointOutSize, false);
-}
-
-void ccidResetMessage()
-{
-  g_driver.received = 0;
-  g_driver.stored = 0;
-}
-
-} // namespace
-
-// Reply to a message that could not be stored in full. The host still expects a
-// response carrying its bSeq, so the header is taken from what was buffered.
-static void ccidReportOverrun()
-{
-  if (!g_activeCcid || g_driver.stored < CCID_HEADER_SIZE)
-  {
-    return;
-  }
-  g_activeCcid->handleOverrun(g_messageBuffer[0], g_messageBuffer[5], g_messageBuffer[6]);
-}
-
-// Defined below, next to the callbacks it names.
-extern const usbd_class_driver_t espUsbDeviceCcidDriverTable[1];
-
-bool espUsbCcidDriverAttach()
-{
-  if (!ccidAllocBuffers())
-  {
-    return false;
-  }
-  if (!espUsbDeviceRegisterAppDrivers(espUsbDeviceCcidDriverTable, 1))
-  {
-    ccidFreeBuffers();
-    return false;
-  }
-  return true;
-}
-
-void espUsbCcidDriverDetach()
-{
-  espUsbDeviceUnregisterAppDrivers(espUsbDeviceCcidDriverTable, 1);
-  g_driver = CcidDriverState();
-  ccidFreeBuffers();
-}
-
-bool espUsbCcidDriverMounted()
-{
-  return g_driver.endpointIn != 0 && g_driver.endpointOut != 0;
-}
-
-bool espUsbCcidDriverSend(const uint8_t *message, size_t length)
-{
-  if (!message || length == 0 || length > CCID_MESSAGE_SIZE || !g_epInBuffer)
-  {
-    return false;
-  }
-  if (!g_driver.endpointIn)
-  {
-    return false;
-  }
-  if (!usbd_edpt_claim(g_driver.rhport, g_driver.endpointIn))
-  {
-    return false;
-  }
-  memcpy(g_epInBuffer, message, length);
-  g_driver.zlpPending = g_driver.endpointInSize != 0 &&
-                        (length % g_driver.endpointInSize) == 0;
-  return usbd_edpt_xfer(g_driver.rhport, g_driver.endpointIn, g_epInBuffer,
-                        static_cast<uint16_t>(length), false);
-}
-
-bool espUsbCcidDriverNotify(const uint8_t *data, size_t length)
-{
-  if (!data || length == 0 || length > CCID_INTERRUPT_ENDPOINT_SIZE || !g_epNotifyBuffer)
-  {
-    return false;
-  }
-  if (!g_driver.endpointNotify)
-  {
-    return false;
-  }
-  if (!usbd_edpt_claim(g_driver.rhport, g_driver.endpointNotify))
-  {
-    return false;
-  }
-  memcpy(g_epNotifyBuffer, data, length);
-  return usbd_edpt_xfer(g_driver.rhport, g_driver.endpointNotify, g_epNotifyBuffer,
-                        static_cast<uint16_t>(length), false);
-}
-
-static void ccidd_init(void)
-{
-  g_driver = CcidDriverState();
-}
-
-static bool ccidd_deinit(void)
-{
-  g_driver = CcidDriverState();
-  return true;
-}
-
-static void ccidd_reset(uint8_t rhport)
-{
-  (void)rhport;
-  g_driver = CcidDriverState();
-}
-
-static uint16_t ccidd_open(uint8_t rhport, tusb_desc_interface_t const *desc_itf, uint16_t max_len)
-{
-  TU_VERIFY(USB_CLASS_SMART_CARD == desc_itf->bInterfaceClass, 0);
-  // Subclass / protocol 0 is bulk CCID. ICCD variants (protocol 1 and 2) speak
-  // over control transfers only and are not what this driver implements.
-  TU_VERIFY(0 == desc_itf->bInterfaceSubClass && 0 == desc_itf->bInterfaceProtocol, 0);
-  TU_VERIFY(g_messageBuffer != nullptr, 0);
-
-  const uint8_t *desc_end = reinterpret_cast<const uint8_t *>(desc_itf) + max_len;
-  const uint8_t *p_desc = tu_desc_next(desc_itf);
-
-  g_driver.rhport = rhport;
-  g_driver.interfaceNumber = desc_itf->bInterfaceNumber;
-  g_driver.endpointIn = 0;
-  g_driver.endpointOut = 0;
-  g_driver.endpointNotify = 0;
-  ccidResetMessage();
-
-  while (tu_desc_in_bounds(p_desc, desc_end))
-  {
-    const uint8_t desc_type = tu_desc_type(p_desc);
-    if (desc_type == TUSB_DESC_INTERFACE || desc_type == TUSB_DESC_INTERFACE_ASSOCIATION)
-    {
-      break;
-    }
-    if (desc_type == TUSB_DESC_ENDPOINT)
-    {
-      const tusb_desc_endpoint_t *desc_ep = reinterpret_cast<const tusb_desc_endpoint_t *>(p_desc);
-      const uint16_t packetSize = tu_edpt_packet_size(desc_ep);
-      TU_ASSERT(usbd_edpt_open(rhport, desc_ep), 0);
-      if (desc_ep->bmAttributes.xfer == TUSB_XFER_INTERRUPT)
-      {
-        TU_ASSERT(packetSize <= CCID_INTERRUPT_ENDPOINT_SIZE, 0);
-        g_driver.endpointNotify = desc_ep->bEndpointAddress;
-      }
-      else if (tu_edpt_dir(desc_ep->bEndpointAddress) == TUSB_DIR_IN)
-      {
-        g_driver.endpointIn = desc_ep->bEndpointAddress;
-        g_driver.endpointInSize = packetSize;
-      }
-      else
-      {
-        TU_ASSERT(packetSize <= CCID_EP_OUT_CAPACITY, 0);
-        g_driver.endpointOut = desc_ep->bEndpointAddress;
-        g_driver.endpointOutSize = packetSize;
-      }
-    }
-    p_desc = tu_desc_next(p_desc);
-  }
-
-  TU_ASSERT(g_driver.endpointIn && g_driver.endpointOut, 0);
-  TU_ASSERT(ccidArmReceive(), 0);
-  return static_cast<uint16_t>(reinterpret_cast<uintptr_t>(p_desc) -
-                               reinterpret_cast<uintptr_t>(desc_itf));
-}
-
-static bool ccidd_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
-{
-  if (request->bmRequestType_bit.type != TUSB_REQ_TYPE_CLASS)
-  {
-    return false;
-  }
-  if (stage != CONTROL_STAGE_SETUP)
-  {
-    return true;
-  }
-  // GET_CLOCK_FREQUENCIES / GET_DATA_RATES are only legal when the class
-  // descriptor announces more than one, which this device does not: stalling is
-  // the conforming answer, so they fall through to the `false` below.
-  if (request->bRequest == CCID_REQUEST_ABORT)
-  {
-    if (g_activeCcid)
-    {
-      g_activeCcid->handleAbort(tu_u16_low(request->wValue), tu_u16_high(request->wValue));
-    }
-    return tud_control_status(rhport, request);
-  }
-  return false;
-}
-
-static bool ccidd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes)
-{
-  (void)rhport;
-
-  if (ep_addr == g_driver.endpointIn)
-  {
-    if (g_driver.zlpPending)
-    {
-      g_driver.zlpPending = false;
-      if (usbd_edpt_claim(g_driver.rhport, g_driver.endpointIn))
-      {
-        usbd_edpt_xfer(g_driver.rhport, g_driver.endpointIn, g_epInBuffer, 0, false);
-      }
-    }
-    return true;
-  }
-
-  if (ep_addr == g_driver.endpointNotify)
-  {
-    // The endpoint is free again: send the slot state if a change was dropped
-    // while this notification was waiting to be polled.
-    if (g_activeCcid)
-    {
-      g_activeCcid->handleNotifyComplete();
-    }
-    return true;
-  }
-
-  if (ep_addr != g_driver.endpointOut)
-  {
-    return true;
-  }
-
-  if (result != XFER_RESULT_SUCCESS)
-  {
-    ccidResetMessage();
-    ccidArmReceive();
-    return true;
-  }
-
-  if (xferred_bytes > 0)
-  {
-    g_driver.received += xferred_bytes;
-    if (g_driver.stored < CCID_MESSAGE_SIZE)
-    {
-      const uint32_t room = CCID_MESSAGE_SIZE - g_driver.stored;
-      const uint32_t copy = xferred_bytes < room ? xferred_bytes : room;
-      memcpy(&g_messageBuffer[g_driver.stored], g_epOutBuffer, copy);
-      g_driver.stored += copy;
-    }
-  }
-
-  if (g_driver.stored >= CCID_HEADER_SIZE)
-  {
-    const uint32_t total = CCID_HEADER_SIZE + ccidRead32(&g_messageBuffer[1]);
-    if (g_driver.received >= total)
-    {
-      if (total <= CCID_MESSAGE_SIZE)
-      {
-        if (g_activeCcid)
-        {
-          g_activeCcid->handleMessage(g_messageBuffer, total);
-        }
-      }
-      else
-      {
-        ccidReportOverrun();
-      }
-      ccidResetMessage();
-    }
-  }
-  else if (xferred_bytes == 0 || xferred_bytes < g_driver.endpointOutSize)
-  {
-    // Short packet before even a header arrived: the host ended the transfer, so
-    // whatever is buffered cannot become a message.
-    ccidResetMessage();
-  }
-
-  ccidArmReceive();
-  return true;
-}
-
-const usbd_class_driver_t espUsbDeviceCcidDriverTable[1] = {
-    {
-        .name = "CCID",
-        .init = ccidd_init,
-        .deinit = ccidd_deinit,
-        .reset = ccidd_reset,
-        .open = ccidd_open,
-        .control_xfer_cb = ccidd_control_xfer_cb,
-        .xfer_cb = ccidd_xfer_cb,
-        .xfer_isr = NULL,
-        .sof = NULL,
-    },
-};
-
-#else // !ESP_USB_DEVICE_CCID_HAS_TINYUSB
-
-static bool espUsbCcidDriverAttach() { return false; }
-static void espUsbCcidDriverDetach() {}
-static bool espUsbCcidDriverMounted() { return false; }
-static bool espUsbCcidDriverSend(const uint8_t *, size_t) { return false; }
-static bool espUsbCcidDriverNotify(const uint8_t *, size_t) { return false; }
-
-#endif // ESP_USB_DEVICE_CCID_HAS_TINYUSB
-
-//--------------------------------------------------------------------+
-// EspUsbDeviceCcid
-//--------------------------------------------------------------------+
-
-EspUsbDeviceCcid::EspUsbDeviceCcid(EspUsbDevice &device) : EspUsbDeviceClass(device)
-{
-}
-
-EspUsbDeviceCcid::~EspUsbDeviceCcid()
-{
-  end();
-}
-
-bool EspUsbDeviceCcid::begin()
-{
-  if (g_activeCcid && g_activeCcid != this)
-  {
-    return false;
-  }
-  if (!espUsbCcidDriverAttach())
-  {
-    return false;
-  }
-  g_activeCcid = this;
-  cardPowered_ = false;
-  aborted_ = false;
-  return true;
-}
-
-void EspUsbDeviceCcid::end()
-{
-  if (g_activeCcid != this)
-  {
-    return;
-  }
-  g_activeCcid = nullptr;
-  espUsbCcidDriverDetach();
-}
 
 uint16_t EspUsbDeviceCcid::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber,
                                                    uint8_t endpointNumber, uint16_t endpointSize)
 {
-  if (endpointNumber == 0 || endpointNumber > 14)
+  if (endpointNumber == 0 || endpointNumber > (config_.removable ? 14:15))
   {
     return 0;
   }
-  if (!dst) return 9 + 54 + 3 * 7;
+  if (!dst) return 9 + 54 + (config_.removable ? 3:2) * 7;
+  interfaceNumber_ = interfaceNumber;
   const uint16_t packet = endpointSize > 64 ? 512 : CCID_BULK_ENDPOINT_SIZE;
   const uint8_t epOut = endpointNumber;
   const uint8_t epIn = static_cast<uint8_t>(0x80 | endpointNumber);
@@ -555,7 +279,7 @@ uint16_t EspUsbDeviceCcid::configurationDescriptor(uint8_t *dst, uint8_t interfa
 
   uint16_t offset = 0;
   const uint8_t interfaceDescriptor[] = {
-      9, USB_DESC_INTERFACE, interfaceNumber, 0, 3, USB_CLASS_SMART_CARD, 0x00, 0x00, 0,
+      9, USB_DESC_INTERFACE, interfaceNumber, 0, uint8_t(config_.removable ? 3:2), USB_CLASS_SMART_CARD, 0x00, 0x00, stringIndex_,
   };
   memcpy(&dst[offset], interfaceDescriptor, sizeof(interfaceDescriptor));
   offset += sizeof(interfaceDescriptor);
@@ -582,7 +306,7 @@ uint16_t EspUsbDeviceCcid::configurationDescriptor(uint8_t *dst, uint8_t interfa
   // and parameter negotiation itself, and exchanges whole short APDUs. That last
   // part is what tells the host it may send an APDU rather than TPDUs.
   ccidWrite32(&ccid[40], 0x000204fe);
-  ccidWrite32(&ccid[44], CCID_HEADER_SIZE + 261); // dwMaxCCIDMessageLength
+  ccidWrite32(&ccid[44], uint32_t(config_.messageBytes)); // dwMaxCCIDMessageLength
   ccid[48] = 0xff;                    // bClassGetResponse: echoes the APDU class
   ccid[49] = 0xff;                    // bClassEnvelope: echoes the APDU class
   ccidWrite16(&ccid[50], 0);          // wLcdLayout: no display
@@ -600,10 +324,11 @@ uint16_t EspUsbDeviceCcid::configurationDescriptor(uint8_t *dst, uint8_t interfa
       7, USB_DESC_ENDPOINT, epNotify, USB_ENDPOINT_ATTR_INTERRUPT,
       static_cast<uint8_t>(CCID_INTERRUPT_ENDPOINT_SIZE & 0xff),
       static_cast<uint8_t>((CCID_INTERRUPT_ENDPOINT_SIZE >> 8) & 0xff),
-      CCID_INTERRUPT_INTERVAL_MS,
+      uint8_t(endpointSize > 64 ? 8 : CCID_INTERRUPT_INTERVAL_MS),
   };
-  memcpy(&dst[offset], endpoints, sizeof(endpoints));
-  offset += sizeof(endpoints);
+  const size_t endpointBytes=config_.removable ? sizeof(endpoints):14;
+  memcpy(&dst[offset], endpoints, endpointBytes);
+  offset += endpointBytes;
   return offset;
 }
 
@@ -623,28 +348,18 @@ void EspUsbDeviceCcid::onBusDetached()
   aborted_ = false;
 }
 
-bool EspUsbDeviceCcid::insertCard(const uint8_t *atr, size_t length)
-{
-  if (!atr || length < 2 || length > ESP_USB_DEVICE_CCID_MAX_ATR)
-  {
-    return false;
-  }
-  // Write the ATR before announcing the card: the device task only reads it once
-  // cardPresent_ is set, so no lock is needed between the two tasks.
-  memcpy(atr_, atr, length);
-  atrLength_ = static_cast<uint8_t>(length);
-  cardPowered_ = false;
-  cardPresent_ = true;
-  notifySlotState();
-  return true;
+bool EspUsbDeviceCcid::insertCard(const uint8_t *atr,size_t bytes) {
+  if(!atr || bytes<2 || bytes>ESP_USB_DEVICE_CCID_MAX_ATR)return false;
+  portENTER_CRITICAL(&ccidLock);
+  if(state_ && (!config_.removable || state_->stopping)){portEXIT_CRITICAL(&ccidLock);return false;}
+  memcpy(atr_,atr,bytes);atrLength_=uint8_t(bytes);cardPowered_=false;cardPresent_=true;
+  portEXIT_CRITICAL(&ccidLock);notifySlotState();return true;
 }
-
-void EspUsbDeviceCcid::removeCard()
-{
-  cardPresent_ = false;
-  cardPowered_ = false;
-  atrLength_ = 0;
-  notifySlotState();
+esp_err_t EspUsbDeviceCcid::removeCard() {
+  portENTER_CRITICAL(&ccidLock);
+  if(state_ && (!config_.removable || state_->stopping)){portEXIT_CRITICAL(&ccidLock);return ESP_ERR_INVALID_STATE;}
+  cardPresent_=cardPowered_=false;atrLength_=0;
+  portEXIT_CRITICAL(&ccidLock);notifySlotState();return ESP_OK;
 }
 
 bool EspUsbDeviceCcid::cardPresent() const
@@ -657,34 +372,30 @@ bool EspUsbDeviceCcid::cardPowered() const
   return cardPowered_;
 }
 
-size_t EspUsbDeviceCcid::atr(uint8_t *buffer, size_t capacity) const
-{
-  if (!buffer || capacity < atrLength_)
-  {
-    return 0;
-  }
-  memcpy(buffer, atr_, atrLength_);
-  return atrLength_;
+size_t EspUsbDeviceCcid::atr(uint8_t *buffer,size_t capacity) const {
+  portENTER_CRITICAL(&ccidLock);size_t n=atrLength_;
+  if(!buffer || capacity<n)n=0;else memcpy(buffer,atr_,n);
+  portEXIT_CRITICAL(&ccidLock);return n;
 }
 
-void EspUsbDeviceCcid::onApdu(ApduCallback callback)
-{
-  apduCallback_ = callback;
+esp_err_t EspUsbDeviceCcid::onApdu(ApduCallback callback) {
+  if(state_)return ESP_ERR_INVALID_STATE;
+  apduCallback_=std::move(callback);return ESP_OK;
 }
 
-void EspUsbDeviceCcid::onEscape(EscapeCallback callback)
-{
-  escapeCallback_ = callback;
+esp_err_t EspUsbDeviceCcid::onEscape(EscapeCallback callback) {
+  if(state_)return ESP_ERR_INVALID_STATE;
+  escapeCallback_=std::move(callback);return ESP_OK;
 }
 
-void EspUsbDeviceCcid::onPower(PowerCallback callback)
-{
-  powerCallback_ = callback;
+esp_err_t EspUsbDeviceCcid::onPower(PowerCallback callback) {
+  if(state_)return ESP_ERR_INVALID_STATE;
+  powerCallback_=std::move(callback);return ESP_OK;
 }
 
 bool EspUsbDeviceCcid::mounted() const
 {
-  return espUsbCcidDriverMounted();
+  portENTER_CRITICAL(&ccidLock);bool ready=state_ && !state_->stopping && state_->in && tud_ready();portEXIT_CRITICAL(&ccidLock);return ready;
 }
 
 uint32_t EspUsbDeviceCcid::commandCount() const
@@ -711,31 +422,13 @@ uint8_t EspUsbDeviceCcid::iccStatus() const
   return cardPowered_ ? ESP_USB_DEVICE_CCID_ICC_ACTIVE : ESP_USB_DEVICE_CCID_ICC_INACTIVE;
 }
 
-void EspUsbDeviceCcid::notifySlotState()
-{
-  // RDR_to_PC_NotifySlotChange: two bits per slot, bit 0 the current state and
-  // bit 1 "changed since the last notification".
-  const uint8_t message[2] = {
-      CCID_RDR_TO_PC_NOTIFY_SLOT_CHANGE,
-      static_cast<uint8_t>((cardPresent_ ? 0x01 : 0x00) | 0x02),
-  };
-  // The endpoint holds one notification at a time and only frees up when the
-  // host polls it - which it does not do at all until it opens the interface, so
-  // the very first notification can sit there for a long time. A card that moves
-  // in the meantime must not be lost: remember that the host is behind, and send
-  // the state it ends up in once the endpoint is free (handleNotifyComplete()).
-  notifyPending_ = !espUsbCcidDriverNotify(message, sizeof(message));
+void EspUsbDeviceCcid::notifySlotState() {
+  portENTER_CRITICAL(&ccidLock);
+  notifyPending_=true;
+  if(state_ && !state_->stopping && config_.removable)espusb::internal::postTinyUsbRuntimeJob(state_->job);
+  portEXIT_CRITICAL(&ccidLock);
 }
-
-void EspUsbDeviceCcid::handleNotifyComplete()
-{
-  if (!notifyPending_)
-  {
-    return;
-  }
-  notifyPending_ = false;
-  notifySlotState();
-}
+void EspUsbDeviceCcid::handleNotifyComplete(){if(notifyPending_)notifySlotState();}
 
 size_t EspUsbDeviceCcid::writeHeader(uint8_t messageType, uint32_t dataLength, uint8_t slot,
                                      uint8_t sequence, uint8_t icc, uint8_t commandStatus,
@@ -755,13 +448,13 @@ void EspUsbDeviceCcid::sendStatus(uint8_t messageType, uint8_t slot, uint8_t seq
                                   uint8_t commandStatus, uint8_t error, uint8_t parameter)
 {
   writeHeader(messageType, 0, slot, sequence, iccStatus(), commandStatus, error, parameter);
-  espUsbCcidDriverSend(response_, CCID_HEADER_SIZE);
+  state_->send(CCID_HEADER_SIZE);
 }
 
 void EspUsbDeviceCcid::sendData(uint8_t messageType, uint8_t slot, uint8_t sequence,
                                 const uint8_t *data, size_t length, uint8_t parameter)
 {
-  if (length > sizeof(response_) - CCID_HEADER_SIZE)
+  if (length > config_.messageBytes - CCID_HEADER_SIZE)
   {
     sendStatus(messageType, slot, sequence, CCID_COMMAND_FAILED,
                ESP_USB_DEVICE_CCID_ERROR_XFR_OVERRUN, parameter);
@@ -773,12 +466,11 @@ void EspUsbDeviceCcid::sendData(uint8_t messageType, uint8_t slot, uint8_t seque
   {
     memcpy(&response_[CCID_HEADER_SIZE], data, length);
   }
-  espUsbCcidDriverSend(response_, CCID_HEADER_SIZE + length);
+  state_->send(CCID_HEADER_SIZE + length);
 }
 
 void EspUsbDeviceCcid::handleAbort(uint8_t slot, uint8_t sequence)
 {
-  (void)sequence;
   if (slot != 0)
   {
     return;
@@ -787,14 +479,12 @@ void EspUsbDeviceCcid::handleAbort(uint8_t slot, uint8_t sequence)
   // PC_to_RDR_Abort arrives has to fail with CMD_ABORTED (CCID 1.1 section 5.3.1),
   // which is what this flag makes handleMessage() do.
   aborted_ = true;
+  abortSequence_ = sequence;
 }
 
 void EspUsbDeviceCcid::handleOverrun(uint8_t messageType, uint8_t slot, uint8_t sequence)
 {
-  const uint8_t responseType = (messageType == CCID_PC_TO_RDR_XFR_BLOCK ||
-                                messageType == CCID_PC_TO_RDR_ICC_POWER_ON)
-                                   ? CCID_RDR_TO_PC_DATA_BLOCK
-                                   : CCID_RDR_TO_PC_SLOT_STATUS;
+  const uint8_t responseType = ccidResponseType(messageType);
   commandCount_++;
   lastMessageType_ = messageType;
   sendStatus(responseType, slot, sequence, CCID_COMMAND_FAILED,
@@ -822,24 +512,18 @@ void EspUsbDeviceCcid::handleMessage(const uint8_t *message, size_t length)
   // message for a slot this reader does not have is refused the same way.
   if (slot != 0)
   {
-    const uint8_t responseType = (messageType == CCID_PC_TO_RDR_XFR_BLOCK ||
-                                  messageType == CCID_PC_TO_RDR_ICC_POWER_ON)
-                                     ? CCID_RDR_TO_PC_DATA_BLOCK
-                                     : CCID_RDR_TO_PC_SLOT_STATUS;
+    const uint8_t responseType = ccidResponseType(messageType);
     writeHeader(responseType, 0, slot, sequence, ESP_USB_DEVICE_CCID_ICC_ABSENT,
                 CCID_COMMAND_FAILED, ESP_USB_DEVICE_CCID_ERROR_BAD_SLOT, 0);
-    espUsbCcidDriverSend(response_, CCID_HEADER_SIZE);
+    state_->send(CCID_HEADER_SIZE);
     return;
   }
 
   // An ABORT class request was received: everything up to the PC_to_RDR_Abort
   // that closes the sequence is refused (CCID 1.1 section 5.3.1).
-  if (aborted_ && messageType != CCID_PC_TO_RDR_ABORT)
+  if (aborted_ && (messageType != CCID_PC_TO_RDR_ABORT || sequence != abortSequence_))
   {
-    const uint8_t responseType = (messageType == CCID_PC_TO_RDR_XFR_BLOCK ||
-                                  messageType == CCID_PC_TO_RDR_ICC_POWER_ON)
-                                     ? CCID_RDR_TO_PC_DATA_BLOCK
-                                     : CCID_RDR_TO_PC_SLOT_STATUS;
+    const uint8_t responseType = ccidResponseType(messageType);
     sendStatus(responseType, slot, sequence, CCID_COMMAND_FAILED,
                ESP_USB_DEVICE_CCID_ERROR_CMD_ABORTED, 0);
     return;
@@ -849,19 +533,14 @@ void EspUsbDeviceCcid::handleMessage(const uint8_t *message, size_t length)
   {
   case CCID_PC_TO_RDR_ICC_POWER_ON:
   {
-    if (!cardPresent_)
-    {
-      sendStatus(CCID_RDR_TO_PC_DATA_BLOCK, slot, sequence, CCID_COMMAND_FAILED,
-                 ESP_USB_DEVICE_CCID_ERROR_ICC_MUTE, 0);
-      return;
-    }
-    const bool wasPowered = cardPowered_;
-    cardPowered_ = true;
-    if (!wasPowered && powerCallback_)
-    {
-      powerCallback_(true);
-    }
-    sendData(CCID_RDR_TO_PC_DATA_BLOCK, slot, sequence, atr_, atrLength_, 0);
+    uint8_t snapshot[ESP_USB_DEVICE_CCID_MAX_ATR];size_t bytes=0;bool wasPowered=false;
+    portENTER_CRITICAL(&ccidLock);
+    const bool present=cardPresent_;
+    if(present){wasPowered=cardPowered_;cardPowered_=true;bytes=atrLength_;memcpy(snapshot,atr_,bytes);}
+    portEXIT_CRITICAL(&ccidLock);
+    if(!present){sendStatus(CCID_RDR_TO_PC_DATA_BLOCK,slot,sequence,CCID_COMMAND_FAILED,ESP_USB_DEVICE_CCID_ERROR_ICC_MUTE,0);return;}
+    if(!wasPowered && powerCallback_)powerCallback_(true);
+    sendData(CCID_RDR_TO_PC_DATA_BLOCK,slot,sequence,snapshot,bytes,0);
     return;
   }
 
@@ -895,7 +574,7 @@ void EspUsbDeviceCcid::handleMessage(const uint8_t *message, size_t length)
     if (apduCallback_)
     {
       responseLength = apduCallback_(data, dataSize, &response_[CCID_HEADER_SIZE],
-                                     sizeof(response_) - CCID_HEADER_SIZE);
+                                     config_.messageBytes - CCID_HEADER_SIZE);
     }
     else
     {
@@ -924,7 +603,7 @@ void EspUsbDeviceCcid::handleMessage(const uint8_t *message, size_t length)
     if (escapeCallback_)
     {
       responseLength = escapeCallback_(data, dataSize, &response_[CCID_HEADER_SIZE],
-                                       sizeof(response_) - CCID_HEADER_SIZE);
+                                       config_.messageBytes - CCID_HEADER_SIZE);
     }
     if (responseLength == 0)
     {
@@ -952,7 +631,7 @@ void EspUsbDeviceCcid::handleMessage(const uint8_t *message, size_t length)
       // bError 7: the offending byte is bProtocolNum.
       writeHeader(CCID_RDR_TO_PC_PARAMETERS, 0, slot, sequence, iccStatus(),
                   CCID_COMMAND_FAILED, 7, protocol);
-      espUsbCcidDriverSend(response_, CCID_HEADER_SIZE);
+      state_->send(CCID_HEADER_SIZE);
       return;
     }
     // The emulated slot has nothing to configure, so the answer is the same
@@ -963,6 +642,10 @@ void EspUsbDeviceCcid::handleMessage(const uint8_t *message, size_t length)
   }
 
   case CCID_PC_TO_RDR_ABORT:
+    if (!aborted_) {
+      sendStatus(CCID_RDR_TO_PC_SLOT_STATUS, slot, sequence, CCID_COMMAND_FAILED, ESP_USB_DEVICE_CCID_ERROR_CMD_ABORTED, 0);
+      return;
+    }
     aborted_ = false;
     sendStatus(CCID_RDR_TO_PC_SLOT_STATUS, slot, sequence, CCID_COMMAND_OK, 0, 0);
     return;

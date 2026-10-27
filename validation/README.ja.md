@@ -448,3 +448,35 @@ WRITEは処理済み64 byteが残り、残りのsectorは変更されないこ�
 
 TinyUSB manifestは24 file / 2 compiled sourcesで一致。旧tests/examplesはmainと同じ。
 全29件の一括再試験、任意Host HALTからの進行中SCSI継続、bus reset/endとの全競合順序、OS/実mediaは未完了。
+
+
+## CCIDのruntime容量と独立instance
+
+2026-10-27。CCIDの固定message配列、単一global owner/driver/bufferを撤去した。
+EspUsbCcidConfigでmessageBytes・removable・nameを設定し、Functionごとのbegin時資源へ移した。
+返信DMAをcallbackの出力先と共有し、IN/ZLP完了まで次のOUTを投稿しない。
+固定カードは開始前の挿入を要求し、通知endpoint/bufferと稼働中の着脱を省く。
+API・移行と残課題は[CCIDガイド](../docs/V3_CCID_API.ja.md)を参照。
+
+新規ccid_streamはSDK Hostで2つのCCIDを同時claimし、各descriptor容量と通知endpoint有無を読む。
+同じbinaryで64/271/320/1024 byteを基準に、2番目は+64 byteの独立容量へ切り替える。
+ATR、APDU、Escape、slot通知、Abort sequence不一致、不正slot、容量超過、32-bit長さfieldの異常値、
+未読返信のSET_INTERFACE中断を検証した。metadataでは64/271/320/1024/65535 byteと反復開始終了のheap一致も確認した。
+
+- 初回SDK試験`ccid-runtime-sdk.xml`: **1 passed、0 skipped、0 unfinished、234.90秒**。
+  原本`/tmp/pytest-embedded/2026-10-27_08-21-27-507168/`、2 serial log全てSTOPPED、panicなし。
+- `ccid-runtime-final.xml`: ccid_stream、allocation_failure、control_core、cdc_streamの
+  **4 passed、0 skipped、0 unfinished、527.51秒**。
+  774取得点で失敗/回復、heap before/after一致。原本`/tmp/pytest-embedded/2026-10-27_08-29-47-559553/`、
+  8 serial log全てSTOPPED、panicなし。
+- その後、SET_INTERFACEで古いAbort待ちも取り消す処理を加えた。
+  `ccid-runtime-boundaries-final.xml`: **1 passed、0 skipped、0 unfinished、80.51秒**。
+  各容量いっぱいのEscape、末尾ZLP、T=1パラメータ、PowerOff、Abort待ちからの再初期化も成功。
+  原本`/tmp/pytest-embedded/2026-10-27_08-41-40-156434/`、2 serial log全てSTOPPED、panicなし。
+
+JUnit/transcript/serialコピーは`validation/.pytest-results/ccid-runtime-*`。
+追加試験で容量超過Escapeへの応答typeがSlotStatusになる旧処理を検出し、要求別の応答typeへ統一した。
+最終sourceのVendor copy最小buildでは未使用CCID本体/state/bufferのsymbol不在を確認した。
+記録は`ccid-runtime-vendor-copy-build.txt`と`ccid-runtime-vendor-copy-nm.txt`。
+試験入口は標準combo、conftest/独自hookなし。現在の収集は30件で、全30件の一括再試験は未完了。
+HS/他SoC、PC/SC・OS・実カード、任意HALTと進行中command、全競合順序は未検証として残す。

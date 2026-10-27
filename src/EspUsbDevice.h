@@ -545,12 +545,16 @@ enum EspUsbDeviceCcidError : uint8_t
 // Longest ATR ISO 7816-3 allows (TS + T0 + 15 interface + 15 historical + TCK).
 static constexpr size_t ESP_USB_DEVICE_CCID_MAX_ATR = 33;
 
-// Largest CCID message (10-byte header + abData) the device accepts or sends.
-// The default covers short APDU level exchange (10 + 261) with room to spare;
-// raise it with a build flag if a sketch answers with more.
-#ifndef ESP_USB_DEVICE_CCID_BUFFER_SIZE
-#define ESP_USB_DEVICE_CCID_BUFFER_SIZE 320
+#ifdef ESP_USB_DEVICE_CCID_BUFFER_SIZE
+#error "Use EspUsbCcidConfig::messageBytes instead of ESP_USB_DEVICE_CCID_BUFFER_SIZE"
 #endif
+struct EspUsbCcidConfig
+{
+  size_t messageBytes = 320; // complete message, including its 10-byte header
+  bool removable = true; // false omits notification endpoint; insert before begin
+  const char *name = nullptr;
+};
+struct EspUsbCcidState;
 
 struct EspUsbDeviceMidiPacket
 {
@@ -1297,7 +1301,7 @@ public:
   // sees as command status FAILED with bError = ICC_MUTE.
   //
   // For onApdu() the buffers are the APDU and its answer including SW1SW2 - the
-  // device does not add or interpret a status word. Runs in the TinyUSB device
+  // device does not add or interpret a status word. Runs in the USB worker
   // task: no blocking, and no USB calls back into this object.
   using ApduCallback = std::function<size_t(const uint8_t *apdu, size_t length,
                                             uint8_t *response, size_t capacity)>;
@@ -1309,12 +1313,19 @@ public:
   explicit EspUsbDeviceCcid(EspUsbDevice &device);
   ~EspUsbDeviceCcid() override;
 
+  esp_err_t configure(const EspUsbCcidConfig &config);
+  const EspUsbCcidConfig &configuration() const { return config_; }
+  size_t messageCapacity() const;
+  esp_err_t startError() const override { return startError_; }
+  void prepareToStop() override;
+  const char *functionName() const override { return config_.name; }
+  void assignFunctionIds(uint8_t, uint8_t stringIndex) override { stringIndex_ = stringIndex; }
   bool begin() override;
   void end() override;
   bool isHid() const override { return false; }
   uint16_t configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize) override;
   uint8_t interfaceCount() const override { return 1; }
-  uint8_t endpointCount() const override { return 2; } // bulk duplex + interrupt IN
+  uint8_t endpointCount() const override { return config_.removable ? 2 : 1; } // bulk duplex + optional interrupt IN
   void onBusAttached() override;
   void onBusDetached() override;
 
@@ -1323,15 +1334,15 @@ public:
   // must be 2..ESP_USB_DEVICE_CCID_MAX_ATR. Notifies the host over the
   // interrupt endpoint when the device is mounted. Call from the sketch task.
   bool insertCard(const uint8_t *atr, size_t length);
-  void removeCard();
+  esp_err_t removeCard();
   bool cardPresent() const;
   // True once the host has activated the card with IccPowerOn.
   bool cardPowered() const;
   size_t atr(uint8_t *buffer, size_t capacity) const;
 
-  void onApdu(ApduCallback callback);
-  void onEscape(EscapeCallback callback);
-  void onPower(PowerCallback callback);
+  esp_err_t onApdu(ApduCallback callback);
+  esp_err_t onEscape(EscapeCallback callback);
+  esp_err_t onPower(PowerCallback callback);
 
   // True while the host has the CCID interface configured.
   bool mounted() const;
@@ -1341,7 +1352,8 @@ public:
   uint32_t apduCount() const;
   uint8_t lastMessageType() const;
 
-  // Internal: a complete PC_to_RDR message arrived (TinyUSB device task).
+private:
+  // Internal: a complete PC_to_RDR message arrived (USB worker).
   void handleMessage(const uint8_t *message, size_t length);
   // Internal: a message longer than the device's buffer arrived and was dropped.
   void handleOverrun(uint8_t messageType, uint8_t slot, uint8_t sequence);
@@ -1351,6 +1363,11 @@ public:
   void handleNotifyComplete();
 
 private:
+  friend struct EspUsbCcidState;
+  EspUsbCcidConfig config_;
+  EspUsbCcidState *state_ = nullptr;
+  esp_err_t startError_ = ESP_OK;
+  uint8_t interfaceNumber_ = 255, stringIndex_ = 0;
   size_t writeHeader(uint8_t messageType, uint32_t dataLength, uint8_t slot,
                      uint8_t sequence, uint8_t iccStatus, uint8_t commandStatus,
                      uint8_t error, uint8_t parameter);
@@ -1373,8 +1390,9 @@ private:
   // notification on it, so the host has not been told the current state yet.
   std::atomic<bool> notifyPending_{false};
   bool aborted_ = false; // an ABORT request is pending for the current slot
+  uint8_t abortSequence_ = 0;
 
-  uint8_t response_[ESP_USB_DEVICE_CCID_BUFFER_SIZE] = {};
+  uint8_t *response_ = nullptr;
   std::atomic<uint32_t> commandCount_{0};
   std::atomic<uint32_t> apduCount_{0};
   std::atomic<uint8_t> lastMessageType_{0};

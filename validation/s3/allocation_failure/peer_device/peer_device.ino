@@ -39,6 +39,7 @@ EspUsbDeviceCdcSerial *serialPort = nullptr;
 EspUsbDeviceHidVendor *hid[2] = {};
 EspUsbDeviceMidi *midi[2] = {};
 EspUsbDeviceMsc *msc[2] = {};
+EspUsbDeviceCcid *ccid[2] = {};
 EspUsbAudioFunction *audio = nullptr;
 EspUsbDeviceDfu *dfu[2] = {};
 uint8_t dfuBuffer[130];
@@ -71,7 +72,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 41 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 44 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -154,7 +155,7 @@ void loop() {
           ok &= net[0]->configure(network) == ESP_OK;
           points += mode == 33 ? 4 : mode == 34 || mode == 35 ? 6 : mode == 36 ? 5 : 7;
         }
-        if (mode >= 37) {
+        if (mode >= 37 && mode <= 40) {
           video[0] = new EspUsbDeviceVideo(device);
           EspUsbVideoConfig camera; camera.payloadBytes = 64;
           if (mode == 38 || mode == 40) camera.transport = EspUsbVideoTransport::Bulk;
@@ -167,6 +168,14 @@ void loop() {
             camera.transport = EspUsbVideoTransport::Bulk; camera.payloadBytes = 65;
             ok &= video[1]->configure(camera) == ESP_OK; points += 2;
           }
+        }
+        if (mode >= 41) {
+          ccid[0] = new EspUsbDeviceCcid(device);
+          EspUsbCcidConfig card;card.messageBytes=64;card.removable=mode==41;
+          const uint8_t atr[]={0x3b,0};
+          ok &= ccid[0]->configure(card)==ESP_OK && ccid[0]->insertCard(atr,sizeof(atr));
+          points += mode==41 ? 7:6;
+          if(mode==43){ccid[1]=new EspUsbDeviceCcid(device);ok &= ccid[1]->configure(card)==ESP_OK && ccid[1]->insertCard(atr,sizeof(atr));points+=4;}
         }
         points += 6; // Function index + FS, strings, MS OS, BOS, and the selected core/event/DMA block.
         EspUsbDeviceConfig identity;
@@ -202,6 +211,7 @@ void loop() {
         delete inputOnly; inputOnly = nullptr;
         for (auto &function : midi) { delete function; function = nullptr; }
         for (auto &function : msc) { delete function; function = nullptr; }
+        for (auto &function : ccid) { delete function; function = nullptr; }
         delete audio; audio = nullptr;
         for (auto &function : dfu) { delete function; function = nullptr; }
         for (auto &function : net) { delete function; function = nullptr; }

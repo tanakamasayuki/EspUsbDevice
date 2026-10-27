@@ -1,10 +1,11 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はMSCのSET_INTERFACEとBOT回復の区別。関連3件が成功。
+最新実装はCCIDのruntime資源・複数instanceと独立S3–S3試験。関連4件と最終境界1件が成功。
+直前のMSCのSET_INTERFACEとBOT回復の区別は関連3件が成功。
 直前のHIDの標準要求による転送回復は関連4件が成功。
 直前のVendor control公開actualBytesとCDC受信長検査は各関連3件が成功。
 直前のVendor/CDC標準要求の回復は関連10件と最終4件が成功。
-全体試験の最新記録は共通core/EP0独自化`ce6a444`の全27件成功（1743.12秒）で、現在の全29件は未実行。
+全体試験の最新記録は共通core/EP0独自化`ce6a444`の全27件成功（1743.12秒）で、現在の全30件は未実行。
 [core APIと未完の境界](V3_CORE_API.ja.md)を参照。TinyUSBのコンパイル対象はDWC2関連2本、
 vendor選択は24 file。C ABI/headerとDWC2への依存は残る。
 
@@ -834,3 +835,40 @@ TinyUSB manifestは24 file / 2 compiled sourcesで一致。旧tests/examplesはm
 ESP_USB_DEVICE_CCID_BUFFER_SIZE由来の固定容量が残り、新規validationにも専用caseがない。
 公開API/資源のruntime化と独立したCCID試験を進める。MIDIは共有bulk回復経路に入るが、固有の標準要求試験は未追加。
 残るDWC2/ABI/headerの撤去、EP0世代境界などの全体目標は維持する。
+
+
+## CCIDのruntime容量と独立instance
+
+2026-10-27。CCIDの固定message配列、単一global owner/driver/bufferを撤去した。
+EspUsbCcidConfigでmessageBytes・removable・nameを設定し、Functionごとのbegin時資源へ移した。
+返信DMAをcallbackの出力先と共有し、IN/ZLP完了まで次のOUTを投稿しない。
+固定カードは開始前の挿入を要求し、通知endpoint/bufferと稼働中の着脱を省く。
+API・移行と残課題は[CCIDガイド](V3_CCID_API.ja.md)を参照。
+
+新規ccid_streamはSDK Hostで2つのCCIDを同時claimし、各descriptor容量と通知endpoint有無を読む。
+同じbinaryで64/271/320/1024 byteを基準に、2番目は+64 byteの独立容量へ切り替える。
+ATR、APDU、Escape、slot通知、Abort sequence不一致、不正slot、容量超過、32-bit長さfieldの異常値、
+未読返信のSET_INTERFACE中断を検証した。metadataでは64/271/320/1024/65535 byteと反復開始終了のheap一致も確認した。
+
+- 初回SDK試験`ccid-runtime-sdk.xml`: **1 passed、0 skipped、0 unfinished、234.90秒**。
+  原本`/tmp/pytest-embedded/2026-10-27_08-21-27-507168/`、2 serial log全てSTOPPED、panicなし。
+- `ccid-runtime-final.xml`: ccid_stream、allocation_failure、control_core、cdc_streamの
+  **4 passed、0 skipped、0 unfinished、527.51秒**。
+  774取得点で失敗/回復、heap before/after一致。原本`/tmp/pytest-embedded/2026-10-27_08-29-47-559553/`、
+  8 serial log全てSTOPPED、panicなし。
+- その後、SET_INTERFACEで古いAbort待ちも取り消す処理を加えた。
+  `ccid-runtime-boundaries-final.xml`: **1 passed、0 skipped、0 unfinished、80.51秒**。
+  各容量いっぱいのEscape、末尾ZLP、T=1パラメータ、PowerOff、Abort待ちからの再初期化も成功。
+  原本`/tmp/pytest-embedded/2026-10-27_08-41-40-156434/`、2 serial log全てSTOPPED、panicなし。
+
+JUnit/transcript/serialコピーは`validation/.pytest-results/ccid-runtime-*`。
+追加試験で容量超過Escapeへの応答typeがSlotStatusになる旧処理を検出し、要求別の応答typeへ統一した。
+最終sourceのVendor copy最小buildでは未使用CCID本体/state/bufferのsymbol不在を確認した。
+記録は`ccid-runtime-vendor-copy-build.txt`と`ccid-runtime-vendor-copy-nm.txt`。
+試験入口は標準combo、conftest/独自hookなし。現在の収集は30件で、全30件の一括再試験は未完了。
+HS/他SoC、PC/SC・OS・実カード、任意HALTと進行中command、全競合順序は未検証として残す。
+
+
+CCIDの固定容量/単一ownerは上記で置換済み。次はMIDI固有の標準要求と、
+NCM/Video/CCID等の進行中HALT回復、共通EP0世代境界を整理し、残るDWC2/ABI/headerを置き換える。
+全体試験の最新27件記録と今回の関連試験を同じ実装の全件成功として扱わない。

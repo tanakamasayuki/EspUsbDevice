@@ -459,3 +459,25 @@ BOT reset中のinterface再選択も、未受信のendpoint CLEAR_FEATUREを完�
 利点は中断後に古いCSWやdataを次のコマンドとして扱わず、必要なBOT回復手順を維持すること。
 不利益は進行中コマンドの破棄と、部分的にstorageへ反映済みのWRITEをアプリが確認する必要があること。
 追加task/転送時heapと公開API変更はない。書込みの原子性やロールバック保証を新設するものではない。
+
+
+## CCIDの容量・instance・通知をruntimeへ移す
+
+ESP_USB_DEVICE_CCID_BUFFER_SIZE、単一global ownerとdriver state、Function内の固定返信配列を撤去する。
+EspUsbCcidConfig.messageBytesはheaderを含む全message容量で、descriptorにも同じ値を出す。
+既定320、64～65535 byte。実際のcontrollerの最大packetより小さければbeginで拒否する。
+2つのCCIDを別interfaceとして登録でき、各状態とbufferをbegin時に確保しendで返す。
+返信stagingと送信bufferの重複を避け、1本のDMA返信bufferをIN/ZLP完了まで保持する。
+次のOUTをその後にarmし、1 slot / 1 busy commandという広告とbackpressureを揃える。
+
+removable=falseはカード固定を表す。開始前のinsertCardを必須とし、稼働中のinsert/removeを拒否して、
+通知endpointとbufferを省く。単に通知だけを無効化して着脱可能とする設定は追加しない。
+[USB-IF CCID 1.1](https://www.usb.org/sites/default/files/DWG_Smart-Card_CCID_Rev110.pdf)の
+§3.1.2、§5.1、§5.2を基準に、着脱可能なreaderの通知要件とmessage容量を扱う。
+
+利点は構成ごとの資源、複数readerの独立性、共有返信bufferの寿命が決まること。
+不利益はbegin時の確保失敗、返信完了までの次command待ち、稼働中設定変更の拒否。
+onApdu/onEscape/onPowerはesp_err_tを返して開始後の変更を拒否し、removeCardも結果を返す。
+通常の登録呼出しは戻り値を無視していた形を維持できる。容量指定はconfigureへ移す。
+ATRの33 byte配列はwire上限であり、選んだFunction内に残す。交換時のcopyとPowerOnのsnapshotはlockで保護する。
+大きいmessage容量をextended APDU対応の広告へ自動変換しない。大きいEscape等の資源指定とprotocol機能は分ける。
