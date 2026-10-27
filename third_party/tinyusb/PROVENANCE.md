@@ -1,140 +1,62 @@
-# TinyUSB provenance
+# TinyUSB provenance and temporary dependency
 
 [日本語](PROVENANCE.ja.md)
 
-EspUsbDevice v2 vendors a selected TinyUSB device-stack source snapshot so its
-USB configuration and runtime do not depend on Arduino-ESP32's prebuilt
-`libarduino_tinyusb`.
+All v3 USB classes use independent drivers. The ten TinyUSB class sources and
+unused class headers have been removed from the Arduino build tree. EP0/core,
+FreeRTOS integration, DWC2 and some protocol definitions remain temporarily.
+These are also scheduled for replacement; removing class sources is not the
+completion of the stack migration.
 
-- Pin metadata: `UPSTREAM.json` (repository, full commit SHA, TinyUSB version,
-  reviewed Arduino-ESP32 baseline, and selection reason)
-- License: MIT
-- Arduino build tree: only the selected `.c` files and their S2/S3/P4
-  transitive headers under the library `src/` directory
-- Build manifest: `BUILD_FILES.txt` (48 files: 14 sources and 34 headers)
-- Verification cache: the pinned upstream tarball and its 48 selected files are
-  downloaded on demand under ignored `.upstream-cache/`
-- Local patches: `LOCAL_PATCHES.json` records exact replacements applied by both
-  verification and update scripts; the upstream cache stays unchanged.
+- Pin and rationale: `UPSTREAM.json`, using a full commit SHA.
+- License: MIT. Keep `LICENSE` and copyright/SPDX notices on remaining files.
+- Selection: `BUILD_FILES.txt`, 27 files (5 sources and 22 headers).
+- Sources: `tusb.c`, `common/tusb_fifo.c`, `device/usbd.c`,
+  `portable/synopsys/dwc2/dcd_dwc2.c`, `portable/synopsys/dwc2/dwc2_common.c`.
+- Only the currently used Audio/CDC/HID/MIDI protocol headers remain under
+  `class/`. Unused DFU/MSC/NCM/Video definitions were also removed.
+- `src/tusb_config.h` and `src/internal/EspUsbTinyUsbConfig.h` are first-party
+  integration. Enabling the legacy class drivers is rejected.
 
-The verification cache is downloaded from the canonical
-[`hathach/tinyusb`](https://github.com/hathach/tinyusb) repository.
-[`espressif/tinyusb`](https://github.com/espressif/tinyusb) is a fork of that
-repository and also contains this exact Git commit. Because the full commit SHA
-identifies the same Git tree in both repositories, the selected source contents
-are identical; the canonical upstream is used as the download origin.
+The v2 selection originally included nine classes, then ten after adding Video.
+Git preserves that history and the removed Windows NCM divisor patch. Independent
+NCM also uses four-byte alignment; no patch for a deleted source remains in the
+current manifest.
 
-## Initial build source set
+## Verification and local patches
 
-Core:
+`python3 tools/verify_tinyusb_vendor.py` checks the manifest, compiled source set
+and exact upstream contents. It obtains only the selected files from the pinned
+canonical [hathach/tinyusb](https://github.com/hathach/tinyusb) tarball when the
+ignored `.upstream-cache/` is absent. Normal Arduino builds never download files.
+The cache stays unchanged; exact replacements in `LOCAL_PATCHES.json` are applied
+for comparison. The update script uses the same manifest and does not restore
+removed classes.
 
-- `src/tusb.c`
-- `src/common/tusb_fifo.c`
-- `src/device/usbd.c`
+Remaining local patches support the temporary adapter:
 
-Classes:
+- `device/dcd.h`, `device/usbd.c`, `device/usbd_pvt.h`: abort preserving DATA PID,
+  nonblocking event fences reporting queue exhaustion, and actual control DATA
+  byte counts.
+- `portable/synopsys/dwc2/dcd_dwc2.c`: stop without STALL and split DMA arms by
+  actual GHWCFG3 counter widths. S3 has seven packet-count bits although the
+  common register type exposes ten. Intermediate arms emit no completion;
+  a short/ZLP or full transfer completion returns the result once.
 
-- `src/class/hid/hid_device.c`
-- `src/class/cdc/cdc_device.c`
-- `src/class/midi/midi_device.c`
-- `src/class/msc/msc_device.c`
-- `src/class/vendor/vendor_device.c`
-- `src/class/net/ncm_device.c`
-- `src/class/audio/audio_device.c`
-- `src/class/dfu/dfu_device.c`
-- `src/class/dfu/dfu_rt_device.c`
+Selected paths have been tested on S3–S3. P4/S2/S31 hardware validation remains
+pending. Review these replacements when changing the upstream pin; each original
+must match exactly once. Preserve provenance and licenses when moving derived
+code into the independent implementation.
 
-ESP32 DWC2 device controller:
+## Update procedure
 
-- `src/portable/synopsys/dwc2/dcd_dwc2.c`
-- `src/portable/synopsys/dwc2/dwc2_common.c`
-
-The complete upstream source tree is not stored in this repository. The
-verification script downloads the tarball for the pinned commit when its
-ignored local cache is absent, extracts only the 48 manifest entries, and
-applies the recorded local patches, and compares the result byte-for-byte with
-the Arduino build tree. Normal Arduino builds
-never download anything. The build tree is a minimal projection measured from
-clean S2, S3, and P4 compiler dependency files. Host, Type-C, video, printer,
-MTP, MIDI 2.0, ECM/RNDIS, non-FreeRTOS OSALs, and non-ESP32 portable files are
-not copied into the build tree. DFU joined the selection when
-`EspUsbDeviceDfu` was added; it is the one class here that costs no endpoint,
-so the two drivers are carried for every sketch.
-
-The `src/` build tree is a mechanical copy from the pinned snapshot plus the
-recorded local patches. `src/tusb_config.h` and
-`src/internal/EspUsbTinyUsbConfig.h` are first-party integration files.
-
-## Local patches
-
-- `class/net/ncm_device.c`: set both `wNdbInDivisor` and `wNdbOutDivisor` to
-  `4` for Windows NCM compatibility (EspUsbDevice issue #3). This matches the
-  existing four-byte transmit alignment and backports
-  [TinyUSB PR #3914](https://github.com/hathach/tinyusb/pull/3914).
-- Temporary v3 adapter extensions (until the independent EP0/DCD replaces it):
-  `device/dcd.h`, `device/usbd.c`, and `device/usbd_pvt.h` add endpoint abort
-  without resetting DATA PID, plus nonblocking FIFO fences that report a full
-  queue for worker retries. `portable/synopsys/dwc2/dcd_dwc2.c` stops endpoints
-  without STALL and segments DMA using the actual GHWCFG3 counter widths. S3
-  implements seven packet-count bits despite the common register type exposing
-  ten. Intermediate arms produce no completion event; only full completion or
-  an OUT short/ZLP returns the transfer. Segmentation, cancellation, and selected
-  reset/end races are tested on S3–S3; P4/S2/S31 remain unverified.
-- `device/usbd.c` / `device/usbd_pvt.h`: expose the actual control data-stage
-  byte count to DATA/ACK callbacks so the independent HID adapter can reject
-  incomplete SET_REPORT data before a successful status stage.
-- An upstream pin change must review these replacements. The scripts fail if
-  a replacement no longer matches exactly once; remove it when the new upstream
-  already includes the fix.
-
-## Update rules
-
-### Review cadence
-
-- Review the pin whenever the supported Arduino-ESP32 baseline changes. Prefer
-  the TinyUSB commit recorded by that core's S2, S3, and P4 tool packages.
-- Also review it before each major/minor EspUsbDevice release. When neither the
-  core nor the library release cadence triggers a review, check upstream
-  releases, bug fixes, and security advisories at least once per quarter. A
-  review does not require an update.
-- Update between those reviews only for a relevant upstream bug, security fix,
-  required USB feature, or target support. Record any deliberate divergence
-  from the core-bundled commit in `UPSTREAM.json` `selection_reason`.
-- Pin a full upstream commit, never a moving branch or version string.
-
-### Update procedure
-
-1. Install/select the new Arduino-ESP32 baseline and inspect the `tinyusb:`
-   entries in the S2, S3, and P4 tool-package `versions.txt` files. They must be
-   considered separately; do not assume every target uses the same commit.
-2. Edit `UPSTREAM.json`: full `commit`, `tinyusb_version`,
-   `reviewed_with_arduino_esp32`, and `selection_reason`. Changing the commit
-   changes the cache directory, so the next verification/update command
-   downloads that commit automatically.
-3. Run `python3 tools/verify_tinyusb_vendor.py`. A new pin normally reports
-   modified selected files after populating the cache; that failure is the
-   expected review point.
-4. Run `python3 tools/update_tinyusb_vendor.py` for a dry-run file list, review
-   the upstream changes, then run
-   `python3 tools/update_tinyusb_vendor.py --apply`.
-5. Clean-compile the complete example matrix for S2, S3, and P4. If compiler
-   dependencies changed, regenerate `BUILD_FILES.txt` from clean dependency
-   files, copy any newly required upstream headers, remove no-longer-used ones,
-   and repeat the compile until all three targets are clean.
-
-   ```sh
-   cd tests
-   python3 tools/build_check.py esp32s3
-   ```
-
-6. Run `python3 tools/verify_tinyusb_vendor.py` again. It must pass
-   byte-for-byte before testing on hardware.
-7. Run the complete hardware suite:
-
-   ```sh
-   uv run --env-file .env pytest --clean
-   ```
-
-8. Review the full diff, upstream license/SPDX headers, link-map symbol audit,
-   and provenance. Keep upstream headers unchanged and record every local patch
-   here. Do not copy Arduino-ESP32's `esp32-hal-tinyusb` integration.
+1. When the core baseline or a relevant fix requires review, inspect each SoC
+   tool package's `versions.txt` and remaining dependencies. Record a full commit
+   in `UPSTREAM.json`, never a moving branch.
+2. Run `python3 tools/verify_tinyusb_vendor.py` and review the differences.
+3. Preview `python3 tools/update_tinyusb_vendor.py`; use `--apply` only for the
+   reviewed manifest files.
+4. Review remaining upstream contents, patches, licenses, compiler dependencies
+   and linked symbols.
+5. Run the standard plugin's `--combo all` from `validation/`, distinguishing
+   untested SoCs/HS. Do not restore old `tests/` or `examples/` as v3 design gates.

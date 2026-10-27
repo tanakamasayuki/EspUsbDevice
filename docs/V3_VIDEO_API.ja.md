@@ -114,3 +114,22 @@ ProbeのGET_MIN payloadを3、GET_RESを1に直し、受け付ける範囲と一
 コピー/JUnit/transcriptは`validation/.pytest-results/video-driver-extended*`。
 通常収集26件。全体の直近成功19件とは区別する。
 実USB bus resetと取消し/recommitの競合全順序、PC/OS、HS/他SoCは引き続き未確認。
+
+
+## Videoとlegacy classソース除去後の全体試験
+
+2026-10-27。TinyUSBの無効化済みclass実装10本と関連headerを削除した。
+残るvendor選択は27 file / 5 compiled sources。共通EP0/core/DCDとAudio/CDC/HID/MIDIのprotocol定義は残る。
+検証scriptと更新scriptのmanifestも揃え、削除したNCMのlocal patchを現manifestから外した。
+出所とMIT表示は維持する。既に無効だったソースの削除なのでFlash/速度の改善を主張しない。
+
+標準`--combo all`の`runtime-video-all.xml`は**26 passed、0 skipped、0 unfinished、1703.91秒**。
+670取得点の確保失敗/回復、全独自classの既存経路、複数Video制御、ISO/Bulk各3構成を一括実行した。
+52 serial log全てSTOPPED、panicなし。Video deviceのnmでもlegacy class driver symbol不在を確認した。
+serial原本は`/tmp/pytest-embedded/2026-10-27_02-12-17-085198/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/runtime-video-all*`。symbolは`video-control-cleanup-nm.txt`。
+Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。conftestや独自pytest hookは使わない。
+
+次は共通EP0/core/DCDを独自実装へ置き換える。reset/新SETUP/STALL/status、
+標準要求、event順序とDMA停止、suspend/remote wakeupを分けて検証する。
+他SoC/HS、PC/OS、長時間試験、出荷exampleと最終API整理は未完了。

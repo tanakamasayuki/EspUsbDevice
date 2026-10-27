@@ -1,129 +1,52 @@
-# TinyUSBの由来と管理方法
+# TinyUSBの由来と暫定依存
 
 [English](PROVENANCE.md)
 
-EspUsbDevice v2は、USB設定とruntimeをArduino-ESP32のprebuilt
-`libarduino_tinyusb`へ依存させないため、TinyUSB device stackの選択済みsourceを
-同梱します。
+v3では全USB classを独自driverへ移行した。TinyUSBのclass実装10本と関連headerを
+Arduino build treeから削除し、同じ場所へ別のvendor snapshotを重ねない。
+共通EP0/core、FreeRTOS adapter、DWC2と一部protocol定義は暫定依存として残る。
+最終方針はこれらも置換することであり、この削除だけでTinyUSB依存撤去完了とはしない。
 
-- Pin metadata: `UPSTREAM.json`（repository、full commit SHA、TinyUSB version、
-  確認したArduino-ESP32 baseline、選定理由）
-- License: MIT
-- Arduino build tree: 選択済み`.c` fileと、S2/S3/P4で必要になるtransitive
-  headerだけをlibraryの`src/`以下へ配置
-- Build manifest: `BUILD_FILES.txt`（48 file: source 14、header 34）
-- Verification cache: 固定したupstream tarballと選択済み48 fileを、検証時だけ
-  ignoredな`.upstream-cache/`以下へ取得
-- Local patch: `LOCAL_PATCHES.json`に正確な置換内容を記録し、verify/updateの両方で
-  適用する。upstream cache自体は変更しない。
+- Pinと選定理由: `UPSTREAM.json`。full commit SHAへ固定する。
+- License: MIT、`LICENSE`と残存fileのcopyright/SPDX表示を保持する。
+- 現在の選択: `BUILD_FILES.txt`の27 file（5 source、22 header）。
+- 残るsource: `tusb.c`、`common/tusb_fifo.c`、`device/usbd.c`、
+  `portable/synopsys/dwc2/dcd_dwc2.c`、`portable/synopsys/dwc2/dwc2_common.c`。
+- `class/`以下には現在利用するAudio/CDC/HID/MIDIのprotocol定義headerだけを残す。
+  DFU/MSC/NCM/Videoの未使用定義headerも削除した。
+- `src/tusb_config.h`と`src/internal/EspUsbTinyUsbConfig.h`は独自integration。
+  legacy classの再有効化は拒否し、独自driverとの二重claimを防ぐ。
 
-検証用cacheはcanonical upstreamである
-[`hathach/tinyusb`](https://github.com/hathach/tinyusb)から取得します。
-[`espressif/tinyusb`](https://github.com/espressif/tinyusb)はそのforkであり、この
-Git commitを同じSHAで保持しています。full commit SHAが同じならGit treeも同じなので、
-選択したsource内容に差はありません。取得元にはcanonical upstreamを使用します。
+v2での同梱開始時は9 class、Video追加後は10 classを選択していた。
+その履歴と削除したNCMのWindows用divisor patchはGitで参照できる。
+独自NCMでも4-byte alignmentを用いるが、削除済みfileのpatchを現manifestへ残さない。
 
-## 初期build source
+## 検証とlocal patch
 
-Core:
+`python3 tools/verify_tinyusb_vendor.py`はmanifest、source集合、正確なupstream内容を検証する。
+canonical [`hathach/tinyusb`](https://github.com/hathach/tinyusb)の固定tarballが
+ignored `.upstream-cache/`にない場合だけ必要fileを取得する。通常のArduino buildはdownloadしない。
+cacheは元のsnapshotのままで、`LOCAL_PATCHES.json`の正確な置換を比較時に適用する。
+更新scriptも同じmanifestとpatchを用い、削除したclassを復元しない。
 
-- `src/tusb.c`
-- `src/common/tusb_fifo.c`
-- `src/device/usbd.c`
+残るlocal patchは暫定adapter用である。
 
-Class:
+- `device/dcd.h`、`device/usbd.c`、`device/usbd_pvt.h`: DATA PIDを保持するabort、
+  queue満杯を返すFIFO fence予約、control DATAの実byte数を取得する関数。
+- `portable/synopsys/dwc2/dcd_dwc2.c`: STALLしない停止と、GHWCFG3の実カウンタ幅に基づくDMA分割。
+  S3のpacket数は7 bitであり、共通register型の10 bitとは異なる。
+  中間armでは完了eventを出さず、short/ZLPまたは全体の完了で一度返す。
 
-- `src/class/hid/hid_device.c`
-- `src/class/cdc/cdc_device.c`
-- `src/class/midi/midi_device.c`
-- `src/class/msc/msc_device.c`
-- `src/class/vendor/vendor_device.c`
-- `src/class/net/ncm_device.c`
-- `src/class/audio/audio_device.c`
-- `src/class/dfu/dfu_device.c`
-- `src/class/dfu/dfu_rt_device.c`
+S3–S3で選択経路を検証しているが、P4/S2/S31の実機検証は未完了。
+上流pinを変更する場合は残る依存に必要な修正だけをreviewし、置換元が正確に一か所へ一致することを確かめる。
+由来のあるコードを独自側へ移す場合もlicenseと出所を保持する。
 
-ESP32 DWC2 device controller:
+## 更新手順
 
-- `src/portable/synopsys/dwc2/dcd_dwc2.c`
-- `src/portable/synopsys/dwc2/dwc2_common.c`
-
-完全なupstream source treeはこのrepositoryで管理しません。検証scriptは、固定commitの
-tarballがignored local cacheにない場合だけdownloadし、manifestにある48 fileだけを
-展開し、記録済みlocal patchを適用した結果をArduino build treeとbyte-for-byteで
-比較します。通常のArduino buildは何も
-downloadしません。
-
-Arduino build treeは、S2/S3/P4のclean buildで生成したcompiler dependencyから求めた
-最小構成です。Host、Type-C、Video、Printer、MTP、MIDI 2.0、ECM/RNDIS、
-FreeRTOS以外のOSAL、ESP32以外のportable fileはbuild treeへコピーしません。DFUは
-`EspUsbDeviceDfu`の追加時に選択対象へ入りました。endpointを消費しない唯一のclassなので、
-2つのdriverは全スケッチが抱えます。
-
-`src/`内のTinyUSB build treeは固定snapshotからの機械的なcopyに、記録済みlocal
-patchを適用したものです。`src/tusb_config.h`と
-`src/internal/EspUsbTinyUsbConfig.h`はEspUsbDevice独自のintegration fileです。
-
-## Local patch
-
-- `class/net/ncm_device.c`: Windows NCMとの互換性のため、`wNdbInDivisor`と
-  `wNdbOutDivisor`を両方`4`へ変更（EspUsbDevice issue #3）。既存の送信処理の
-  4 byte alignmentと整合し、
-  [TinyUSB PR #3914](https://github.com/hathach/tinyusb/pull/3914)の修正を取り込む。
-- v3暫定adapterの追加変更（独自EP0/DCDへの全置換まで使用）:
-  `device/dcd.h`、`device/usbd.c`、`device/usbd_pvt.h`へ、DATA PIDを保持する
-  endpoint abortと非blocking FIFO fence予約を追加。queue満杯を返してworker側で再試行する。
-  `portable/synopsys/dwc2/dcd_dwc2.c`はendpointをSTALLせず停止し、DMA転送をGHWCFG3の
-  実カウンタ幅で分割する。S3のpacket数は7 bitであり、共通register型の10 bitとは異なる。
-  中間armでは完了eventを出さず、OUTのshort/ZLPまたは全体の完了で一度通知する。
-  S3–S3で分割・取消し・reset/end競合を検証し、P4/S2/S31は未検証。
-- `device/usbd.c` / `device/usbd_pvt.h`: 独自HIDのSET_REPORTをstatus応答前に検証するため、
-  DATA/ACK callbackからcontrol dataの実転送量を取得する暫定adapter関数を追加。
-- upstream pin更新時は置換内容も見直す。置換元が正確に1か所へ一致しなければ
-  scriptは失敗する。新しいupstreamに修正が含まれる場合は該当patchを削除する。
-
-## 更新ルール
-
-### 見直す頻度
-
-- 対応するArduino-ESP32 baselineを変更するたびにpinを見直す。原則として、そのcoreの
-  S2/S3/P4 tool packageに記録されたTinyUSB commitを優先する。
-- EspUsbDeviceのmajor/minor release前にも見直す。core更新もreleaseもない場合は、
-  少なくとも四半期に1回upstreamのrelease、bug fix、security情報を確認する。
-  「見直し」は必ずしも「更新」を意味しない。
-- それ以外で更新するのは、関係するupstream bug/security fix、必要なUSB機能、
-  target対応がある場合に限る。core同梱commitから意図的に外す場合は、
-  `UPSTREAM.json`の`selection_reason`へ理由を記録する。
-- moving branchやversion文字列ではなく、upstreamのfull commit SHAへ固定する。
-
-### 更新手順
-
-1. 新しいArduino-ESP32 baselineをinstall/selectし、S2/S3/P4 tool packageそれぞれの
-   `versions.txt`にある`tinyusb:`行を確認する。全targetが同じcommitとは仮定しない。
-2. `UPSTREAM.json`のfull `commit`、`tinyusb_version`、
-   `reviewed_with_arduino_esp32`、`selection_reason`を更新する。commitを変えるとcache
-   directoryも変わるため、次のverify/update commandで新しいcommitが自動取得される。
-3. `python3 tools/verify_tinyusb_vendor.py`を実行する。新しいpinではcacheを取得した後、
-   選択済みfileの差分により通常は失敗する。この失敗を差分reviewの開始点とする。
-4. `python3 tools/update_tinyusb_vendor.py`で反映対象fileをdry-run表示してupstream差分を
-   reviewし、問題なければ`python3 tools/update_tinyusb_vendor.py --apply`を実行する。
-5. S2/S3/P4の全example matrixをclean compileする。compiler dependencyが変わった場合は
-   clean dependency fileから`BUILD_FILES.txt`を再生成し、新しく必要なupstream headerを
-   追加し、不要になったfileを削除して、3 targetすべてが通るまでcompileを繰り返す。
-
-   ```sh
-   cd tests
-   python3 tools/build_check.py esp32s3
-   ```
-
-6. `python3 tools/verify_tinyusb_vendor.py`を再実行する。実機testへ進む前に
-   byte-for-byteで成功しなければならない。
-7. 完全な実機suiteを実行する。
-
-   ```sh
-   uv run --env-file .env pytest --clean
-   ```
-
-8. full diff、upstream license/SPDX header、link-map symbol audit、provenanceを確認する。
-   upstream headerは変更せず、local patchを加える場合はすべてこの文書へ記録する。
-   Arduino-ESP32の`esp32-hal-tinyusb` integrationはこのtreeへcopyしない。
+1. Core baseline変更や関連修正が必要な場合は、各SoC tool packageの`versions.txt`と残存依存を確認する。
+   moving branchではなくfull commitを`UPSTREAM.json`へ記録する。
+2. `python3 tools/verify_tinyusb_vendor.py`で差分を確認する。
+3. `python3 tools/update_tinyusb_vendor.py`をdry-runし、必要なら`--apply`でmanifestのfileだけを更新する。
+4. 残存upstream内容とpatch、license、compiler dependency、link symbolを確認する。
+5. `validation/`から標準pluginの`--combo all`で検証し、未検証のSoC/HSを区別する。
+   旧`tests/`や`examples/`をv3の設計・合否基準へ戻さない。
