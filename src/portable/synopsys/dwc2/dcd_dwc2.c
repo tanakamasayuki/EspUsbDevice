@@ -86,11 +86,17 @@ bool espusb_dwc2_runtime_prepare(uint8_t port, void *memory, size_t bytes, uint1
   const size_t required = espusb_dwc2_runtime_size(port, out_mask, in_mask);
   if (runtime || !required || !memory || ((uintptr_t)memory & 63u) || bytes < required) return false;
   memset(memory, 0, required);
-  runtime = (espusb_dwc2_runtime_t *)memory;
-  runtime->mask[TUSB_DIR_OUT] = out_mask; runtime->mask[TUSB_DIR_IN] = in_mask;
-  runtime->count[TUSB_DIR_OUT] = selected_count(out_mask); runtime->count[TUSB_DIR_IN] = selected_count(in_mask);
-  runtime->ep_count = _dwc2_controller[port].ep_count; runtime->port = port;
-  runtime->bytes = required; runtime->setup_buffer = (uint8_t *)memory + required - DWC2_SETUP_STORAGE_BYTES;
+  espusb_dwc2_runtime_t *state = (espusb_dwc2_runtime_t *)memory;
+  state->mask[TUSB_DIR_OUT] = out_mask; state->mask[TUSB_DIR_IN] = in_mask;
+  state->count[TUSB_DIR_OUT] = selected_count(out_mask); state->count[TUSB_DIR_IN] = selected_count(in_mask);
+  state->ep_count = _dwc2_controller[port].ep_count; state->port = port;
+  state->bytes = required; state->setup_buffer = (uint8_t *)memory + required - DWC2_SETUP_STORAGE_BYTES;
+  // Initialization dirtied this cache line. Hand it to DMA before controller
+  // initialization; otherwise a delayed writeback could overwrite a SETUP.
+  // Keep direction operations separate and publish storage only on success.
+  if (!dcd_dcache_clean(state->setup_buffer, DWC2_SETUP_STORAGE_BYTES) ||
+      !dcd_dcache_invalidate(state->setup_buffer, DWC2_SETUP_STORAGE_BYTES)) return false;
+  runtime = state;
   return true;
 }
 void espusb_dwc2_runtime_release(void) { runtime = NULL; }

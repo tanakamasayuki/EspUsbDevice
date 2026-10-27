@@ -54,3 +54,5 @@ S3–S3で選択経路を検証しているが、P4/S2/S31の実機検証は未�
 4. 残存upstream内容とpatch、license、compiler dependency、link symbolを確認する。
 5. `validation/`から標準pluginの`--combo all`で検証し、未検証のSoC/HSを区別する。
    旧`tests/`や`examples/`をv3の設計・合否基準へ戻さない。
+
+SETUP領域は初回DMA前にclean/invalidateし、同期成功後にruntime pointerを公開する。失敗時は未公開の領域をcoreへ返す。

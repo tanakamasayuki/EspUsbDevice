@@ -6,6 +6,17 @@
 #include "../../../../src/internal/EspUsbDwc2Runtime.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #include <atomic>
+// S3 has no cache on internal DMA RAM. Replace its no-op backend hooks to
+// verify synchronization failure cleanup without adding product test switches.
+unsigned cacheFailure=0,cacheClean=0,cacheInvalidate=0,cacheBad=0;
+extern "C" bool dcd_dcache_clean(const void *address,uint32_t bytes) {
+  if(cacheFailure){++cacheClean;if((uintptr_t(address)&63) || bytes!=64 || espusb_dwc2_runtime_bytes())++cacheBad;}
+  return cacheFailure!=1;
+}
+extern "C" bool dcd_dcache_invalidate(const void *address,uint32_t bytes) {
+  if(cacheFailure){++cacheInvalidate;if((uintptr_t(address)&63) || bytes!=64 || espusb_dwc2_runtime_bytes())++cacheBad;}
+  return cacheFailure!=2;
+}
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 uint8_t controlIn[129], controlOut[129];
@@ -54,9 +65,21 @@ bool selectedStorage() {
   Serial.printf("DWC2_STORAGE ep0=%u vendor=%u sparse=%u\r\n",unsigned(minimal),unsigned(paired),unsigned(sparse));
   return ok;
 }
+bool cacheFailures() {
+  bool ok=true;
+  for(unsigned failure:{1u,2u}) {
+    cacheFailure=failure;cacheClean=cacheInvalidate=cacheBad=0;
+    ok &= !device.begin() && device.lastError()==ESP_FAIL && !espusb_dwc2_runtime_bytes() && device.end()==ESP_OK;
+    ok &= cacheClean==1 && cacheInvalidate==(failure==1 ? 0u:1u) && !cacheBad;
+    cacheFailure=0;
+    ok &= device.begin() && espusb_dwc2_runtime_transfers()==4 && device.end()==ESP_OK && !espusb_dwc2_runtime_bytes();
+    delay(10);
+  }
+  return ok;
+}
 bool metadata() {
   EspUsbDeviceConfig cfg;
-  bool ok=selectedStorage();
+  bool ok=selectedStorage() && cacheFailures();
   for (unsigned n:{0u}) {
     cfg.eventQueueDepth=n;
     ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_SIZE && device.end()==ESP_OK;

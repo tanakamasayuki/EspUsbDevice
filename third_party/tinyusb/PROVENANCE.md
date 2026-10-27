@@ -70,3 +70,5 @@ storage is replaced with compact records for descriptor-selected directions.
 This is recorded in LOCAL_PATCHES.json, retains the original MIT attribution,
 and is an intermediate lifecycle boundary rather than completion of the DCD
 replacement. Physical FIFO reservations and controller shutdown remain intact.
+
+The runtime adapter cleans and invalidates the dedicated SETUP line before initial DMA, publishing its pointer only after synchronization succeeds. Failed preparation leaves storage unpublished for core cleanup.

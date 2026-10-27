@@ -345,7 +345,7 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   s->queue=xQueueCreateStatic(UBaseType_t(queueDepth)+1,sizeof(Event),memory+queueOffset,&s->queueState);
   if (!s->queue) { s->~Core(); freeUsbMemory(s); return ESP_ERR_NO_MEM; }
   if (!espusb_dwc2_runtime_prepare(port,memory+dcdOffset,dcdBytes,outMask,inMask)) {
-    vQueueDelete(s->queue); s->~Core(); freeUsbMemory(s); return ESP_ERR_INVALID_STATE;
+    vQueueDelete(s->queue); s->~Core(); freeUsbMemory(s); return ESP_FAIL;
   }
   core=s;
   for (unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].init) s->drivers[i].init();

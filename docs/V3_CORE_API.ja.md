@@ -199,3 +199,35 @@ manifestは24 file / 2 compiled sourcesで一致し、updater dry-runも差分0�
 修正版ではFunctionなし=0、DFU Runtime=EP0のみと区別した。停止記録は`dwc2-runtime-interrupted-transcript.txt`。
 DWC2のregister/FIFO処理と内部ABI/headerはまだvendor依存であり、全撤去完了ではない。
 P4の初回SETUP DMA前のcache同期、他SoC/HS実機、全EP0世代境界・各classのHALT競合などは継続する。
+
+
+## 初回SETUP DMAのcache引渡し
+
+開始時に初期化したSETUP領域はCPU cacheがdirtyな可能性があるため、hardware初期化前に
+clean、invalidateを順に実行する。既存のbackend hookを使い、cacheのないS3/S2ではno-opとなる。
+metadataと別の64 byte lineだけを同期し、成功した後にDWC2 runtime pointerを公開する。
+失敗時はcontrollerを起動せず、coreの領域とqueueを返してESP_FAILで開始を失敗させる。
+NoMemとは区別し、次のbeginで再試行できる。
+
+S3専用probeではno-op hookを置換し、clean失敗とinvalidate失敗を一つずつ注入する。
+どちらも未公開・未回収0で戻ることと、通常hookへ戻した後の実通信を確認する。
+これはP4でcache coherencyを実測した証拠ではなく、P4/HSの実機試験は残る。
+
+
+## DWC2初回cache引渡しの補強
+
+全30件成功の実装`105d998`の後、SETUP lineの初期化によるdirty cacheを初回DMA前に同期する処理を加えた。
+clean/invalidateに成功するまでruntime pointerを公開せず、失敗時はESP_FAILでqueue/領域を返す。
+S3 probeは既存no-op backend hookを置換し、clean失敗とinvalidate失敗、未公開/64-byte alignment/長さ、
+続く再開始と実通信を確認した。製品用のtest flagやconftestは追加していない。
+
+`dwc2-cache-start.xml`はcontrol_coreとallocation_failureの
+**2 passed、0 skipped、0 unfinished、93.10秒**。774取得点の失敗/回復とheap一致も継続成功。
+4 serial log全てSTOPPED、panicなし。原本は
+`/tmp/pytest-embedded/2026-10-27_13-28-12-564789/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/dwc2-cache-start*`。
+最終sourceのS2/P4 HS probeもcompile成功し、nmで旧DWC2 static stateの不在を確認した。
+記録は`dwc2-cache-{s2,p4}-build.txt`と`dwc2-cache-{s2,p4}-nm.txt`。
+
+この追加後に全30件を再実行したわけではない。全体試験は`105d998`、追加後の関連確認は上の2件と区別する。
+P4/HSの実cache coherency、他SoC実機、残るvendor DWC2 register/FIFOとABI/headerの撤去は未完了。

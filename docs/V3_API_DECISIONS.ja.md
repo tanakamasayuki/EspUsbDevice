@@ -492,3 +492,13 @@ ATRの33 byte配列はwire上限であり、選んだFunction内に残す。交�
 不利益はbegin時の容量増加、maskからslotを求めるlookup費用、開始時確保失敗の対象拡大。
 公開API、FIFO容量やDMA segmentation、callback/fence契約は変えない。
 残るvendor sourceはMIT由来とpatchを維持し、独自DCDへの置換が完了したという扱いにはしない。
+
+
+## DWC2 SETUP DMAの初回cache同期
+
+runtime化で初期化したSETUP cache lineをhardwareへ渡す前にclean/invalidateし、
+遅れたCPU writebackが受信済みSETUPを壊す条件を避ける。成功するまでruntime pointerを公開しない。
+同期失敗はESP_FAILとし、領域を返して再試行可能にする。NoMemや設定値不正とは区別する。
+公開設定は追加せず、既存backend hookへ開始時だけ2回の呼出しを加える。
+cacheのないtargetの処理はno-op。heap取得点と通常の転送経路は増やさない。
+S3の失敗注入とP4 compileを、P4の実cache coherency試験と同一視しない。

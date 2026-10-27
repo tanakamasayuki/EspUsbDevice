@@ -1,6 +1,7 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はDWC2 storageの開始時領域への移行。標準combo allの全30件が成功（1952.20秒）。
+最新実装はDWC2初回SETUP cache同期と失敗時の未公開/回復。関連2件が成功。
+直前のstorage移行`105d998`では標準combo allの全30件が成功（1952.20秒）。
 直前のCCID runtime資源・複数instanceは関連4件と最終境界1件が成功。
 直前のMSCのSET_INTERFACEとBOT回復の区別は関連3件が成功。
 直前のHIDの標準要求による転送回復は関連4件が成功。
@@ -900,3 +901,22 @@ manifestは24 file / 2 compiled sourcesで一致し、updater dry-runも差分0�
 修正版ではFunctionなし=0、DFU Runtime=EP0のみと区別した。停止記録は`dwc2-runtime-interrupted-transcript.txt`。
 DWC2のregister/FIFO処理と内部ABI/headerはまだvendor依存であり、全撤去完了ではない。
 P4の初回SETUP DMA前のcache同期、他SoC/HS実機、全EP0世代境界・各classのHALT競合などは継続する。
+
+
+## DWC2初回cache引渡しの補強
+
+全30件成功の実装`105d998`の後、SETUP lineの初期化によるdirty cacheを初回DMA前に同期する処理を加えた。
+clean/invalidateに成功するまでruntime pointerを公開せず、失敗時はESP_FAILでqueue/領域を返す。
+S3 probeは既存no-op backend hookを置換し、clean失敗とinvalidate失敗、未公開/64-byte alignment/長さ、
+続く再開始と実通信を確認した。製品用のtest flagやconftestは追加していない。
+
+`dwc2-cache-start.xml`はcontrol_coreとallocation_failureの
+**2 passed、0 skipped、0 unfinished、93.10秒**。774取得点の失敗/回復とheap一致も継続成功。
+4 serial log全てSTOPPED、panicなし。原本は
+`/tmp/pytest-embedded/2026-10-27_13-28-12-564789/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/dwc2-cache-start*`。
+最終sourceのS2/P4 HS probeもcompile成功し、nmで旧DWC2 static stateの不在を確認した。
+記録は`dwc2-cache-{s2,p4}-build.txt`と`dwc2-cache-{s2,p4}-nm.txt`。
+
+この追加後に全30件を再実行したわけではない。全体試験は`105d998`、追加後の関連確認は上の2件と区別する。
+P4/HSの実cache coherency、他SoC実機、残るvendor DWC2 register/FIFOとABI/headerの撤去は未完了。
