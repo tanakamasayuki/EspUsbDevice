@@ -1,4 +1,5 @@
 #include "EspUsbDevice.h"
+#include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
@@ -22,6 +23,7 @@ struct EspUsbMscState {
   EspUsbDeviceMsc &owner;
   uint8_t *buffer = nullptr;
   bool owned = false, resetFence = false, clearIn = false, clearOut = false;
+  bool interfaceReset = false, needsBotReset = false;
   std::atomic<bool> stopping{false};
   enum class Stage { Command, DataIn, DataOut, Status, StatusSent, NeedReset, Recovery } stage = Stage::Command;
   uint8_t port = 0, interface = 255, in = 0, out = 0, maxLun = 0;
@@ -149,7 +151,18 @@ struct EspUsbMscState {
     if (s->fenceEpoch != s->resetEpoch) {
       espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob); return;
     }
-    if (s->stage == Stage::Recovery && s->clearIn && s->clearOut) s->commandReady();
+    if (s->stopping.load() || s->stage != Stage::Recovery) return;
+    if (s->interfaceReset) {
+      const bool haltIn = usbd_edpt_stalled(s->port, s->in), haltOut = usbd_edpt_stalled(s->port, s->out);
+      usbd_edpt_clear_stall(s->port, s->in); usbd_edpt_clear_stall(s->port, s->out);
+      // SET_INTERFACE resets endpoint toggles, but must not bypass the
+      // outstanding CLEAR_FEATURE steps of an ongoing BOT Reset Recovery.
+      if (haltIn && !s->clearIn) usbd_edpt_stall(s->port, s->in);
+      if (haltOut && !s->clearOut) usbd_edpt_stall(s->port, s->out);
+      s->interfaceReset = false;
+    }
+    if (s->needsBotReset) s->needReset();
+    else if (s->clearIn && s->clearOut) s->commandReady();
   }
   static void recover(void *context) {
     auto *s = static_cast<EspUsbMscState *>(context);
@@ -165,6 +178,7 @@ struct EspUsbMscState {
       ++s->resetEpoch;
       s->in = s->out = 0; s->interface = 255; s->stage = Stage::Command;
       s->key = s->asc = s->ascq = 0;
+      s->interfaceReset = s->needsBotReset = s->clearIn = s->clearOut = false;
     }
   }
   static bool deinit() { resetAll(0); return true; }
@@ -191,7 +205,7 @@ struct EspUsbMscState {
       while (s && s->in != r->wIndex && s->out != r->wIndex) s = s->next;
       if (!s || r->bRequest != 1 || r->wValue || r->wLength) return false;
       if (phase != CONTROL_STAGE_SETUP) return true;
-      if (s->stage == Stage::NeedReset) usbd_edpt_stall(port, uint8_t(r->wIndex));
+      if (s->stage == Stage::NeedReset || s->needsBotReset) usbd_edpt_stall(port, uint8_t(r->wIndex));
       else if (s->stage == Stage::Recovery) {
         (r->wIndex == s->in ? s->clearIn : s->clearOut) = true;
         if (s->clearIn && s->clearOut && !s->resetFence && !s->recoveryJob.queued) s->commandReady();
@@ -201,13 +215,26 @@ struct EspUsbMscState {
     }
     while (s && s->interface != r->wIndex) s = s->next;
     if (!s || r->wValue) return false;
+    if (r->bmRequestType == 1 && r->bRequest == 11 && !r->wLength) {
+      if (phase != CONTROL_STAGE_SETUP) return true;
+      const bool input = usbd_edpt_abort(port, s->in);
+      const bool output = usbd_edpt_abort(port, s->out);
+      if (!input || !output) return espusb::internal::rejectUsbControl();
+      // A new interface selection cancels normal transport, but it cannot
+      // replace BOT Reset Recovery after an invalid CBW or a phase error.
+      s->needsBotReset |= s->stage == Stage::NeedReset;
+      if (s->stage != Stage::Recovery) s->clearIn = s->clearOut = true;
+      ++s->resetEpoch; s->interfaceReset = true; s->stage = Stage::Recovery;
+      if (!espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob)) return espusb::internal::rejectUsbControl();
+      return tud_control_status(port, r);
+    }
     if (r->bmRequestType == 0xa1 && r->bRequest == 254 && r->wLength == 1)
       return phase != CONTROL_STAGE_SETUP || tud_control_xfer(port, r, &s->maxLun, 1);
     if (r->bmRequestType == 0x21 && r->bRequest == 255 && !r->wLength) {
       if (phase != CONTROL_STAGE_SETUP) return true;
       if (!usbd_edpt_abort(port, s->in) || !usbd_edpt_abort(port, s->out)) return false;
       ++s->resetEpoch;
-      s->stage = Stage::Recovery; s->clearIn = s->clearOut = false;
+      s->stage = Stage::Recovery; s->clearIn = s->clearOut = s->needsBotReset = false;
       s->key = s->asc = s->ascq = 0;
       espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob);
       return tud_control_status(port, r);

@@ -1,6 +1,7 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はHIDの標準要求による転送回復。関連4件が成功。
+最新実装はMSCのSET_INTERFACEとBOT回復の区別。関連3件が成功。
+直前のHIDの標準要求による転送回復は関連4件が成功。
 直前のVendor control公開actualBytesとCDC受信長検査は各関連3件が成功。
 直前のVendor/CDC標準要求の回復は関連10件と最終4件が成功。
 全体試験の最新記録は共通core/EP0独自化`ce6a444`の全27件成功（1743.12秒）で、現在の全29件は未実行。
@@ -805,3 +806,31 @@ plugin repoは1.10.0、commit `698bb29`で、combo/profileの最新ローカル�
 新試験もconftestや独自hookなし。標準combo allで29件を収集したが、現在の全29件一括実行は未完了。
 SET_INTERFACEとidleの同時条件、人工的な旧完了/queue満杯/reset/endの全競合順序、他SoC/OSは未検証。
 残るDWC2/ABI/header依存と他クラスの回復検証も継続する。
+
+
+## MSC interface再選択とBOT回復
+
+2026-10-27。SET_INTERFACE alt 0をMSCのepoch付きDMA停止/fenceへ接続した。
+通常のCommand待ち・CSW待ち・部分READ/WRITEを破棄して新しいCBWを受ける。
+不正CBW後のBOT reset要求と、BOT reset途中の未完CLEAR_FEATUREは維持する。
+WRITEは処理済み64 byteが残り、残りのsectorは変更されないことを実測した。
+2つのMSCそれぞれで再初期化と容量/readbackを確認した。他instanceの同時進行コマンドの維持は未検証。
+
+`msc-interface-verified.xml`はmsc_bot、msc_storage、allocation_failureの
+**3 passed、0 skipped、0 unfinished、252.88秒**。6 serial log全てSTOPPED、panicなし。
+712取得点で失敗/回復、heap before/after一致。原本は
+`/tmp/pytest-embedded/2026-10-27_08-04-42-101108/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/msc-interface-verified*`。
+既存BOT 13ケース、不正CBW 6条件、511 byte sector、media/sense、複数MSCも継続成功した。
+最初の試験ではBOT reset中のSET_INTERFACEがHALTを早期解除する条件を検出し、未完の解除手順を保持した。
+次の失敗はHost試験が前回の511 byte geometryを保持したためで、Host開始時に既定512 byteへ戻した。
+各失敗transcriptも`.pytest-results/msc-interface-before-halt-preserve*`と`msc-interface-host-geometry*`に残す。
+
+TinyUSB manifestは24 file / 2 compiled sourcesで一致。旧tests/examplesはmainと同じ。
+全29件の一括再試験、任意Host HALTからの進行中SCSI継続、bus reset/endとの全競合順序、OS/実mediaは未完了。
+
+
+次の候補: CCIDは`EspUsbDeviceCcid.cpp`に単一global ownerと
+ESP_USB_DEVICE_CCID_BUFFER_SIZE由来の固定容量が残り、新規validationにも専用caseがない。
+公開API/資源のruntime化と独立したCCID試験を進める。MIDIは共有bulk回復経路に入るが、固有の標準要求試験は未追加。
+残るDWC2/ABI/headerの撤去、EP0世代境界などの全体目標は維持する。

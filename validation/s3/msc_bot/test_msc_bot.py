@@ -16,6 +16,8 @@ def test_msc_bot(dut, peers):
             dut.expect_exact(f"INVALID_CBW 1 variant={variant}\r\n", timeout=15)
         dut.write("sense")
         dut.expect_exact("SENSE_CHECK 1\r\n", timeout=15)
+        dut.write("interface")
+        dut.expect_exact("INTERFACE_CHECK 1\r\n", timeout=30)
         device.write("fail")
         device.expect_exact("IO_CHANGED\r\n", timeout=5)
         dut.write("faultread")
@@ -52,6 +54,8 @@ def test_msc_bot(dut, peers):
         for interface, command in ((1, "second"), (0, "primary")):
             dut.write(f"start {interface}")
             dut.expect_exact("HOST_READY 1\r\n", timeout=30)
+            dut.write("interface")
+            dut.expect_exact("INTERFACE_CHECK 1\r\n", timeout=30)
             dut.write(command)
             dut.expect_exact("ISOLATED 1\r\n", timeout=15)
             dut.write("stop")

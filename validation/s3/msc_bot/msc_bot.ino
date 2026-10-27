@@ -190,6 +190,44 @@ bool invalidCbw(unsigned variant) {
   ok &= reset();
   return ok;
 }
+bool alternate() {return request(1,11,0,0) && reclaim();}
+bool nextCommand() {return cbw(0,false,0) && csw(0,0);}
+bool interfaceCheck() {
+  bool ok=reset();
+  // Command, pending CSW, partially completed READ, and partially committed WRITE.
+  for(unsigned phase=0;phase<(selectedInterface ? 3u:4u);++phase) {
+    if(phase==1)ok &= cbw(0,false,0);
+    if(phase==2)ok &= cbw(0x28,true,sectorBytes,1,4) && bulk(true,64) && actual==64;
+    if(phase==3) {
+      ok &= cbw(0x2a,false,sectorBytes,1,4);
+      memset(output->data_buffer,0x91,64);ok &= bulk(false,64) && actual==64;
+    }
+    events(5);
+    ok &= alternate() && nextCommand();
+    if(!ok){Serial.printf("INTERFACE_PHASE %u\r\n",phase);return false;}
+  }
+  if(!selectedInterface) {
+    ok &= cbw(0x28,true,sectorBytes,1,4) && bulk(true,sectorBytes) && actual==sectorBytes;
+    for(unsigned i=0;i<sectorBytes;++i)ok &= input->data_buffer[i]==(i<64 ? 0x91:0);
+    ok &= csw(0,0);
+  }
+  if(!ok){Serial.println("INTERFACE_WRITE_COMMIT");return false;}
+  // SET_INTERFACE is not BOT Reset Recovery for an invalid CBW.
+  memset(output->data_buffer,0,31);ok &= bulk(false,31) && actual==31;events(5);
+  ok &= alternate();
+  for(uint8_t ep:{endpoint,outEndpoint}) {
+    ok &= request(0x82,0,0,2,ep) && (control->data_buffer[8]&1);
+    ok &= clear(ep);
+    ok &= request(0x82,0,0,2,ep) && (control->data_buffer[8]&1);
+  }
+  // A new interface selection during class reset still requires both clears.
+  ok &= request(0x21,255,0,0) && alternate();
+  for(uint8_t ep:{endpoint,outEndpoint}) {
+    ok &= request(0x82,0,0,2,ep) && (control->data_buffer[8]&1);
+    ok &= clear(ep);
+  }
+  return ok && reclaim() && nextCommand();
+}
 bool senseCheck() {
   bool ok = cbw(0xff, false, 0) && csw(1, 0);
   ok &= cbw(3, true, 18) && bulk(true, 18) && actual == 18;
@@ -243,6 +281,7 @@ void loop() {
   String command = Serial.readStringUntil('\n'); command.trim();
   if (command == "start" || command.startsWith("start ")) {
     selectedInterface = command == "start" ? 0 : command.substring(6).toInt();
+    sectorBytes = 512;
     usb_host_config_t config = {}; config.intr_flags = ESP_INTR_FLAG_LEVEL1;
 #if CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK
     // This Core enables filtering: a null callback rejects every device.
@@ -279,6 +318,8 @@ void loop() {
     Serial.printf("SECTOR_GUARD %u\r\n", unsigned(sectorGuard()));
   } else if (command == "primary" || command == "second") {
     Serial.printf("ISOLATED %u\r\n", unsigned(isolated(command == "second")));
+  } else if (command == "interface") {
+    Serial.printf("INTERFACE_CHECK %u\r\n",unsigned(interfaceCheck()));
   } else if (command == "sense") {
     Serial.printf("SENSE_CHECK %u\r\n", unsigned(senseCheck()));
   } else if (command == "stop") {

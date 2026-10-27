@@ -448,3 +448,14 @@ HID内でDMA停止と方向別fenceを扱い、SET_INTERFACEは両方向、HALT/
 不利益は受理済みの未送信copyと受信途中レポートが破棄されること、HID選択時の回復コード・状態の増加。
 追加task/転送時heapはなく、未使用HIDにこの処理は持ち込まない。
 公開送信APIはcopy受理のままとし、借用buffer返却callbackを新設する変更は含めない。
+
+
+## MSC interface再選択をBOT resetと区別する
+
+共通alt 0 ACKだけではMSCの共有DMAとCommand/Data/Statusの状態が残るため、
+MSC自身のepoch付きrecovery fenceへSET_INTERFACEを接続する。
+通常の未完コマンドを破棄して次のCBWへ戻す一方、不正CBW/報告済みPhase ErrorのBOT reset要求は保持する。
+BOT reset中のinterface再選択も、未受信のendpoint CLEAR_FEATUREを完了扱いにしない。
+利点は中断後に古いCSWやdataを次のコマンドとして扱わず、必要なBOT回復手順を維持すること。
+不利益は進行中コマンドの破棄と、部分的にstorageへ反映済みのWRITEをアプリが確認する必要があること。
+追加task/転送時heapと公開API変更はない。書込みの原子性やロールバック保証を新設するものではない。

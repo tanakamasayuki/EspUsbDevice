@@ -115,3 +115,44 @@ MSC自身のBOT resetに必要なhardware abortはMSC使用時だけリンクす
 362取得点の失敗/回復、511/512 byte sectorの各BOT13ケースと隣接sectorのguard、
 独立2 MSCと既存CDC/Vendor/HID/MIDIの回帰を含む。全caseで両board STOPPED、panicなし。
 serial原本は/tmp/pytest-embedded/2026-10-26_17-57-02-044220/、コピーとJUnit/transcriptはvalidation/.pytest-results/runtime-msc-all*。
+
+
+## interfaceの再初期化とBOT回復
+
+SET_INTERFACE alt 0で対象MSCの両DMAを停止し、旧完了eventのfence後にDATA0へ戻す。
+通常のCommand/Data/Statusの途中なら未完のBOT transactionを破棄し、新しいCBWを待つ。
+保存済みのSCSI senseやmedia設定は維持する。storage callbackで処理済みの書込みはロールバックしない。
+Hostは中断したコマンドの成功や書込み全体の原子性を仮定できず、必要な範囲を確認・再送する。
+
+不正CBW後や、Phase Errorを返した後のReset Recovery要求は維持する。
+SET_INTERFACEや単なるHALT解除をBOT resetの代用として扱わない。
+BOT reset途中のSET_INTERFACEでも、未完のCLEAR_FEATURE手順を完了扱いにしない。
+[USB-IF BOT 1.0](https://www.usb.org/sites/default/files/usbmassbulk_10.pdf)の§3.1、§5.3.4、§6.6.1を基準に、
+class resetでのHALT/PID保持、両endpointの解除、不正CBWからの回復を区別する。
+
+再初期化にも既存recovery jobとepoch付きfenceを使い、新たなtaskや転送時heap確保は増やさない。
+公開APIの形は維持する。MSCを選んだ場合に状態フラグと回復コードが追加される。
+任意のタイミングのHost起因HALT/CLEARだけで進行中SCSI commandを継続する条件、
+SET_INTERFACEとbus reset/endの全到着順、実media/OSの検証は残る。
+
+
+## MSC interface再選択とBOT回復
+
+2026-10-27。SET_INTERFACE alt 0をMSCのepoch付きDMA停止/fenceへ接続した。
+通常のCommand待ち・CSW待ち・部分READ/WRITEを破棄して新しいCBWを受ける。
+不正CBW後のBOT reset要求と、BOT reset途中の未完CLEAR_FEATUREは維持する。
+WRITEは処理済み64 byteが残り、残りのsectorは変更されないことを実測した。
+2つのMSCそれぞれで再初期化と容量/readbackを確認した。他instanceの同時進行コマンドの維持は未検証。
+
+`msc-interface-verified.xml`はmsc_bot、msc_storage、allocation_failureの
+**3 passed、0 skipped、0 unfinished、252.88秒**。6 serial log全てSTOPPED、panicなし。
+712取得点で失敗/回復、heap before/after一致。原本は
+`/tmp/pytest-embedded/2026-10-27_08-04-42-101108/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/msc-interface-verified*`。
+既存BOT 13ケース、不正CBW 6条件、511 byte sector、media/sense、複数MSCも継続成功した。
+最初の試験ではBOT reset中のSET_INTERFACEがHALTを早期解除する条件を検出し、未完の解除手順を保持した。
+次の失敗はHost試験が前回の511 byte geometryを保持したためで、Host開始時に既定512 byteへ戻した。
+各失敗transcriptも`.pytest-results/msc-interface-before-halt-preserve*`と`msc-interface-host-geometry*`に残す。
+
+TinyUSB manifestは24 file / 2 compiled sourcesで一致。旧tests/examplesはmainと同じ。
+全29件の一括再試験、任意Host HALTからの進行中SCSI継続、bus reset/endとの全競合順序、OS/実mediaは未完了。

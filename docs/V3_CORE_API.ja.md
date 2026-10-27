@@ -138,3 +138,8 @@ HIDの標準要求による方向別回復も追加済み。公開APIの影響�
 [HIDガイド](V3_HID_API.ja.md#標準interfaceendpoint要求による回復)を参照。
 共有bulkを使うMIDIはVendor/CDCと同じ回復経路に入るが、MIDI固有の標準要求試験はまだ追加していない。
 他クラスも個別の所有権・protocol契約と検証を継続する。
+
+
+MSCのSET_INTERFACEも独自recovery fenceへ接続済み。不正CBWのBOT reset要求と区別する。
+[MSCガイド](V3_MSC_API.ja.md#interfaceの再初期化とbot回復)にAPIの影響と関連3件の実測を記録した。
+任意Host HALT中のcommand継続、他instanceの同時進行、全競合順序を完了したという意味ではない。
