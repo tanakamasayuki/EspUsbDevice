@@ -97,6 +97,9 @@ void loop() {
       if (mode == 6) { second = new EspUsbDeviceMidi(device); auto next = second->configuration(); next.rxPackets = 3; next.txPackets = 5; next.transferPackets = 1; second->configure(next); }
       if (mode == 8) config.autoFlush = false;
       if (mode == 9) config.inCables = 16;
+      // Receive all 16 OUT cables, then exercise the sole IN cable separately.
+      // Echoing OUT cables 1..15 would correctly be refused by the IN contract.
+      if (mode == 10) { config.outCables = cables = 16; receiveOnly = true; }
       if (mode == 7) { serialPort = new EspUsbDeviceCdcSerial(device); keyboard = new EspUsbDeviceHidKeyboard(device); }
       callbackPackets.store(0); payloadOk.store(true);
       midi.onPacket([](const EspUsbDeviceMidiPacket &packet) {

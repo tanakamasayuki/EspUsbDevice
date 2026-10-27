@@ -9,9 +9,10 @@ def test_midi_stream(dut, peers):
         assert result.group(1) == result.group(2), "MIDI configuration leaked heap"
         for mode, rx, tx, cables in ((0, 1, 1, 1), (1, 37, 43, 16), (2, 3, 5, 1),
                                       (3, 0, 128, 1), (4, 0, 1, 1), (5, 1, 0, 1),
-                                      (6, 1, 1, 1), (7, 1, 1, 1), (8, 1, 1, 1), (9, 1, 1, 1)):
+                                      (6, 1, 1, 1), (7, 1, 1, 1), (8, 1, 1, 1), (9, 1, 1, 1),
+                                      (10, 1, 1, 16)):
             device.write(f"start {mode}")
-            in_cables = 16 if mode == 9 else cables
+            in_cables = 16 if mode == 9 else 1 if mode == 10 else cables
             device.expect_exact(f"STARTED 1 rx={rx} tx={tx} in={in_cables} out={cables}\r\n", timeout=30)
             dut.write(f"start {in_cables} {cables}")
             dut.expect_exact("HOST_READY 1\r\n", timeout=30)
@@ -44,7 +45,7 @@ def test_midi_stream(dut, peers):
                 dut.expect_exact("SENT 1\r\n", timeout=5)
             elif mode == 4:
                 device.write(f"send {events}")
-            if mode != 5:
+            if mode not in (5, 10):
                 dut.write(f"wait {events}")
                 dut.expect_exact(f"RECEIVED {events} bad=0\r\n", timeout=10)
             if mode == 3:
@@ -95,7 +96,7 @@ def test_midi_stream(dut, peers):
                 device.expect_exact("COMPOSITE 1\r\n", timeout=10)
                 dut.write("composite_result")
                 dut.expect_exact("COMPOSITE_RECEIVED 1\r\n", timeout=10)
-            if mode in (7, 9):
+            if mode in (7, 9, 10):
                 dut.write(f"semantics {in_cables - 1}")
                 dut.expect_exact("SEMANTICS_ARMED\r\n", timeout=5)
                 device.write("semantics")

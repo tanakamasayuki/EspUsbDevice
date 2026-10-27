@@ -630,3 +630,16 @@ S3 Vendor-onlyでは未使用class stateも不在。各targetのライブラリ2
 旧tests/examplesはmainとの差分なし。
 wire type・HID table・DWC2とcapability定義、HALT競合・全EP0順序・他SoC/HS実機、
 最終API/sampleの整理は未完了。逆向きIN1/OUT16の追加試験はこの全体結果には含めない。
+
+## MIDI逆向き非対称cableの追加確認
+
+2026-10-28。`c67fe1c`の製品実装を変更せず、MIDI probeへIN1/OUT16を追加した。
+Hostが方向別cable数を読み取り、全16 OUT cableへ計64 eventを送りDeviceで全byteを確認する。
+OUTのcable 1～15はINには存在しないため、そのままechoする期待にはしない。
+続いて唯一のIN cable 0へhelper/SysEx等の15 eventを送り、Hostで全byteを比較した。
+拡張したMIDI probeは**1 passed、0 skipped、0 unfinished、43.28秒**。
+既存の対称1/16、IN16/OUT1と複合/取消しを含む11 runtime modeも同じ実行で通過した。
+2 serial logともSTOPPED、panicなし。原本`/tmp/pytest-embedded/2026-10-27_15-54-28-307048/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/native-midi-asym*`。
+全体31件の一括成功は追加前の`c67fe1c`であり、追加後はMIDIのみ再実行した。
+製品コードは全体試験時と同一。S2/P4の追加実機確認を行った意味ではない。
