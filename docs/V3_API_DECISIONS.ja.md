@@ -512,3 +512,13 @@ EP0とdeferred fenceは別の寿命契約を維持する。
 利点は新しいbufferをHost data完了より早く返さず、古い結果で新しいendpoint flagsを解除しないこと。
 不利益はevent一つにつきuint32_t一つとcore側世代の開始時領域増加。公開API、転送時heap取得は変えない。
 構成世代は投入済みqueueの識別であり、全ISR順序やarm tokenの代わりという扱いにはしない。
+
+
+## 構成世代とhardware完了の境界
+
+構成世代を導入した後も、latched XFRCが新規armの状態で処理される条件をS3で再現した。
+close_allで停止完了待ちと非制御DEPINT clearを行い、転送recordを初期化する。
+endpoint ISRとtask操作は同じhardware lockで同期し、SOF class callbackはlock外へ保つ。
+利点は再構成で返したbufferへ旧DMA/IRQ処理が残らず、旧完了を新規転送へ適用しないこと。
+不利益は停止待ち時間とcritical sectionの増加。公開API、通常転送のheap取得点は変えない。
+全てのISR順序をarm tokenで証明したという扱いにはせず、EP0/bus reset等の境界検証を継続する。

@@ -4,9 +4,11 @@
 #include "../../../../src/device/usbd_pvt.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #include <atomic>
+#include "soc/usb_dwc_struct.h"
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 alignas(64) uint8_t oldTx[64],oldRx[64],newTx[64],newRx[64];
+std::atomic<bool> irqMasked{false};
 std::atomic<unsigned> setups{0},oldReturns{0},successes{0},bad{0};
 std::atomic<bool> parked{false},released{false},armed{false},newTxPending{false},newRxPending{false};
 uint64_t oldTxId=0,oldRxId=0,newTxId=0,newRxId=0;
@@ -59,6 +61,20 @@ void loop() {
     released=false;setupMark=setups.load();bool ok=espusb::internal::postTinyUsbRuntimeJob(parkJob);
     uint32_t until=millis()+3000;while(ok && !parked.load() && int32_t(until-millis())>0)delay(1);
     Serial.printf("PARKED %u\r\n",unsigned(ok && parked.load()));
+  } else if(s=="mask") {
+    uint32_t until=millis()+3000;while(setups.load()==setupMark && int32_t(until-millis())>0)delay(1);
+    bool ok=parked.load() && setups.load()>setupMark;
+    if(ok){dcd_int_disable(espusb::internal::tinyUsbRuntimeRhport());irqMasked=true;}
+    Serial.printf("MASKED %u\r\n",unsigned(ok));
+  } else if(s=="latched") {
+    const bool completed=(input&15) && USB_DWC.in_eps[(input&15)-1].diepint_reg.xfercompl;
+    Serial.printf("LATCHED %u\r\n",unsigned(irqMasked.load() && completed && !oldReturns.load()));
+  } else if(s=="inject_latched") {
+    bool ok=irqMasked.load() && parked.load() && usbd_try_defer_func(armNew,nullptr);released=true;
+    uint32_t until=millis()+3000;while(!armed.load() && int32_t(until-millis())>0)delay(1);
+    ok &= armed.load();
+    if(irqMasked.exchange(false))dcd_int_enable(espusb::internal::tinyUsbRuntimeRhport());
+    Serial.printf("INJECTED %u\r\n",unsigned(ok));
   } else if(s=="inject") {
     uint32_t until=millis()+3000;while(setups.load()==setupMark && int32_t(until-millis())>0)delay(1);
     bool ok=parked.load() && setups.load()>setupMark && usbd_try_defer_func(armNew,nullptr);
@@ -69,7 +85,9 @@ void loop() {
     while((!armed.load() || (s=="result" && successes.load()<2)) && int32_t(until-millis())>0)delay(1);
     if(s=="pending")delay(20);
     Serial.printf("STATE old=%u success=%u tx=%u rx=%u bad=%u\r\n",oldReturns.load(),successes.load(),unsigned(newTxPending.load()),unsigned(newRxPending.load()),bad.load());
-  } else if(s=="release") {released=true;Serial.println("RELEASED");
+  } else if(s=="release") {
+    if(irqMasked.exchange(false))dcd_int_enable(espusb::internal::tinyUsbRuntimeRhport());
+    released=true;Serial.println("RELEASED");
   } else if(s=="stop") {
     released=true;Serial.println(device.end()==ESP_OK ? "STOPPED":"STOP_FAILED");
   }

@@ -56,3 +56,5 @@ S3–S3で選択経路を検証しているが、P4/S2/S31の実機検証は未�
    旧`tests/`や`examples/`をv3の設計・合否基準へ戻さない。
 
 SETUP領域は初回DMA前にclean/invalidateし、同期成功後にruntime pointerを公開する。失敗時は未公開の領域をcoreへ返す。
+
+DWC2の構成解除ではDMA停止完了を待ち、latched非制御IRQを消す。endpoint ISRとtask操作を同じlockへ揃えるpatchも記録する。SOF class callbackはlock外に保つ。

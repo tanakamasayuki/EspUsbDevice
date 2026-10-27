@@ -1,16 +1,11 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装は構成世代による旧queue完了の隔離。再現後の関連5件が成功。
-直前のDWC2初回SETUP cache同期と失敗時の未公開/回復は関連2件が成功。
-直前のstorage移行`105d998`では標準combo allの全30件が成功（1952.20秒）。
-直前のCCID runtime資源・複数instanceは関連4件と最終境界1件が成功。
-直前のMSCのSET_INTERFACEとBOT回復の区別は関連3件が成功。
-直前のHIDの標準要求による転送回復は関連4件が成功。
-直前のVendor control公開actualBytesとCDC受信長検査は各関連3件が成功。
-直前のVendor/CDC標準要求の回復は関連10件と最終4件が成功。
-全体試験の最新記録は共通core/EP0独自化`ce6a444`の全27件成功（1743.12秒）で、現在の全30件は未実行。
+最新実装はDWC2再構成時のDMA停止・latched IRQ消去とendpoint操作の同期。
+構成世代だけでは防げない旧hardware完了を実機で再現し、修正後の標準combo allは
+**全31件成功（1071.24秒）**。62 serial log全てSTOPPED、panicなし。
+S2/P4 HSはcompile-only成功。実機確認はS3–S3のみ。
 [core APIと未完の境界](V3_CORE_API.ja.md)を参照。TinyUSBのコンパイル対象はDWC2関連2本、
-vendor選択は24 file。C ABI/headerとDWC2への依存は残る。
+vendor選択は24 files。C ABI/headerとDWC2への依存は残る。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
@@ -953,3 +948,19 @@ armごとのtoken、全EP0順序、他SoC/HS実機の検証を完了した扱い
 latched XFRCを残したまま再構成/新規armを行う。IRQ再開後に新規loanが早期返却されないか確認する。
 現DCDはclose_allでEPDISを要求するが非制御DEPINT全clearをせず、通常EP IRQ処理はtask側のhardware lockを取らない。
 このhardware側境界は構成世代だけでは証明できない。DMA停止待ち・IRQ clear・ISR/task同期と合わせて調べる。
+
+## DWC2停止・IRQ同期の全体確認
+
+2026-10-27。構成世代filterだけでは防げない実latched XFRCをS3–S3で再現した。
+修正前は旧INの完了後、IRQを保留して再構成・新規armすると、新規TXが実data前にSuccessになった。
+close_allのDMA停止待ち・残存割り込み消去と、endpoint処理のhardware lock同期を追加した。
+queue深さ4/16/31で、queue内の旧完了と実latched完了を各2回、計12回の再構成で確認する。
+単独確認は**1 passed、28.57秒**。続く標準`pytest --combo all`は
+**31 passed、0 skipped、0 failed/error、0 unfinished、1071.24秒**。
+62 serial log全てSTOPPED、panicなし。原本は
+`/tmp/pytest-embedded/2026-10-27_14-05-33-983106/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/dwc2-quiesce-all*`。
+S2/P4 HSのcompile-only probeも成功し、`dwc2-quiesce-{s2,p4}-build.txt`へ保存した。
+vendor検証は24 files/2 compiled sources、updater dry runは差分0。
+旧tests/examplesはmainとの差分なし。他SoC/HS実機、hardware故障時の停止timeout、
+全EP0順序とvendor ABI/header/DWC2の完全撤去は未完了。

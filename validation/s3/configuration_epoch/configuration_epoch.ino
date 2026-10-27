@@ -5,6 +5,7 @@ usb_host_client_handle_t client=nullptr;usb_device_handle_t handle=nullptr;
 usb_transfer_t *control=nullptr,*input=nullptr,*output=nullptr;
 std::atomic<bool> running{false},exited{true},allFree{false},done{true};
 bool claimed=false;uint8_t in=0,out=0;
+std::atomic<bool> oldDone{true};
 void daemon(void *) {
   while(running.load()) {
     uint32_t flags=0;usb_host_lib_handle_events(pdMS_TO_TICKS(10),&flags);
@@ -36,6 +37,15 @@ bool configurationDone() {
   if(ok)claimed=usb_host_interface_claim(client,handle,0,0)==ESP_OK;
   return ok && claimed;
 }
+bool oldRead() {
+  input->device_handle=handle;input->bEndpointAddress=in;input->num_bytes=64;input->callback=[](usb_transfer_t *){oldDone=true;};
+  oldDone=false;if(usb_host_transfer_submit(input)!=ESP_OK){oldDone=true;return false;}
+  uint32_t until=millis()+3000;while(!oldDone.load() && int32_t(until-millis())>0)events();
+  if(!oldDone.load())return false;
+  bool ok=input->status==USB_TRANSFER_STATUS_COMPLETED && input->actual_num_bytes==64;
+  for(unsigned j=0;ok && j<64;++j)ok &= input->data_buffer[j]==0xdd;
+  return ok;
+}
 bool exchange() {
   if(!done.load())return false;input->device_handle=handle;input->bEndpointAddress=in;input->num_bytes=64;input->callback=complete;
   done=false;if(usb_host_transfer_submit(input)!=ESP_OK){done=true;return false;}
@@ -48,6 +58,11 @@ bool exchange() {
 }
 bool stop() {
   if(!done.load() && !wait())return false;bool ok=true;
+  if(!oldDone.load()) {
+    ok &= usb_host_endpoint_halt(handle,in)==ESP_OK && usb_host_endpoint_flush(handle,in)==ESP_OK;
+    uint32_t until=millis()+3000;while(!oldDone.load() && int32_t(until-millis())>0)events();
+    if(!oldDone.load())return false;
+  }
   for(auto **t:{&control,&input,&output})if(*t){ok &= usb_host_transfer_free(*t)==ESP_OK;*t=nullptr;}
   if(claimed)ok &= usb_host_interface_release(client,handle,0)==ESP_OK;claimed=false;
   if(handle){ok &= usb_host_device_close(client,handle)==ESP_OK;handle=nullptr;}
@@ -72,6 +87,7 @@ void loop() {
     uint32_t until=millis()+10000;while(ok && !claimed && int32_t(until-millis())>0)events();
     Serial.printf("HOST_READY %u\r\n",unsigned(ok && claimed));
   } else if(s=="configure")Serial.printf("CONFIG_SUBMITTED %u\r\n",unsigned(configureAsync()));
+  else if(s=="old")Serial.printf("OLD_READ %u\r\n",unsigned(oldRead()));
   else if(s=="complete")Serial.printf("CONFIGURED %u\r\n",unsigned(configurationDone()));
   else if(s=="exchange")Serial.printf("EXCHANGED %u\r\n",unsigned(exchange()));
   else if(s=="stop")Serial.println(!client || stop() ? "STOPPED":"STOP_FAILED");

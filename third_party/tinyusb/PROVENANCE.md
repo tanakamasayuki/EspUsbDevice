@@ -72,3 +72,5 @@ and is an intermediate lifecycle boundary rather than completion of the DCD
 replacement. Physical FIFO reservations and controller shutdown remain intact.
 
 The runtime adapter cleans and invalidates the dedicated SETUP line before initial DMA, publishing its pointer only after synchronization succeeds. Failed preparation leaves storage unpublished for core cleanup.
+
+The recorded DWC2 patches also wait for endpoint shutdown, clear latched non-control interrupts, and serialize endpoint ISR/task operations. SOF class callback dispatch stays outside that lock.

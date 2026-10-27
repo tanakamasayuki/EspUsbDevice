@@ -12,11 +12,17 @@ def test_configuration_epoch(dut, peers):
         for depth in (4, 16, 31):
             command(device, f"start {depth}", "STARTED 1", 30)
             command(dut, "start", "HOST_READY 1", 30)
-            for _ in range(3):
+            for latched in (False, True, False, True):
                 command(device, "prime", "PRIMED 1")
                 command(device, "park", "PARKED 1")
                 command(dut, "configure", "CONFIG_SUBMITTED 1")
-                command(device, "inject", "INJECTED 1")
+                if latched:
+                    command(device, "mask", "MASKED 1")
+                    command(dut, "old", "OLD_READ 1")
+                    command(device, "latched", "LATCHED 1")
+                    command(device, "inject_latched", "INJECTED 1")
+                else:
+                    command(device, "inject", "INJECTED 1")
                 command(dut, "complete", "CONFIGURED 1")
                 command(device, "pending", "STATE old=2 success=0 tx=1 rx=1 bad=0")
                 command(dut, "exchange", "EXCHANGED 1")

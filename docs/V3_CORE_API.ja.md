@@ -275,3 +275,37 @@ S2/P4 HSのcompile-only probeも成功。記録は`configuration-epoch-{s2,p4}-b
 収集対象は31件となったが、全体試験の最新は構成世代追加前`105d998`の30件で、全31件一括成功ではない。
 今回の識別対象はqueue投入済みの旧完了であり、遅れて実行されるDCD ISRやlatched IRQ、
 armごとのtoken、全EP0順序、他SoC/HS実機の検証を完了した扱いにはしない。
+
+
+## 再構成前のDMA停止とlatched IRQ
+
+queueに投入済みのeventだけでなく、hardwareに残った旧XFRCも区別する必要がある。
+S3でSET_CONFIGURATIONのSETUP後にDCD IRQを止め、旧INを実Hostで完了させた。
+SDK registerのxfercompl=1を確認した後、再構成・新規armを行ってIRQを再開すると、
+修正前は新規TXがHostの新しいINより早くSuccessで返った。
+この完了は再構成後にISRが投入するため、構成世代filterだけでは識別できなかった。
+
+DWC2 close_allは有効endpointの停止完了を待ち、非制御endpointのactive/interrupt状態と
+転送recordを解放してから再openを許す。EPENAがすでに0でも残ったXFRCを消す。
+IRQ処理はDAINTMSKを反映し、endpoint IRQ・ISO不完全転送処理とtask側endpoint操作を
+同じhardware lockで同期する。SOFのclass callback呼出しはlock外に保ち、逆順のlock取得を避ける。
+
+新しいconfiguration_epochはqueue旧完了と実latched IRQを交互に実行する。
+公開API、転送時heap、確保点数は変えない。代償は再構成時の実DMA停止待ちと、
+endpoint処理中のcritical section増加。hardware故障時の停止待ちtimeoutや全EP0到着順などは別の検証対象とする。
+
+## DWC2停止・IRQ同期の全体確認
+
+2026-10-27。構成世代filterだけでは防げない実latched XFRCをS3–S3で再現した。
+修正前は旧INの完了後、IRQを保留して再構成・新規armすると、新規TXが実data前にSuccessになった。
+close_allのDMA停止待ち・残存割り込み消去と、endpoint処理のhardware lock同期を追加した。
+queue深さ4/16/31で、queue内の旧完了と実latched完了を各2回、計12回の再構成で確認する。
+単独確認は**1 passed、28.57秒**。続く標準`pytest --combo all`は
+**31 passed、0 skipped、0 failed/error、0 unfinished、1071.24秒**。
+62 serial log全てSTOPPED、panicなし。原本は
+`/tmp/pytest-embedded/2026-10-27_14-05-33-983106/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/dwc2-quiesce-all*`。
+S2/P4 HSのcompile-only probeも成功し、`dwc2-quiesce-{s2,p4}-build.txt`へ保存した。
+vendor検証は24 files/2 compiled sources、updater dry runは差分0。
+旧tests/examplesはmainとの差分なし。他SoC/HS実機、hardware故障時の停止timeout、
+全EP0順序とvendor ABI/header/DWC2の完全撤去は未完了。

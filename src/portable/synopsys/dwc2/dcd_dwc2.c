@@ -637,10 +637,12 @@ void dcd_sof_enable(uint8_t rhport, bool en) {
 
 bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const* desc_edpt) {
   TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(desc_edpt->bEndpointAddress), tu_edpt_dir(desc_edpt->bEndpointAddress)));
-  TU_ASSERT(dfifo_alloc(rhport, desc_edpt->bEndpointAddress, tu_edpt_packet_size(desc_edpt),
-                       desc_edpt->bmAttributes.xfer == TUSB_XFER_BULK));
-  edpt_activate(rhport, desc_edpt);
-  return true;
+  usbd_spin_lock(false);
+  const bool opened = dfifo_alloc(rhport, desc_edpt->bEndpointAddress, tu_edpt_packet_size(desc_edpt),
+                                  desc_edpt->bmAttributes.xfer == TUSB_XFER_BULK);
+  if (opened) edpt_activate(rhport, desc_edpt);
+  usbd_spin_unlock(false);
+  return opened;
 }
 
 // Close all non-control endpoints, cancel all pending transfers if any.
@@ -659,10 +661,16 @@ void dcd_edpt_close_all(uint8_t rhport) {
     for (uint8_t d = 0; d < 2; d++) {
       dwc2_dep_t* dep = &dwc2->ep[d][n];
       if (edpt_is_enabled(dep)) {
-        dep->ctl |= EPCTL_SNAK | EPCTL_EPDIS;
+        // EPDIS is asynchronous. Wait until DMA has actually stopped before
+        // a class can return its buffers or reopen this endpoint number.
+        edpt_disable(rhport, n | (d == 0 ? TUSB_DIR_IN_MASK : 0), false);
       }
+      dep->ctl &= ~EPCTL_USBAEP;
+      // A completed transfer may have left EPENA clear but XFRC latched.
+      // It must not be interpreted using the next arm's transfer record.
+      dep->intr = 0xffffffffu;
       xfer_ctl_t *xfer = XFER_CTL_BASE(n, 1-d);
-      if (xfer) xfer->max_size = 0;
+      if (xfer) tu_memclr(xfer, sizeof(*xfer));
     }
   }
 
@@ -675,15 +683,19 @@ void dcd_edpt_close_all(uint8_t rhport) {
 
 bool dcd_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet_size) {
   TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(ep_addr), tu_edpt_dir(ep_addr)));
-  TU_ASSERT(dfifo_alloc(rhport, ep_addr, largest_packet_size, false));
-  return true;
+  usbd_spin_lock(false);
+  const bool allocated = dfifo_alloc(rhport, ep_addr, largest_packet_size, false);
+  usbd_spin_unlock(false);
+  return allocated;
 }
 
 bool dcd_edpt_iso_activate(uint8_t rhport,  tusb_desc_endpoint_t const * p_endpoint_desc) {
   TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(p_endpoint_desc->bEndpointAddress), tu_edpt_dir(p_endpoint_desc->bEndpointAddress)));
   // Disable EP to clear potential incomplete transfers
+  usbd_spin_lock(false);
   edpt_disable(rhport, p_endpoint_desc->bEndpointAddress, false);
   edpt_activate(rhport, p_endpoint_desc);
+  usbd_spin_unlock(false);
   return true;
 }
 
@@ -755,6 +767,7 @@ bool dcd_edpt_xfer_fifo(uint8_t rhport, uint8_t ep_addr, tu_fifo_t* ff, uint16_t
 
 void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  usbd_spin_lock(false);
   edpt_disable(rhport, ep_addr, true);
 
   // For control endpoint, prepare to receive SETUP packet
@@ -763,6 +776,7 @@ void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr) {
       dma_setup_prepare(rhport);
     }
   }
+  usbd_spin_unlock(false);
 }
 
 bool dcd_edpt_abort_supported(void) { return true; }
@@ -796,8 +810,10 @@ void dcd_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr) {
   dwc2_dep_t* dep = &dwc2->ep[dir == TUSB_DIR_IN ? 0 : 1][epnum];
 
   // Clear stall and reset data toggle
-  dep->ctl &= ~EPCTL_STALL;;
+  usbd_spin_lock(false);
+  dep->ctl &= ~EPCTL_STALL;
   dep->ctl |= EPCTL_SD0PID_SEVNFRM;
+  usbd_spin_unlock(false);
 }
 
 //--------------------------------------------------------------------
@@ -1204,7 +1220,7 @@ static void handle_ep_irq(uint8_t rhport, uint8_t dir) {
   // DAINT for a given EP clears when DEPINTx is cleared.
   // EPINT will be cleared when DAINT bits are cleared.
   for (uint8_t epnum = 0; epnum < ep_count; epnum++) {
-    if (tu_bit_test(dwc2->daint,daint_offset + epnum)) {
+    if (tu_bit_test(dwc2->daint & dwc2->daintmsk,daint_offset + epnum)) {
       dwc2_dep_t* epout = &ep_base[epnum];
       union {
         uint32_t value;
@@ -1338,6 +1354,8 @@ void dcd_int_handler(uint8_t rhport) {
     dwc2->gotgint = otg_int;
   }
 
+  // SOF callbacks may take class locks and submit transfers. Dispatch them
+  // outside the hardware lock used by the endpoint interrupt sections below.
   if(gintsts & GINTSTS_SOF && dwc2->gintmsk & GINTMSK_SOFM) {
     dwc2->gintsts = GINTSTS_SOF;
     dwc2->gintmsk |= GINTMSK_USBSUSPM;
@@ -1354,7 +1372,9 @@ void dcd_int_handler(uint8_t rhport) {
   // IN endpoint interrupt handling.
   if (gintsts & GINTSTS_IEPINT) {
     // IEPINT bit read-only, clear using DIEPINTn
+    usbd_spin_lock(true);
     handle_ep_irq(rhport, TUSB_DIR_IN);
+    usbd_spin_unlock(true);
   }
 
 #if CFG_TUD_DWC2_SLAVE_ENABLE
@@ -1363,9 +1383,11 @@ void dcd_int_handler(uint8_t rhport) {
     // RXFLVL bit is read-only
     dwc2->gintmsk &= ~GINTMSK_RXFLVLM; // disable RXFLVL interrupt while reading
 
+    usbd_spin_lock(true);
     do {
       handle_rxflvl_irq(rhport); // read all packets
     } while(dwc2->gintsts & GINTSTS_RXFLVL);
+    usbd_spin_unlock(true);
 
     dwc2->gintmsk |= GINTMSK_RXFLVLM;
   }
@@ -1375,14 +1397,18 @@ void dcd_int_handler(uint8_t rhport) {
   // OUT endpoint interrupt handling.
   if (gintsts & GINTSTS_OEPINT) {
     // OEPINT is read-only, clear using DOEPINTn
+    usbd_spin_lock(true);
     handle_ep_irq(rhport, TUSB_DIR_OUT);
+    usbd_spin_unlock(true);
   }
 #endif
 
   // Incomplete isochronous IN transfer interrupt handling.
   if (gintsts & GINTSTS_IISOIXFR) {
     dwc2->gintsts = GINTSTS_IISOIXFR;
+    usbd_spin_lock(true);
     handle_incomplete_iso_in(rhport);
+    usbd_spin_unlock(true);
   }
 }
 
