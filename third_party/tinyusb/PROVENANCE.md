@@ -62,3 +62,11 @@ code into the independent implementation.
    and linked symbols.
 5. Run the standard plugin's `--combo all` from `validation/`, distinguishing
    untested SoCs/HS. Do not restore old `tests/` or `examples/` as v3 design gates.
+
+
+The DWC2 adapter also accepts core-owned runtime storage through the first-party
+`src/internal/EspUsbDwc2Runtime.h` boundary. Static transfer/controller/SETUP
+storage is replaced with compact records for descriptor-selected directions.
+This is recorded in LOCAL_PATCHES.json, retains the original MIT attribution,
+and is an intermediate lifecycle boundary rather than completion of the DCD
+replacement. Physical FIFO reservations and controller shutdown remain intact.

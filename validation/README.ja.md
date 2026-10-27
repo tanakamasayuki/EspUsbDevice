@@ -480,3 +480,30 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/ccid-runtime-*`�
 記録は`ccid-runtime-vendor-copy-build.txt`と`ccid-runtime-vendor-copy-nm.txt`。
 試験入口は標準combo、conftest/独自hookなし。現在の収集は30件で、全30件の一括再試験は未完了。
 HS/他SoC、PC/SC・OS・実カード、任意HALTと進行中command、全競合順序は未検証として残す。
+
+
+## DWC2 runtime storageでの全体試験
+
+2026-10-27。標準`--combo all`の`dwc2-runtime-all-final.xml`は
+**30 passed、0 skipped、0 unfinished、1952.20秒**。
+774取得点の確保失敗/回復、Audio/HID/MIDI/MSC/NCM/CCID/DFU/Video、取消し・reset/end、
+大きいDMA転送とEP0を一括検証した。60 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_08-55-42-330489/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/dwc2-runtime-all-final*`。
+
+DWC2の転送配列/controller state/SETUP DMAを独自coreの開始時領域へ移し、
+全alternateのdescriptor maskに現れる方向だけrecordを確保する。別のheap取得点は増やしていない。
+Functionなしはbackend起動なし/0 byte、EP0だけのDFU Runtimeは2 record/128 byte、
+Vendorは4 record/192 byte、着脱可能な2 CCIDは疎なOUTを含む8 record/256 byteを実測した。
+終了後の確保0と反復時heap一致も確認した。
+
+新規`build_probes/controller_storage`はS2/P4 HSでcompile成功。
+S3/S2/P4のnmで旧xfer_status、_dcd_data、_dcd_usbbufの不在とruntime経路の存在を確認した。
+これらはS3以外の実機確認ではない。Core 3.3.12のboards.txtにはS31定義がなく、S31 buildは未実施。
+記録は`.pytest-results/dwc2-storage-{s3,s2,p4}-nm.txt`とS2/P4 build transcript。
+
+manifestは24 file / 2 compiled sourcesで一致し、updater dry-runも差分0。旧tests/examplesはmainと同じ。
+初回の一括実行は「Functionなしでもbackendが起動する」という追加試験の誤った前提を見つけて停止した。
+修正版ではFunctionなし=0、DFU Runtime=EP0のみと区別した。停止記録は`dwc2-runtime-interrupted-transcript.txt`。
+DWC2のregister/FIFO処理と内部ABI/headerはまだvendor依存であり、全撤去完了ではない。
+P4の初回SETUP DMA前のcache同期、他SoC/HS実機、全EP0世代境界・各classのHALT競合などは継続する。

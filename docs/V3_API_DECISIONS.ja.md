@@ -481,3 +481,14 @@ onApdu/onEscape/onPowerはesp_err_tを返して開始後の変更を拒否し、
 通常の登録呼出しは戻り値を無視していた形を維持できる。容量指定はconfigureへ移す。
 ATRの33 byte配列はwire上限であり、選んだFunction内に残す。交換時のcopyとPowerOnのsnapshotはlockで保護する。
 大きいmessage容量をextended APDU対応の広告へ自動変換しない。大きいEscape等の資源指定とprotocol機能は分ける。
+
+
+## DWC2 stateの所有者を独自coreへ移す
+
+上位class/coreだけでなく、残るDWC2のstatic xfer_statusとcontroller/SETUP領域もruntimeへ移す。
+使うendpoint方向だけのcompact recordをcoreの開始時領域へ含め、停止後にまとめて返す。
+未使用方向のrecordは作らず、全alternateで必要なendpointを先に集める。hardware全体の停止処理は省かない。
+利点は未起動時の常駐DMA/state費用削減、controller選択と寿命の一体化、別heap取得点が増えないこと。
+不利益はbegin時の容量増加、maskからslotを求めるlookup費用、開始時確保失敗の対象拡大。
+公開API、FIFO容量やDMA segmentation、callback/fence契約は変えない。
+残るvendor sourceはMIT由来とpatchを維持し、独自DCDへの置換が完了したという扱いにはしない。

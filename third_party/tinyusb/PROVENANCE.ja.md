@@ -37,6 +37,10 @@ cacheは元のsnapshotのままで、`LOCAL_PATCHES.json`の正確な置換を�
   S3のpacket数は7 bitであり、共通register型の10 bitとは異なる。
   中間armでは完了eventを出さず、short/ZLPまたは全体の完了で一度返す。
 
+- DWC2のstate/SETUP storageを独自coreの開始時領域へ渡す暫定hook。
+  static転送配列をdescriptor maskごとのrecordへ置換し、停止後に解放する。
+  `src/internal/EspUsbDwc2Runtime.h`はfirst-partyの内部境界で、upstream fileには含めない。
+
 S3–S3で選択経路を検証しているが、P4/S2/S31の実機検証は未完了。
 上流pinを変更する場合は残る依存に必要な修正だけをreviewし、置換元が正確に一か所へ一致することを確かめる。
 由来のあるコードを独自側へ移す場合もlicenseと出所を保持する。

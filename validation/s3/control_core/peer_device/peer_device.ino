@@ -3,6 +3,7 @@
 #include <esp_heap_caps.h>
 #include "../../../../src/device/usbd_pvt.h"
 #include "../../../../src/device/dcd.h"
+#include "../../../../src/internal/EspUsbDwc2Runtime.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #include <atomic>
 EspUsbDevice device;
@@ -18,16 +19,51 @@ void overflow(void *) {
   for(unsigned i=0;i<2;++i)dcd_event_bus_signal(espusb::internal::tinyUsbRuntimeRhport(),DCD_EVENT_RESUME,false);
 }
 espusb::internal::TinyUsbRuntimeJob overflowJob{overflow,nullptr};
+bool selectedStorage() {
+  bool ok=true;size_t minimal=0,paired=0,sparse=0;
+  {
+    EspUsbDevice local;ok &= local.begin() && !espusb_dwc2_runtime_bytes() && !espusb_dwc2_runtime_transfers();
+    ok &= local.end()==ESP_OK;delay(10);
+  }
+  {
+    EspUsbDevice local;EspUsbDeviceDfu control(local,EspUsbDeviceDfuMode::Runtime);
+    ok &= local.begin();
+    minimal=espusb_dwc2_runtime_bytes();
+    ok &= espusb_dwc2_runtime_transfers()==2 && minimal>0;
+    ok &= local.end()==ESP_OK && !espusb_dwc2_runtime_bytes() && !espusb_dwc2_runtime_transfers();delay(10);
+  }
+  {
+    const uint8_t report[]={0x06,0,0xff,0x09,1,0xa1,1,0x75,8,0x95,1,0x09,1,0x81,2,0xc0};
+    EspUsbDevice local;EspUsbDeviceHidCustom input(local,report,sizeof(report),1);
+    ok &= local.begin() && espusb_dwc2_runtime_transfers()==3;
+    ok &= local.end()==ESP_OK && !espusb_dwc2_runtime_bytes();delay(10);
+  }
+  {
+    EspUsbDevice local;EspUsbDeviceVendor stream(local);
+    ok &= local.begin() && espusb_dwc2_runtime_transfers()==4;
+    paired=espusb_dwc2_runtime_bytes();ok &= paired>minimal;
+    ok &= local.end()==ESP_OK && !espusb_dwc2_runtime_bytes();delay(10);
+  }
+  {
+    EspUsbDevice local;EspUsbDeviceCcid first(local),second(local);
+    // Sparse OUT addresses 1/3; IN 1/2/3/4. Add both EP0 directions.
+    ok &= local.begin() && espusb_dwc2_runtime_transfers()==8 && espusb_dwc2_runtime_bytes()>paired;
+    sparse=espusb_dwc2_runtime_bytes();
+    ok &= local.end()==ESP_OK && !espusb_dwc2_runtime_bytes();delay(10);
+  }
+  Serial.printf("DWC2_STORAGE ep0=%u vendor=%u sparse=%u\r\n",unsigned(minimal),unsigned(paired),unsigned(sparse));
+  return ok;
+}
 bool metadata() {
   EspUsbDeviceConfig cfg;
-  bool ok=true;
+  bool ok=selectedStorage();
   for (unsigned n:{0u}) {
     cfg.eventQueueDepth=n;
     ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_SIZE && device.end()==ESP_OK;
   }
   for (unsigned n:{1u,4u,16u,31u}) {
     cfg.eventQueueDepth=n;
-    ok &= device.begin(cfg) && usbd_event_queue_capacity()==n && device.end()==ESP_OK && !usbd_event_queue_capacity();
+    ok &= device.begin(cfg) && usbd_event_queue_capacity()==n && espusb_dwc2_runtime_transfers()==4 && device.end()==ESP_OK && !usbd_event_queue_capacity() && !espusb_dwc2_runtime_bytes();
     delay(10); // FreeRTOS idle task reclaims self-deleted worker TCBs.
   }
   return ok;

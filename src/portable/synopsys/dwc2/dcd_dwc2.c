@@ -23,6 +23,7 @@
 #include "device/usbd.h"
 #include "device/usbd_pvt.h"
 #include "dwc2_common.h"
+#include "../../../internal/EspUsbDwc2Runtime.h"
 
 //--------------------------------------------------------------------+
 // MACRO TYPEDEF CONSTANT ENUM
@@ -37,10 +38,6 @@ typedef struct {
   uint8_t iso_retry; // ISO retry counter
 } xfer_ctl_t;
 
-// This variable is modified from ISR context, so it must be protected by critical section
-static xfer_ctl_t xfer_status[DWC2_EP_MAX][2];
-#define XFER_CTL_BASE(_ep, _dir) (&xfer_status[_ep][_dir])
-
 typedef struct {
   // EP0 transfers are limited to 1 packet - larger sizes has to be split
   uint16_t ep0_pending[2];  // Index determines direction as tusb_dir_t type
@@ -53,18 +50,52 @@ typedef struct {
   bool sof_en;
 } dcd_data_t;
 
-static dcd_data_t _dcd_data;
+// EspUsb owns this storage for exactly one active controller. Transfer records
+// are compact: OUT records followed by IN records, selected by descriptor masks.
+// SETUP DMA occupies its own full cache line after all metadata.
+typedef struct {
+  dcd_data_t data;
+  uint8_t *setup_buffer;
+  size_t bytes;
+  uint16_t mask[2];
+  uint8_t count[2], ep_count, port;
+  xfer_ctl_t transfers[];
+} espusb_dwc2_runtime_t;
+static espusb_dwc2_runtime_t *runtime;
+#define _dcd_data (runtime->data)
+#define DWC2_SETUP_STORAGE_BYTES 64u
 
-// DMA receives up to 3 back-to-back SETUP packets (3 x 8 bytes), Slave mode only needs 1 packet (8 bytes)
-#if CFG_TUD_DWC2_DMA_ENABLE
-  #define DWC2_SETUP_BUFFER_SIZE 24
-#else
-  #define DWC2_SETUP_BUFFER_SIZE 8
-#endif
+static inline unsigned selected_count(uint16_t mask) { return (unsigned)__builtin_popcount((unsigned)mask); }
+static inline xfer_ctl_t *selected_transfer(uint8_t ep, uint8_t dir) {
+  if (!runtime || dir > 1 || ep >= runtime->ep_count || !(runtime->mask[dir] & (1u << ep))) return NULL;
+  const unsigned before = selected_count((uint16_t)(runtime->mask[dir] & ((1u << ep) - 1u)));
+  return runtime->transfers + (dir == TUSB_DIR_IN ? runtime->count[TUSB_DIR_OUT] : 0) + before;
+}
+#define XFER_CTL_BASE(_ep, _dir) selected_transfer((_ep), (_dir))
 
-CFG_TUD_MEM_SECTION static struct {
-  TUD_EPBUF_DEF(setup_buffer, DWC2_SETUP_BUFFER_SIZE);
-} _dcd_usbbuf;
+size_t espusb_dwc2_runtime_size(uint8_t port, uint16_t out_mask, uint16_t in_mask) {
+  if (port >= TU_ARRAY_SIZE(_dwc2_controller)) return 0;
+  const uint8_t count = _dwc2_controller[port].ep_count;
+  if (!count || count > 16 || !(out_mask & 1u) || !(in_mask & 1u)) return 0;
+  const uint32_t allowed = (1u << count) - 1u;
+  if ((out_mask | in_mask) & ~allowed) return 0;
+  const size_t metadata = sizeof(espusb_dwc2_runtime_t) + (selected_count(out_mask) + selected_count(in_mask)) * sizeof(xfer_ctl_t);
+  return ((metadata + 63u) & ~(size_t)63u) + DWC2_SETUP_STORAGE_BYTES;
+}
+bool espusb_dwc2_runtime_prepare(uint8_t port, void *memory, size_t bytes, uint16_t out_mask, uint16_t in_mask) {
+  const size_t required = espusb_dwc2_runtime_size(port, out_mask, in_mask);
+  if (runtime || !required || !memory || ((uintptr_t)memory & 63u) || bytes < required) return false;
+  memset(memory, 0, required);
+  runtime = (espusb_dwc2_runtime_t *)memory;
+  runtime->mask[TUSB_DIR_OUT] = out_mask; runtime->mask[TUSB_DIR_IN] = in_mask;
+  runtime->count[TUSB_DIR_OUT] = selected_count(out_mask); runtime->count[TUSB_DIR_IN] = selected_count(in_mask);
+  runtime->ep_count = _dwc2_controller[port].ep_count; runtime->port = port;
+  runtime->bytes = required; runtime->setup_buffer = (uint8_t *)memory + required - DWC2_SETUP_STORAGE_BYTES;
+  return true;
+}
+void espusb_dwc2_runtime_release(void) { runtime = NULL; }
+size_t espusb_dwc2_runtime_bytes(void) { return runtime ? runtime->bytes : 0; }
+uint8_t espusb_dwc2_runtime_transfers(void) { return runtime ? runtime->count[0] + runtime->count[1] : 0; }
 
 static tud_configure_dwc2_t _tud_cfg = CFG_TUD_CONFIGURE_DWC2_DEFAULT;
 
@@ -127,7 +158,7 @@ static void dma_setup_prepare(uint8_t rhport) {
 
   // Receive back-to-back setup packets
   dwc2->epout[0].doeptsiz = (3 << DOEPTSIZ_STUPCNT_Pos);
-  dwc2->epout[0].doepdma = (uintptr_t) _dcd_usbbuf.setup_buffer;
+  dwc2->epout[0].doepdma = (uintptr_t) runtime->setup_buffer;
   dwc2->epout[0].doepctl |= DOEPCTL_EPENA | DOEPCTL_USBAEP;
 }
 
@@ -442,6 +473,7 @@ bool dcd_configure(uint8_t rhport, uint32_t cfg_id, const void* cfg_param) {
 }
 
 bool dcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
+  TU_VERIFY(runtime && runtime->port == rhport);
   dwc2_clock_init(rhport, rh_init->role);
 
   tu_memclr(&_dcd_data, sizeof(_dcd_data));
@@ -598,6 +630,7 @@ void dcd_sof_enable(uint8_t rhport, bool en) {
  *------------------------------------------------------------------*/
 
 bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const* desc_edpt) {
+  TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(desc_edpt->bEndpointAddress), tu_edpt_dir(desc_edpt->bEndpointAddress)));
   TU_ASSERT(dfifo_alloc(rhport, desc_edpt->bEndpointAddress, tu_edpt_packet_size(desc_edpt),
                        desc_edpt->bmAttributes.xfer == TUSB_XFER_BULK));
   edpt_activate(rhport, desc_edpt);
@@ -622,7 +655,8 @@ void dcd_edpt_close_all(uint8_t rhport) {
       if (edpt_is_enabled(dep)) {
         dep->ctl |= EPCTL_SNAK | EPCTL_EPDIS;
       }
-      xfer_status[n][1-d].max_size = 0;
+      xfer_ctl_t *xfer = XFER_CTL_BASE(n, 1-d);
+      if (xfer) xfer->max_size = 0;
     }
   }
 
@@ -634,11 +668,13 @@ void dcd_edpt_close_all(uint8_t rhport) {
 }
 
 bool dcd_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet_size) {
+  TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(ep_addr), tu_edpt_dir(ep_addr)));
   TU_ASSERT(dfifo_alloc(rhport, ep_addr, largest_packet_size, false));
   return true;
 }
 
 bool dcd_edpt_iso_activate(uint8_t rhport,  tusb_desc_endpoint_t const * p_endpoint_desc) {
+  TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(p_endpoint_desc->bEndpointAddress), tu_edpt_dir(p_endpoint_desc->bEndpointAddress)));
   // Disable EP to clear potential incomplete transfers
   edpt_disable(rhport, p_endpoint_desc->bEndpointAddress, false);
   edpt_activate(rhport, p_endpoint_desc);
@@ -654,7 +690,7 @@ bool dcd_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint16_t to
 
   usbd_spin_lock(is_isr);
 
-  if (xfer->max_size == 0) {
+  if (!xfer || xfer->max_size == 0) {
     ret = false;  // Endpoint is closed
   } else {
     xfer->buffer = buffer;
@@ -691,7 +727,7 @@ bool dcd_edpt_xfer_fifo(uint8_t rhport, uint8_t ep_addr, tu_fifo_t* ff, uint16_t
 
   usbd_spin_lock(is_isr);
 
-  if (xfer->max_size == 0) {
+  if (!xfer || xfer->max_size == 0) {
     ret = false;  // Endpoint is closed
   } else {
     xfer->buffer = NULL;
@@ -729,7 +765,7 @@ bool dcd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
   if (epnum == 0 || epnum >= _dwc2_controller[rhport].ep_count) return false;
   usbd_spin_lock(false);
   xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, dir);
-  if (xfer->max_size == 0) { usbd_spin_unlock(false); return false; }
+  if (!xfer || xfer->max_size == 0) { usbd_spin_unlock(false); return false; }
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
   dwc2_dep_t* dep = &dwc2->ep[dir == TUSB_DIR_IN ? 0 : 1][epnum];
   edpt_disable(rhport, ep_addr, false);
@@ -768,7 +804,7 @@ static void handle_bus_reset(uint8_t rhport) {
   dwc2_regs_t *dwc2 = DWC2_REG(rhport);
   const uint8_t ep_count =  dwc2_ep_count(dwc2);
 
-  tu_memclr(xfer_status, sizeof(xfer_status));
+  tu_memclr(runtime->transfers, (runtime->count[0] + runtime->count[1]) * sizeof(xfer_ctl_t));
 
   _dcd_data.ep0_pending[TUSB_DIR_OUT] = 0;
   _dcd_data.ep0_pending[TUSB_DIR_IN] = 0;
@@ -818,8 +854,8 @@ static void handle_bus_reset(uint8_t rhport) {
   dwc2->epin[0].ctl |= mps << DIEPCTL0_MPSIZ_Pos;
   dwc2->epout[0].ctl |= mps << DOEPCTL0_MPSIZ_Pos;
 
-  xfer_status[0][TUSB_DIR_OUT].max_size = CFG_TUD_ENDPOINT0_SIZE;
-  xfer_status[0][TUSB_DIR_IN].max_size = CFG_TUD_ENDPOINT0_SIZE;
+  XFER_CTL_BASE(0, TUSB_DIR_OUT)->max_size = CFG_TUD_ENDPOINT0_SIZE;
+  XFER_CTL_BASE(0, TUSB_DIR_IN)->max_size = CFG_TUD_ENDPOINT0_SIZE;
 
   uint32_t gintmsk = GINTMSK_OTGINT | GINTMSK_IEPINT | GINTMSK_IISOIXFRM;
   if(dma_device_enabled(dwc2)) {
@@ -937,7 +973,7 @@ static void handle_rxflvl_irq(uint8_t rhport) {
 
     case GRXSTS_PKTSTS_SETUP_RX: {
       // Setup packet received
-      uint32_t * setup = (uint32_t*)(uintptr_t) _dcd_usbbuf.setup_buffer;
+      uint32_t * setup = (uint32_t*)(uintptr_t) runtime->setup_buffer;
       // We can receive up to three setup packets in succession, but only the last one is valid.
       setup[0] = (*rx_fifo);
       setup[1] = (*rx_fifo);
@@ -951,7 +987,7 @@ static void handle_rxflvl_irq(uint8_t rhport) {
       if (edpt_is_enabled(&dwc2->epin[0])) {
         edpt_disable(rhport, 0x80, false);
       }
-      dcd_event_setup_received(rhport, _dcd_usbbuf.setup_buffer, true);
+      dcd_event_setup_received(rhport, runtime->setup_buffer, true);
       break;
     }
 
@@ -960,6 +996,7 @@ static void handle_rxflvl_irq(uint8_t rhport) {
       const uint16_t byte_count = grxstsp.byte_count;
       xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, TUSB_DIR_OUT);
 
+      if (!xfer) { for (unsigned n = 0; n < (byte_count + 3u) / 4u; ++n) (void)*rx_fifo; break; }
       if (byte_count != 0) {
         // Read packet off RxFIFO
         if (xfer->ff != NULL) {
@@ -996,6 +1033,7 @@ static void handle_rxflvl_irq(uint8_t rhport) {
       }
 
       xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, TUSB_DIR_OUT);
+      if (!xfer) break;
       if (epnum == 0 && _dcd_data.ep0_pending[TUSB_DIR_OUT] > 0) {
         // EP0 can only handle one packet, schedule another packet to be received.
         edpt_schedule_packets(rhport, 0, TUSB_DIR_OUT);
@@ -1054,7 +1092,7 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
     _dcd_data.ep0_pending[TUSB_DIR_OUT] = 0;
     _dcd_data.ep0_pending[TUSB_DIR_IN] = 0;
 
-    dcd_dcache_invalidate(_dcd_usbbuf.setup_buffer, sizeof(_dcd_usbbuf.setup_buffer));
+    dcd_dcache_invalidate(runtime->setup_buffer, DWC2_SETUP_STORAGE_BYTES);
 
     // DOEPDMA0 has advanced past the last received SETUP packet; back up one packet to the latest valid one
     // (Programming Guide v4.20a section 9.1.2.1: "DOEPDMAn-8 provides the pointer to the last valid SETUP data")
@@ -1170,6 +1208,7 @@ static void handle_ep_irq(uint8_t rhport, uint8_t dir) {
       intr.value = epout->intr;
 
       epout->intr = intr.value; // Clear interrupt //-V::2584::{otg_int}
+      if (!XFER_CTL_BASE(epnum, dir)) continue;
 
       if (is_dma) {
         #if CFG_TUD_DWC2_DMA_ENABLE
@@ -1206,6 +1245,7 @@ static void handle_incomplete_iso_in(uint8_t rhport) {
     // DSTS.SOFFN is the targeted uframe number for this EP, then this EP has an incomplete transfer.
     if (depctl.enable && depctl.type == DEPCTL_EPTYPE_ISOCHRONOUS && depctl.dpid_iso_odd == odd_now) {
       xfer_ctl_t *xfer = XFER_CTL_BASE(epnum, TUSB_DIR_IN);
+      if (!xfer) continue;
       if (xfer->iso_retry > 0) {
         xfer->iso_retry--;
         // Restart ISO transfe: re-write TSIZ and CTL

@@ -143,3 +143,59 @@ HIDの標準要求による方向別回復も追加済み。公開APIの影響�
 MSCのSET_INTERFACEも独自recovery fenceへ接続済み。不正CBWのBOT reset要求と区別する。
 [MSCガイド](V3_MSC_API.ja.md#interfaceの再初期化とbot回復)にAPIの影響と関連3件の実測を記録した。
 任意Host HALT中のcommand継続、他instanceの同時進行、全競合順序を完了したという意味ではない。
+
+
+## DWC2の転送状態をcoreの開始時領域へ移す
+
+DWC2の全endpoint向けstatic転送配列、常駐controller stateとSETUP bufferを撤去する。
+独自coreがbegin時の一つのDMA領域にDWC2 storageも含め、deinit・割込み停止の後に解放する。
+DWC2用の別heap取得点は増やさない。開始時に確保できなければ既存のNoMem経路で失敗する。
+
+descriptorの全alternateに現れるendpoint方向をmaskへ集め、EP0のIN/OUTを加えた数だけ
+転送recordを確保する。OUT番号が1/3、IN番号が1/2/3/4のような疎な構成も扱う。
+slotはOUT群・IN群へ詰め、未選択方向のopen/transferを拒否する。
+controllerが持つ物理endpointの停止・IRQ clearは引き続き全体に行う。
+SETUP DMAの64 byteはmetadataと別のcache lineへ置き、metadataを巻き込むinvalidateを避ける。
+
+FunctionなしのDeviceは従来からbackendを起動せず、DWC2の確保も0。
+DFU RuntimeだけならEP0の2方向、HID INのみなら3、Vendorなら4、着脱可能な2 CCIDなら8 recordとなる。
+alternate切替中のheap取得はなく、bus resetでも選択済み領域を初期化して再利用する。
+
+公開APIは変えない。代償はbegin時の領域増加と、endpoint lookupにmaskの計数が入ること。
+全機種分の常駐費用を持つ形から、稼働中構成が費用を払う形へ移す。
+FIFO予約量・hardware register操作・暫定C ABIとprotocol型は今回維持し、TinyUSB依存の全撤去とはしない。
+P4の初回SETUP DMA前のcache同期、HS・他SoCの実機確認も個別に検証する。
+
+
+S3実測ではDWC2領域がEP0のみ128 byte、Vendor（4 record）192 byte、
+着脱可能な2 CCID（8 record、疎なOUT配置）256 byte。metadataからSETUP DMAを隔離するため、
+領域全体を64 byte単位へ丸める。record数の違いが同じ確保byte数になる場合もある。
+これは現在の領域の測定で、v2との速度比較や全機種での同じサイズを保証する値ではない。
+S3/S2のnmで旧xfer_status・_dcd_data・_dcd_usbbuf symbolの不在とruntime storage経路の存在を確認した。
+
+
+## DWC2 runtime storageでの全体試験
+
+2026-10-27。標準`--combo all`の`dwc2-runtime-all-final.xml`は
+**30 passed、0 skipped、0 unfinished、1952.20秒**。
+774取得点の確保失敗/回復、Audio/HID/MIDI/MSC/NCM/CCID/DFU/Video、取消し・reset/end、
+大きいDMA転送とEP0を一括検証した。60 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_08-55-42-330489/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/dwc2-runtime-all-final*`。
+
+DWC2の転送配列/controller state/SETUP DMAを独自coreの開始時領域へ移し、
+全alternateのdescriptor maskに現れる方向だけrecordを確保する。別のheap取得点は増やしていない。
+Functionなしはbackend起動なし/0 byte、EP0だけのDFU Runtimeは2 record/128 byte、
+Vendorは4 record/192 byte、着脱可能な2 CCIDは疎なOUTを含む8 record/256 byteを実測した。
+終了後の確保0と反復時heap一致も確認した。
+
+新規`build_probes/controller_storage`はS2/P4 HSでcompile成功。
+S3/S2/P4のnmで旧xfer_status、_dcd_data、_dcd_usbbufの不在とruntime経路の存在を確認した。
+これらはS3以外の実機確認ではない。Core 3.3.12のboards.txtにはS31定義がなく、S31 buildは未実施。
+記録は`.pytest-results/dwc2-storage-{s3,s2,p4}-nm.txt`とS2/P4 build transcript。
+
+manifestは24 file / 2 compiled sourcesで一致し、updater dry-runも差分0。旧tests/examplesはmainと同じ。
+初回の一括実行は「Functionなしでもbackendが起動する」という追加試験の誤った前提を見つけて停止した。
+修正版ではFunctionなし=0、DFU Runtime=EP0のみと区別した。停止記録は`dwc2-runtime-interrupted-transcript.txt`。
+DWC2のregister/FIFO処理と内部ABI/headerはまだvendor依存であり、全撤去完了ではない。
+P4の初回SETUP DMA前のcache同期、他SoC/HS実機、全EP0世代境界・各classのHALT競合などは継続する。

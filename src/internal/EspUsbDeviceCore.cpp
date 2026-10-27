@@ -2,6 +2,7 @@
 // first-party classes and the remaining TinyUSB DWC2 adapter. See
 // third_party/tinyusb/PROVENANCE.md for the adapter's MIT-licensed origins.
 #include "EspUsbDeviceCore.h"
+#include "EspUsbDwc2Runtime.h"
 #include "EspUsbMemory.h"
 #include "device/dcd.h"
 #include "device/usbd.h"
@@ -316,17 +317,24 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   const auto *cfg=tud_descriptor_configuration_cb(0);
   if (!cfg || cfg[0]!=9 || cfg[1]!=2) return ESP_ERR_INVALID_STATE;
   const unsigned count=cfg[4]; const uint16_t length=uint16_t(cfg[2]) | uint16_t(cfg[3])<<8;
-  unsigned epCount=1;
+  unsigned epCount=1; uint16_t outMask=1, inMask=1;
   for (size_t n=9;n<length;) {
     if (n+2>length || cfg[n]<2 || cfg[n]>length-n) return ESP_ERR_INVALID_ARG;
-    if (cfg[n+1]==5) { if (cfg[n]<7 || (cfg[n+2]&0x70)) return ESP_ERR_INVALID_ARG; epCount=std::max(epCount,unsigned(cfg[n+2]&15)+1); }
+    if (cfg[n+1]==5) {
+      if (cfg[n]<7 || (cfg[n+2]&0x70) || !(cfg[n+2]&15)) return ESP_ERR_INVALID_ARG;
+      epCount=std::max(epCount,unsigned(cfg[n+2]&15)+1);
+      (cfg[n+2]&128 ? inMask:outMask) |= uint16_t(1u << (cfg[n+2]&15));
+    }
     n+=cfg[n];
   }
   size_t epOffset=aligned(sizeof(Core),alignof(Endpoint));
   size_t itfOffset=epOffset+epCount*2*sizeof(Endpoint);
   size_t queueOffset=aligned(itfOffset+count,alignof(Event));
   size_t packetOffset=aligned(queueOffset+(size_t(queueDepth)+1)*sizeof(Event),64);
-  auto *memory=static_cast<uint8_t *>(allocateUsbMemory(packetOffset+64,64,true));
+  const size_t dcdOffset=packetOffset+64;
+  const size_t dcdBytes=espusb_dwc2_runtime_size(port,outMask,inMask);
+  if (!dcdBytes) return ESP_ERR_INVALID_ARG;
+  auto *memory=static_cast<uint8_t *>(allocateUsbMemory(dcdOffset+dcdBytes,64,true));
   if (!memory) return ESP_ERR_NO_MEM;
   auto *s=new (memory) Core;
   s->port=port; s->queueDepth=queueDepth; s->interfaceCount=uint8_t(count); s->endpointCount=uint8_t(epCount);
@@ -336,6 +344,9 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   s->drivers=usbd_app_driver_get_cb(&s->driverCount);
   s->queue=xQueueCreateStatic(UBaseType_t(queueDepth)+1,sizeof(Event),memory+queueOffset,&s->queueState);
   if (!s->queue) { s->~Core(); freeUsbMemory(s); return ESP_ERR_NO_MEM; }
+  if (!espusb_dwc2_runtime_prepare(port,memory+dcdOffset,dcdBytes,outMask,inMask)) {
+    vQueueDelete(s->queue); s->~Core(); freeUsbMemory(s); return ESP_ERR_INVALID_STATE;
+  }
   core=s;
   for (unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].init) s->drivers[i].init();
   const tusb_rhport_init_t init={TUSB_ROLE_DEVICE, highSpeed ? TUSB_SPEED_HIGH : TUSB_SPEED_FULL};
@@ -348,6 +359,7 @@ void stopUsbDeviceCore() {
   const bool mounted=s->configuration.exchange(0)!=0;
   for(unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].deinit)s->drivers[i].deinit();
   if(mounted)tud_umount_cb();
+  espusb_dwc2_runtime_release();
   vQueueDelete(s->queue); core=nullptr; s->~Core(); freeUsbMemory(s);
 }
 uint8_t usbEndpointInterface(uint8_t port,uint8_t address) {
