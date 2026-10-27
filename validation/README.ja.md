@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので25 tests（Videoの6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので26 tests（Videoの6 runtime構成と複数Function制御を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -282,3 +282,19 @@ DeviceOnlyには独自Video実装もリンクされないことを確認した�
 通常収集は25件。全体の直近成功はNCM時点の19件で、今回の関連7件と区別する。
 Videoの確保失敗・複数Function・不正control・cancel/reset/recommit競合は後続の試験対象。
 共通EP0/core/DCDと他SoC/HSは未完了であり、v3全体の完成ではない。
+
+## Videoの確保失敗・複数Function・制御要求
+
+2026-10-27。`video-driver-extended.xml`は**9 passed、0 skipped、0 unfinished、175.58秒**。
+Video ISO/Bulkの内部/外部staging、2 Function、65535-byte stagingを含む670取得点を
+一つずつ失敗させ、全点でNoMem、全資源回収、再開始とheap回復を確認した。
+`video_control`は2 Functionを同時に列挙し、MJPEGの65-byte payloadとYUY2の128-byte payloadを実通信した。
+26/34/48-byte Probe/Commit、GET_LEN/INFO/MIN/MAX/RES/DEF、22件の不正要求のSTALLと復帰、
+不正frame/NULL/busy/別Functionのticket拒否、片方のalt/recommit/cancel中に他方のframeを保持・完了できることを確認。
+62-byte frameのBulk ZLP終端、両方の送信中endとStopped一度だけの返却、外部DMA領域前後のcanaryも含む。
+ProbeのGET_MIN payloadを3、GET_RESを1に直し、受け付ける範囲と一致させた。
+この関連9件には既存のISO/Bulk各3構成と独立descriptor試験も含む。
+18 serial log全てSTOPPED、panicなし。原本は`/tmp/pytest-embedded/2026-10-27_02-07-12-940635/`、
+コピー/JUnit/transcriptは`validation/.pytest-results/video-driver-extended*`。
+通常収集26件。全体の直近成功19件とは区別する。
+実USB bus resetと取消し/recommitの競合全順序、PC/OS、HS/他SoCは引き続き未確認。

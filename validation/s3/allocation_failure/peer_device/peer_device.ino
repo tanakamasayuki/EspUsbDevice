@@ -43,6 +43,8 @@ EspUsbAudioFunction *audio = nullptr;
 EspUsbDeviceDfu *dfu[2] = {};
 uint8_t dfuBuffer[130];
 EspUsbDeviceNet *net[2] = {};
+EspUsbDeviceVideo *video[2] = {};
+alignas(64) uint8_t videoBuffer[128];
 alignas(64) uint8_t netRx[4096], netTx[4096];
 alignas(64) uint8_t mscBuffer[512];
 EspUsbDeviceMidiPacket midiRx[19], midiTx[21];
@@ -69,7 +71,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 37 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 41 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -142,7 +144,7 @@ void loop() {
           points += mode == 29 || mode == 31 ? 4 : 3;
           if (mode == 31) { dfu[1] = new EspUsbDeviceDfu(device); points += 2; }
         }
-        if (mode >= 32) {
+        if (mode >= 32 && mode <= 36) {
           net[0] = new EspUsbDeviceNet(device);
           EspUsbNetConfig network; network.ntbInBytes = network.ntbOutBytes = 2048;
           if (mode == 33) network.txBuffers = network.rxBuffers = 0;
@@ -151,6 +153,20 @@ void loop() {
           if (mode == 36) { network.txBuffers = network.rxBuffers = 2; network.txBuffer = netTx; network.rxBuffer = netRx; network.txBufferBytes = sizeof(netTx); network.rxBufferBytes = sizeof(netRx); }
           ok &= net[0]->configure(network) == ESP_OK;
           points += mode == 33 ? 4 : mode == 34 || mode == 35 ? 6 : mode == 36 ? 5 : 7;
+        }
+        if (mode >= 37) {
+          video[0] = new EspUsbDeviceVideo(device);
+          EspUsbVideoConfig camera; camera.payloadBytes = 64;
+          if (mode == 38 || mode == 40) camera.transport = EspUsbVideoTransport::Bulk;
+          if (mode == 38) { camera.payloadBytes = 65; camera.payloadBuffer = videoBuffer; camera.payloadBufferBytes = sizeof(videoBuffer); }
+          if (mode == 40) camera.payloadBytes = 65535;
+          ok &= video[0]->configure(camera) == ESP_OK;
+          points += mode == 38 ? 3 : 4;
+          if (mode == 39) {
+            video[1] = new EspUsbDeviceVideo(device);
+            camera.transport = EspUsbVideoTransport::Bulk; camera.payloadBytes = 65;
+            ok &= video[1]->configure(camera) == ESP_OK; points += 2;
+          }
         }
         points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.
         EspUsbDeviceConfig identity;
@@ -162,7 +178,7 @@ void loop() {
           const bool rejected = !device.begin(identity) && device.lastError() == ESP_ERR_NO_MEM;
           failAt = 0;
           ok &= rejected && failureReached && device.end() == ESP_OK && outstanding == 0 &&
-              !vendor.readCapacity() && !vendor.writeCapacity() && !badFree && !overflow;
+              !vendor.readCapacity() && !vendor.writeCapacity() && (!video[0] || !video[0]->payloadBufferSize()) && (!video[1] || !video[1]->payloadBufferSize()) && !badFree && !overflow;
           if (!ok) { Serial.printf("FAULT_FAILED mode=%u point=%u calls=%u live=%u rejected=%u hit=%u\r\n", mode, point, calls, outstanding, unsigned(rejected), unsigned(failureReached)); break; }
           ++failures;
           calls = 0;
@@ -176,7 +192,7 @@ void loop() {
             ok &= calls == beforeFeature;
           }
           ok &= vendor.configuration().rxCapacity == config.rxCapacity && vendor.configuration().txCapacity == config.txCapacity;
-          ok &= device.end() == ESP_OK && outstanding == 0;
+          ok &= device.end() == ESP_OK && outstanding == 0 && (!video[0] || !video[0]->payloadBufferSize()) && (!video[1] || !video[1]->payloadBufferSize());
           delay(10);
           if (ok) ++recoveries;
         }
@@ -189,6 +205,7 @@ void loop() {
         delete audio; audio = nullptr;
         for (auto &function : dfu) { delete function; function = nullptr; }
         for (auto &function : net) { delete function; function = nullptr; }
+        for (auto &function : video) { delete function; function = nullptr; }
       }
       {
         // Two NCMs fit the S3's IN endpoints; a further Vendor does not.

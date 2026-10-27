@@ -1,8 +1,8 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新確認: Video classも独自driverへ移行し、関連7件成功（212.48秒）。
+最新確認: Video classも独自driverへ移行し、関連9件成功（175.58秒）。
 [Video APIと未確認範囲](V3_VIDEO_API.ja.md)を参照。標準`--combo all`の直近全成功はNCM時点の19件（1080.50秒）。
-現在の通常収集は25件。全件と今回の関連試験を混同しない。
+現在の通常収集は26件。全件と今回の関連試験を混同しない。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
@@ -656,3 +656,21 @@ Videoの確保失敗・複数Function・不正control・cancel/reset/recommit競
 
 次はVideoの確保失敗・複数instance・EP0/取消し競合の追加検証を行い、標準combo allで全件を確認する。
 その後、共通EP0/core/DCDの置換へ進む。新APIを旧test/exampleに合わせて戻さない。
+
+## Videoの確保失敗・複数Function・制御要求
+
+2026-10-27。`video-driver-extended.xml`は**9 passed、0 skipped、0 unfinished、175.58秒**。
+Video ISO/Bulkの内部/外部staging、2 Function、65535-byte stagingを含む670取得点を
+一つずつ失敗させ、全点でNoMem、全資源回収、再開始とheap回復を確認した。
+`video_control`は2 Functionを同時に列挙し、MJPEGの65-byte payloadとYUY2の128-byte payloadを実通信した。
+26/34/48-byte Probe/Commit、GET_LEN/INFO/MIN/MAX/RES/DEF、22件の不正要求のSTALLと復帰、
+不正frame/NULL/busy/別Functionのticket拒否、片方のalt/recommit/cancel中に他方のframeを保持・完了できることを確認。
+62-byte frameのBulk ZLP終端、両方の送信中endとStopped一度だけの返却、外部DMA領域前後のcanaryも含む。
+ProbeのGET_MIN payloadを3、GET_RESを1に直し、受け付ける範囲と一致させた。
+この関連9件には既存のISO/Bulk各3構成と独立descriptor試験も含む。
+18 serial log全てSTOPPED、panicなし。原本は`/tmp/pytest-embedded/2026-10-27_02-07-12-940635/`、
+コピー/JUnit/transcriptは`validation/.pytest-results/video-driver-extended*`。
+通常収集26件。全体の直近成功19件とは区別する。
+実USB bus resetと取消し/recommitの競合全順序、PC/OS、HS/他SoCは引き続き未確認。
+
+次は無効化済みのlegacy classソースを除去し、標準combo allで26件を確認する。

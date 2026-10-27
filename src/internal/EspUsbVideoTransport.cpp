@@ -196,8 +196,13 @@ struct EspUsbVideoState {
       const uint8_t *source=nullptr; uint16_t bytes=48;
       switch (r->bRequest) {
       case 0x81: source=selector==1 ? s->probe : s->commit; break;
-      case 0x82: case 0x83: case 0x87: s->defaults(s->scratch); source=s->scratch; break;
-      case 0x84: memset(s->scratch,0,48); source=s->scratch; break;
+      case 0x82: case 0x83: case 0x87:
+        s->defaults(s->scratch);
+        if (r->bRequest==0x82) put32(s->scratch+22,3);
+        source=s->scratch; break;
+      case 0x84:
+        memset(s->scratch,0,48); put32(s->scratch+22,1);
+        source=s->scratch; break;
       case 0x85: put16(s->scratch,48); source=s->scratch; bytes=2; break;
       case 0x86: s->scratch[0]=3; source=s->scratch; bytes=1; break;
       default: return s->reject(7);
