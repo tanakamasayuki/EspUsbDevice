@@ -6,6 +6,7 @@ EspUsbDevice device;
 EspUsbDeviceVendor first(device);
 EspUsbDeviceBulkStream *stream[2]={&first,nullptr};
 EspUsbDeviceCdcSerial *serialPort=nullptr;
+std::atomic<unsigned> codingChanges{0};
 alignas(64) uint8_t tx[2][256],rx[2][320];
 struct Counts {
   std::atomic<unsigned> tx{0},rx{0},bad{0};
@@ -41,6 +42,8 @@ void loop(){
     unsigned kind,copy;sscanf(s.c_str(),"start %u %u",&kind,&copy);
     delete stream[1];serialPort=nullptr;
     if(kind)stream[1]=serialPort=new EspUsbDeviceCdcSerial(device);else stream[1]=new EspUsbDeviceVendor(device);
+    codingChanges=0;
+    if(serialPort)serialPort->onLineCoding([](const EspUsbDeviceCdcLineCoding &){++codingChanges;});
     bool ok=true;
     for(unsigned i=0;i<2;++i){
       auto &c=counts[i];c.tx=c.rx=c.bad=0;c.txPending=c.rxPending=false;c.txStatus=c.rxStatus=EspUsbTransferStatus::Stopped;
@@ -77,6 +80,8 @@ void loop(){
     bool ok=stream[i]->available()==int(n);
     if(ok && n){ok=stream[i]->read(data,n)==n;for(unsigned j=0;j<n;++j)ok &= data[j]==uint8_t(j*17+7+i*53);}
     Serial.printf("COPY_RX %u\r\n",unsigned(ok));
+  } else if(s=="coding_count") {
+    Serial.printf("CODING_COUNT %u\r\n",codingChanges.load());
   } else if(s=="cdc") {
     const auto c=serialPort ? serialPort->lineCoding() : EspUsbDeviceCdcLineCoding{};
     Serial.printf("CDC %u\r\n",unsigned(serialPort && serialPort->lineState().dtr && c.baud==115200));

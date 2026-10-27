@@ -42,6 +42,30 @@ bool request(uint8_t type,uint8_t code,uint16_t value,uint16_t index,uint16_t n=
   done=false;if(usb_host_transfer_submit_control(client,control)!=ESP_OK){done=true;return false;}
   return wait() && control->status==USB_TRANSFER_STATUS_COMPLETED && control->actual_num_bytes==8+n;
 }
+bool coding(unsigned n,unsigned invalid) {
+  if(n>7 || !notification || !done.load())return false;
+  auto *s=reinterpret_cast<usb_setup_packet_t *>(control->data_buffer);*s={};
+  s->bmRequestType=0x21;s->bRequest=0x20;s->wIndex=interfaces[1]-1;s->wLength=n;
+  const uint32_t baud=n==7 ? 115200:9600;
+  for(unsigned i=0;i<4;++i)control->data_buffer[8+i]=uint8_t(baud>>(8*i));
+  control->data_buffer[12]=control->data_buffer[13]=0;control->data_buffer[14]=8;
+  if(invalid==1)memset(control->data_buffer+8,0,4);
+  if(invalid==2)control->data_buffer[12]=3;
+  if(invalid==3)control->data_buffer[13]=5;
+  if(invalid==4)control->data_buffer[14]=4;
+  if(invalid==5)control->data_buffer[14]=9;
+  control->device_handle=handle;control->bEndpointAddress=0;control->num_bytes=8+n;control->callback=complete;
+  done=false;const esp_err_t submitted=usb_host_transfer_submit_control(client,control);
+  if(submitted!=ESP_OK){done=true;Serial.printf("CODING_SUBMIT %s\r\n",esp_err_to_name(submitted));return false;}
+  if(!wait())return false;
+  const unsigned status=control->status,actual=control->actual_num_bytes;
+  const bool expected=control->status==(n==7 && !invalid ? USB_TRANSFER_STATUS_COMPLETED:USB_TRANSFER_STATUS_STALL);
+  bool ok=request(0xa1,0x21,0,interfaces[1]-1,7);
+  const uint8_t wanted[]={0x00,0xc2,0x01,0,0,0,8};
+  ok &= !memcmp(control->data_buffer+8,wanted,7);
+  Serial.printf("CODING_RESULT n=%u status=%u actual=%u preserved=%u\r\n",n,status,actual,unsigned(ok));
+  return expected && ok;
+}
 bool bulk(unsigned i,bool reading,unsigned n) {
   if(!done.load())return false;auto *t=reading ? input[i]:output[i];
   t->device_handle=handle;t->bEndpointAddress=reading ? in[i]:out[i];t->num_bytes=reading ? (n+63)/64*64:n;t->callback=complete;
@@ -109,6 +133,9 @@ void loop(){
     unsigned i,input;char cmd[6];sscanf(s.c_str(),"%5s %u %u",cmd,&i,&input);
     bool ok=cmd[0]=='h' ? request(2,3,0,input ? in[i]:out[i]) : clear(i,input);
     Serial.printf("FEATURE %u\r\n",unsigned(ok));
+  } else if(s.startsWith("coding ")) {
+    unsigned n,invalid;sscanf(s.c_str(),"coding %u %u",&n,&invalid);
+    Serial.printf("CODING %u\r\n",unsigned(coding(n,invalid)));
   } else if(s=="control") {
     bool ok=notification && request(2,3,0,notification) && request(1,11,0,interfaces[1]-1);
     ok &= request(0x82,0,0,notification,2) && !control->data_buffer[8];

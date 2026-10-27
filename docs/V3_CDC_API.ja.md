@@ -118,3 +118,18 @@ data interfaceの再選択は借用TX/RXをCancelledで返し、copy queue/ring�
 control interfaceの再選択では通知endpointだけを初期化し、data転送、DTR、line codingを維持する。
 HALTされたINへのcopy write/writeAvailableは0となる。APIの形は維持し、Host要求時の動作を明確にする。
 S3–S3のbulk_standardでVendor+CDCと2 Vendorを別構成で検証した。OS互換性や通知送信の実装完了は含まない。
+
+
+## SET_LINE_CODINGの受理条件
+
+7 byteの要求長に加え、DATA段階で受信実長が7 byteであることと設定値を検査する。
+検査に失敗すればSTALLし、lineCodingとonLineCodingの通知を更新しない。
+設定値の反映と通知は成功したstatusの後に行う。
+
+2026-10-27のS3 Host SDKでは、SETUPのwLength=7と送信量0～6 byteを組み合わせると
+usb_host_transfer_submit_controlがESP_ERR_INVALID_ARGを返し、wireへ送信しなかった。
+この条件の物理short OUTの検証は未完了。SETUP自体の要求長0～6 byteの拒否とは区別する。
+Host側の検査は[ESP-IDFのUSBH実装](https://github.com/espressif/esp-idf/blob/v5.5.1/components/usb/usbh.c#L232-L248)にもある。
+実機の追加試験では、要求長0～6 byteと、baud=0、stopBits=3、parity=5、dataBits=4/9を拒否し、
+各要求の後にGET_LINE_CODINGで直前の設定が維持されることを確認する。
+正常なSET_LINE_CODING一回だけがcallbackを発生させることも確認する。

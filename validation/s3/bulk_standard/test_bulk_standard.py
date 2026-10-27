@@ -31,6 +31,13 @@ def test_bulk_standard(dut, peers):
 
             command(device, f"start {kind} 0", "STARTED 1", 30)
             command(dut, "start", "HOST_READY 1", 30)
+            if kind:
+                command(dut, "coding 7 0", "CODING 1")
+                for short_length in range(7):
+                    command(dut, f"coding {short_length} 0", "CODING 1")
+                for invalid in range(1, 6):
+                    command(dut, f"coding 7 {invalid}", "CODING 1")
+                command(device, "coding_count", "CODING_COUNT 1")
             # Reset each data interface independently, including CDC's data
             # interface, while both Functions have partial TX and RX loans.
             for target in (0, 1):

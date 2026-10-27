@@ -128,7 +128,7 @@ bool EspUsbDeviceCdcSerial::onBulkControl(uint8_t port, uint8_t stage, const voi
   case CDC_REQUEST_SET_LINE_CODING:
     if (r->bmRequestType != 0x21 || r->wValue || r->wLength != 7) return false;
     if (stage == CONTROL_STAGE_SETUP) return tud_control_xfer(port, r, controlBuffer_, 7);
-    if (stage == CONTROL_STAGE_DATA) return validCoding(controlBuffer_);
+    if (stage == CONTROL_STAGE_DATA) return usbd_control_received_bytes() == 7 && validCoding(controlBuffer_);
     if (stage == CONTROL_STAGE_ACK) {
       const EspUsbDeviceCdcLineCoding coding{read32(controlBuffer_), controlBuffer_[4], controlBuffer_[5], controlBuffer_[6]};
       portENTER_CRITICAL(&cdcLock); lineCoding_ = coding; portEXIT_CRITICAL(&cdcLock);

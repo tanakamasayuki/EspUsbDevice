@@ -418,3 +418,12 @@ queue depth 1ではfenceとEP0 statusが競合するため、指定深さにhard
 試験は独立bulk_standardを追加し、他Function/方向のPID継続、部分転送、copy回復も確認する。
 Host側のpipe再開が旧PIDを維持する条件では、両方向の初期化後にHost pipeだけを再生成した。
 Deviceへ余分なSET_INTERFACEを送って回復を隠す方法は用いていない。
+
+
+## CDC設定の受信実長
+
+SET_LINE_CODINGで要求長だけを検査すると、short OUTで以前のbufferの末尾を含む値を受理し得る。
+DATA段階で実長7 byteを要求する。公開API、追加heap、通知の正常経路は変えない。
+不正な短い設定を従来受理していたHostにはSTALLとなるが、不完全な値を採用しないことを優先する。
+要求長・不正設定値の拒否と設定/callback維持はS3–S3で検証した。
+Host SDKが送信量とwLengthの不一致を拒否するため、物理short OUTの実測は残課題とする。

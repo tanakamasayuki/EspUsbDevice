@@ -376,3 +376,18 @@ JUnit/transcript/serialコピーとnmは`validation/.pytest-results/`（git対�
 Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。conftestや独自pytest hookは使わない。
 最新の全体試験27件は`ce6a444`に対する結果で、この変更後の全28件一括成功を意味しない。
 他クラスの同要求での回復、EP0世代境界、残存DWC2/ABI/header依存の撤去は引き続き未完了。
+
+
+## CDC controlの境界確認
+
+2026-10-27。SET_LINE_CODINGのDATA段階に受信実長7 byteの検査を加えた。
+bulk_standardでは要求長0～6 byte、baud=0、stopBits=3、parity=5、dataBits=4/9を拒否し、
+GET_LINE_CODINGの値とcallback回数を維持することを確認した。
+`cdc-control-boundaries.xml`はbulk_standard、cdc_stream、control_coreの
+**3 passed、0 skipped、0 unfinished、179.38秒**。6 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_07-31-55-291424/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/cdc-control-boundaries*`。
+
+wLength=7のまま実送信を0～6 byteにする実験はHost SDKが送信前に拒否したため、
+物理short OUTのDevice側挙動は未検証。`cdc-short-before*`はその失敗記録であり、Deviceの不具合再現結果ではない。
+受信長guard自体のshort経路を実機で通した証拠として、上の正常・不正SETUP/設定値試験を扱わない。
