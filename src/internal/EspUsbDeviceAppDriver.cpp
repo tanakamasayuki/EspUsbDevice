@@ -7,15 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-static usbd_class_driver_t *g_appDrivers = nullptr;
-static const usbd_class_driver_t **g_sources = nullptr;
+static espusb::internal::UsbClassDriver *g_appDrivers = nullptr;
+static const espusb::internal::UsbClassDriver **g_sources = nullptr;
 static uint8_t g_appDriverCount = 0;
 
-bool espUsbDeviceRegisterAppDrivers(const usbd_class_driver_t *drivers, uint8_t count)
+bool espUsbDeviceRegisterAppDrivers(const espusb::internal::UsbClassDriver *drivers, uint8_t count)
 {
   if (!drivers || !count || unsigned(g_appDriverCount) + count > UINT8_MAX) return false;
-  auto *table = static_cast<usbd_class_driver_t *>(espusb::internal::allocateUsbMemory((g_appDriverCount + count) * sizeof(usbd_class_driver_t)));
-  auto **sources = static_cast<const usbd_class_driver_t **>(espusb::internal::allocateUsbMemory((g_appDriverCount + count) * sizeof(const usbd_class_driver_t *)));
+  auto *table = static_cast<espusb::internal::UsbClassDriver *>(espusb::internal::allocateUsbMemory((g_appDriverCount + count) * sizeof(espusb::internal::UsbClassDriver)));
+  auto **sources = static_cast<const espusb::internal::UsbClassDriver **>(espusb::internal::allocateUsbMemory((g_appDriverCount + count) * sizeof(const espusb::internal::UsbClassDriver *)));
   if (!table || !sources) { espusb::internal::freeUsbMemory(table); espusb::internal::freeUsbMemory(sources); return false; }
   if (g_appDriverCount) {
     memcpy(table, g_appDrivers, g_appDriverCount * sizeof(*table));
@@ -30,7 +30,7 @@ bool espUsbDeviceRegisterAppDrivers(const usbd_class_driver_t *drivers, uint8_t 
   return true;
 }
 
-void espUsbDeviceUnregisterAppDrivers(const usbd_class_driver_t *drivers, uint8_t count)
+void espUsbDeviceUnregisterAppDrivers(const espusb::internal::UsbClassDriver *drivers, uint8_t count)
 {
   for (uint8_t i = 0; i < count; ++i) {
     for (uint8_t j = 0; j < g_appDriverCount; ++j) {
@@ -47,10 +47,10 @@ void espUsbDeviceUnregisterAppDrivers(const usbd_class_driver_t *drivers, uint8_
   }
 }
 
-// Transitional C ABI: the independent core snapshots this selected table at start.
-extern "C" usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
+// The independent core borrows this table for its active lifetime.
+const espusb::internal::UsbClassDriver *espusb::internal::selectedUsbClassDrivers(uint8_t &count)
 {
-  *driver_count = g_appDriverCount;
+  count = g_appDriverCount;
   return g_appDrivers;
 }
 

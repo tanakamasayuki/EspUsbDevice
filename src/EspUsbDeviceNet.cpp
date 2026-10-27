@@ -1,3 +1,4 @@
+#include "internal/EspUsbDeviceEndpoint.h"
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbMemory.h"
@@ -12,7 +13,7 @@
 namespace {
 portMUX_TYPE netLock = portMUX_INITIALIZER_UNLOCKED;
 using espusb::internal::NetGuard;
-const usbd_class_driver_t &netDriver();
+const espusb::internal::UsbClassDriver &netDriver();
 uint16_t get16(const uint8_t *p) { return uint16_t(p[0]) | uint16_t(p[1]) << 8; }
 uint32_t get32(const uint8_t *p) { return get16(p) | uint32_t(get16(p + 2)) << 16; }
 void put16(uint8_t *p, uint16_t n) { p[0] = uint8_t(n); p[1] = uint8_t(n >> 8); }
@@ -311,9 +312,9 @@ struct EspUsbNetState {
 };
 EspUsbNetState *EspUsbNetState::first = nullptr;
 namespace {
-const usbd_class_driver_t &netDriver() {
-  static const usbd_class_driver_t driver = {
-    .name = "EspNCM", .init = EspUsbNetState::init, .deinit = EspUsbNetState::deinit,
+const espusb::internal::UsbClassDriver &netDriver() {
+  static const espusb::internal::UsbClassDriver driver = {
+    .init = EspUsbNetState::init, .deinit = EspUsbNetState::deinit,
     .reset = EspUsbNetState::resetAll, .open = EspUsbNetState::open,
     .control_xfer_cb = EspUsbNetState::controlRequest, .xfer_cb = EspUsbNetState::complete, .sof = nullptr
   }; return driver;

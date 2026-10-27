@@ -33,7 +33,7 @@
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
 #include "tusb.h"
 // usbd_edpt_claim() / usbd_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
-#include "device/usbd_pvt.h"
+#include "internal/EspUsbDeviceEndpoint.h"
 #if __has_include("esp_memory_utils.h")
 #include "esp_memory_utils.h"
 #define ESP_USB_DEVICE_HAS_DMA_CAPABLE_CHECK 1

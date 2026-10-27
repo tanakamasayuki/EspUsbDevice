@@ -1,3 +1,4 @@
+#include "internal/EspUsbDeviceEndpoint.h"
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbDeviceRestart.h"
@@ -10,7 +11,7 @@ namespace {
 using Status = EspUsbDfuStatus;
 enum DfuState : uint8_t { AppIdle, AppDetach, Idle, DownloadSync, DownloadBusy,
   DownloadIdle, ManifestSync, Manifest, WaitReset, UploadIdle, Error };
-const usbd_class_driver_t &dfuDriver();
+const espusb::internal::UsbClassDriver &dfuDriver();
 EspUsbDeviceDfu *otaOwner = nullptr;
 }
 struct EspUsbDfuState {
@@ -156,9 +157,9 @@ struct EspUsbDfuState {
 };
 EspUsbDfuState *EspUsbDfuState::first = nullptr;
 namespace {
-const usbd_class_driver_t &dfuDriver() {
-  static const usbd_class_driver_t driver = {
-    .name = "EspDFU", .init = EspUsbDfuState::init, .deinit = EspUsbDfuState::deinit,
+const espusb::internal::UsbClassDriver &dfuDriver() {
+  static const espusb::internal::UsbClassDriver driver = {
+    .init = EspUsbDfuState::init, .deinit = EspUsbDfuState::deinit,
     .reset = EspUsbDfuState::resetAll, .open = EspUsbDfuState::open,
     .control_xfer_cb = EspUsbDfuState::control, .xfer_cb = nullptr, .sof = nullptr
   };

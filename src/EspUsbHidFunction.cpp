@@ -4,7 +4,7 @@
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
 #include "device/usbd.h"
-#include "device/usbd_pvt.h"
+#include "internal/EspUsbDeviceEndpoint.h"
 #include <algorithm>
 #include <string.h>
 
@@ -57,7 +57,7 @@ bool walk(const uint8_t *data, size_t bytes, Global *stack, size_t depthLimit, C
   }
   return !depth;
 }
-extern const usbd_class_driver_t hidDriver;
+extern const espusb::internal::UsbClassDriver hidDriver;
 }
 
 struct EspUsbHidState {
@@ -486,8 +486,8 @@ struct EspUsbHidState {
 };
 EspUsbHidState *EspUsbHidState::first = nullptr;
 namespace {
-const usbd_class_driver_t hidDriver = {
-  .name = "EspHid", .init = EspUsbHidState::init, .deinit = EspUsbHidState::deinit,
+const espusb::internal::UsbClassDriver hidDriver = {
+  .init = EspUsbHidState::init, .deinit = EspUsbHidState::deinit,
   .reset = EspUsbHidState::resetAll, .open = EspUsbHidState::open,
   .control_xfer_cb = EspUsbHidState::controlRequest, .xfer_cb = EspUsbHidState::complete, .sof = nullptr
 };

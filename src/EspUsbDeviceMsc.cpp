@@ -1,3 +1,4 @@
+#include "internal/EspUsbDeviceEndpoint.h"
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbDeviceAppDriver.h"
@@ -10,7 +11,7 @@
 #include <utility>
 namespace {
 portMUX_TYPE mscLock = portMUX_INITIALIZER_UNLOCKED;
-const usbd_class_driver_t &mscDriver();
+const espusb::internal::UsbClassDriver &mscDriver();
 uint32_t le32(const uint8_t *p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
 uint32_t be32(const uint8_t *p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
 uint16_t be16(const uint8_t *p) { return uint16_t(p[0]) << 8 | p[1]; }
@@ -272,9 +273,9 @@ struct EspUsbMscState {
 };
 EspUsbMscState *EspUsbMscState::first = nullptr;
 namespace {
-const usbd_class_driver_t &mscDriver() {
-  static const usbd_class_driver_t driver = {
-    .name = "EspMsc", .init = EspUsbMscState::init, .deinit = EspUsbMscState::deinit,
+const espusb::internal::UsbClassDriver &mscDriver() {
+  static const espusb::internal::UsbClassDriver driver = {
+    .init = EspUsbMscState::init, .deinit = EspUsbMscState::deinit,
     .reset = EspUsbMscState::resetAll, .open = EspUsbMscState::open,
     .control_xfer_cb = EspUsbMscState::control, .xfer_cb = EspUsbMscState::complete, .sof = nullptr
   };

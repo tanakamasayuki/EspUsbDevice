@@ -2,7 +2,7 @@
 #include "class/midi/midi.h"
 #include "class/audio/audio.h"
 #include "device/usbd.h"
-#include "device/usbd_pvt.h"
+#include "internal/EspUsbDeviceEndpoint.h"
 #include <string.h>
 #include <utility>
 static_assert(sizeof(EspUsbDeviceMidiPacket) == 4, "USB-MIDI events are four bytes");

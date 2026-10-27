@@ -568,3 +568,25 @@ S2/P4 HSのcompile-only probeも成功し、`dwc2-quiesce-{s2,p4}-build.txt`へ�
 vendor検証は24 files/2 compiled sources、updater dry runは差分0。
 旧tests/examplesはmainとの差分なし。他SoC/HS実機、hardware故障時の停止timeout、
 全EP0順序とvendor ABI/header/DWC2の完全撤去は未完了。
+
+2026-10-27にplugin手元repoの1.10.0 CHANGELOGと`TESTING_ADVANCED.ja.md`の
+「結線で決まる組は --combo で列挙する」を再確認した。
+現在の`arduino_combos`によるS3一組と`--combo all`、`--noconftest`を維持する。
+将来のP4/S2/S31は結線ごとの組を追加し、存在しない直積を作らない。
+設定済みportの故障やcompile/upload失敗をskipへ置き換えない。
+`arduino_reset_dirs`はsketchが固定outputへ書き出す場合の標準機能で、現在のUSB probeには不要。
+
+## class登録表独自化後の全体確認
+
+2026-10-27。native class登録を独自`UsbClassDriver`とC++ getterへ移した。
+unused name/xfer_isr枠を削除し、native classのendpoint宣言を独自headerへ限定した。
+標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1368.18秒**。
+774取得点の失敗/回復を含み、62 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_14-29-11-226117/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/class-dispatch-all*`。
+S2/P4 HSのcompile-onlyも成功。`class-dispatch-{s2,p4}-build.txt`とnm結果を保存した。
+S3 Vendor-onlyとS2/P4 ELFで独自getterがあり、旧class table ABIのsymbolがないことを確認。
+S3 Vendor-onlyではHID/MSC/Audio/Video/NCM/CCID/DFU stateのsymbolもない。
+記録は`class-dispatch-s3-vendor-nm.txt`。旧tests/examplesはmainとの差分なし。
+残るwire/protocol header、endpoint/control C symbol、core/DWC2のprivate headerと
+DWC2実装の完全置換、各classのHALT競合・全EP0順序・他SoC/HS実機は次の作業対象。

@@ -522,3 +522,20 @@ endpoint ISRとtask操作は同じhardware lockで同期し、SOF class callback
 利点は再構成で返したbufferへ旧DMA/IRQ処理が残らず、旧完了を新規転送へ適用しないこと。
 不利益は停止待ち時間とcritical sectionの増加。公開API、通常転送のheap取得点は変えない。
 全てのISR順序をarm tokenで証明したという扱いにはせず、EP0/bus reset等の境界検証を継続する。
+
+## native class登録表の独自化
+
+独自coreは選択されたclassだけを`UsbClassDriver`として登録し、C++の
+`selectedUsbClassDrivers`から借用する。TinyUSBの`usbd_class_driver_t` layoutと
+`usbd_app_driver_get_cb` hookは使用しない。coreが呼ばないname/xfer_isr枠も除き、
+32bit環境では登録tableが1 driverあたり8 byte小さくなる。取得点数や転送中heapは増やさない。
+classの完了/controlはworker、SOFは従来どおりISR。登録/解除はcore停止中という契約を維持する。
+
+native class用のendpoint宣言は`internal/EspUsbDeviceEndpoint.h`へ限定した。
+classから`device/usbd_pvt.h`を直接includeせず、vendorのOS/FIFO/class tableを引き込まない。
+coreと残存DWC2 adapterは引き続き同headerを使う。endpoint/controlのC symbol名、
+wire typeやprotocol headerの依存は残り、全ABI撤去や全TinyUSB撤去とは区別する。
+
+利用者APIと移行手順は変わらない。不利益は段階移行中のendpoint宣言が残存bridgeの宣言と
+重なること。coreのtranslation unitで両headerをincludeし、型の不一致をcompile errorにする。
+両方の意味を変えるときはまとめて変更する。driverの任意ISR dispatchは公開しない。

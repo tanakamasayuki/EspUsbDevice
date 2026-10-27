@@ -1,3 +1,4 @@
+#include "EspUsbDeviceEndpoint.h"
 #include "EspUsbVideoTransport.h"
 #include "../EspUsbDevice.h"
 #include "EspUsbDeviceAppDriver.h"
@@ -11,7 +12,7 @@ namespace {
 portMUX_TYPE videoLock = portMUX_INITIALIZER_UNLOCKED;
 using espusb::internal::VideoGuard;
 uint64_t nextFrameId = 1;
-const usbd_class_driver_t &videoDriver();
+const espusb::internal::UsbClassDriver &videoDriver();
 uint16_t get16(const uint8_t *p) { return uint16_t(p[0]) | uint16_t(p[1]) << 8; }
 uint32_t get32(const uint8_t *p) { return get16(p) | uint32_t(get16(p+2)) << 16; }
 void put16(uint8_t *p,uint16_t n) { p[0]=uint8_t(n); p[1]=uint8_t(n>>8); }
@@ -256,8 +257,8 @@ struct EspUsbVideoState {
 };
 EspUsbVideoState *EspUsbVideoState::first=nullptr;
 namespace {
-const usbd_class_driver_t &videoDriver() {
-  static const usbd_class_driver_t d={.name="EspVideo",.init=EspUsbVideoState::init,.deinit=EspUsbVideoState::deinit,
+const espusb::internal::UsbClassDriver &videoDriver() {
+  static const espusb::internal::UsbClassDriver d={.init=EspUsbVideoState::init,.deinit=EspUsbVideoState::deinit,
     .reset=EspUsbVideoState::resetAll,.open=EspUsbVideoState::open,.control_xfer_cb=EspUsbVideoState::control,
     .xfer_cb=EspUsbVideoState::complete,.sof=nullptr}; return d;
 }

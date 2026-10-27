@@ -1,3 +1,4 @@
+#include "EspUsbDeviceEndpoint.h"
 #include "EspUsbAudioTransport.h"
 #include "../EspUsbDevice.h"
 #include "EspUsbDeviceAppDriver.h"
@@ -8,7 +9,7 @@
 #include <string.h>
 namespace {
 portMUX_TYPE audioLock = portMUX_INITIALIZER_UNLOCKED;
-const usbd_class_driver_t &audioDriver();
+const espusb::internal::UsbClassDriver &audioDriver();
 using espusb::internal::AudioGuard;
 struct Ring {
   uint8_t *data = nullptr;
@@ -251,9 +252,9 @@ struct EspUsbAudioState {
 };
 EspUsbAudioState *EspUsbAudioState::first = nullptr;
 namespace {
-const usbd_class_driver_t &audioDriver() {
-  static const usbd_class_driver_t driver = {
-    .name = "EspAudio", .init = EspUsbAudioState::init, .deinit = EspUsbAudioState::deinit,
+const espusb::internal::UsbClassDriver &audioDriver() {
+  static const espusb::internal::UsbClassDriver driver = {
+    .init = EspUsbAudioState::init, .deinit = EspUsbAudioState::deinit,
     .reset = EspUsbAudioState::resetAll, .open = EspUsbAudioState::open,
     .control_xfer_cb = EspUsbAudioState::controlRequest, .xfer_cb = EspUsbAudioState::complete, .sof = nullptr
   };

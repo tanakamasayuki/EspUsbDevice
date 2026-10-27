@@ -3,7 +3,7 @@
 #include "internal/EspUsbDeviceCore.h"
 #include "tusb.h"
 #include "class/cdc/cdc.h"
-#include "device/usbd_pvt.h"
+#include "internal/EspUsbDeviceEndpoint.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>

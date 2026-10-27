@@ -1,11 +1,12 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はDWC2再構成時のDMA停止・latched IRQ消去とendpoint操作の同期。
-構成世代だけでは防げない旧hardware完了を実機で再現し、修正後の標準combo allは
-**全31件成功（1071.24秒）**。62 serial log全てSTOPPED、panicなし。
-S2/P4 HSはcompile-only成功。実機確認はS3–S3のみ。
+最新実装はnative class登録表の独自化。unused name/xfer_isr枠とvendor登録hookへの依存を除いた。
+標準combo allは**全31件成功（1368.18秒）**。62 serial log全てSTOPPED、panicなし。
+S2/P4 HSはcompile-only成功。実機確認はS3–S3のみ。選択していないclassの不在もELFで確認。
+直前のDWC2再構成時のDMA停止・latched IRQ消去とendpoint同期は`0fd005c`。
+同修正版でも全31件成功（1071.24秒）。
 [core APIと未完の境界](V3_CORE_API.ja.md)を参照。TinyUSBのコンパイル対象はDWC2関連2本、
-vendor選択は24 files。C ABI/headerとDWC2への依存は残る。
+vendor選択は24 files。wire/protocol headerと残存bridge/DWC2への依存は残る。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
@@ -964,3 +965,18 @@ S2/P4 HSのcompile-only probeも成功し、`dwc2-quiesce-{s2,p4}-build.txt`へ�
 vendor検証は24 files/2 compiled sources、updater dry runは差分0。
 旧tests/examplesはmainとの差分なし。他SoC/HS実機、hardware故障時の停止timeout、
 全EP0順序とvendor ABI/header/DWC2の完全撤去は未完了。
+
+## class登録表独自化後の全体確認
+
+2026-10-27。native class登録を独自`UsbClassDriver`とC++ getterへ移した。
+unused name/xfer_isr枠を削除し、native classのendpoint宣言を独自headerへ限定した。
+標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1368.18秒**。
+774取得点の失敗/回復を含み、62 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_14-29-11-226117/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/class-dispatch-all*`。
+S2/P4 HSのcompile-onlyも成功。`class-dispatch-{s2,p4}-build.txt`とnm結果を保存した。
+S3 Vendor-onlyとS2/P4 ELFで独自getterがあり、旧class table ABIのsymbolがないことを確認。
+S3 Vendor-onlyではHID/MSC/Audio/Video/NCM/CCID/DFU stateのsymbolもない。
+記録は`class-dispatch-s3-vendor-nm.txt`。旧tests/examplesはmainとの差分なし。
+残るwire/protocol header、endpoint/control C symbol、core/DWC2のprivate headerと
+DWC2実装の完全置換、各classのHALT競合・全EP0順序・他SoC/HS実機は次の作業対象。

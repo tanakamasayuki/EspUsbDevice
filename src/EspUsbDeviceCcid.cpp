@@ -4,14 +4,14 @@
 #include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbTinyUsbRuntime.h"
-#include "device/usbd_pvt.h"
+#include "internal/EspUsbDeviceEndpoint.h"
 #include "device/usbd.h"
 #include <algorithm>
 #include <string.h>
 #include <utility>
 namespace {
 portMUX_TYPE ccidLock = portMUX_INITIALIZER_UNLOCKED;
-extern const usbd_class_driver_t ccidDriver;
+extern const espusb::internal::UsbClassDriver ccidDriver;
 static constexpr uint8_t USB_DESC_INTERFACE = 0x04;
 static constexpr uint8_t USB_DESC_ENDPOINT = 0x05;
 // CCID functional descriptor. Shares its number with the HID descriptor, which
@@ -216,7 +216,7 @@ struct EspUsbCcidState {
 };
 EspUsbCcidState *EspUsbCcidState::first=nullptr;
 namespace {
-const usbd_class_driver_t ccidDriver={.name="EspCcid",.init=EspUsbCcidState::init,.deinit=EspUsbCcidState::deinit,
+const espusb::internal::UsbClassDriver ccidDriver={.init=EspUsbCcidState::init,.deinit=EspUsbCcidState::deinit,
 .reset=EspUsbCcidState::resetAll,.open=EspUsbCcidState::open,.control_xfer_cb=EspUsbCcidState::control,.xfer_cb=EspUsbCcidState::complete,.sof=nullptr};
 }
 EspUsbDeviceCcid::EspUsbDeviceCcid(EspUsbDevice &d):EspUsbDeviceClass(d) {}

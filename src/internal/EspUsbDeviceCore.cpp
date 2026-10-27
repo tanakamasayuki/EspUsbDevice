@@ -2,6 +2,8 @@
 // first-party classes and the remaining TinyUSB DWC2 adapter. See
 // third_party/tinyusb/PROVENANCE.md for the adapter's MIT-licensed origins.
 #include "EspUsbDeviceCore.h"
+#include "EspUsbDeviceAppDriver.h"
+#include "EspUsbDeviceEndpoint.h"
 #include "EspUsbDwc2Runtime.h"
 #include "EspUsbMemory.h"
 #include "device/dcd.h"
@@ -38,7 +40,7 @@ struct Control {
 struct Core {
   uint8_t port = Invalid, interfaceCount = 0, endpointCount = 0, driverCount = 0;
   uint16_t queueDepth = 0;
-  const usbd_class_driver_t *drivers = nullptr;
+  const espusb::internal::UsbClassDriver *drivers = nullptr;
   Endpoint *endpoints = nullptr;
   uint8_t *interfaces = nullptr, *packet = nullptr;
   StaticQueue_t queueState{};
@@ -56,7 +58,7 @@ struct Core {
     if ((address & 0x70) || (address & 15) >= endpointCount) return nullptr;
     return endpoints + (address & 15)*2 + (address >> 7);
   }
-  const usbd_class_driver_t *driver(uint8_t index) const {
+  const espusb::internal::UsbClassDriver *driver(uint8_t index) const {
     return index < driverCount ? drivers + index : nullptr;
   }
   bool currentControl() const {
@@ -141,7 +143,7 @@ struct Core {
     c.capacity = std::min(bytes,c.request.wLength); c.transferred = 0;
     return data();
   }
-  bool invoke(const usbd_class_driver_t *d) {
+  bool invoke(const espusb::internal::UsbClassDriver *d) {
     control.callback = d ? d->control_xfer_cb : nullptr;
     return control.callback && control.callback(port,CONTROL_STAGE_SETUP,&control.request);
   }
@@ -342,7 +344,7 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   s->endpoints=reinterpret_cast<Endpoint *>(memory+epOffset); s->interfaces=memory+itfOffset; s->packet=memory+packetOffset;
   for (unsigned i=0;i<epCount*2;++i) new(s->endpoints+i) Endpoint;
   memset(s->interfaces,Invalid,count);
-  s->drivers=usbd_app_driver_get_cb(&s->driverCount);
+  s->drivers=espusb::internal::selectedUsbClassDrivers(s->driverCount);
   s->queue=xQueueCreateStatic(UBaseType_t(queueDepth)+1,sizeof(Event),memory+queueOffset,&s->queueState);
   if (!s->queue) { s->~Core(); freeUsbMemory(s); return ESP_ERR_NO_MEM; }
   if (!espusb_dwc2_runtime_prepare(port,memory+dcdOffset,dcdBytes,outMask,inMask)) {

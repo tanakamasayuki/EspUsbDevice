@@ -11,7 +11,7 @@
 #include "esp_memory_utils.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "device/usbd_pvt.h"
+#include "internal/EspUsbDeviceEndpoint.h"
 #include "device/usbd.h"
 
 namespace {
@@ -44,7 +44,7 @@ struct Ring {
 uint8_t *allocateDma(size_t n) {
   return static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(n, 64, true));
 }
-extern const usbd_class_driver_t bulkDriver;
+extern const espusb::internal::UsbClassDriver bulkDriver;
 }
 
 // Per-Function transport over the independent core and temporary DWC2 ABI.
@@ -350,11 +350,11 @@ struct EspUsbBulkState {
 };
 EspUsbBulkState *EspUsbBulkState::first = nullptr;
 namespace {
-const usbd_class_driver_t bulkDriver = {
-    .name = "EspBulk", .init = EspUsbBulkState::init, .deinit = EspUsbBulkState::deinit,
+const espusb::internal::UsbClassDriver bulkDriver = {
+    .init = EspUsbBulkState::init, .deinit = EspUsbBulkState::deinit,
     .reset = EspUsbBulkState::resetAll, .open = EspUsbBulkState::open,
     .control_xfer_cb = EspUsbBulkState::control, .xfer_cb = EspUsbBulkState::complete,
-    .xfer_isr = nullptr, .sof = nullptr,
+    .sof = nullptr,
 };
 }
 
