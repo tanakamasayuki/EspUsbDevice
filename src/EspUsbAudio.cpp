@@ -12,7 +12,6 @@
 #endif
 
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
-#include "tusb.h"
 #include "device/usbd.h"
 #define ESP_USB_AUDIO_HAS_USB_CORE 1
 #else

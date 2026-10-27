@@ -4,14 +4,15 @@
 
 All v3 USB classes use independent drivers. The ten TinyUSB class sources and
 unused class headers have been removed from the Arduino build tree. The independent EP0/core also replaces usbd.c; the old bootstrap and FIFO
-implementations were removed. DWC2, private C ABI headers and some protocol
+implementations were removed. The device controller now uses the owned
+`src/internal/EspUsbController.h` contract. DWC2 and some wire/protocol
 definitions remain temporarily.
 These are also scheduled for replacement; removing class sources is not the
 completion of the stack migration.
 
 - Pin and rationale: `UPSTREAM.json`, using a full commit SHA.
 - License: MIT. Keep `LICENSE` and copyright/SPDX notices on remaining files.
-- Selection: `BUILD_FILES.txt`, 24 files (2 sources and 22 headers).
+- Selection: `BUILD_FILES.txt`, 17 files (2 sources and 15 headers).
 - Sources: `portable/synopsys/dwc2/dcd_dwc2.c` and
   `portable/synopsys/dwc2/dwc2_common.c`.
 - Only the currently used Audio/CDC/HID/MIDI protocol headers remain under
@@ -37,9 +38,9 @@ removed classes.
 Remaining local patches support the temporary adapter. The patch for removed
 usbd.c is also retained only in Git history:
 
-- `device/dcd.h`, `device/usbd_pvt.h`: abort preserving DATA PID,
-  nonblocking event fences reporting queue exhaustion, and actual control DATA
-  byte counts.
+- The removed device DCD/private, FIFO, OS abstraction and umbrella headers
+  remain only in Git history. The controller event layout in the owned header
+  is adapted from TinyUSB `device/dcd.h`, retaining its MIT attribution.
 - `portable/synopsys/dwc2/dcd_dwc2.c`: stop without STALL and split DMA arms by
   actual GHWCFG3 counter widths. S3 has seven packet-count bits although the
   common register type exposes ten. Intermediate arms emit no completion;
@@ -74,3 +75,12 @@ replacement. Physical FIFO reservations and controller shutdown remain intact.
 The runtime adapter cleans and invalidates the dedicated SETUP line before initial DMA, publishing its pointer only after synchronization succeeds. Failed preparation leaves storage unpublished for core cleanup.
 
 The recorded DWC2 patches also wait for endpoint shutdown, clear latched non-control interrupts, and serialize endpoint ISR/task operations. SOF class callback dispatch stays outside that lock.
+
+
+The native controller API has typed runtime options and device-only init, and
+uses `espusb_controller_*` symbols. The ESP adapter uses only internal DMA;
+unreachable slave/FIFO code and its transfer-record pointer were removed.
+The core still owns queue/fence capacity and FreeRTOS synchronization directly.
+The pinned updater cannot restore removed device/private, OS/FIFO or umbrella
+headers. DWC2 register/port sources and wire/protocol definitions remain derived
+upstream dependencies; this boundary change is not full DWC2 replacement.

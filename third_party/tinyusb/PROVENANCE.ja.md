@@ -5,12 +5,13 @@
 v3では全USB classを独自driverへ移行した。TinyUSBのclass実装10本と関連headerを
 Arduino build treeから削除し、同じ場所へ別のvendor snapshotを重ねない。
 共通EP0/coreも独自実装へ移行し、旧usbd.c・bootstrap・FIFO実装を除去した。
-DWC2、内部C ABI/headerと一部protocol定義は暫定依存として残る。
+controller境界は独自`src/internal/EspUsbController.h`へ移した。
+DWC2と一部wire/protocol定義は暫定依存として残る。
 最終方針はこれらも置換することであり、この削除だけでTinyUSB依存撤去完了とはしない。
 
 - Pinと選定理由: `UPSTREAM.json`。full commit SHAへ固定する。
 - License: MIT、`LICENSE`と残存fileのcopyright/SPDX表示を保持する。
-- 現在の選択: `BUILD_FILES.txt`の24 file（2 source、22 header）。
+- 現在の選択: `BUILD_FILES.txt`の17 file（2 source、15 header）。
 - 残るsource: `portable/synopsys/dwc2/dcd_dwc2.c`、`portable/synopsys/dwc2/dwc2_common.c`。
 - `class/`以下には現在利用するAudio/CDC/HID/MIDIのprotocol定義headerだけを残す。
   DFU/MSC/NCM/Videoの未使用定義headerも削除した。
@@ -31,8 +32,8 @@ cacheは元のsnapshotのままで、`LOCAL_PATCHES.json`の正確な置換を�
 
 残るlocal patchは暫定adapter用である。削除したusbd.cのpatchも履歴側へ移した。
 
-- `device/dcd.h`、`device/usbd_pvt.h`: DATA PIDを保持するabort、
-  queue満杯を返すFIFO fence予約、control DATAの実byte数を取得する関数。
+- 削除したDCD/private、FIFO、OS抽象、umbrella headerはGit履歴だけに残す。
+  独自controller event layoutはTinyUSB `device/dcd.h`由来で、MIT帰属表示を維持する。
 - `portable/synopsys/dwc2/dcd_dwc2.c`: STALLしない停止と、GHWCFG3の実カウンタ幅に基づくDMA分割。
   S3のpacket数は7 bitであり、共通register型の10 bitとは異なる。
   中間armでは完了eventを出さず、short/ZLPまたは全体の完了で一度返す。
@@ -58,3 +59,10 @@ S3–S3で選択経路を検証しているが、P4/S2/S31の実機検証は未�
 SETUP領域は初回DMA前にclean/invalidateし、同期成功後にruntime pointerを公開する。失敗時は未公開の領域をcoreへ返す。
 
 DWC2の構成解除ではDMA停止完了を待ち、latched非制御IRQを消す。endpoint ISRとtask操作を同じlockへ揃えるpatchも記録する。SOF class callbackはlock外に保つ。
+
+
+controller境界は型付きruntime optionとdevice専用init、`espusb_controller_*` symbolを使う。
+ESP adapterは従来のinternal DMAへ限定し、未使用のslave/FIFO経路とrecord内のFIFO pointerを削除した。
+coreはqueue/fence容量とFreeRTOS同期を直接所有する。updaterは削除したDCD/private、OS/FIFO、
+umbrella headerを復元しない。DWC2 register/port実装とwire/protocol定義は上流由来のままで、
+この境界移行をDWC2完全置換とは扱わない。

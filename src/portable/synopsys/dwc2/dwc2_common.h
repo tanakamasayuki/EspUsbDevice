@@ -12,7 +12,7 @@
 #include "dwc2_type.h"
 
 #if CFG_TUD_ENABLED
-#include "device/dcd.h"
+#include "../../../internal/EspUsbController.h"
 #endif
 
 #if CFG_TUH_ENABLED

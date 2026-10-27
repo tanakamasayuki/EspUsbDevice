@@ -341,3 +341,50 @@ S3 Vendor-onlyではHID/MSC/Audio/Video/NCM/CCID/DFU stateのsymbolもない。
 記録は`class-dispatch-s3-vendor-nm.txt`。旧tests/examplesはmainとの差分なし。
 残るwire/protocol header、endpoint/control C symbol、core/DWC2のprivate headerと
 DWC2実装の完全置換、各classのHALT競合・全EP0順序・他SoC/HS実機は次の作業対象。
+
+## controller境界と未使用のvendor基盤の撤去
+
+`internal/EspUsbController.h`がcoreと残存DWC2 adapterの専用境界となる。
+型付き`EspUsbControllerConfig`でbulk INの二重bufferとVBUS policyを渡し、initはdevice専用の
+port/highSpeedを受け取る。旧DCD symbolとvendor config ID/unionは使わない。
+controller eventは独自型とし、deferred fenceはcore内の予約ID 255で区別する。
+controller入口は無効/範囲外eventを拒否し、worker内のjobだけがdeferred payloadを使う。
+control ACK observerも独自coreから専用hookへ通知する。
+
+使われない`usbd_*`互換entry、vendor DCD/private、OS/FIFO、umbrella headerを撤去した。
+ESPは従来同様internal DMAで動かし、無効だったslave/FIFO経路とrecordのFIFO pointerを削除する。
+controllerにinternal DMAがなければ初期化を明示的に拒否する。新SoCの非DMA経路を追加する場合は
+専用実装が必要だが、今回対応するS2/S3/P4の転送方式は変えない。
+転送時のheapや確保点数は増やさず、recordから32bit pointer一つを減らす。
+最終storage量は既存の64byte丸めとdescriptor選択数に従い、必ず4byte単位で減るとは限らない。
+
+利用者API/移行手順は変わらない。内部TinyUSB APIへ直接依存する非公開利用は対象外。
+故障注入probeは独自header/symbolへ変更し、queue深さ・cache失敗・旧完了/latched IRQの条件を保つ。
+型や名前を変更しただけでDWC2が独自実装になったとは扱わない。MIT由来は維持し、
+vendor選択は24→17 files、compiled sourceは2本のまま。wire/protocol定義、device向け残存headerと
+DWC2 register/port処理の置換は続く。
+
+## controller境界移行後の全体確認
+
+2026-10-28。controller event/IRQ/転送/cache hookと型付き設定を独自境界へ移し、
+vendor DCD/private、FIFO、OS抽象、umbrellaの7 headersと無効slave/FIFO経路を撤去した。
+初回はcoreがFreeRTOS宣言とcontrol callback型を旧umbrella経由で得ていたためcompile error。
+直接includeと独自driver型の参照へ修正し、初回を実機の合格記録には含めない。
+初回失敗logは`controller-boundary-*-initial-build-failed.txt`等へ分けて保存した。
+
+修正版の標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1402.90秒**。
+774確保点全てで失敗と回復が成功し、試験前後のheapは同量。
+62 serial log全てSTOPPED、panicなし。DWC2 storageはEP0のみ128、Vendor192、sparse256 byteで、
+今回のpointer削除はこれらの64byte丸め後の値を変えない。
+原本`/tmp/pytest-embedded/2026-10-27_14-58-51-720359/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/controller-boundary-all*`。
+S2/P4 HSはcompile-only成功。S3 Vendor/S2/P4 ELFで独自controllerを確認し、旧DCD/FIFO入口は不在。
+P4のcache clean/invalidateはstrong実装、S2はweakのno-opを維持する。
+S3 Vendor-onlyで未使用class stateは不在。各targetのライブラリ28ソースの依存記録にも、
+削除したvendor headerやSDK内の同名headerへの暗黙fallbackはない。
+Arduino SDK自身の別ソースが持つTinyUSB依存と、古いbuild directoryの残存artifactはこの判定に含めない。
+記録は`controller-boundary-{s2,p4}-build.txt`、各nmと`controller-boundary-audit.txt`。
+
+vendor検証17 files/2 sources、updater dry run差分0。旧tests/examplesはmainとの差分なし。
+残るdevice向けheader、wire/protocol type、DWC2 register/port実装、全EP0順序・class HALT競合、
+S2/P4/S31とHSの実機検証は未完了。APIの最終整理とv3 sample整備も引き続き必要。

@@ -80,7 +80,7 @@ static void dwc2_int_handler_wrap(void* arg) {
   const tusb_role_t role = (tusb_role_t) tu_u16_high((uint16_t)(uintptr_t)arg);
 #if CFG_TUD_ENABLED
   if (role == TUSB_ROLE_DEVICE) {
-    dcd_int_handler(rhport);
+    espusb_controller_int_handler(rhport);
   }
 #endif
 #if CFG_TUH_ENABLED && !CFG_TUH_MAX3421

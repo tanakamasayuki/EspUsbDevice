@@ -8,6 +8,8 @@
 
 extern "C" {
 uint16_t usbd_control_received_bytes();
+// Private capacity metadata used by core resource/fault probes.
+uint16_t usbd_event_queue_capacity();
 bool usbd_edpt_open(uint8_t port, const tusb_desc_endpoint_t *);
 bool usbd_edpt_xfer(uint8_t port, uint8_t address, uint8_t *buffer, uint16_t bytes, bool inIsr);
 bool usbd_edpt_claim(uint8_t port, uint8_t address);

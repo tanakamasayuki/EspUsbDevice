@@ -6,7 +6,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <atomic>
-#include "tusb.h"
+#include "EspUsbController.h"
 
 namespace {
 
@@ -138,11 +138,17 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   // dfifo_device_init(), and the transmit FIFO sizes are fixed from then on.
   // vbus_sensing keeps the value the default configuration would have used,
   // because this call replaces the whole structure rather than merging into it.
-  const tud_configure_dwc2_t dwc2Config = {
-      .bm_double_buffered = options.bulkInDoubleBuffered,
-      .vbus_sensing = CFG_TUD_VBUS_DETECT_HW,
+  const EspUsbControllerConfig dwc2Config = {
+      .bulkInDoubleBuffered = options.bulkInDoubleBuffered,
+      .vbusSensing = CFG_TUD_VBUS_DETECT_HW,
   };
-  tud_configure(g_rhport, TUD_CFGID_DWC2, &dwc2Config);
+  if (!espusb_controller_configure(g_rhport, &dwc2Config))
+  {
+    usb_del_phy(g_phy);
+    g_phy = nullptr;
+    g_rhport = 0xff;
+    return ESP_ERR_INVALID_STATE;
+  }
 
   const esp_err_t coreError = startUsbDeviceCore(g_rhport, selected == UsbController::HighSpeed, options.eventQueueDepth);
   if (coreError != ESP_OK)

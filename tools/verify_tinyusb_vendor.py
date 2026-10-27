@@ -70,7 +70,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_upstream_files() -> set[str]:
-    files = {"tusb.h", "tusb_option.h"}
+    files = {"tusb_option.h"}
+    # Detect an accidentally restored vendor umbrella even though it is no
+    # longer selected. Other removed headers are covered by the directory scan.
+    if (BUILD / "tusb.h").exists():
+        files.add("tusb.h")
     for directory in UPSTREAM_DIRS:
         files.update(
             str(path.relative_to(BUILD))

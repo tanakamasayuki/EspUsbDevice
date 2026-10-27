@@ -1,7 +1,7 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbDeviceCore.h"
-#include "tusb.h"
+#include "device/usbd.h"
 #include "class/cdc/cdc.h"
 #include "internal/EspUsbDeviceEndpoint.h"
 #include "freertos/FreeRTOS.h"

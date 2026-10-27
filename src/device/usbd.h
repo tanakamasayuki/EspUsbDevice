@@ -80,13 +80,6 @@ void tud_task (void) {
 // Check if there is pending events need processing by tud_task()
 bool tud_task_event_ready(void);
 
-#ifndef TUSB_DCD_H_
-extern void dcd_int_handler(uint8_t rhport);
-#endif
-
-// Interrupt handler, name alias to DCD
-#define tud_int_handler   dcd_int_handler
-
 // Get current bus speed
 tusb_speed_t tud_speed_get(void);
 

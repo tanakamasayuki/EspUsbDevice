@@ -12,16 +12,14 @@
 
 #if CFG_TUD_ENABLED && defined(TUP_USBIP_DWC2)
 
-#if !(CFG_TUD_DWC2_SLAVE_ENABLE || CFG_TUD_DWC2_DMA_ENABLE)
-#error DWC2 require either CFG_TUD_DWC2_SLAVE_ENABLE or CFG_TUD_DWC2_DMA_ENABLE to be enabled
+#if !CFG_TUD_DWC2_DMA_ENABLE || CFG_TUD_DWC2_SLAVE_ENABLE
+#error EspUsbDevice requires the ESP controller internal DMA path
 #endif
 
 // Debug level for DWC2
 #define DWC2_DEBUG    2
 
-#include "device/dcd.h"
-#include "device/usbd.h"
-#include "device/usbd_pvt.h"
+#include "../../../internal/EspUsbController.h"
 #include "dwc2_common.h"
 #include "../../../internal/EspUsbDwc2Runtime.h"
 
@@ -30,7 +28,6 @@
 //--------------------------------------------------------------------+
 typedef struct {
   uint8_t* buffer;
-  tu_fifo_t* ff;
   uint16_t total_len;
   uint16_t max_size;
   uint16_t dma_done, dma_chunk; // Non-EP0 DMA segmentation; one final event.
@@ -48,13 +45,13 @@ typedef struct {
 
   // SOF enabling flag - required for SOF to not get disabled in ISR when SOF was enabled by
   bool sof_en;
-} dcd_data_t;
+} espusb_controller_data_t;
 
 // EspUsb owns this storage for exactly one active controller. Transfer records
 // are compact: OUT records followed by IN records, selected by descriptor masks.
 // SETUP DMA occupies its own full cache line after all metadata.
 typedef struct {
-  dcd_data_t data;
+  espusb_controller_data_t data;
   uint8_t *setup_buffer;
   size_t bytes;
   uint16_t mask[2];
@@ -94,8 +91,8 @@ bool espusb_dwc2_runtime_prepare(uint8_t port, void *memory, size_t bytes, uint1
   // Initialization dirtied this cache line. Hand it to DMA before controller
   // initialization; otherwise a delayed writeback could overwrite a SETUP.
   // Keep direction operations separate and publish storage only on success.
-  if (!dcd_dcache_clean(state->setup_buffer, DWC2_SETUP_STORAGE_BYTES) ||
-      !dcd_dcache_invalidate(state->setup_buffer, DWC2_SETUP_STORAGE_BYTES)) return false;
+  if (!espusb_controller_dcache_clean(state->setup_buffer, DWC2_SETUP_STORAGE_BYTES) ||
+      !espusb_controller_dcache_invalidate(state->setup_buffer, DWC2_SETUP_STORAGE_BYTES)) return false;
   runtime = state;
   return true;
 }
@@ -103,7 +100,7 @@ void espusb_dwc2_runtime_release(void) { runtime = NULL; }
 size_t espusb_dwc2_runtime_bytes(void) { return runtime ? runtime->bytes : 0; }
 uint8_t espusb_dwc2_runtime_transfers(void) { return runtime ? runtime->count[0] + runtime->count[1] : 0; }
 
-static tud_configure_dwc2_t _tud_cfg = CFG_TUD_CONFIGURE_DWC2_DEFAULT;
+static EspUsbControllerConfig controller_config = {0, CFG_TUD_VBUS_DETECT_HW};
 
 TU_ATTR_ALWAYS_INLINE static inline uint8_t dwc2_ep_count(const dwc2_regs_t* dwc2) {
   #if TU_CHECK_MCU(OPT_MCU_GD32VF103)
@@ -122,25 +119,22 @@ TU_ATTR_ALWAYS_INLINE static inline bool edpt_is_enabled(dwc2_dep_t* dep) {
   return (dep->ctl & EPCTL_EPENA) != 0;
 }
 
-  #if CFG_TUD_DWC2_SLAVE_ENABLE
-static uint16_t epin_write_tx_fifo(dwc2_regs_t *dwc2, uint8_t epnum);
-  #endif
 
   //--------------------------------------------------------------------
   // DMA
   //--------------------------------------------------------------------
   #if CFG_TUD_MEM_DCACHE_ENABLE
-bool dcd_dcache_clean(const void* addr, uint32_t data_size) {
+bool espusb_controller_dcache_clean(const void* addr, uint32_t data_size) {
   TU_VERIFY(addr && data_size);
   return dwc2_dcache_clean(addr, data_size);
 }
 
-bool dcd_dcache_invalidate(const void* addr, uint32_t data_size) {
+bool espusb_controller_dcache_invalidate(const void* addr, uint32_t data_size) {
   TU_VERIFY(addr && data_size);
   return dwc2_dcache_invalidate(addr, data_size);
 }
 
-bool dcd_dcache_clean_invalidate(const void* addr, uint32_t data_size) {
+bool espusb_controller_dcache_clean_invalidate(const void* addr, uint32_t data_size) {
   TU_VERIFY(addr && data_size);
   return dwc2_dcache_clean_invalidate(addr, data_size);
 }
@@ -248,7 +242,7 @@ static bool dfifo_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t packet_size, b
 
     // Enable double buffering if configured, only effective for non-periodic endpoints
     // Since we queue only 1 control transfer at a time, it's only applicable for bulk IN endpoints
-    if (((_tud_cfg.bm_double_buffered & (1 << epnum)) != 0) && epnum > 0 && is_bulk) {
+    if (((controller_config.bulkInDoubleBuffered & (1 << epnum)) != 0) && epnum > 0 && is_bulk) {
       fifo_size *= 2;
     }
 
@@ -442,52 +436,38 @@ static void edpt_schedule_packets(uint8_t rhport, const uint8_t epnum, const uin
   const bool is_dma = dma_device_enabled(dwc2);
   if(is_dma) {
     if (dir == TUSB_DIR_IN && total_bytes != 0) {
-      dcd_dcache_clean(xfer->buffer, total_bytes);
+      espusb_controller_dcache_clean(xfer->buffer, total_bytes);
     }
     dep->diepdma = (uintptr_t) xfer->buffer;
     dep->diepctl = depctl.value; // enable endpoint
   } else
   #endif
   {
-  #if CFG_TUD_DWC2_SLAVE_ENABLE
-    dep->diepctl = depctl.value; // enable endpoint
-
-    if (dir == TUSB_DIR_IN && total_bytes != 0) {
-      const uint16_t xferred_bytes = epin_write_tx_fifo(dwc2, epnum);
-
-      // Enable TXFE interrupt if there are still data to be sent
-      // EP0 only sends one packet at a time, so no need to check for EP0
-      if ((epnum != 0) && (xfer->total_len - xferred_bytes > 0)) {
-         dwc2->diepempmsk |= (1u << epnum);
-      }
-    }
-  #endif
   }
 }
 
 //--------------------------------------------------------------------
 // Controller API
 //--------------------------------------------------------------------
-// optional dcd configuration, called by tud_configure()
-bool dcd_configure(uint8_t rhport, uint32_t cfg_id, const void* cfg_param) {
-  (void) rhport;
-  TU_VERIFY(cfg_id == TUD_CFGID_DWC2 && cfg_param != NULL);
-
-  const tud_configure_param_t* const cfg = (const tud_configure_param_t*) cfg_param;
-  _tud_cfg = cfg->dwc2;
+// Runtime options are explicit and typed; no vendor configuration ID/union.
+bool espusb_controller_configure(uint8_t rhport, const EspUsbControllerConfig *config) {
+  (void)rhport;
+  TU_VERIFY(config != NULL && runtime == NULL);
+  controller_config = *config;
   return true;
 }
 
-bool dcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
+bool espusb_controller_init(uint8_t rhport, bool highSpeed) {
   TU_VERIFY(runtime && runtime->port == rhport);
-  dwc2_clock_init(rhport, rh_init->role);
+  dwc2_clock_init(rhport, TUSB_ROLE_DEVICE);
 
   tu_memclr(&_dcd_data, sizeof(_dcd_data));
 
   // Core Initialization
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
-  const bool is_hs_phy = dwc2_core_is_highspeed_phy(dwc2, TUD_OPT_HIGH_SPEED);
+  const bool is_hs_phy = dwc2_core_is_highspeed_phy(dwc2, highSpeed);
   const bool is_dma = dma_device_enabled(dwc2);
+  TU_VERIFY(is_dma);
   TU_ASSERT(dwc2_core_init(rhport, is_hs_phy, is_dma));
 
   //------------- 7.1 Device Initialization -------------//
@@ -509,20 +489,20 @@ bool dcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
   dcfg |= DCFG_NZLSOHSK; // send STALL back and discard if host send non-zlp during control status
   dwc2->dcfg = dcfg;
 
-  dcd_disconnect(rhport);
+  espusb_controller_disconnect(rhport);
 
   // Force device mode
   dwc2->gusbcfg = (dwc2->gusbcfg & ~GUSBCFG_FHMOD) | GUSBCFG_FDMOD;
 
   // OTG Ctrl
   uint32_t gotgctl = dwc2->gotgctl & ~GOTGCTL_AVALOEN; // Clear A-override
-  if (!_tud_cfg.vbus_sensing) {
+  if (!controller_config.vbusSensing) {
     gotgctl |= GOTGCTL_BVALOEN | GOTGCTL_BVALOVAL;     // force B Valid if not sensing VBus
   }
   dwc2->gotgctl = gotgctl;
 
   #ifdef TUP_USBIP_DWC2_STM32
-  dwc2_stm32_gccfg_cfg(dwc2, _tud_cfg.vbus_sensing, false);
+  dwc2_stm32_gccfg_cfg(dwc2, controller_config.vbusSensing, false);
   #endif
 
   // Enable required interrupts
@@ -532,33 +512,33 @@ bool dcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
   gahbcfg |= GAHBCFG_GINT; // Enable global interrupt
   dwc2->gahbcfg = gahbcfg;
 
-  dcd_connect(rhport);
+  espusb_controller_connect(rhport);
   return true;
 }
 
-bool dcd_deinit(uint8_t rhport) {
-  dcd_disconnect(rhport);
+bool espusb_controller_deinit(uint8_t rhport) {
+  espusb_controller_disconnect(rhport);
   dwc2_core_deinit(rhport);
   return true;
 }
 
-void dcd_int_enable(uint8_t rhport) {
+void espusb_controller_int_enable(uint8_t rhport) {
   dwc2_dcd_int_enable(rhport);
 }
 
-void dcd_int_disable(uint8_t rhport) {
+void espusb_controller_int_disable(uint8_t rhport) {
   dwc2_dcd_int_disable(rhport);
 }
 
-void dcd_set_address(uint8_t rhport, uint8_t dev_addr) {
+void espusb_controller_set_address(uint8_t rhport, uint8_t dev_addr) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
   dwc2->dcfg = (dwc2->dcfg & ~DCFG_DAD_Msk) | (dev_addr << DCFG_DAD_Pos);
 
   // Response with status after changing device address
-  dcd_edpt_xfer(rhport, tu_edpt_addr(0, TUSB_DIR_IN), NULL, 0, false);
+  espusb_controller_edpt_xfer(rhport, tu_edpt_addr(0, TUSB_DIR_IN), NULL, 0, false);
 }
 
-void dcd_remote_wakeup(uint8_t rhport) {
+void espusb_controller_remote_wakeup(uint8_t rhport) {
   (void) rhport;
 
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
@@ -576,7 +556,7 @@ void dcd_remote_wakeup(uint8_t rhport) {
   dwc2->dctl &= ~DCTL_RWUSIG;
 }
 
-void dcd_connect(uint8_t rhport) {
+void espusb_controller_connect(uint8_t rhport) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
 
 #if defined(TUP_USBIP_DWC2_ESP32) && !TU_CHECK_MCU(OPT_MCU_ESP32S31)
@@ -596,7 +576,7 @@ void dcd_connect(uint8_t rhport) {
   dwc2->dctl &= ~DCTL_SDIS;
 }
 
-void dcd_disconnect(uint8_t rhport) {
+void espusb_controller_disconnect(uint8_t rhport) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
 
 #if defined(TUP_USBIP_DWC2_ESP32) && !TU_CHECK_MCU(OPT_MCU_ESP32S31)
@@ -616,8 +596,8 @@ void dcd_disconnect(uint8_t rhport) {
   dwc2->dctl |= DCTL_SDIS;
 }
 
-// Be advised: audio, video and possibly other iso-ep classes use dcd_sof_enable() to enable/disable its corresponding ISR on purpose!
-void dcd_sof_enable(uint8_t rhport, bool en) {
+// Be advised: audio, video and possibly other iso-ep classes use espusb_controller_sof_enable() to enable/disable its corresponding ISR on purpose!
+void espusb_controller_sof_enable(uint8_t rhport, bool en) {
   (void) rhport;
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
 
@@ -635,22 +615,22 @@ void dcd_sof_enable(uint8_t rhport, bool en) {
 /* DCD Endpoint port
  *------------------------------------------------------------------*/
 
-bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const* desc_edpt) {
+bool espusb_controller_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const* desc_edpt) {
   TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(desc_edpt->bEndpointAddress), tu_edpt_dir(desc_edpt->bEndpointAddress)));
-  usbd_spin_lock(false);
+  espusb_controller_lock(false);
   const bool opened = dfifo_alloc(rhport, desc_edpt->bEndpointAddress, tu_edpt_packet_size(desc_edpt),
                                   desc_edpt->bmAttributes.xfer == TUSB_XFER_BULK);
   if (opened) edpt_activate(rhport, desc_edpt);
-  usbd_spin_unlock(false);
+  espusb_controller_unlock(false);
   return opened;
 }
 
 // Close all non-control endpoints, cancel all pending transfers if any.
-void dcd_edpt_close_all(uint8_t rhport) {
+void espusb_controller_edpt_close_all(uint8_t rhport) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
   uint8_t const ep_count = _dwc2_controller[rhport].ep_count;
 
-  usbd_spin_lock(false);
+  espusb_controller_lock(false);
 
   _dcd_data.allocated_epin_count = 0;
 
@@ -678,41 +658,40 @@ void dcd_edpt_close_all(uint8_t rhport) {
   dfifo_flush_rx(dwc2);
   dfifo_device_init(rhport); // re-init dfifo
 
-  usbd_spin_unlock(false);
+  espusb_controller_unlock(false);
 }
 
-bool dcd_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet_size) {
+bool espusb_controller_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet_size) {
   TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(ep_addr), tu_edpt_dir(ep_addr)));
-  usbd_spin_lock(false);
+  espusb_controller_lock(false);
   const bool allocated = dfifo_alloc(rhport, ep_addr, largest_packet_size, false);
-  usbd_spin_unlock(false);
+  espusb_controller_unlock(false);
   return allocated;
 }
 
-bool dcd_edpt_iso_activate(uint8_t rhport,  tusb_desc_endpoint_t const * p_endpoint_desc) {
+bool espusb_controller_edpt_iso_activate(uint8_t rhport,  tusb_desc_endpoint_t const * p_endpoint_desc) {
   TU_VERIFY(XFER_CTL_BASE(tu_edpt_number(p_endpoint_desc->bEndpointAddress), tu_edpt_dir(p_endpoint_desc->bEndpointAddress)));
   // Disable EP to clear potential incomplete transfers
-  usbd_spin_lock(false);
+  espusb_controller_lock(false);
   edpt_disable(rhport, p_endpoint_desc->bEndpointAddress, false);
   edpt_activate(rhport, p_endpoint_desc);
-  usbd_spin_unlock(false);
+  espusb_controller_unlock(false);
   return true;
 }
 
-bool dcd_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint16_t total_bytes, bool is_isr) {
+bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint16_t total_bytes, bool is_isr) {
   (void) is_isr;
   uint8_t const epnum = tu_edpt_number(ep_addr);
   uint8_t const dir = tu_edpt_dir(ep_addr);
   xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, dir);
   bool ret;
 
-  usbd_spin_lock(is_isr);
+  espusb_controller_lock(is_isr);
 
   if (!xfer || xfer->max_size == 0) {
     ret = false;  // Endpoint is closed
   } else {
     xfer->buffer = buffer;
-    xfer->ff = NULL;
     xfer->total_len = total_bytes;
     xfer->dma_done = xfer->dma_chunk = 0;
     xfer->iso_retry = xfer->interval; // Reset ISO retry counter to interval value
@@ -727,47 +706,14 @@ bool dcd_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint16_t to
     ret = true;
   }
 
-  usbd_spin_unlock(is_isr);
+  espusb_controller_unlock(is_isr);
 
   return ret;
 }
 
-// The number of bytes has to be given explicitly to allow more flexible control of how many
-// bytes should be written and second to keep the return value free to give back a boolean
-// success message. If total_bytes is too big, the FIFO will copy only what is available
-// into the USB buffer!
-bool dcd_edpt_xfer_fifo(uint8_t rhport, uint8_t ep_addr, tu_fifo_t* ff, uint16_t total_bytes, bool is_isr) {
-  (void) is_isr;
-  uint8_t const epnum = tu_edpt_number(ep_addr);
-  uint8_t const dir = tu_edpt_dir(ep_addr);
-  xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, dir);
-  bool ret;
-
-  usbd_spin_lock(is_isr);
-
-  if (!xfer || xfer->max_size == 0) {
-    ret = false;  // Endpoint is closed
-  } else {
-    xfer->buffer = NULL;
-    xfer->ff = ff;
-    xfer->total_len = total_bytes;
-    xfer->dma_done = xfer->dma_chunk = 0;
-    xfer->iso_retry = xfer->interval; // Reset ISO retry counter to interval value
-
-    // Schedule packets to be sent within interrupt
-    // TODO xfer fifo may only available for slave mode
-    edpt_schedule_packets(rhport, epnum, dir);
-    ret = true;
-  }
-
-  usbd_spin_unlock(is_isr);
-
-  return ret;
-}
-
-void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr) {
+void espusb_controller_edpt_stall(uint8_t rhport, uint8_t ep_addr) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
-  usbd_spin_lock(false);
+  espusb_controller_lock(false);
   edpt_disable(rhport, ep_addr, true);
 
   // For control endpoint, prepare to receive SETUP packet
@@ -776,16 +722,16 @@ void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr) {
       dma_setup_prepare(rhport);
     }
   }
-  usbd_spin_unlock(false);
+  espusb_controller_unlock(false);
 }
 
-bool dcd_edpt_abort_supported(void) { return true; }
-bool dcd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
+bool espusb_controller_edpt_abort_supported(void) { return true; }
+bool espusb_controller_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
   const uint8_t epnum = tu_edpt_number(ep_addr), dir = tu_edpt_dir(ep_addr);
   if (epnum == 0 || epnum >= _dwc2_controller[rhport].ep_count) return false;
-  usbd_spin_lock(false);
+  espusb_controller_lock(false);
   xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, dir);
-  if (!xfer || xfer->max_size == 0) { usbd_spin_unlock(false); return false; }
+  if (!xfer || xfer->max_size == 0) { espusb_controller_unlock(false); return false; }
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
   dwc2_dep_t* dep = &dwc2->ep[dir == TUSB_DIR_IN ? 0 : 1][epnum];
   edpt_disable(rhport, ep_addr, false);
@@ -794,26 +740,26 @@ bool dcd_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
   if (dir == TUSB_DIR_IN) dep->diepint = 0xffffffffu;
   else {
     dep->doepint = 0xffffffffu;
-    if (xfer->buffer && xfer->dma_chunk) dcd_dcache_invalidate(xfer->buffer, xfer->dma_chunk);
+    if (xfer->buffer && xfer->dma_chunk) espusb_controller_dcache_invalidate(xfer->buffer, xfer->dma_chunk);
   }
   dep->ctl |= EPCTL_USBAEP;
   xfer->buffer = NULL;
   xfer->total_len = xfer->dma_done = xfer->dma_chunk = 0;
-  usbd_spin_unlock(false);
+  espusb_controller_unlock(false);
   return true;
 }
 
-void dcd_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr) {
+void espusb_controller_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
   uint8_t const epnum = tu_edpt_number(ep_addr);
   uint8_t const dir = tu_edpt_dir(ep_addr);
   dwc2_dep_t* dep = &dwc2->ep[dir == TUSB_DIR_IN ? 0 : 1][epnum];
 
   // Clear stall and reset data toggle
-  usbd_spin_lock(false);
+  espusb_controller_lock(false);
   dep->ctl &= ~EPCTL_STALL;
   dep->ctl |= EPCTL_SD0PID_SEVNFRM;
-  usbd_spin_unlock(false);
+  espusb_controller_unlock(false);
 }
 
 //--------------------------------------------------------------------
@@ -911,7 +857,7 @@ static void handle_enum_done(uint8_t rhport) {
   }
 
   // TODO must update GUSBCFG_TRDT according to link speed
-  dcd_event_bus_reset(rhport, speed, true);
+  espusb_controller_event_bus_reset(rhport, speed, true);
 }
 
 #if 0
@@ -932,171 +878,6 @@ TU_ATTR_ALWAYS_INLINE static inline void print_doepint(uint32_t doepint) {
 }
 #endif
 
-#if CFG_TUD_DWC2_SLAVE_ENABLE
-static uint16_t epin_write_tx_fifo(dwc2_regs_t *dwc2, uint8_t epnum) {
-  dwc2_dep_t *const epin = &dwc2->ep[0][epnum];
-  xfer_ctl_t *const xfer = XFER_CTL_BASE(epnum, TUSB_DIR_IN);
-
-  dwc2_ep_tsize_t tsiz           = {.value = epin->tsiz};
-  const uint16_t  remain_packets = tsiz.packet_count;
-
-  uint16_t total_bytes_written = 0;
-  // Process every single packet (only whole packets can be written to fifo)
-  for (uint16_t i = 0; i < remain_packets; i++) {
-    tsiz.value                  = epin->tsiz;
-    const uint16_t remain_bytes = (uint16_t)tsiz.xfer_size;
-    const uint16_t xact_bytes   = tu_min16(remain_bytes, xfer->max_size);
-
-    // Check if dtxfsts has enough space available
-    if (xact_bytes > ((epin->dtxfsts & DTXFSTS_INEPTFSAV_Msk) << 2)) {
-      break;
-    }
-
-    // Push packet to Tx-FIFO
-    volatile uint32_t *tx_fifo = dwc2->fifo[epnum];
-    if (xfer->ff) {
-      tu_hwfifo_write_from_fifo(tx_fifo, xfer->ff, xact_bytes, NULL);
-      total_bytes_written += xact_bytes;
-    } else {
-      tu_hwfifo_write(tx_fifo, xfer->buffer, xact_bytes, NULL);
-      xfer->buffer += xact_bytes;
-      total_bytes_written += xact_bytes;
-    }
-  }
-  return total_bytes_written;
-}
-
-// Process shared receive FIFO, this interrupt is only used in Slave mode
-static void handle_rxflvl_irq(uint8_t rhport) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
-  const volatile uint32_t* rx_fifo = dwc2->fifo[0];
-
-  // DWC2 v3.10a (e.g. STM32L476) emits an extra EP0 RX_COMPLETE that is NOT a real OUT data transfer completion, in two
-  // situations - each flagged by a DOEPINT bit set on that word:
-  // - DOEPINT.STPKTRX (Setup Packet Received): pushed between SETUP_RX and SETUP_DONE of every control transfer.
-  // - DOEPINT.STSPHSRX (Status Phase Received for control write): pushed after the OUT data stage when the host
-  //   starts the IN status phase.
-  // Both are dropped in the RX_COMPLETE case below, clearing the flag (W1C) so a latched STSPHSRX
-  // does not block the core from emitting the next SETUP_DONE. usbd still processes the real OUT data
-  // and queues the IN status ZLP itself - the core does not auto-complete the control-write status.
-  const bool quirk_v310a = (dwc2->gsnpsid == DWC2_CORE_REV_3_10a);
-
-  // Pop control word off FIFO
-  const dwc2_grxstsp_t grxstsp = {.value = dwc2->grxstsp};
-  const uint8_t packet_status = grxstsp.packet_status;
-  const uint8_t epnum = grxstsp.ep_ch_num;
-
-  dwc2_dep_t* epout = &dwc2->epout[epnum];
-
-  switch (packet_status) {
-    case GRXSTS_PKTSTS_GLOBAL_OUT_NAK:
-      // Global OUT NAK: do nothing
-      break;
-
-    case GRXSTS_PKTSTS_SETUP_RX: {
-      // Setup packet received
-      uint32_t * setup = (uint32_t*)(uintptr_t) runtime->setup_buffer;
-      // We can receive up to three setup packets in succession, but only the last one is valid.
-      setup[0] = (*rx_fifo);
-      setup[1] = (*rx_fifo);
-      break;
-    }
-
-    case GRXSTS_PKTSTS_SETUP_DONE: {
-      // Pop this word causes the Setup interrupt
-      epout->doeptsiz |= (3 << DOEPTSIZ_STUPCNT_Pos);
-      epout->doepint = DOEPINT_SETUP | DOEPINT_STPKTRX; // Clear SETUP interrupt, required for core to re-write this control word
-      if (edpt_is_enabled(&dwc2->epin[0])) {
-        edpt_disable(rhport, 0x80, false);
-      }
-      dcd_event_setup_received(rhport, runtime->setup_buffer, true);
-      break;
-    }
-
-    case GRXSTS_PKTSTS_RX_DATA: {
-      // Out packet received
-      const uint16_t byte_count = grxstsp.byte_count;
-      xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, TUSB_DIR_OUT);
-
-      if (!xfer) { for (unsigned n = 0; n < (byte_count + 3u) / 4u; ++n) (void)*rx_fifo; break; }
-      if (byte_count != 0) {
-        // Read packet off RxFIFO
-        if (xfer->ff != NULL) {
-          tu_hwfifo_read_to_fifo(rx_fifo, xfer->ff, byte_count, NULL);
-        } else {
-          tu_hwfifo_read(rx_fifo, xfer->buffer, byte_count, NULL);
-          xfer->buffer += byte_count;
-        }
-      }
-
-      // short packet (including ZLP when byte_count == 0), minus remaining bytes (xfer_size)
-      if (byte_count < xfer->max_size) {
-        const dwc2_ep_tsize_t tsiz = {.value = epout->tsiz};
-        xfer->total_len -= tsiz.xfer_size;
-        if (epnum == 0) {
-          _dcd_data.ep0_pending[TUSB_DIR_OUT] = 0;
-        }
-      }
-      break;
-    }
-
-    case GRXSTS_PKTSTS_RX_COMPLETE: {
-      // Pop this word causes the xfer complete interrupt
-      const uint32_t doepint = epout->doepint;
-      epout->doepint = DOEPINT_XFRC;
-
-      // v3.10a quirk (see top of function): the extra RX_COMPLETE flagged with Setup Packet Received (STPKTRX) or
-      // Status Phase Received for control write (STSPHSRX) is not a real OUT completion. Drop it
-      if (quirk_v310a) {
-        if (doepint & (DOEPINT_STPKTRX | DOEPINT_STSPHSRX)) {
-          epout->doepint = DOEPINT_STPKTRX | DOEPINT_STSPHSRX;
-          break;
-        }
-      }
-
-      xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, TUSB_DIR_OUT);
-      if (!xfer) break;
-      if (epnum == 0 && _dcd_data.ep0_pending[TUSB_DIR_OUT] > 0) {
-        // EP0 can only handle one packet, schedule another packet to be received.
-        edpt_schedule_packets(rhport, 0, TUSB_DIR_OUT);
-      } else {
-        dcd_event_xfer_complete(rhport, epnum, xfer->total_len, XFER_RESULT_SUCCESS, true);
-      }
-      break;
-    }
-
-    default: break; // nothing to do
-  }
-}
-
-static void handle_epin_slave(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepint_bm) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
-  dwc2_dep_t* epin = &dwc2->epin[epnum];
-  xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, TUSB_DIR_IN);
-
-  if (diepint_bm.xfer_complete) {
-    if ((epnum == 0) && (0 != _dcd_data.ep0_pending[TUSB_DIR_IN])) {
-      // EP0 can only handle one packet. Schedule another packet to be transmitted.
-      edpt_schedule_packets(rhport, epnum, TUSB_DIR_IN);
-    } else {
-      dcd_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, xfer->total_len, XFER_RESULT_SUCCESS, true);
-    }
-  }
-
-  // TX FIFO empty bit is read-only. It will only be cleared by hardware when written bytes is more than
-  // - 64 bytes or
-  // - Half/Empty of TX FIFO size (configured by GAHBCFG.TXFELVL)
-  if (diepint_bm.txfifo_empty && tu_bit_test(dwc2->diepempmsk, epnum)) {
-    epin_write_tx_fifo(dwc2, epnum);
-
-    // Turn off TXFE if all bytes are written.
-    dwc2_ep_tsize_t tsiz = {.value = epin->tsiz};
-    if (tsiz.xfer_size == 0) {
-      dwc2->diepempmsk &= ~(1u << epnum);
-    }
-  }
-}
-#endif
 
 #if CFG_TUD_DWC2_DMA_ENABLE
 static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepint_bm) {
@@ -1114,12 +895,12 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
     _dcd_data.ep0_pending[TUSB_DIR_OUT] = 0;
     _dcd_data.ep0_pending[TUSB_DIR_IN] = 0;
 
-    dcd_dcache_invalidate(runtime->setup_buffer, DWC2_SETUP_STORAGE_BYTES);
+    espusb_controller_dcache_invalidate(runtime->setup_buffer, DWC2_SETUP_STORAGE_BYTES);
 
     // DOEPDMA0 has advanced past the last received SETUP packet; back up one packet to the latest valid one
     // (Programming Guide v4.20a section 9.1.2.1: "DOEPDMAn-8 provides the pointer to the last valid SETUP data")
     tusb_control_request_t *setup_packet = (tusb_control_request_t *) (uintptr_t) (epout0->doepdma - sizeof(tusb_control_request_t));
-    dcd_event_setup_received(rhport, (uint8_t*)setup_packet, true);
+    espusb_controller_event_setup_received(rhport, (uint8_t*)setup_packet, true);
 
     // Prepare EP0 for next setup if this setup has no data stage
     if (setup_packet->wLength == 0) {
@@ -1138,7 +919,7 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
         // EP0 can only handle one packet: invalidate and advance past the received bytes, then
         // schedule the next.
         if (xfer->buffer != NULL) {
-          dcd_dcache_invalidate(xfer->buffer, CFG_TUD_ENDPOINT0_SIZE);
+          espusb_controller_dcache_invalidate(xfer->buffer, CFG_TUD_ENDPOINT0_SIZE);
           xfer->buffer += CFG_TUD_ENDPOINT0_SIZE;
         }
         edpt_schedule_packets(rhport, epnum, TUSB_DIR_OUT);
@@ -1151,13 +932,13 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
         const uint16_t remain = tsiz.xfer_size;
         if (epnum != 0) {
           const uint16_t actual = xfer->dma_chunk - remain;
-          dcd_dcache_invalidate(xfer->buffer, actual);
+          espusb_controller_dcache_invalidate(xfer->buffer, actual);
           xfer->dma_done += actual;
           if (actual == xfer->dma_chunk && xfer->dma_done < xfer->total_len) {
             if (xfer->buffer) xfer->buffer += actual;
             edpt_schedule_packets(rhport, epnum, TUSB_DIR_OUT);
           } else {
-            dcd_event_xfer_complete(rhport, epnum, xfer->dma_done, XFER_RESULT_SUCCESS, true);
+            espusb_controller_event_xfer_complete(rhport, epnum, xfer->dma_done, XFER_RESULT_SUCCESS, true);
           }
           return;
         }
@@ -1176,8 +957,8 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
           dma_setup_prepare(rhport);
         }
 
-        dcd_dcache_invalidate(xfer->buffer, inval_len);
-        dcd_event_xfer_complete(rhport, epnum, xfer->total_len, XFER_RESULT_SUCCESS, true);
+        espusb_controller_dcache_invalidate(xfer->buffer, inval_len);
+        espusb_controller_event_xfer_complete(rhport, epnum, xfer->total_len, XFER_RESULT_SUCCESS, true);
       }
     }
   }
@@ -1193,7 +974,7 @@ static void handle_epin_dma(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepin
         if (xfer->buffer) xfer->buffer += xfer->dma_chunk;
         edpt_schedule_packets(rhport, epnum, TUSB_DIR_IN);
       } else {
-        dcd_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, xfer->dma_done, XFER_RESULT_SUCCESS, true);
+        espusb_controller_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, xfer->dma_done, XFER_RESULT_SUCCESS, true);
       }
       return;
     }
@@ -1204,7 +985,7 @@ static void handle_epin_dma(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepin
       }
       edpt_schedule_packets(rhport, epnum, TUSB_DIR_IN);
     } else {
-      dcd_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, xfer->total_len, XFER_RESULT_SUCCESS, true);
+      espusb_controller_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, xfer->total_len, XFER_RESULT_SUCCESS, true);
     }
   }
 }
@@ -1241,13 +1022,6 @@ static void handle_ep_irq(uint8_t rhport, uint8_t dir) {
         }
         #endif
       } else {
-        #if CFG_TUD_DWC2_SLAVE_ENABLE
-        if (dir == TUSB_DIR_IN) {
-          handle_epin_slave(rhport, epnum, intr.diepint_bm);
-        } else {
-          // epout is handled in handle_rxflvl_irq
-        }
-        #endif
       }
     }
   }
@@ -1286,7 +1060,7 @@ static void handle_incomplete_iso_in(uint8_t rhport) {
         // too many retries, give up, but keep endpoint activated
         edpt_disable(rhport, epnum | TUSB_DIR_IN_MASK, false);
         epin->diepctl |= DIEPCTL_USBAEP;
-        dcd_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, 0, XFER_RESULT_FAILED, true);
+        espusb_controller_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, 0, XFER_RESULT_FAILED, true);
       }
     }
   }
@@ -1304,7 +1078,7 @@ static void handle_incomplete_iso_in(uint8_t rhport) {
   Note: when OTG_MULTI_PROC_INTRPT = 1, Device Each endpoint interrupt deachint/deachmsk/diepeachmsk/doepeachmsk
   are combined to generate dedicated interrupt line for each endpoint.
  */
-void dcd_int_handler(uint8_t rhport) {
+void espusb_controller_int_handler(uint8_t rhport) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
   const uint32_t gintmask = dwc2->gintmsk;
   const uint32_t gintsts = dwc2->gintsts & gintmask;
@@ -1313,9 +1087,9 @@ void dcd_int_handler(uint8_t rhport) {
     // USBRST is start of reset.
     dwc2->gintsts = GINTSTS_USBRST;
 
-    usbd_spin_lock(true);
+    espusb_controller_lock(true);
     handle_bus_reset(rhport);
-    usbd_spin_unlock(true);
+    espusb_controller_unlock(true);
   }
 
   if (gintsts & GINTSTS_ENUMDNE) {
@@ -1330,13 +1104,13 @@ void dcd_int_handler(uint8_t rhport) {
   if (gintsts & GINTSTS_USBSUSP) {
     dwc2->gintsts = GINTSTS_USBSUSP;
     dwc2->gintmsk &= ~GINTMSK_USBSUSPM;
-    dcd_event_bus_signal(rhport, DCD_EVENT_SUSPEND, true);
+    espusb_controller_event_bus_signal(rhport, ESPUSB_CONTROLLER_EVENT_SUSPEND, true);
   }
 
   if (gintsts & GINTSTS_WKUINT) {
     dwc2->gintsts = GINTSTS_WKUINT;
     dwc2->gintmsk |= GINTMSK_USBSUSPM;
-    dcd_event_bus_signal(rhport, DCD_EVENT_RESUME, true);
+    espusb_controller_event_bus_signal(rhport, ESPUSB_CONTROLLER_EVENT_RESUME, true);
   }
 
   // TODO check GINTSTS_DISCINT for disconnect detection
@@ -1348,7 +1122,7 @@ void dcd_int_handler(uint8_t rhport) {
 
     if (otg_int & GOTGINT_SEDET) {
       dwc2->gintmsk &= ~GINTMSK_OTGINT;
-      dcd_event_bus_signal(rhport, DCD_EVENT_UNPLUGGED, true);
+      espusb_controller_event_bus_signal(rhport, ESPUSB_CONTROLLER_EVENT_UNPLUGGED, true);
     }
 
     dwc2->gotgint = otg_int;
@@ -1366,54 +1140,39 @@ void dcd_int_handler(uint8_t rhport) {
       dwc2->gintmsk &= ~GINTMSK_SOFM;
     }
 
-    dcd_event_sof(rhport, frame, true);
+    espusb_controller_event_sof(rhport, frame, true);
   }
 
   // IN endpoint interrupt handling.
   if (gintsts & GINTSTS_IEPINT) {
     // IEPINT bit read-only, clear using DIEPINTn
-    usbd_spin_lock(true);
+    espusb_controller_lock(true);
     handle_ep_irq(rhport, TUSB_DIR_IN);
-    usbd_spin_unlock(true);
+    espusb_controller_unlock(true);
   }
 
-#if CFG_TUD_DWC2_SLAVE_ENABLE
-  // RxFIFO non-empty interrupt handling.
-  if (gintsts & GINTSTS_RXFLVL) {
-    // RXFLVL bit is read-only
-    dwc2->gintmsk &= ~GINTMSK_RXFLVLM; // disable RXFLVL interrupt while reading
-
-    usbd_spin_lock(true);
-    do {
-      handle_rxflvl_irq(rhport); // read all packets
-    } while(dwc2->gintsts & GINTSTS_RXFLVL);
-    usbd_spin_unlock(true);
-
-    dwc2->gintmsk |= GINTMSK_RXFLVLM;
-  }
-#endif
 
 #if CFG_TUD_DWC2_DMA_ENABLE
   // OUT endpoint interrupt handling.
   if (gintsts & GINTSTS_OEPINT) {
     // OEPINT is read-only, clear using DOEPINTn
-    usbd_spin_lock(true);
+    espusb_controller_lock(true);
     handle_ep_irq(rhport, TUSB_DIR_OUT);
-    usbd_spin_unlock(true);
+    espusb_controller_unlock(true);
   }
 #endif
 
   // Incomplete isochronous IN transfer interrupt handling.
   if (gintsts & GINTSTS_IISOIXFR) {
     dwc2->gintsts = GINTSTS_IISOIXFR;
-    usbd_spin_lock(true);
+    espusb_controller_lock(true);
     handle_incomplete_iso_in(rhport);
-    usbd_spin_unlock(true);
+    espusb_controller_unlock(true);
   }
 }
 
 #if CFG_TUD_TEST_MODE
-void dcd_enter_test_mode(uint8_t rhport, tusb_feature_test_mode_t test_selector) {
+void espusb_controller_enter_test_mode(uint8_t rhport, tusb_feature_test_mode_t test_selector) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
 
   // Enable the test mode

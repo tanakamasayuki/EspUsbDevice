@@ -1,6 +1,6 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceCore.h"
-#include "tusb.h"
+#include "device/usbd.h"
 #include <algorithm>
 #include <string.h>
 

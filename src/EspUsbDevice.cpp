@@ -31,9 +31,10 @@
 #endif
 
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
-#include "tusb.h"
+#include "device/usbd.h"
 // usbd_edpt_claim() / usbd_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
 #include "internal/EspUsbDeviceEndpoint.h"
+#include "internal/EspUsbController.h"
 #if __has_include("esp_memory_utils.h")
 #include "esp_memory_utils.h"
 #define ESP_USB_DEVICE_HAS_DMA_CAPABLE_CHECK 1
@@ -512,13 +513,10 @@ extern "C" uint8_t const *tud_descriptor_other_speed_configuration_cb(uint8_t in
   return descriptor;
 }
 
-// Status stage of a control transfer has completed. Weak in device/usbd.c and
-// left undefined by the dwc2 driver, which makes it the one place a library can
-// see the standard and class requests the stack answers by itself - SET_ADDRESS,
-// SET_CONFIGURATION, GET_DESCRIPTOR, a HID SET_REPORT - without editing the
-// vendored TinyUSB. A stalled request has no status stage and so never arrives
-// here, which is why vendor requests are also reported at SETUP below.
-extern "C" void dcd_edpt0_status_complete(uint8_t rhport, const tusb_control_request_t *request)
+// The independent EP0 engine reports acknowledged standard/class/vendor
+// requests here. Stalled requests have no status stage; the vendor SETUP path
+// reports them separately when a control observer is registered.
+extern "C" void espusb_controller_edpt0_status_complete(uint8_t rhport, const tusb_control_request_t *request)
 {
   if (!g_activeDevice || !request || !g_activeDevice->hasControlObserver())
   {

@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <EspUsbDevice.h>
-#include "../../../../src/device/dcd.h"
-#include "../../../../src/device/usbd_pvt.h"
+#include "../../../../src/internal/EspUsbController.h"
+#include "../../../../src/internal/EspUsbDeviceEndpoint.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #include <atomic>
 #include "soc/usb_dwc_struct.h"
@@ -13,7 +13,7 @@ std::atomic<unsigned> setups{0},oldReturns{0},successes{0},bad{0};
 std::atomic<bool> parked{false},released{false},armed{false},newTxPending{false},newRxPending{false};
 uint64_t oldTxId=0,oldRxId=0,newTxId=0,newRxId=0;
 unsigned setupMark=0;uint8_t input=0,output=0;
-extern "C" void tud_event_hook_cb(uint8_t,uint32_t event,bool) {if(event==DCD_EVENT_SETUP_RECEIVED)++setups;}
+extern "C" void tud_event_hook_cb(uint8_t,uint32_t event,bool) {if(event==ESPUSB_CONTROLLER_EVENT_SETUP_RECEIVED)++setups;}
 void park(void *) {
   parked=true;uint32_t until=millis()+10000;
   while(!released.load() && int32_t(until-millis())>0)delay(1);
@@ -64,7 +64,7 @@ void loop() {
   } else if(s=="mask") {
     uint32_t until=millis()+3000;while(setups.load()==setupMark && int32_t(until-millis())>0)delay(1);
     bool ok=parked.load() && setups.load()>setupMark;
-    if(ok){dcd_int_disable(espusb::internal::tinyUsbRuntimeRhport());irqMasked=true;}
+    if(ok){espusb_controller_int_disable(espusb::internal::tinyUsbRuntimeRhport());irqMasked=true;}
     Serial.printf("MASKED %u\r\n",unsigned(ok));
   } else if(s=="latched") {
     const bool completed=(input&15) && USB_DWC.in_eps[(input&15)-1].diepint_reg.xfercompl;
@@ -73,12 +73,12 @@ void loop() {
     bool ok=irqMasked.load() && parked.load() && usbd_try_defer_func(armNew,nullptr);released=true;
     uint32_t until=millis()+3000;while(!armed.load() && int32_t(until-millis())>0)delay(1);
     ok &= armed.load();
-    if(irqMasked.exchange(false))dcd_int_enable(espusb::internal::tinyUsbRuntimeRhport());
+    if(irqMasked.exchange(false))espusb_controller_int_enable(espusb::internal::tinyUsbRuntimeRhport());
     Serial.printf("INJECTED %u\r\n",unsigned(ok));
   } else if(s=="inject") {
     uint32_t until=millis()+3000;while(setups.load()==setupMark && int32_t(until-millis())>0)delay(1);
     bool ok=parked.load() && setups.load()>setupMark && usbd_try_defer_func(armNew,nullptr);
-    if(ok)for(uint8_t ep:{input,output})dcd_event_xfer_complete(espusb::internal::tinyUsbRuntimeRhport(),ep,64,XFER_RESULT_SUCCESS,false);
+    if(ok)for(uint8_t ep:{input,output})espusb_controller_event_xfer_complete(espusb::internal::tinyUsbRuntimeRhport(),ep,64,XFER_RESULT_SUCCESS,false);
     released=true;Serial.printf("INJECTED %u\r\n",unsigned(ok));
   } else if(s=="pending" || s=="result") {
     uint32_t until=millis()+3000;
@@ -86,7 +86,7 @@ void loop() {
     if(s=="pending")delay(20);
     Serial.printf("STATE old=%u success=%u tx=%u rx=%u bad=%u\r\n",oldReturns.load(),successes.load(),unsigned(newTxPending.load()),unsigned(newRxPending.load()),bad.load());
   } else if(s=="release") {
-    if(irqMasked.exchange(false))dcd_int_enable(espusb::internal::tinyUsbRuntimeRhport());
+    if(irqMasked.exchange(false))espusb_controller_int_enable(espusb::internal::tinyUsbRuntimeRhport());
     released=true;Serial.println("RELEASED");
   } else if(s=="stop") {
     released=true;Serial.println(device.end()==ESP_OK ? "STOPPED":"STOP_FAILED");

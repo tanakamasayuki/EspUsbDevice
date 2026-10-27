@@ -3,9 +3,9 @@
 #include "esp_heap_caps.h"
 #include <atomic>
 #if defined(ESPUSB_CANCEL_FENCE_FAULT) || defined(ESPUSB_CANCEL_LIFECYCLE_FAULT)
-#include "../../../../src/tusb.h"
-#include "../../../../src/device/usbd_pvt.h"
-#include "../../../../src/device/dcd.h"
+#include "../../../../src/device/usbd.h"
+#include "../../../../src/internal/EspUsbDeviceEndpoint.h"
+#include "../../../../src/internal/EspUsbController.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #endif
 
@@ -72,7 +72,7 @@ void injectCancelFence(void *) {
     // least one old completion queued when the worker first services abort.
     const auto port = espusb::internal::tinyUsbRuntimeRhport();
     for (unsigned i = 0; i < usbd_event_queue_capacity(); ++i)
-      dcd_event_xfer_complete(port, i & 1 ? out : in, 0, XFER_RESULT_SUCCESS, false);
+      espusb_controller_event_xfer_complete(port, i & 1 ? out : in, 0, XFER_RESULT_SUCCESS, false);
     faultEvents.store(usbd_event_queue_capacity());
   }
   faultDone.store(true);
@@ -88,7 +88,7 @@ unsigned lifecycleResetMark = 0;
 std::atomic<bool> lifecycleEndDone{false};
 std::atomic<int> lifecycleEndResult{-1}, lifecycleTx{-1}, lifecycleRx{-1};
 extern "C" void tud_event_hook_cb(uint8_t, uint32_t event, bool) {
-  if (event == DCD_EVENT_BUS_RESET) lifecycleResets.fetch_add(1);
+  if (event == ESPUSB_CONTROLLER_EVENT_BUS_RESET) lifecycleResets.fetch_add(1);
 }
 void parkLifecycle(void *) {
   lifecycleParked.store(true);

@@ -539,3 +539,25 @@ wire typeやprotocol headerの依存は残り、全ABI撤去や全TinyUSB撤去�
 利用者APIと移行手順は変わらない。不利益は段階移行中のendpoint宣言が残存bridgeの宣言と
 重なること。coreのtranslation unitで両headerをincludeし、型の不一致をcompile errorにする。
 両方の意味を変えるときはまとめて変更する。driverの任意ISR dispatchは公開しない。
+
+## controller境界と未使用のvendor基盤の撤去
+
+`internal/EspUsbController.h`がcoreと残存DWC2 adapterの専用境界となる。
+型付き`EspUsbControllerConfig`でbulk INの二重bufferとVBUS policyを渡し、initはdevice専用の
+port/highSpeedを受け取る。旧DCD symbolとvendor config ID/unionは使わない。
+controller eventは独自型とし、deferred fenceはcore内の予約ID 255で区別する。
+controller入口は無効/範囲外eventを拒否し、worker内のjobだけがdeferred payloadを使う。
+control ACK observerも独自coreから専用hookへ通知する。
+
+使われない`usbd_*`互換entry、vendor DCD/private、OS/FIFO、umbrella headerを撤去した。
+ESPは従来同様internal DMAで動かし、無効だったslave/FIFO経路とrecordのFIFO pointerを削除する。
+controllerにinternal DMAがなければ初期化を明示的に拒否する。新SoCの非DMA経路を追加する場合は
+専用実装が必要だが、今回対応するS2/S3/P4の転送方式は変えない。
+転送時のheapや確保点数は増やさず、recordから32bit pointer一つを減らす。
+最終storage量は既存の64byte丸めとdescriptor選択数に従い、必ず4byte単位で減るとは限らない。
+
+利用者API/移行手順は変わらない。内部TinyUSB APIへ直接依存する非公開利用は対象外。
+故障注入probeは独自header/symbolへ変更し、queue深さ・cache失敗・旧完了/latched IRQの条件を保つ。
+型や名前を変更しただけでDWC2が独自実装になったとは扱わない。MIT由来は維持し、
+vendor選択は24→17 files、compiled sourceは2本のまま。wire/protocol定義、device向け残存headerと
+DWC2 register/port処理の置換は続く。

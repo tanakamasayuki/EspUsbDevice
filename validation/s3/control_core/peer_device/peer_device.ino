@@ -1,19 +1,19 @@
 #include <Arduino.h>
 #include <EspUsbDevice.h>
 #include <esp_heap_caps.h>
-#include "../../../../src/device/usbd_pvt.h"
-#include "../../../../src/device/dcd.h"
+#include "../../../../src/internal/EspUsbDeviceEndpoint.h"
+#include "../../../../src/internal/EspUsbController.h"
 #include "../../../../src/internal/EspUsbDwc2Runtime.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #include <atomic>
 // S3 has no cache on internal DMA RAM. Replace its no-op backend hooks to
 // verify synchronization failure cleanup without adding product test switches.
 unsigned cacheFailure=0,cacheClean=0,cacheInvalidate=0,cacheBad=0;
-extern "C" bool dcd_dcache_clean(const void *address,uint32_t bytes) {
+extern "C" bool espusb_controller_dcache_clean(const void *address,uint32_t bytes) {
   if(cacheFailure){++cacheClean;if((uintptr_t(address)&63) || bytes!=64 || espusb_dwc2_runtime_bytes())++cacheBad;}
   return cacheFailure!=1;
 }
-extern "C" bool dcd_dcache_invalidate(const void *address,uint32_t bytes) {
+extern "C" bool espusb_controller_dcache_invalidate(const void *address,uint32_t bytes) {
   if(cacheFailure){++cacheInvalidate;if((uintptr_t(address)&63) || bytes!=64 || espusb_dwc2_runtime_bytes())++cacheBad;}
   return cacheFailure!=2;
 }
@@ -27,7 +27,7 @@ void noop(void *) {}
 void overflow(void *) {
   while(usbd_try_defer_func(noop,nullptr)) {}
   // Fill the hardware reserve, then exceed physical queue capacity.
-  for(unsigned i=0;i<2;++i)dcd_event_bus_signal(espusb::internal::tinyUsbRuntimeRhport(),DCD_EVENT_RESUME,false);
+  for(unsigned i=0;i<2;++i)espusb_controller_event_bus_signal(espusb::internal::tinyUsbRuntimeRhport(),ESPUSB_CONTROLLER_EVENT_RESUME,false);
 }
 espusb::internal::TinyUsbRuntimeJob overflowJob{overflow,nullptr};
 bool selectedStorage() {

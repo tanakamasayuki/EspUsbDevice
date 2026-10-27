@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので27 tests（control_coreとVideoの6 runtime構成・複数Function制御を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので31 tests（core/control、標準要求の回復とVideoの6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -590,3 +590,28 @@ S3 Vendor-onlyではHID/MSC/Audio/Video/NCM/CCID/DFU stateのsymbolもない。
 記録は`class-dispatch-s3-vendor-nm.txt`。旧tests/examplesはmainとの差分なし。
 残るwire/protocol header、endpoint/control C symbol、core/DWC2のprivate headerと
 DWC2実装の完全置換、各classのHALT競合・全EP0順序・他SoC/HS実機は次の作業対象。
+
+## controller境界移行後の全体確認
+
+2026-10-28。controller event/IRQ/転送/cache hookと型付き設定を独自境界へ移し、
+vendor DCD/private、FIFO、OS抽象、umbrellaの7 headersと無効slave/FIFO経路を撤去した。
+初回はcoreがFreeRTOS宣言とcontrol callback型を旧umbrella経由で得ていたためcompile error。
+直接includeと独自driver型の参照へ修正し、初回を実機の合格記録には含めない。
+初回失敗logは`controller-boundary-*-initial-build-failed.txt`等へ分けて保存した。
+
+修正版の標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1402.90秒**。
+774確保点全てで失敗と回復が成功し、試験前後のheapは同量。
+62 serial log全てSTOPPED、panicなし。DWC2 storageはEP0のみ128、Vendor192、sparse256 byteで、
+今回のpointer削除はこれらの64byte丸め後の値を変えない。
+原本`/tmp/pytest-embedded/2026-10-27_14-58-51-720359/`、
+JUnit/transcript/serialコピーは`validation/.pytest-results/controller-boundary-all*`。
+S2/P4 HSはcompile-only成功。S3 Vendor/S2/P4 ELFで独自controllerを確認し、旧DCD/FIFO入口は不在。
+P4のcache clean/invalidateはstrong実装、S2はweakのno-opを維持する。
+S3 Vendor-onlyで未使用class stateは不在。各targetのライブラリ28ソースの依存記録にも、
+削除したvendor headerやSDK内の同名headerへの暗黙fallbackはない。
+Arduino SDK自身の別ソースが持つTinyUSB依存と、古いbuild directoryの残存artifactはこの判定に含めない。
+記録は`controller-boundary-{s2,p4}-build.txt`、各nmと`controller-boundary-audit.txt`。
+
+vendor検証17 files/2 sources、updater dry run差分0。旧tests/examplesはmainとの差分なし。
+残るdevice向けheader、wire/protocol type、DWC2 register/port実装、全EP0順序・class HALT競合、
+S2/P4/S31とHSの実機検証は未完了。APIの最終整理とv3 sample整備も引き続き必要。
