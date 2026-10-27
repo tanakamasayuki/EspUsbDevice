@@ -666,3 +666,17 @@ control_coreの単独試験は1 passed、32.31秒。14 interval条件と不正op
 正常open、heap回復を確認した。最初のfixtureはbus reset前のFIFO未初期化で失敗し、
 private probeでFIFO初期化を明示して修正した。HSの算術確認とHS実通信の確認は区別する。
 全体31件の結果と未検証範囲は[V3_CORE_API](V3_CORE_API.ja.md#native-dwc2整理後の全体確認)を参照。
+
+
+## 採用記録: CCIDのendpoint回復
+
+標準HALT解除だけではCCIDの受信が再開せず、次の応答が戻らない問題をS3–S3で確認した。
+HostのPIDをDATA0にそろえた修正前試験でも失敗することを確認し、classの回復処理を追加した。
+bulkはcommand/responseの組を退役させ、通知は独立に退役する。旧完了のfence後に再開し、
+CLEAR対象のPIDだけを戻す。SETの後に反対endpointまで解除することはしない。
+
+公開APIを増やさず、begin時に選んだCCID state内のmaskで処理する。
+他のFunctionやCCID未使用構成へ追加のqueue/buffer/常駐jobを持たせない。
+カード状態と登録callbackは維持するが、途中のbulk交換の継続は保証せずHostの再送を必要とする。
+理由と移行時の意味は[CCID API](V3_CCID_API.ja.md#endpoint-haltからの復帰)を参照。
+任意のbus reset/endやEP0競合までの検証完了とは扱わない。

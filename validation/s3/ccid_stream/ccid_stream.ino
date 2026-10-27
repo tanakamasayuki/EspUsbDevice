@@ -43,7 +43,15 @@ void put32(uint8_t *p,uint32_t n){for(unsigned j=0;j<4;++j)p[j]=uint8_t(n>>(j*8)
 bool transfer(usb_transfer_t *t,uint8_t endpoint,unsigned bytes) {
   if(!done.load())return false;t->device_handle=handle;t->bEndpointAddress=endpoint;t->num_bytes=bytes;t->callback=complete;
   done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
-  bool ok=wait() && t->status==USB_TRANSFER_STATUS_COMPLETED;
+  const bool completed=wait();
+  if(!completed) {
+    // Retire the host request before reporting failure, so explicit stop can
+    // still free every transfer and interface after a device recovery bug.
+    usb_host_endpoint_halt(handle,endpoint);usb_host_endpoint_flush(handle,endpoint);
+    const bool retired=wait();
+    if(retired)usb_host_endpoint_clear(handle,endpoint);
+  }
+  bool ok=completed && t->status==USB_TRANSFER_STATUS_COMPLETED;
   if(!ok)Serial.printf("TRANSFER_ERROR ep=%u status=%u actual=%u\r\n",endpoint,unsigned(t->status),unsigned(t->actual_num_bytes));
   return ok;
 }
@@ -56,11 +64,39 @@ bool message(uint8_t type,unsigned n,unsigned expected,int error=-1,uint8_t slot
   if(!ok)Serial.printf("REPLY_ERROR type=%u status=%u error=%u actual=%u length=%u\r\n",t->data_buffer[0],t->data_buffer[7],t->data_buffer[8],unsigned(t->actual_num_bytes),unsigned(get32(t->data_buffer+1)));
   return ok;
 }
-bool setupRequest(uint8_t type,uint8_t code,uint16_t value) {
-  auto *s=reinterpret_cast<usb_setup_packet_t *>(control->data_buffer);*s={};s->bmRequestType=type;s->bRequest=code;s->wValue=value;s->wIndex=interfaces[selected];
-  control->device_handle=handle;control->num_bytes=8;control->bEndpointAddress=0;control->callback=complete;
+bool setupRequest(uint8_t type,uint8_t code,uint16_t value,uint16_t index=UINT16_MAX,uint16_t bytes=0) {
+  auto *s=reinterpret_cast<usb_setup_packet_t *>(control->data_buffer);*s={};s->bmRequestType=type;s->bRequest=code;s->wValue=value;s->wIndex=index==UINT16_MAX ? interfaces[selected]:index;s->wLength=bytes;
+  control->device_handle=handle;control->num_bytes=8+bytes;control->bEndpointAddress=0;control->callback=complete;
   done=false;if(usb_host_transfer_submit_control(client,control)!=ESP_OK){done=true;return false;}
   return wait() && control->status==USB_TRANSFER_STATUS_COMPLETED;
+}
+bool endpointStatus(uint8_t ep,bool halted) {
+  return setupRequest(0x82,0,0,ep,2) && control->actual_num_bytes==10 &&
+      control->data_buffer[8]==unsigned(halted) && !control->data_buffer[9];
+}
+uint8_t endpointAddress(unsigned which) {
+  return which==0 ? out[selected]:which==1 ? in[selected]:notice[selected];
+}
+bool feature(unsigned which,bool setting) {
+  const uint8_t ep=endpointAddress(which);if(!ep)return false;
+  if(!setting && (usb_host_endpoint_halt(handle,ep)!=ESP_OK || usb_host_endpoint_flush(handle,ep)!=ESP_OK || usb_host_endpoint_clear(handle,ep)!=ESP_OK))return false;
+  return setupRequest(2,setting ? 3:1,0,ep) && endpointStatus(ep,setting);
+}
+bool halt(unsigned which) {
+  return endpointStatus(endpointAddress(which),false) && feature(which,true) && feature(which,false);
+}
+bool fragment(bool partial) {
+  auto *t=output[selected];memset(t->data_buffer,0,64);
+  t->data_buffer[0]=partial ? 0x6e:0x62;put32(t->data_buffer+1,partial ? 246:0);t->data_buffer[6]=++sequence;
+  const unsigned bytes=partial ? 64:10;
+  const bool ok=transfer(t,out[selected],bytes) && t->actual_num_bytes==int(bytes);
+  events(5);return ok;
+}
+bool readPower() {
+  auto *t=input[selected];
+  return transfer(t,in[selected],64) && t->actual_num_bytes==14 && t->data_buffer[0]==0x80 &&
+      get32(t->data_buffer+1)==4 && t->data_buffer[6]==sequence && !t->data_buffer[8] &&
+      t->data_buffer[10]==0x3b && t->data_buffer[11]==0x80 && t->data_buffer[12]==1 && t->data_buffer[13]==0x81;
 }
 bool abortCommand() {
   return setupRequest(0x21,1,uint16_t(uint8_t(sequence+2))<<8) && message(0x72,0,0,0xff) && message(0x72,0,0);
@@ -100,13 +136,21 @@ void loop() {
     ok &= xTaskCreate(daemon,"ccid-stream",4096,nullptr,5,nullptr)==pdPASS;
     usb_host_client_config_t cc={};cc.max_num_event_msg=8;cc.async.client_event_callback=event;
     ok &= usb_host_client_register(&cc,&client)==ESP_OK;
-    ok &= usb_host_transfer_alloc(8,0,&control)==ESP_OK;
+    ok &= usb_host_transfer_alloc(16,0,&control)==ESP_OK;
     for(unsigned i=0;i<2;++i)ok &= usb_host_transfer_alloc(2048,0,&input[i])==ESP_OK && usb_host_transfer_alloc(2048,0,&output[i])==ESP_OK;
     uint32_t until=millis()+10000;while(ok && !claimed[1] && int32_t(until-millis())>0)events(1);
     Serial.printf("HOST_READY %u\r\n",unsigned(ok && claimed[0] && claimed[1]));
   } else if(s.startsWith("open ")) {
     unsigned bytes,removable;sscanf(s.c_str(),"open %u %u %u",&selected,&bytes,&removable);Serial.printf("OPENED %u\r\n",unsigned(selected<2 && capacities[selected]==bytes && bool(notice[selected])==bool(removable)));
-  } else if(s=="power") {
+  } else if(s=="partial" || s=="queued")Serial.printf("FRAGMENT %u\r\n",unsigned(fragment(s=="partial")));
+  else if(s=="read_power")Serial.printf("POWER_READ %u\r\n",unsigned(readPower()));
+  else if(s.startsWith("set ") || s.startsWith("clear ")) {
+    const bool setting=s.startsWith("set ");Serial.printf("FEATURE %u\r\n",unsigned(feature(s.substring(setting ? 4:6).toInt(),setting)));
+  } else if(s.startsWith("status ")) {
+    unsigned which,halted;sscanf(s.c_str(),"status %u %u",&which,&halted);
+    Serial.printf("ENDPOINT_STATUS %u\r\n",unsigned(endpointStatus(endpointAddress(which),halted)));
+  } else if(s.startsWith("halt "))Serial.printf("HALT_RECOVERED %u\r\n",unsigned(halt(s.substring(5).toInt())));
+  else if(s=="power") {
     bool ok=message(0x62,0,4);auto *p=input[selected]->data_buffer;
     Serial.printf("POWERED %u\r\n",unsigned(ok && p[0]==0x80 && p[10]==0x3b && p[11]==0x80 && p[12]==1 && p[13]==0x81));
   } else if(s.startsWith("exchange ")) {

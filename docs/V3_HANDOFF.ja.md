@@ -1,18 +1,17 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装は残るDWC2 vendor snapshotの整理。hardware DMA/PHY実装を本体内部で保守する
-派生forkへ移し、Device専用register mapとinterval検証を持つ。MIT/BSD由来表示は保持する。
-`tools/verify_usb_backend.py`をoffline検査入口とし、vendor自動updaterは終了した。
-control_core単独は1 passed（32.31秒）、S2/P4 HS compile-onlyと全29 source依存確認は成功。
-全31件の標準combo allは成功（1150.57秒、0 skipped/failed/error/unfinished）。
-62 serial全てSTOPPED、panicなし。774取得点の失敗/回復とheap一致も確認した。
-S3/S2/P4とも全29 sourceの依存とnative DWC2 symbol位置を確認。
-結果は`validation/.pytest-results/native-dwc2-all*`、`native-dwc2-audit.txt`。
-実装commitは`cd6dc24`。
-直前commit `3665309`の全体結果は31 passed（1123.26秒）、62 serial全てSTOPPED、panicなし。
-実機確認はS3–S3のみ。[core API](V3_CORE_API.ja.md)と[由来](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
-依存整理だけをv3完了とはしない。全EP0順序とclass HALT競合、最終API/sample、OS/他SoC/HS実機
-検証を続ける。
+最新実装はCCIDのHALT/CLEAR回復。対象readerの未完bulk交換をfenceで退役し、通知は独立に
+回復する。CLEARの対象だけPIDを戻し、別方向のHALT/PID、別readerとカード状態は維持する。
+Host PIDをそろえた修正前の失敗も確認した。[CCID APIと実測](V3_CCID_API.ja.md)を参照。
+関連3件は**3 passed（146.41秒）、0 skipped/failed/error/unfinished**。
+260 HALT/CLEAR要求、34の状態確認、通知復帰をまたぐ未読返信6回、774取得点の失敗/回復と
+heap一致を確認。6 serial全てSTOPPED、panicなし。S2/P4はcompile-only成功。
+結果は`validation/.pytest-results/ccid-halt-final*`と`ccid-halt-audit.txt`。
+直前`cd6dc24`のDWC2依存整理後の全体結果は31 passed（1150.57秒）。CCID変更後は関連3件を確認し、
+全31件の再実行はしていない。vendor snapshot/updaterの撤去と派生コードの由来は
+[由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
+実機確認はS3–S3のみ。NCM/VideoのHALT回復、全EP0順序とreset/end競合、最終API/sample、
+OS/他SoC/HS実機検証を続ける。
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
 旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/Videoのclassを独自化した。共通EP0/coreも独自化済みで、残るコンパイル依存はDWC2関連2本。

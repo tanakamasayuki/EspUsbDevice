@@ -30,6 +30,62 @@ def test_ccid_stream(dut, peers):
                 if removable:
                     command(dut, "notice 1", "NOTICE 1")
                 command(dut, "power", "POWERED 1")
+                for endpoint in (0, 1):
+                    # IDF endpoint_clear resumes the previous host PID. Start
+                    # this pipe at DATA0 before testing device-side CLEAR.
+                    command(dut, "abandon", "ABANDONED 1")
+                    command(dut, f"halt {endpoint}", "HALT_RECOVERED 1")
+                    command(dut, "power", "POWERED 1")
+                    if removable:
+                        command(dut, "notice 1", "NOTICE 1")
+                # One prior IN packet leaves IN at DATA1. One full OUT
+                # fragment returns OUT to DATA0; clearing OUT must preserve IN.
+                command(dut, "abandon", "ABANDONED 1")
+                command(dut, "power", "POWERED 1")
+                command(dut, "partial", "FRAGMENT 1")
+                command(dut, "halt 0", "HALT_RECOVERED 1")
+                command(dut, "power", "POWERED 1")
+                if removable:
+                    command(dut, "notice 1", "NOTICE 1")
+                # An unread reply keeps IN at DATA0 and OUT at DATA1.
+                command(dut, "abandon", "ABANDONED 1")
+                command(dut, "queued", "FRAGMENT 1")
+                command(dut, "halt 1", "HALT_RECOVERED 1")
+                command(dut, "power", "POWERED 1")
+                if removable:
+                    command(dut, "notice 1", "NOTICE 1")
+                    # Notification recovery must preserve that unread reply.
+                    command(dut, "abandon", "ABANDONED 1")
+                    command(dut, "queued", "FRAGMENT 1")
+                    command(dut, "halt 2", "HALT_RECOVERED 1")
+                    command(dut, "read_power", "POWER_READ 1")
+                    command(dut, "notice 1", "NOTICE 1")
+                    command(dut, "power", "POWERED 1")
+                for first, second in ((0, 1), (1, 0)):
+                    command(dut, "abandon", "ABANDONED 1")
+                    for endpoint in (0, 1):
+                        command(dut, f"set {endpoint}", "FEATURE 1")
+                    command(dut, f"clear {first}", "FEATURE 1")
+                    command(dut, f"status {second} 1", "ENDPOINT_STATUS 1")
+                    command(dut, f"clear {second}", "FEATURE 1")
+                    command(dut, "power", "POWERED 1")
+                    if removable:
+                        command(dut, "notice 1", "NOTICE 1")
+                if removable:
+                    command(dut, "abandon", "ABANDONED 1")
+                    command(dut, "set 2", "FEATURE 1")
+                    command(dut, "set 0", "FEATURE 1")
+                    command(dut, "clear 0", "FEATURE 1")
+                    command(dut, "status 2 1", "ENDPOINT_STATUS 1")
+                    command(dut, "clear 2", "FEATURE 1")
+                    command(dut, "power", "POWERED 1")
+                    command(dut, "notice 1", "NOTICE 1")
+                command(dut, "abandon", "ABANDONED 1")
+                for _ in range(2):
+                    command(dut, "clear 0", "FEATURE 1")
+                command(dut, "power", "POWERED 1")
+                if removable:
+                    command(dut, "notice 1", "NOTICE 1")
                 command(dut, "parameters", "PARAMETERS 1")
                 for length in (1, min(54, limit - 10), min(118, limit - 10), min(261, limit - 10)):
                     command(dut, f"exchange {length} 0", "EXCHANGED 1")
@@ -45,6 +101,18 @@ def test_ccid_stream(dut, peers):
                     command(device, f"insert {index}", "INSERTED 1")
                     command(dut, "notice 1", "NOTICE 1")
                     command(dut, "power", "POWERED 1")
+            # Reader A may be halted while reader B keeps serving commands.
+            command(dut, f"open 0 {capacity} {removable}", "OPENED 1")
+            command(dut, "abandon", "ABANDONED 1")
+            command(dut, "set 0", "FEATURE 1")
+            command(dut, f"open 1 {capacity + 64} {removable}", "OPENED 1")
+            command(dut, "power", "POWERED 1")
+            command(dut, f"open 0 {capacity} {removable}", "OPENED 1")
+            command(dut, "status 0 1", "ENDPOINT_STATUS 1")
+            command(dut, "clear 0", "FEATURE 1")
+            command(dut, "power", "POWERED 1")
+            if removable:
+                command(dut, "notice 1", "NOTICE 1")
             for board in (dut, device):
                 command(board, "stop", "STOPPED", 30)
     finally:

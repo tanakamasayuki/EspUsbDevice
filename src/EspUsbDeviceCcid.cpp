@@ -104,7 +104,8 @@ struct EspUsbCcidState {
   uint16_t packetCapacity=64,packetSize=0;
   uint64_t received=0;
   size_t stored=0;
-  bool txBusy=false,zlp=false,draining=false,fenceQueued=false;
+  bool txBusy=false,zlp=false,fenceQueued=false;
+  uint8_t draining=0,resetPid=0; // bulk exchange = bits 0/1, slot notification = bit 2
   std::atomic<bool> stopping{false};
   uint32_t epoch=0,fenceEpoch=0;
   espusb::internal::TinyUsbRuntimeJob job{pump,this};
@@ -115,10 +116,10 @@ struct EspUsbCcidState {
     owner.response_=nullptr;
   }
   void receive() {
-    if(!stopping && !draining && !txBusy && out)espusb_device_edpt_xfer(port,out,packet,packetSize,false);
+    if(!stopping && !(draining&3) && !txBusy && out && !espusb_device_edpt_stalled(port,in))espusb_device_edpt_xfer(port,out,packet,packetSize,false);
   }
   bool send(size_t bytes) {
-    if(stopping || draining || !in || txBusy || bytes>owner.config_.messageBytes || !espusb_device_edpt_claim(port,in))return false;
+    if(stopping || (draining&3) || !in || txBusy || bytes>owner.config_.messageBytes || !espusb_device_edpt_claim(port,in))return false;
     txBusy=true;zlp=bytes%packetSize==0;
     if(espusb_device_edpt_xfer(port,in,owner.response_,uint16_t(bytes),false))return true;
     txBusy=zlp=false;espusb_device_edpt_release(port,in);return false;
@@ -127,10 +128,27 @@ struct EspUsbCcidState {
     auto *s=static_cast<EspUsbCcidState *>(context);s->fenceQueued=false;
     if(s->stopping || !s->draining)return;
     if(s->epoch!=s->fenceEpoch){espusb::internal::postTinyUsbRuntimeJob(s->job);return;}
-    for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)espusb_device_edpt_clear_stall(s->port,ep);
-    s->received=s->stored=0;s->txBusy=s->zlp=s->draining=false;
-    s->receive();s->owner.notifySlotState();
+    const uint8_t retired=s->draining;
+    const uint8_t endpoints[]={s->in,s->out,s->interrupt};
+    for(unsigned i=0;i<3;++i)if((s->resetPid&(1u<<i)) && endpoints[i])
+      espusb_device_edpt_clear_stall(s->port,endpoints[i]);
+    s->draining=s->resetPid=0;
+    if(retired&3){s->received=s->stored=0;s->txBusy=s->zlp=false;}
+    s->receive();
+    if(retired&4)s->owner.notifySlotState();
+    else if(s->owner.notifyPending_.load())espusb::internal::postTinyUsbRuntimeJob(s->job);
   }
+  bool retire(uint8_t mask,uint8_t resetDataPid) {
+    // A CCID command/response spans both bulk directions. Discard the whole
+    // unfinished exchange, preserving the opposite endpoint's PID and HALT.
+    ++epoch;draining|=mask;resetPid|=resetDataPid;
+    const uint8_t endpoints[]={in,out,interrupt};
+    for(unsigned i=0;i<3;++i)if((mask&(1u<<i)) && endpoints[i] &&
+        !espusb_device_edpt_abort(port,endpoints[i]))return false;
+    if(mask&3)owner.aborted_=false;
+    return espusb::internal::postTinyUsbRuntimeJob(job);
+  }
+
   static void pump(void *context) {
     auto *s=static_cast<EspUsbCcidState *>(context);
     if(s->stopping)return;
@@ -150,7 +168,7 @@ struct EspUsbCcidState {
   static void resetAll(uint8_t) {
     for(auto *s=first;s;s=s->next) {
       ++s->epoch;s->in=s->out=s->interrupt=0;s->interface=255;
-      s->received=s->stored=0;s->txBusy=s->zlp=false;s->draining=s->fenceQueued;
+      s->received=s->stored=0;s->txBusy=s->zlp=false;s->draining=s->fenceQueued ? 7:0;s->resetPid=0;
     }
   }
   static bool deinit(){resetAll(0);return true;}
@@ -177,13 +195,19 @@ struct EspUsbCcidState {
     if(!s->in || !s->out)return 0;s->receive();return needed;
   }
   static bool control(uint8_t port,uint8_t stage,const EspUsbControlRequest *r) {
-    auto *s=first;while(s && s->interface!=r->wIndex)s=s->next;if(!s)return false;
+    const bool feature=r->bmRequestType==2 && (r->bRequest==1 || r->bRequest==3) && !r->wValue && !r->wLength;
+    auto *s=first;
+    while(s && (feature ? (s->in!=r->wIndex && s->out!=r->wIndex && s->interrupt!=r->wIndex):s->interface!=r->wIndex))s=s->next;
+    if(!s)return false;
+    if(feature) {
+      if(stage!=ESPUSB_CONTROL_STAGE_SETUP)return true;
+      const uint8_t endpoint=r->wIndex==s->interrupt ? 4:r->wIndex==s->in ? 1:2;
+      if(r->bRequest==3)s->resetPid &= uint8_t(~endpoint);
+      return s->retire(endpoint==4 ? 4:3,r->bRequest==1 ? endpoint:0) || espusb::internal::rejectUsbControl();
+    }
     if(r->bmRequestType==1 && r->bRequest==11 && !r->wValue && !r->wLength) {
       if(stage!=ESPUSB_CONTROL_STAGE_SETUP)return true;
-      bool ok=true;for(uint8_t ep:{s->in,s->out,s->interrupt})if(ep)ok &= espusb_device_edpt_abort(port,ep);
-      if(!ok)return espusb::internal::rejectUsbControl();
-      ++s->epoch;s->draining=true;s->owner.aborted_=false;
-      if(!espusb::internal::postTinyUsbRuntimeJob(s->job))return espusb::internal::rejectUsbControl();
+      if(!s->retire(7,7))return espusb::internal::rejectUsbControl();
       return espusb_device_control_status(port,r);
     }
     if(r->bmRequestType!=0x21 || r->bRequest!=1 || r->wLength || uint8_t(r->wValue))return false;
@@ -193,7 +217,7 @@ struct EspUsbCcidState {
   }
   static bool complete(uint8_t,uint8_t ep,EspUsbControllerResult result,uint32_t bytes) {
     auto *s=first;while(s && s->in!=ep && s->out!=ep && s->interrupt!=ep)s=s->next;if(!s)return false;
-    if(s->stopping || s->draining)return true;
+    if(s->stopping || (s->draining&(ep==s->interrupt ? 4:3)))return true;
     if(ep==s->interrupt){s->owner.handleNotifyComplete();return true;}
     if(ep==s->in) {
       if(result==ESPUSB_TRANSFER_SUCCESS && s->zlp){s->zlp=false;espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);return true;}
