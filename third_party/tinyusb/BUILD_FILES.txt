@@ -1,12 +1,4 @@
-common/tusb_common.h
-common/tusb_compiler.h
-common/tusb_debug.h
-common/tusb_mcu.h
-common/tusb_types.h
-common/tusb_verify.h
 portable/synopsys/dwc2/dcd_dwc2.c
 portable/synopsys/dwc2/dwc2_common.c
 portable/synopsys/dwc2/dwc2_common.h
-portable/synopsys/dwc2/dwc2_esp32.h
 portable/synopsys/dwc2/dwc2_type.h
-tusb_option.h

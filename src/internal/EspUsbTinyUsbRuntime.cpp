@@ -7,6 +7,7 @@
 #include "freertos/semphr.h"
 #include <atomic>
 #include "EspUsbController.h"
+#include "EspUsbDwc2Platform.h"
 
 namespace {
 
@@ -99,28 +100,24 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
     return ESP_ERR_INVALID_STATE;
   }
 
-  UsbController selected = options.controller;
-  if (selected == UsbController::Auto)
-  {
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-    selected = UsbController::HighSpeed;
-#else
-    selected = UsbController::FullSpeed;
-#endif
+  uint8_t port = 255;
+  if (options.controller == UsbController::Auto) {
+    for (uint8_t i=0; i<ESPUSB_DWC2_PORT_COUNT; ++i) if (espusb_dwc2_ports[i].highSpeed) { port=i; break; }
+    if (port==255) port=0;
+  } else if (options.controller == UsbController::FullSpeed || options.controller == UsbController::HighSpeed) {
+    const bool high = options.controller == UsbController::HighSpeed;
+    for (uint8_t i=0; i<ESPUSB_DWC2_PORT_COUNT; ++i) if (espusb_dwc2_ports[i].highSpeed==high) { port=i; break; }
   }
-
-#if !defined(CONFIG_IDF_TARGET_ESP32P4)
-  if (selected != UsbController::FullSpeed)
-  {
-    return ESP_ERR_NOT_SUPPORTED;
-  }
-#endif
+  if (options.controller != UsbController::Auto && options.controller != UsbController::FullSpeed && options.controller != UsbController::HighSpeed) return ESP_ERR_INVALID_ARG;
+  const auto *capabilities = espusb_dwc2_port(port);
+  if (!capabilities) return ESP_ERR_NOT_SUPPORTED;
+  const bool highSpeed = capabilities->highSpeed;
 
   usb_phy_config_t phyConfig = {
       .controller = USB_PHY_CTRL_OTG,
-      .target = selected == UsbController::HighSpeed ? USB_PHY_TARGET_UTMI : USB_PHY_TARGET_INT,
+      .target = highSpeed ? USB_PHY_TARGET_UTMI : USB_PHY_TARGET_INT,
       .otg_mode = USB_OTG_MODE_DEVICE,
-      .otg_speed = selected == UsbController::HighSpeed ? USB_PHY_SPEED_HIGH : USB_PHY_SPEED_FULL,
+      .otg_speed = highSpeed ? USB_PHY_SPEED_HIGH : USB_PHY_SPEED_FULL,
       .ext_io_conf = nullptr,
       .otg_io_conf = nullptr,
   };
@@ -132,7 +129,7 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
     return err;
   }
 
-  g_rhport = selected == UsbController::HighSpeed ? 1 : 0;
+  g_rhport = port;
 
   // The native controller snapshots runtime FIFO/VBUS policy before init.
   const EspUsbControllerConfig dwc2Config = {
@@ -147,7 +144,7 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
     return ESP_ERR_INVALID_STATE;
   }
 
-  const esp_err_t coreError = startUsbDeviceCore(g_rhport, selected == UsbController::HighSpeed, options.eventQueueDepth);
+  const esp_err_t coreError = startUsbDeviceCore(g_rhport, highSpeed, options.eventQueueDepth);
   if (coreError != ESP_OK)
   {
     usb_del_phy(g_phy);

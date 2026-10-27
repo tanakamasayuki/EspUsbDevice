@@ -11,12 +11,12 @@ DWC2と一部wire/protocol定義は暫定依存として残る。
 
 - Pinと選定理由: `UPSTREAM.json`。full commit SHAへ固定する。
 - License: MIT、`LICENSE`と残存fileのcopyright/SPDX表示を保持する。
-- 現在の選択: `BUILD_FILES.txt`の12 file（2 source、10 header）。
+- 現在の選択: `BUILD_FILES.txt`の4 file（2 source、2 register/adapter header）。
 - 残るsource: `portable/synopsys/dwc2/dcd_dwc2.c`、`portable/synopsys/dwc2/dwc2_common.c`。
 - vendor class headerは残さない。必要なUS keyboard table行だけを
   `src/keymap/keymap_en_us.h`へMIT帰属付きで移し、HIDの未使用定義やtemplateを撤去した。
-- `src/tusb_config.h`と`src/internal/EspUsbTinyUsbConfig.h`は独自integration。
-  legacy classの再有効化は拒否し、独自driverとの二重claimを防ぐ。
+- generic common/compiler/MCU/optionsとESP port shimを撤去した。ESP固有処理は
+  `internal/EspUsbDwc2Platform.*`が所有し、`EspUsbLegacyFlags.h`は旧flagの指定だけを拒否する。
 
 v2での同梱開始時は9 class、Video追加後は10 classを選択していた。
 その履歴と削除したNCMのWindows用divisor patchはGitで参照できる。
@@ -81,3 +81,13 @@ raw byte属性とLE読み取り、native speed/resultを使う。vendor型への
 残るDWC2 adapterも境界では同型を使うが、内部のregister/common helperは上流由来のまま。
 US key tableはTinyUSB HID_KEYCODE_TO_ASCII由来（Copyright (c) 2019 Ha Thach、MIT）。
 VBUS policyは`EspUsbDeviceConfig::vbusSensing`からruntimeで渡し、旧build flagは拒否する。
+
+
+ESP platform層は物理port情報、SDK IRQの所有、USB_WRAP pullとcache同期を所有する。
+上限値/pull/cache処理はTinyUSB dwc2_esp32.h由来（Copyright (c) 2021 Ha Thach、MIT）。
+稼働中のIRQ登録は一つだけで、mask/unmaskでは再取得せず、controller/core storage解放前に返す。
+登録失敗はbegin失敗とrollbackへ伝える。PHY reset/turnaroundとendpoint register処理は
+残る固定DWC2 sourceにあり、独自DCDの完成とは扱わない。
+adapterは独自整数/layout helperとinternal device DMAだけを使い、host/slave/他MCUや
+旧compliance-test-modeのbuild設定経路をコンパイルしない。HS=port1と仮定せず能力情報で選ぶ。
+S31はSDK/metadata追加と実機検証が必要なまま。

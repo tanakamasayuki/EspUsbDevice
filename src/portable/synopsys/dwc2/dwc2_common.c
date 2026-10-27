@@ -5,11 +5,9 @@
  * This file is part of the TinyUSB stack.
  */
 
-#include "tusb_option.h"
 
 #define DWC2_COMMON_DEBUG   2
 
-#if defined(TUP_USBIP_DWC2) && (CFG_TUH_ENABLED || CFG_TUD_ENABLED)
 #include "dwc2_common.h"
 
 //--------------------------------------------------------------------
@@ -40,7 +38,6 @@ static void reset_core(dwc2_regs_t* dwc2) {
 
 // Dedicated FS PHY is internal with a clock 48Mhz.
 static void phy_fs_init(dwc2_regs_t* dwc2) {
-  TU_LOG(DWC2_COMMON_DEBUG, "Fullspeed PHY init\r\n");
 
   uint32_t gusbcfg = dwc2->gusbcfg;
 
@@ -49,7 +46,6 @@ static void phy_fs_init(dwc2_regs_t* dwc2) {
   dwc2->gusbcfg = gusbcfg;
 
   // MCU specific PHY init before reset
-  dwc2_phy_init(dwc2, GHWCFG2_HSPHY_NOT_SUPPORTED);
 
   // Reset core after selecting PHY
   reset_core(dwc2);
@@ -62,7 +58,6 @@ static void phy_fs_init(dwc2_regs_t* dwc2) {
   dwc2->gusbcfg = gusbcfg;
 
   // MCU specific PHY update post reset
-  dwc2_phy_update(dwc2, GHWCFG2_HSPHY_NOT_SUPPORTED);
 }
 
 /* dwc2 has 2 highspeed PHYs options
@@ -76,19 +71,12 @@ static void phy_hs_init(dwc2_regs_t* dwc2) {
   const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
   const dwc2_ghwcfg4_t ghwcfg4 = {.value = dwc2->ghwcfg4};
 
-  uint8_t phy_width;
-  if (CFG_TUSB_MCU != OPT_MCU_AT32F402_405 && // at32f402_405 does not support 16-bit
-      ghwcfg4.phy_data_width) {
-    phy_width = 16; // 16-bit PHY interface if supported
-  } else {
-    phy_width = 8; // 8-bit PHY interface
-  }
+  const uint8_t phy_width = ghwcfg4.phy_data_width ? 16 : 8;
 
   // De-select FS PHY
   gusbcfg &= ~GUSBCFG_PHYSEL;
 
   if (ghwcfg2.hs_phy_type == GHWCFG2_HSPHY_ULPI) {
-    TU_LOG(DWC2_COMMON_DEBUG, "Highspeed ULPI PHY init\r\n");
 
     // Select ULPI PHY (external)
     gusbcfg |= GUSBCFG_ULPI_UTMI_SEL;
@@ -105,7 +93,6 @@ static void phy_hs_init(dwc2_regs_t* dwc2) {
     // Disable FS/LS ULPI
     gusbcfg &= ~(GUSBCFG_ULPIFSLS | GUSBCFG_ULPICSM);
   } else {
-    TU_LOG(DWC2_COMMON_DEBUG, "Highspeed UTMI+ PHY init\r\n");
 
     // Select UTMI+ PHY (internal)
     gusbcfg &= ~GUSBCFG_ULPI_UTMI_SEL;
@@ -122,7 +109,6 @@ static void phy_hs_init(dwc2_regs_t* dwc2) {
   dwc2->gusbcfg = gusbcfg;
 
   // mcu specific phy init
-  dwc2_phy_init(dwc2, ghwcfg2.hs_phy_type);
 
   // Reset core after selecting PHY
   reset_core(dwc2);
@@ -135,28 +121,15 @@ static void phy_hs_init(dwc2_regs_t* dwc2) {
   dwc2->gusbcfg = gusbcfg;
 
   // MCU specific PHY update post reset
-  dwc2_phy_update(dwc2, ghwcfg2.hs_phy_type);
 }
 
 static bool check_dwc2(dwc2_regs_t* dwc2) {
-#if CFG_TUSB_DEBUG >= DWC2_COMMON_DEBUG
-  // print guid, gsnpsid, ghwcfg1, ghwcfg2, ghwcfg3, ghwcfg4
-  // Run 'python dwc2_info.py' and check dwc2_info.md for bit-field value and comparison with other ports
-  volatile uint32_t const* p = (volatile uint32_t const*) &dwc2->guid;
-  TU_LOG1("guid, gsnpsid, ghwcfg1, ghwcfg2, ghwcfg3, ghwcfg4\r\n");
-  for (size_t i = 0; i < 5; i++) {
-    TU_LOG1("0x%08" PRIX32 ", ", p[i]);
-  }
-  TU_LOG1("0x%08" PRIX32 "\r\n", p[5]);
-#endif
 
   // For some reason: GD32VF103 gsnpsid and all hwcfg register are always zero (skip it)
   (void)dwc2;
-#if !TU_CHECK_MCU(OPT_MCU_GD32VF103)
-  enum { GSNPSID_ID_MASK = TU_GENMASK(31, 16) };
+  enum { GSNPSID_ID_MASK = ESPUSB_MASK(31, 16) };
   const uint32_t gsnpsid = dwc2->gsnpsid & GSNPSID_ID_MASK;
-  TU_ASSERT(gsnpsid == DWC2_OTG_ID || gsnpsid == DWC2_FS_IOT_ID || gsnpsid == DWC2_HS_IOT_ID);
-#endif
+  ESPUSB_REQUIRE(gsnpsid == DWC2_OTG_ID || gsnpsid == DWC2_FS_IOT_ID || gsnpsid == DWC2_HS_IOT_ID);
 
   return true;
 }
@@ -177,11 +150,11 @@ bool dwc2_core_is_highspeed_phy(dwc2_regs_t* dwc2, bool prefer_hs_phy) {
   }
 }
 
-bool dwc2_core_init(uint8_t rhport, bool is_hs_phy, bool is_dma) {
+bool dwc2_core_init(uint8_t rhport, bool is_hs_phy) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
 
   // Check Synopsys ID register, failed if controller clock/power is not enabled
-  TU_ASSERT(check_dwc2(dwc2));
+  ESPUSB_REQUIRE(check_dwc2(dwc2));
 
   // disable global interrupt
   dwc2->gahbcfg &= ~GAHBCFG_GINT;
@@ -212,14 +185,9 @@ bool dwc2_core_init(uint8_t rhport, bool is_hs_phy, bool is_dma) {
   dwc2->gotgint = 0xFFFFFFFFU;
   dwc2->gintmsk = 0;
 
-  TU_LOG(DWC2_COMMON_DEBUG, "DMA = %u\r\n", is_dma);
 
-  if (is_dma) {
-    // DMA seems to be only settable after a core reset, and not possible to switch on-the-fly
-    dwc2->gahbcfg |= GAHBCFG_DMAEN | GAHBCFG_HBSTLEN_2;
-  } else {
-    dwc2->gintmsk |= GINTSTS_RXFLVL;
-  }
+  // The ESP device engine supports internal buffer DMA only.
+  dwc2->gahbcfg |= GAHBCFG_DMAEN | GAHBCFG_HBSTLEN_2;
 
   return true;
 }
@@ -236,23 +204,6 @@ void dwc2_core_deinit(uint8_t rhport) {
   // Stop PHY clock and gate HCLK for power saving (per databook chapter 14)
   dwc2->pcgcctl |= PCGCCTL_STOPPCLK | PCGCCTL_GATEHCLK;
 
-  // MCU-specific PHY deinit (disable PHY power)
-  const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
-  const uint8_t hs_phy_type = (dwc2->gusbcfg & GUSBCFG_PHYSEL) ? GHWCFG2_HSPHY_NOT_SUPPORTED : ghwcfg2.hs_phy_type;
-  dwc2_phy_deinit(dwc2, hs_phy_type);
+  // PHY allocation/power belongs to the native ESP runtime.
+
 }
-
-// void dwc2_core_handle_common_irq(uint8_t rhport, bool in_isr) {
-//   (void) in_isr;
-//   dwc2_regs_t * const dwc2 = DWC2_REG(rhport);
-//   const uint32_t int_mask = dwc2->gintmsk;
-//   const uint32_t int_status = dwc2->gintsts & int_mask;
-//
-//   // Device disconnect
-//   if (int_status & GINTSTS_DISCINT) {
-//     dwc2->gintsts = GINTSTS_DISCINT;
-//   }
-//
-// }
-
-#endif

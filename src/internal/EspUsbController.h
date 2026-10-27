@@ -67,7 +67,7 @@ bool espusb_controller_configure(uint8_t port, const EspUsbControllerConfig *);
 bool espusb_controller_init(uint8_t port, bool highSpeed);
 bool espusb_controller_deinit(uint8_t port);
 void espusb_controller_int_handler(uint8_t port);
-void espusb_controller_int_enable(uint8_t port);
+bool espusb_controller_int_enable(uint8_t port);
 void espusb_controller_int_disable(uint8_t port);
 void espusb_controller_set_address(uint8_t port, uint8_t address);
 void espusb_controller_remote_wakeup(uint8_t port);
@@ -84,9 +84,7 @@ void espusb_controller_edpt_stall(uint8_t port, uint8_t address);
 void espusb_controller_edpt_clear_stall(uint8_t port, uint8_t address);
 bool espusb_controller_edpt_iso_alloc(uint8_t port, uint8_t address, uint16_t largestPacketBytes);
 bool espusb_controller_edpt_iso_activate(uint8_t port, const EspUsbEndpointDescriptor *);
-#if CFG_TUD_TEST_MODE
-void espusb_controller_enter_test_mode(uint8_t port, uint8_t selector);
-#endif
+
 bool espusb_controller_dcache_clean(const void *, uint32_t bytes);
 bool espusb_controller_dcache_invalidate(const void *, uint32_t bytes);
 bool espusb_controller_dcache_clean_invalidate(const void *, uint32_t bytes);

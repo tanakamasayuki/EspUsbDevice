@@ -6,7 +6,15 @@
 #include "../../../../src/internal/EspUsbDwc2Runtime.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #include <atomic>
+#include "../../../../src/internal/EspUsbDwc2Platform.h"
 #include "soc/usb_dwc_struct.h"
+bool failIrq=false;unsigned irqAttempts=0;
+extern "C" esp_err_t espusb_dwc2_allocate_interrupt(int source,int flags,intr_handler_t handler,
+    void *context,intr_handle_t *result) {
+  ++irqAttempts;
+  if(failIrq){*result=nullptr;return ESP_ERR_NO_MEM;}
+  return esp_intr_alloc(source,flags,handler,context,result);
+}
 // S3 has no cache on internal DMA RAM. Replace its no-op backend hooks to
 // verify synchronization failure cleanup without adding product test switches.
 unsigned cacheFailure=0,cacheClean=0,cacheInvalidate=0,cacheBad=0;
@@ -92,9 +100,29 @@ bool vbusPolicy() {
   Serial.printf("VBUS_POLICY %u\r\n",unsigned(ok));
   return ok;
 }
+bool irqFailures() {
+  bool ok=true;
+  for(unsigned attempt=0;attempt<2;++attempt) {
+    failIrq=true;const unsigned before=irqAttempts;
+    ok &= !device.begin() && device.lastError()==ESP_FAIL && irqAttempts==before+1;
+    ok &= !espusb_dwc2_runtime_bytes() && !espusb::internal::tinyUsbRuntimeStarted() && device.end()==ESP_OK;
+    failIrq=false;ok &= device.begin();
+    const unsigned installed=irqAttempts;
+    failIrq=true;
+    for(unsigned mask=0;mask<3;++mask) {
+      const auto port=espusb::internal::tinyUsbRuntimeRhport();
+      espusb_controller_int_disable(port);ok &= espusb_controller_int_enable(port);
+    }
+    ok &= irqAttempts==installed;
+    failIrq=false;ok &= device.end()==ESP_OK;
+    delay(10);
+  }
+  Serial.printf("IRQ_RECOVERY %u\r\n",unsigned(ok));
+  return ok;
+}
 bool metadata() {
   EspUsbDeviceConfig cfg;
-  bool ok=selectedStorage() && cacheFailures() && vbusPolicy();
+  bool ok=selectedStorage() && cacheFailures() && vbusPolicy() && irqFailures();
   for (unsigned n:{0u}) {
     cfg.eventQueueDepth=n;
     ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_SIZE && device.end()==ESP_OK;

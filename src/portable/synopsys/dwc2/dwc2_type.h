@@ -177,7 +177,7 @@ enum {
 //--------------------------------------------------------------------
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t ses_req_scs           : 1; //  0 Session request success
     uint32_t ses_req               : 1; //  1 Session request
     uint32_t vbval_ov_en           : 1; //  2 VBUS valid override enable
@@ -205,11 +205,11 @@ typedef union {
     uint32_t test_mode_corr_eusb2  : 1; // 31 Test mode control for eUSB2 PHY
   };
 } dwc2_gotgctl_t;
-TU_VERIFY_STATIC(sizeof(dwc2_gotgctl_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_gotgctl_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t rsv0_1                : 2; //  0..1  Reserved
     uint32_t ses_end_det           : 1; //  2     Session end detected
     uint32_t rsv3_7                : 5; //  3..7  Reserved
@@ -223,11 +223,11 @@ typedef union {
     uint32_t rsv21_31              :11; // 21..31 Reserved
   };
 } dwc2_gotgint_t;
-TU_VERIFY_STATIC(sizeof(dwc2_gotgint_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_gotgint_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t gintmask              :  1; //  0 Global interrupt mask
     uint32_t hbst_len              :  4; //  1..4 Burst length/type
     uint32_t dma_en                :  1; //  5 DMA enable
@@ -242,11 +242,11 @@ typedef union {
     uint32_t rsv25_31              :  7; // 25..31 Reserved
   };
 } dwc2_gahbcfg_t;
-TU_VERIFY_STATIC(sizeof(dwc2_gahbcfg_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_gahbcfg_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t timeout_cal             :  3; /* 0..2 Timeout calibration.
       The USB standard timeout value for high-speed operation is 736 to 816 (inclusive) bit times. The USB standard
       timeout value for full- speed operation is 16 to 18 (inclusive) bit times. The application must program this field
@@ -285,11 +285,11 @@ typedef union {
     uint32_t corrupt_tx_pkt          : 1; // 31 Corrupt Tx packet. 0: normal, 1: debug
   };
 } dwc2_gusbcfg_t;
-TU_VERIFY_STATIC(sizeof(dwc2_gusbcfg_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_gusbcfg_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t core_soft_rst      : 1; // 0 Core Soft Reset
     uint32_t piufs_soft_rst     : 1; // 1 PIU FS Dedicated Controller Soft Reset
     uint32_t frame_counter_rst  : 1; // 2 Frame Counter Reset (host)
@@ -303,11 +303,11 @@ typedef union {
     uint32_t ahb_idle           : 1; // 31 AHB Idle
   };
 } dwc2_grstctl_t;
-TU_VERIFY_STATIC(sizeof(dwc2_grstctl_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_grstctl_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t ep_ch_num     : 4; // 0..3 Endpoint/Channel Number
     uint32_t byte_count    :11; // 4..14 Byte Count
     uint32_t dpid          : 2; // 15..16 Data PID
@@ -316,11 +316,11 @@ typedef union {
     uint32_t rsv25_31      : 7; // 25..31 Reserved
   };
 } dwc2_grxstsp_t;
-TU_VERIFY_STATIC(sizeof(dwc2_grxstsp_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_grxstsp_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t op_mode                : 3; // 0..2 HNP/SRP Host/Device/OTG mode
     uint32_t arch                   : 2; // 3..4 Slave/External/Internal DMA
     uint32_t single_point           : 1; // 5 0: support hub and split | 1: no hub, no split
@@ -338,11 +338,11 @@ typedef union {
     uint32_t otg_enable_ic_usb      : 1; // 31 IC_USB mode specified for mode of operation
   };
 } dwc2_ghwcfg2_t;
-TU_VERIFY_STATIC(sizeof(dwc2_ghwcfg2_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_ghwcfg2_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t xfer_size_width          : 4;  // 0..3 Transfer size counter in bits = 11 + n (max 19 bits)
     uint32_t packet_size_width        : 3;  // 4..6 Packet size counter in bits = 4 + n (max 10 bits)
     uint32_t otg_enable               : 1;  // 7 OTG capable
@@ -357,11 +357,11 @@ typedef union {
     uint32_t dfifo_depth              : 16; // DFIFO depth - EP_LOC_CNT in terms of 32-bit words
   };
 } dwc2_ghwcfg3_t;
-TU_VERIFY_STATIC(sizeof(dwc2_ghwcfg3_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_ghwcfg3_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t num_dev_period_in_ep  : 4; // 0..3 Number of Device Periodic IN Endpoints
     uint32_t partial_powerdown     : 1; // 4 Partial Power Down Enabled
     uint32_t ahb_freq_min          : 1; // 5 1: minimum of AHB frequency is less than 60 MHz
@@ -386,11 +386,11 @@ typedef union {
     uint32_t dma_desc_dynamic      : 1; // Dynamic scatter/gather DMA
   };
 } dwc2_ghwcfg4_t;
-TU_VERIFY_STATIC(sizeof(dwc2_ghwcfg4_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_ghwcfg4_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t fifo_available      : 16; // 0..15 Number of words available in the Tx FIFO
     uint32_t req_queue_available :  8; // 16..23 Number of spaces available in the NPT transmit request queue for both IN and OU
                                        // 24..31 is top entry in the request queue that is currently being processed by the MAC
@@ -399,11 +399,11 @@ typedef union {
     uint32_t qtop_ch_num         :  4; // 27..30 Channel number
   };
 } dwc2_hnptxsts_t;
-TU_VERIFY_STATIC(sizeof(dwc2_hnptxsts_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_hnptxsts_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t fifo_available      :16; // 0..15 Number of words available in the Tx FIFO
     uint32_t req_queue_available : 7; // 16..22 Number of spaces available in the PTX transmit request queue
     uint32_t qtop_terminate      : 1; // 23 Last entry for selected channel
@@ -413,11 +413,11 @@ typedef union {
     uint32_t qtop_odd_frame      : 1; // 31 Send in odd frame
   };
 } dwc2_hptxsts_t;
-TU_VERIFY_STATIC(sizeof(dwc2_hptxsts_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_hptxsts_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t conn_status         : 1; // 0 Port connect status
     uint32_t conn_detected       : 1; // 1 Port connect detected
     uint32_t enable              : 1; // 2 Port enable status
@@ -435,11 +435,11 @@ typedef union {
     uint32_t rsv19_31            :13; // 19..31 Reserved
   };
 } dwc2_hprt_t;
-TU_VERIFY_STATIC(sizeof(dwc2_hprt_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_hprt_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t ep_size         : 11; // 0..10 Maximum packet size
     uint32_t ep_num          :  4; // 11..14 Endpoint number
     uint32_t ep_dir          :  1; // 15 Endpoint direction
@@ -453,11 +453,11 @@ typedef union {
     uint32_t enable          :  1; // 31 Channel enable
   };
 } dwc2_channel_char_t;
-TU_VERIFY_STATIC(sizeof(dwc2_channel_char_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_channel_char_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t hub_port    :  7; // 0..6 Hub port number
     uint32_t hub_addr    :  7; // 7..13 Hub address
     uint32_t xact_pos    :  2; // 14..15 Transaction position
@@ -466,27 +466,27 @@ typedef union {
     uint32_t split_en    :  1; // 31 Split enable
   };
 } dwc2_channel_split_t;
-TU_VERIFY_STATIC(sizeof(dwc2_channel_split_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_channel_split_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t xfer_size    : 19; // 0..18 Transfer size in bytes
     uint32_t packet_count : 10; // 19..28 Number of packets
     uint32_t pid          :  2; // 29..30 Packet ID
     uint32_t do_ping      :  1; // 31 Do PING
   };
 } dwc2_channel_tsize_t;
-TU_VERIFY_STATIC(sizeof(dwc2_channel_tsize_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_channel_tsize_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t num        : 16; // 0..15 Frame number
     uint32_t remainning : 16; // 16..31 Frame remaining
   };
 } dwc2_hfnum_t;
-TU_VERIFY_STATIC(sizeof(dwc2_hfnum_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_hfnum_t) == 4, "incorrect size");
 
 // Host Channel
 typedef struct {
@@ -505,7 +505,7 @@ typedef struct {
 //--------------------------------------------------------------------
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t speed                    : 2; // 0..1 Speed
     uint32_t nzsts_out_handshake      : 1; // 2 Non-zero-length status OUT handshake
     uint32_t en_32khz_suspsend        : 1; // 3 Enable 32-kHz SUSPEND mode
@@ -522,11 +522,11 @@ typedef union {
     uint32_t resume_valid             : 6; // 26..31 Resume valid period
   };
 } dwc2_dcfg_t;
-TU_VERIFY_STATIC(sizeof(dwc2_dcfg_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_dcfg_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t remote_wakeup_signal   : 1; // 0 Remote wakeup signal
     uint32_t soft_disconnet         : 1; // 1 Soft disconnect
     uint32_t gnp_in_nak_status      : 1; // 2 Global non-periodic NAK IN status
@@ -547,11 +547,11 @@ typedef union {
     uint32_t rsv20_31               :12; // 20..31 Reserved
   };
 } dwc2_dctl_t;
-TU_VERIFY_STATIC(sizeof(dwc2_dctl_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_dctl_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t suspend_status : 1; // 0 Suspend status
     uint32_t enum_speed     : 2; // 1..2 Enumerated speed
     uint32_t erratic_err    : 1; // 3 Erratic error
@@ -561,11 +561,11 @@ typedef union {
     uint32_t rsv24_31       : 8; // 24..31 Reserved
   };
 } dwc2_dsts_t;
-TU_VERIFY_STATIC(sizeof(dwc2_dsts_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_dsts_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t xfer_complete       : 1; // 0 Transfer complete
     uint32_t disabled            : 1; // 1 Endpoint disabled
     uint32_t ahb_err             : 1; // 2 AHB error
@@ -584,11 +584,11 @@ typedef union {
     uint32_t rsv14_31            :17; // 15..31 Reserved
   };
 } dwc2_diepint_t;
-TU_VERIFY_STATIC(sizeof(dwc2_diepint_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_diepint_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t mps                : 11; // 0..10 Maximum packet size, EP0 only use 2 bits
     uint32_t next_ep            : 4;  // 11..14 Next endpoint number
     uint32_t active             : 1;  // 15 Active
@@ -606,11 +606,11 @@ typedef union {
     uint32_t enable             : 1;  // 31 Enable
   };
 } dwc2_depctl_t;
-TU_VERIFY_STATIC(sizeof(dwc2_depctl_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_depctl_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t xfer_complete      : 1; // 0 Transfer complete
     uint32_t disabled           : 1; // 1 Endpoint disabled
     uint32_t ahb_err            : 1; // 2 AHB error
@@ -630,17 +630,17 @@ typedef union {
     uint32_t rsv16_31           :16; // 16..31 Reserved
   };
 } dwc2_doepint_t;
-TU_VERIFY_STATIC(sizeof(dwc2_doepint_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_doepint_t) == 4, "incorrect size");
 
 typedef union {
   uint32_t value;
-  struct TU_ATTR_PACKED {
+  struct ESPUSB_PACKED {
     uint32_t xfer_size    : 19; // 0..18 Transfer size in bytes
     uint32_t packet_count : 10; // 19..28 Number of packets
     uint32_t mc_pid       :  2; // 29..30 IN: Multi Count, OUT: PID
   };
 } dwc2_ep_tsize_t;
-TU_VERIFY_STATIC(sizeof(dwc2_ep_tsize_t) == 4, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_ep_tsize_t) == 4, "incorrect size");
 
 // Device IN/OUT Endpoint
 typedef struct {
@@ -669,7 +669,7 @@ typedef struct {
   uint32_t rsv1c;
 } dwc2_dep_t;
 
-TU_VERIFY_STATIC(sizeof(dwc2_dep_t) == 0x20, "incorrect size");
+ESPUSB_STATIC_ASSERT(sizeof(dwc2_dep_t) == 0x20, "incorrect size");
 
 //--------------------------------------------------------------------
 // CSR Register Map
@@ -779,13 +779,13 @@ typedef struct {
   volatile uint32_t fifo[16][0x400];    // 1000..FFFF Endpoint FIFO
 } dwc2_regs_t;
 
-TU_VERIFY_STATIC(offsetof(dwc2_regs_t, hcfg   ) == 0x0400, "incorrect size");
-TU_VERIFY_STATIC(offsetof(dwc2_regs_t, channel) == 0x0500, "incorrect size");
-TU_VERIFY_STATIC(offsetof(dwc2_regs_t, dcfg   ) == 0x0800, "incorrect size");
-TU_VERIFY_STATIC(offsetof(dwc2_regs_t, epin   ) == 0x0900, "incorrect size");
-TU_VERIFY_STATIC(offsetof(dwc2_regs_t, epout  ) == 0x0B00, "incorrect size");
-TU_VERIFY_STATIC(offsetof(dwc2_regs_t, pcgcctl) == 0x0E00, "incorrect size");
-TU_VERIFY_STATIC(offsetof(dwc2_regs_t, fifo   ) == 0x1000, "incorrect size");
+ESPUSB_STATIC_ASSERT(offsetof(dwc2_regs_t, hcfg   ) == 0x0400, "incorrect size");
+ESPUSB_STATIC_ASSERT(offsetof(dwc2_regs_t, channel) == 0x0500, "incorrect size");
+ESPUSB_STATIC_ASSERT(offsetof(dwc2_regs_t, dcfg   ) == 0x0800, "incorrect size");
+ESPUSB_STATIC_ASSERT(offsetof(dwc2_regs_t, epin   ) == 0x0900, "incorrect size");
+ESPUSB_STATIC_ASSERT(offsetof(dwc2_regs_t, epout  ) == 0x0B00, "incorrect size");
+ESPUSB_STATIC_ASSERT(offsetof(dwc2_regs_t, pcgcctl) == 0x0E00, "incorrect size");
+ESPUSB_STATIC_ASSERT(offsetof(dwc2_regs_t, fifo   ) == 0x1000, "incorrect size");
 
 //--------------------------------------------------------------------+
 // Register Bit Definitions
@@ -1039,7 +1039,7 @@ TU_VERIFY_STATIC(offsetof(dwc2_regs_t, fifo   ) == 0x1000, "incorrect size");
 #define GUSBCFG_PHYSEL_Pos               (6U)
 #define GUSBCFG_PHYSEL_Msk               (0x1UL << GUSBCFG_PHYSEL_Pos)            // 0x00000040
 #define GUSBCFG_PHYSEL                   GUSBCFG_PHYSEL_Msk                       // USB 2.0 high-speed ULPI PHY or USB 1.1 full-speed serial transceiver select
-#define GUSBCFG_DDRSEL                   TU_BIT(7)                                // Single Data Rate (SDR) or Double Data Rate (DDR) or ULPI interface.
+#define GUSBCFG_DDRSEL                   ESPUSB_BIT(7)                                // Single Data Rate (SDR) or Double Data Rate (DDR) or ULPI interface.
 #define GUSBCFG_SRPCAP_Pos               (8U)
 #define GUSBCFG_SRPCAP_Msk               (0x1UL << GUSBCFG_SRPCAP_Pos)            // 0x00000100
 #define GUSBCFG_SRPCAP                   GUSBCFG_SRPCAP_Msk                       // SRP-capable
@@ -1426,7 +1426,7 @@ TU_VERIFY_STATIC(offsetof(dwc2_regs_t, fifo   ) == 0x1000, "incorrect size");
 #define DAINTMSK_OEPM_Msk                (0xFFFFUL << DAINTMSK_OEPM_Pos)          // 0xFFFF0000
 #define DAINTMSK_OEPM                    DAINTMSK_OEPM_Msk                        // OUT EP interrupt mask bits
 
-#define DAINT_SHIFT(_dir)                (((_dir) == TUSB_DIR_IN) ? 0 : 16)
+#define DAINT_SHIFT(_dir)                (((_dir) == ESPUSB_DIR_IN) ? 0 : 16)
 
 #if 0
 /********************  Bit definition for OTG register  ********************/
@@ -2260,35 +2260,35 @@ TU_VERIFY_STATIC(offsetof(dwc2_regs_t, fifo   ) == 0x1000, "incorrect size");
 #define DOEPTSIZ_STUPCNT_1               (0x2UL << DOEPTSIZ_STUPCNT_Pos)          // 0x40000000
 
 /********************  Bit definition for PCGCTL register  ********************/
-#define PCGCCTL_IF_DEV_MODE              TU_BIT(31)
+#define PCGCCTL_IF_DEV_MODE              ESPUSB_BIT(31)
 #define PCGCCTL_P2HD_PRT_SPD_MASK        (0x3ul << 29)
 #define PCGCCTL_P2HD_PRT_SPD_SHIFT       29
 #define PCGCCTL_P2HD_DEV_ENUM_SPD_MASK   (0x3ul << 27)
 #define PCGCCTL_P2HD_DEV_ENUM_SPD_SHIFT  27
 #define PCGCCTL_MAC_DEV_ADDR_MASK        (0x7ful << 20)
 #define PCGCCTL_MAC_DEV_ADDR_SHIFT       20
-#define PCGCCTL_MAX_TERMSEL              TU_BIT(19)
+#define PCGCCTL_MAX_TERMSEL              ESPUSB_BIT(19)
 #define PCGCCTL_MAX_XCVRSELECT_MASK      (0x3ul << 17)
 #define PCGCCTL_MAX_XCVRSELECT_SHIFT     17
-#define PCGCCTL_PORT_POWER               TU_BIT(16)
+#define PCGCCTL_PORT_POWER               ESPUSB_BIT(16)
 #define PCGCCTL_PRT_CLK_SEL_MASK         (0x3ul << 14)
 #define PCGCCTL_PRT_CLK_SEL_SHIFT        14
-#define PCGCCTL_ESS_REG_RESTORED         TU_BIT(13)
-#define PCGCCTL_EXTND_HIBER_SWITCH       TU_BIT(12)
-#define PCGCCTL_EXTND_HIBER_PWRCLMP      TU_BIT(11)
-#define PCGCCTL_ENBL_EXTND_HIBER         TU_BIT(10)
-#define PCGCCTL_RESTOREMODE              TU_BIT(9)
-#define PCGCCTL_RESETAFTSUSP             TU_BIT(8)
-#define PCGCCTL_DEEP_SLEEP               TU_BIT(7)
-#define PCGCCTL_PHY_IN_SLEEP             TU_BIT(6)
-#define PCGCCTL_ENBL_SLEEP_GATING        TU_BIT(5)
-#define PCGCCTL_RSTPDWNMODULE            TU_BIT(3)
-#define PCGCCTL_PWRCLMP                  TU_BIT(2)
-#define PCGCCTL_GATEHCLK                 TU_BIT(1)
-#define PCGCCTL_STOPPCLK                 TU_BIT(0)
+#define PCGCCTL_ESS_REG_RESTORED         ESPUSB_BIT(13)
+#define PCGCCTL_EXTND_HIBER_SWITCH       ESPUSB_BIT(12)
+#define PCGCCTL_EXTND_HIBER_PWRCLMP      ESPUSB_BIT(11)
+#define PCGCCTL_ENBL_EXTND_HIBER         ESPUSB_BIT(10)
+#define PCGCCTL_RESTOREMODE              ESPUSB_BIT(9)
+#define PCGCCTL_RESETAFTSUSP             ESPUSB_BIT(8)
+#define PCGCCTL_DEEP_SLEEP               ESPUSB_BIT(7)
+#define PCGCCTL_PHY_IN_SLEEP             ESPUSB_BIT(6)
+#define PCGCCTL_ENBL_SLEEP_GATING        ESPUSB_BIT(5)
+#define PCGCCTL_RSTPDWNMODULE            ESPUSB_BIT(3)
+#define PCGCCTL_PWRCLMP                  ESPUSB_BIT(2)
+#define PCGCCTL_GATEHCLK                 ESPUSB_BIT(1)
+#define PCGCCTL_STOPPCLK                 ESPUSB_BIT(0)
 
 #define PCGCTL1_TIMER                   (0x3ul << 1)
-#define PCGCTL1_GATEEN                  TU_BIT(0)
+#define PCGCTL1_GATEEN                  ESPUSB_BIT(0)
 
 #ifdef __cplusplus
  }

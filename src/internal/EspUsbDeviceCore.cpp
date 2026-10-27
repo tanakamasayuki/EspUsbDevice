@@ -306,7 +306,7 @@ struct Core {
     while (xQueueReceive(queue,&old,0)==pdTRUE) if (old.data.event_id==DeferredCall && old.data.func_call.func) old.data.func_call.func(old.data.func_call.param);
     workerBus.store(bus.load()); overflow.store(false); recovering=false;
     vTaskDelay(std::max(TickType_t(1),pdMS_TO_TICKS(20)));
-    espusb_controller_connect(port); espusb_controller_int_enable(port);
+    espusb_controller_connect(port); if(!espusb_controller_int_enable(port))overflow.store(true);
   }
 };
 Core *core=nullptr;
@@ -353,7 +353,8 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   core=s;
   for (unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].init) s->drivers[i].init();
   if (!espusb_controller_init(port,highSpeed)) { stopUsbDeviceCore(); return ESP_FAIL; }
-  espusb_controller_int_enable(port); return ESP_OK;
+  if (!espusb_controller_int_enable(port)) { stopUsbDeviceCore(); return ESP_FAIL; }
+  return ESP_OK;
 }
 void stopUsbDeviceCore() {
   auto *s=core; if(!s)return;
@@ -505,7 +506,4 @@ void espusb_controller_event(const EspUsbControllerEvent *data,bool inIsr) {
 }
 // Private observer for adversarial event probes; no public callback contract.
 __attribute__((weak)) void espusb_device_event_hook(uint8_t,uint32_t,bool) {}
-__attribute__((weak)) bool espusb_controller_dcache_clean(const void *,uint32_t) {return true;}
-__attribute__((weak)) bool espusb_controller_dcache_invalidate(const void *,uint32_t) {return true;}
-__attribute__((weak)) bool espusb_controller_dcache_clean_invalidate(const void *,uint32_t) {return true;}
 }

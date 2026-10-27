@@ -615,3 +615,29 @@ if (!device.begin(config)) { /* lastError()を処理する */ }
 代償は独自layoutとlookupの保守、configのbool一つ、旧private type/build flag依存利用の修正。
 公開の要求field・sendControlResponseなどの操作は維持する。rawRequestをTinyUSB型へcastする拡張は
 v3で継続保証せず、公開fieldと返信APIを使う。転送時heapや新たな取得点は増やさない。
+
+## ESP DWC2 platformとIRQ所有の整理
+
+DWC2から汎用TinyUSB common/compiler/MCU/optionsと旧ESP port shimを撤去した。
+`EspUsbDwc2Platform`がSoCの物理port情報、USB_WRAP、cacheとIRQを管理し、
+`EspUsbDwc2Support`は必要な整数/layout操作だけを持つ。共通core/classもDWC2も
+TinyUSB configをimportしない。旧build flagは`EspUsbLegacyFlags.h`で拒否するだけで、
+class数・buffer・queue・VBUSを設定する別経路にはしない。0指定も不要なので撤去対象。
+vendor選択は12→4 files。残る2 C sourceと2 register/adapter headerにはPHY reset/turnaroundと
+endpoint registerアルゴリズムがあり、これらの依存撤去はまだ完了していない。
+
+IRQは一つのactive controllerが一つのSDK登録を所有し、begin時だけ取得する。
+稼働中のdisable/enableはmask/unmaskで再利用し、end時はISRを停止・登録解放してから
+controller/core storageを回収する。従来は登録/解放を繰り返し、登録結果を検査していなかった。
+登録失敗はbeginのESP_FAILと既存rollbackへ渡す。回復時のunmaskに失敗した場合は
+producer jobを再開せず、既存overflow回復を再試行する。
+試験用にSDK割り込み取得境界をprivate weak関数に分け、製品のtest flagは追加しない。
+mask中もSDK handleを保持するため、その資源はendまで生存する。代わりに再取得の失敗と
+稼働中のIRQ登録用heap取得を避けられる。mask/unmask SDK自身の故障注入は今回の対象外。
+
+RuntimeのAuto/FS/HS選択はportの能力情報から決める。S2/S3はFS、P4 AutoはHS、FS明示はport0を維持。
+HSがport1とは仮定せず、将来HS-onlyのport0にも拡張できる。S31は現SDKでは追加していない。
+未知SoCを暗黙の既存portへ割り当てず、未対応として扱う。PHYの取得/電源は引き続きESP-IDFが所有する。
+P4はSDK cache capabilityと64byte lineを確認し、strongなmsync実装を使う。S2/S3はweak no-opを維持。
+legacy Host/slave/他MCUやcompliance test modeの未公開分岐は持ち込まない。
+公開Device/Function API・borrowed契約・新規移行手順は変わらない。

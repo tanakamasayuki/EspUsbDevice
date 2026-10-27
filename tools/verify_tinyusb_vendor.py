@@ -70,11 +70,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_upstream_files() -> set[str]:
-    files = {"tusb_option.h"}
-    # Detect an accidentally restored vendor umbrella even though it is no
-    # longer selected. Other removed headers are covered by the directory scan.
-    if (BUILD / "tusb.h").exists():
-        files.add("tusb.h")
+    files = {name for name in ("tusb.h", "tusb_option.h") if (BUILD / name).exists()}
     for directory in UPSTREAM_DIRS:
         files.update(
             str(path.relative_to(BUILD))
@@ -134,6 +130,7 @@ def download_tarball() -> None:
 
 
 def populate_upstream_cache(expected_files: set[str]) -> None:
+    expected_files = expected_files | {"tusb_option.h"}  # metadata only
     if all((ARCHIVE / relative).is_file() for relative in expected_files):
         return
     if not TARBALL.is_file():

@@ -491,3 +491,49 @@ DWC2のC 2ソースだけはregister/common helperに依存しており、完全
 初回build失敗は`native-wire-vbus-probe-build-failed.txt`、`native-wire-type-name-build-failed.txt`へ保存し、
 実機の不合格/合格結果に数えていない。残るDWC2/common/capability、HALT競合・全EP0順序、
 他SoC/HS実機と最終API/sampleは継続対象。
+
+## ESP DWC2 platformとIRQ所有の整理
+
+DWC2から汎用TinyUSB common/compiler/MCU/optionsと旧ESP port shimを撤去した。
+`EspUsbDwc2Platform`がSoCの物理port情報、USB_WRAP、cacheとIRQを管理し、
+`EspUsbDwc2Support`は必要な整数/layout操作だけを持つ。共通core/classもDWC2も
+TinyUSB configをimportしない。旧build flagは`EspUsbLegacyFlags.h`で拒否するだけで、
+class数・buffer・queue・VBUSを設定する別経路にはしない。0指定も不要なので撤去対象。
+vendor選択は12→4 files。残る2 C sourceと2 register/adapter headerにはPHY reset/turnaroundと
+endpoint registerアルゴリズムがあり、これらの依存撤去はまだ完了していない。
+
+IRQは一つのactive controllerが一つのSDK登録を所有し、begin時だけ取得する。
+稼働中のdisable/enableはmask/unmaskで再利用し、end時はISRを停止・登録解放してから
+controller/core storageを回収する。従来は登録/解放を繰り返し、登録結果を検査していなかった。
+登録失敗はbeginのESP_FAILと既存rollbackへ渡す。回復時のunmaskに失敗した場合は
+producer jobを再開せず、既存overflow回復を再試行する。
+試験用にSDK割り込み取得境界をprivate weak関数に分け、製品のtest flagは追加しない。
+mask中もSDK handleを保持するため、その資源はendまで生存する。代わりに再取得の失敗と
+稼働中のIRQ登録用heap取得を避けられる。mask/unmask SDK自身の故障注入は今回の対象外。
+
+RuntimeのAuto/FS/HS選択はportの能力情報から決める。S2/S3はFS、P4 AutoはHS、FS明示はport0を維持。
+HSがport1とは仮定せず、将来HS-onlyのport0にも拡張できる。S31は現SDKでは追加していない。
+未知SoCを暗黙の既存portへ割り当てず、未対応として扱う。PHYの取得/電源は引き続きESP-IDFが所有する。
+P4はSDK cache capabilityと64byte lineを確認し、strongなmsync実装を使う。S2/S3はweak no-opを維持。
+legacy Host/slave/他MCUやcompliance test modeの未公開分岐は持ち込まない。
+公開Device/Function API・borrowed契約・新規移行手順は変わらない。
+
+## ESP platform移行後の全体確認
+
+2026-10-28。標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1123.26秒**。
+単独control_coreも1 passed（39.39秒）。最終一括実行にIRQ_RECOVERY 1とVBUS_POLICY 1を確認した。
+IRQ取得失敗を2回繰り返し、beginはESP_FAIL、runtime storage/PHY/workerを回収して再開始できた。
+再開始後は取得失敗を強制したままmask/unmaskを3回繰り返し、IRQ登録関数の呼出しが増えないことを確認した。
+metadata反復のheapは前後同量。774取得点の失敗/回復も成功。
+実latched IRQを含む構成再選択と各class通信も成功し、62 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_18-44-28-712070/`、JUnit/transcript/serialコピーは`validation/.pytest-results/dwc2-platform-all*`。
+S2/P4 HSのcompile-onlyも成功。全29 library sourceのcompiler依存記録に、削除した汎用TinyUSB
+header/configやSDK同名headerへのfallbackはない。S3 Vendor-onlyに未使用class state/keymap/旧IRQ配列はない。
+S2のcacheはweak no-op、P4はstrong msyncを維持する。記録は各targetの`dwc2-platform-*-build.txt`、nm、
+`dwc2-platform-audit.txt`。vendor検証4 files/2 sources、updater dry run差分0。
+
+最終のlegacy flag guardは旧ifdefのDFU/MSC容量指定も含めて維持し、S3 compilerのpreprocessで
+flagなしが成功、55旧flagの0指定も全て明示拒否することを確認した。通常ビルドの生成codeは変わらない。
+結果は`dwc2-platform-legacy-flags.txt`。旧tests/examplesはmainとの差分なし。
+DWC2のregister/PHY/endpointアルゴリズムは残るvendor 4 fileに依存している。
+mask/unmask SDK自身の故障注入、全EP0順序・class HALT競合、他SoC/HS実機、最終API/sampleは未完了。

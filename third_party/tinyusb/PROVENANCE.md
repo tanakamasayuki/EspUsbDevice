@@ -12,14 +12,15 @@ completion of the stack migration.
 
 - Pin and rationale: `UPSTREAM.json`, using a full commit SHA.
 - License: MIT. Keep `LICENSE` and copyright/SPDX notices on remaining files.
-- Selection: `BUILD_FILES.txt`, 12 files (2 sources and 10 headers).
+- Selection: `BUILD_FILES.txt`, 4 files (2 sources and 2 register/adapter headers).
 - Sources: `portable/synopsys/dwc2/dcd_dwc2.c` and
   `portable/synopsys/dwc2/dwc2_common.c`.
 - No vendor class headers remain. The required US keyboard lookup rows were
   extracted into `src/keymap/keymap_en_us.h` with MIT attribution; unused HID
   protocol definitions and templates were removed.
-- `src/tusb_config.h` and `src/internal/EspUsbTinyUsbConfig.h` are first-party
-  integration. Enabling the legacy class drivers is rejected.
+- The generic common/compiler/MCU/options framework and ESP port shim are
+  removed. Native ESP services live in `internal/EspUsbDwc2Platform.*`;
+  `EspUsbLegacyFlags.h` rejects legacy build knobs without defining them.
 
 The v2 selection originally included nine classes, then ten after adding Video.
 Git preserves that history and the removed Windows NCM divisor patch. Independent
@@ -105,3 +106,16 @@ upstream register/common helpers internally. The US key table is derived from
 TinyUSB HID_KEYCODE_TO_ASCII (Copyright (c) 2019 Ha Thach, MIT).
 VBUS policy is passed from EspUsbDeviceConfig::vbusSensing at runtime; legacy
 VBUS build flags are rejected by the temporary capability integration.
+
+
+The ESP platform layer now owns physical port metadata, SDK interrupt ownership,
+USB_WRAP pulls and cache synchronization. Its hardware limits/pull/cache code is
+adapted from TinyUSB dwc2_esp32.h (Copyright (c) 2021 Ha Thach, MIT). It registers
+one device IRQ per active lifetime, masks/unmasks that registration, and frees it
+before controller/core storage is released. Registration failure makes begin
+fail and roll back. Core PHY reset/turnaround and endpoint register algorithms
+remain in the two pinned DWC2 sources; the snapshot is not an independent DCD yet.
+The adapter uses native integer/layout helpers and only internal device DMA.
+No host, slave, generic-MCU or legacy compliance-test-mode configuration path is
+compiled. Port choice uses capabilities rather than assuming HS is port 1.
+S31 still requires SDK support/metadata and hardware validation before use.
