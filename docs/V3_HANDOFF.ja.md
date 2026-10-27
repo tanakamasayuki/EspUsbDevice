@@ -1,9 +1,8 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装は共通core/EP0の独自化。関連5件と補強1件が成功した。
-[core APIと未完の境界](V3_CORE_API.ja.md)を参照。全体の直近成功はcore独自化前の26件で、
-現在の通常収集は27件。次に標準combo allで全27件を確認する。
-TinyUSBのコンパイル対象はDWC2関連2本、vendor選択は24 file。C ABI/headerとDWC2への依存は残る。
+最新実装は共通core/EP0の独自化（`ce6a444`）。標準combo allで全27件成功（1743.12秒）。
+[core APIと未完の境界](V3_CORE_API.ja.md)を参照。TinyUSBのコンパイル対象はDWC2関連2本、
+vendor選択は24 file。C ABI/headerとDWC2への依存は残る。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
@@ -713,3 +712,18 @@ FreeRTOSの自己削除taskのTCBはidle taskが回収するため、heap比較�
 ABI/header依存を含む全撤去はまだ完了していない。
 
 次は全27件を一括検証し、その後、SET_INTERFACE/HALTの転送中所有権、EP0世代境界・suspend等を補強してDWC2の独自化へ進む。
+
+## 独自coreでの全体試験
+
+2026-10-27、実装`ce6a444`。標準`--combo all`の`runtime-core-all.xml`は
+**27 passed、0 skipped、0 unfinished、1743.12秒**。
+712取得点の確保失敗/回復、独立coreの4キュー深さ、過負荷と自動再列挙、各既存クラスとVideoの全経路を一括実行した。
+54 serial log全てSTOPPED、panicなし。
+原本は`/tmp/pytest-embedded/2026-10-27_03-35-23-682254/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/runtime-core-all*`。Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。
+TinyUSB manifestは24 file / 2 compiled sourcesで照合成功し、旧test/sampleは変更していない。
+
+この成功は全標準要求・全競合順序や他SoC/HSの検証完了ではない。
+転送中のSET_INTERFACEとHALT/CLEAR_FEATUREにおけるクラス別PID・所有権回復、
+新SETUPと旧status/dataの到着順、物理short/overrun、suspend/remote wakeupは引き続き対象。
+残るDWC2・ABI/header依存、公開APIの最終整理、出荷exampleとOS互換性も未完了。

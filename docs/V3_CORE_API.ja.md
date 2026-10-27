@@ -92,3 +92,18 @@ DWC2、残存helper・protocol定義、内部ABI、他SoC/HS、PC/OSの確認は
 
 要求の基準は[USB-IF USB 2.0 specification](https://www.usb.org/document-library/usb-20-specification)。
 実機試験は独立した`validation/`と標準pluginのcomboを用い、旧test/sampleを合否基準へ戻さない。
+
+## 独自coreでの全体試験
+
+2026-10-27、実装`ce6a444`。標準`--combo all`の`runtime-core-all.xml`は
+**27 passed、0 skipped、0 unfinished、1743.12秒**。
+712取得点の確保失敗/回復、独立coreの4キュー深さ、過負荷と自動再列挙、各既存クラスとVideoの全経路を一括実行した。
+54 serial log全てSTOPPED、panicなし。
+原本は`/tmp/pytest-embedded/2026-10-27_03-35-23-682254/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/runtime-core-all*`。Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。
+TinyUSB manifestは24 file / 2 compiled sourcesで照合成功し、旧test/sampleは変更していない。
+
+この成功は全標準要求・全競合順序や他SoC/HSの検証完了ではない。
+転送中のSET_INTERFACEとHALT/CLEAR_FEATUREにおけるクラス別PID・所有権回復、
+新SETUPと旧status/dataの到着順、物理short/overrun、suspend/remote wakeupは引き続き対象。
+残るDWC2・ABI/header依存、公開APIの最終整理、出荷exampleとOS互換性も未完了。

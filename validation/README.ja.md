@@ -49,10 +49,10 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
-core独自化前の直近全実行はplugin 1.10.0の標準`--combo all`による`runtime-video-all.xml`。
-**26 passed、0 skipped、0 unfinished、1703.91秒**。全caseで両board STOPPED、panicなし。
-serial原本は`/tmp/pytest-embedded/2026-10-27_02-12-17-085198/`、コピーとtranscriptは
-`.pytest-results/runtime-video-all-serial/`と`runtime-video-all-transcript.txt`へ保存した。
+最新の全実行はplugin 1.10.0の標準`--combo all`による`runtime-core-all.xml`。
+**27 passed、0 skipped、0 unfinished、1743.12秒**。全caseで両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-27_03-35-23-682254/`、コピーとtranscriptは
+`.pytest-results/runtime-core-all-serial/`と`runtime-core-all-transcript.txt`へ保存した。
 `s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/DFU/NCM/Video/descriptor/registryの712取得点を失敗させて回復を確認する。
 文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
 MIDIのqueue/callback/外部ring/片方向/複数instance、MSCの内部/外部DMA bufferと複数instanceも含む。
@@ -336,3 +336,18 @@ FreeRTOSの自己削除taskのTCBはidle taskが回収するため、heap比較�
 ABI/header依存を含む全撤去はまだ完了していない。
 
 現在のcore APIと残りは[共通coreガイド](../docs/V3_CORE_API.ja.md)。標準combo allの全27件を次に実行する。
+
+## 独自coreでの全体試験
+
+2026-10-27、実装`ce6a444`。標準`--combo all`の`runtime-core-all.xml`は
+**27 passed、0 skipped、0 unfinished、1743.12秒**。
+712取得点の確保失敗/回復、独立coreの4キュー深さ、過負荷と自動再列挙、各既存クラスとVideoの全経路を一括実行した。
+54 serial log全てSTOPPED、panicなし。
+原本は`/tmp/pytest-embedded/2026-10-27_03-35-23-682254/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/runtime-core-all*`。Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。
+TinyUSB manifestは24 file / 2 compiled sourcesで照合成功し、旧test/sampleは変更していない。
+
+この成功は全標準要求・全競合順序や他SoC/HSの検証完了ではない。
+転送中のSET_INTERFACEとHALT/CLEAR_FEATUREにおけるクラス別PID・所有権回復、
+新SETUPと旧status/dataの到着順、物理short/overrun、suspend/remote wakeupは引き続き対象。
+残るDWC2・ABI/header依存、公開APIの最終整理、出荷exampleとOS互換性も未完了。
