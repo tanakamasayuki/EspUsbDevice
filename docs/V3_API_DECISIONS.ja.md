@@ -502,3 +502,13 @@ runtime化で初期化したSETUP cache lineをhardwareへ渡す前にclean/inva
 公開設定は追加せず、既存backend hookへ開始時だけ2回の呼出しを加える。
 cacheのないtargetの処理はno-op。heap取得点と通常の転送経路は増やさない。
 S3の失敗注入とP4 compileを、P4の実cache coherency試験と同一視しない。
+
+
+## 構成世代による完了eventの隔離
+
+SET_CONFIGURATIONの再選択でendpoint番号を再利用した際、古いqueue内完了が新規借用を返してしまう条件を実機で再現した。
+bus/SETUP世代に加えて構成世代を持ち、class全体をresetした前のnon-control完了を状態変更前に捨てる。
+EP0とdeferred fenceは別の寿命契約を維持する。
+利点は新しいbufferをHost data完了より早く返さず、古い結果で新しいendpoint flagsを解除しないこと。
+不利益はevent一つにつきuint32_t一つとcore側世代の開始時領域増加。公開API、転送時heap取得は変えない。
+構成世代は投入済みqueueの識別であり、全ISR順序やarm tokenの代わりという扱いにはしない。

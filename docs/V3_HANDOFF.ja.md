@@ -1,6 +1,7 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はDWC2初回SETUP cache同期と失敗時の未公開/回復。関連2件が成功。
+最新実装は構成世代による旧queue完了の隔離。再現後の関連5件が成功。
+直前のDWC2初回SETUP cache同期と失敗時の未公開/回復は関連2件が成功。
 直前のstorage移行`105d998`では標準combo allの全30件が成功（1952.20秒）。
 直前のCCID runtime資源・複数instanceは関連4件と最終境界1件が成功。
 直前のMSCのSET_INTERFACEとBOT回復の区別は関連3件が成功。
@@ -920,3 +921,35 @@ S3 probeは既存no-op backend hookを置換し、clean失敗とinvalidate失敗
 
 この追加後に全30件を再実行したわけではない。全体試験は`105d998`、追加後の関連確認は上の2件と区別する。
 P4/HSの実cache coherency、他SoC実機、残るvendor DWC2 register/FIFOとABI/headerの撤去は未完了。
+
+
+## 再選択した構成への古い完了event混入
+
+2026-10-27。新規configuration_epochで、実HostのSET_CONFIGURATION 1をqueueへ入れた後に
+新規借用を投稿するdeferred job、旧TX/RX完了eventを並べ、workerを再開した。
+修正前はHost data転送前に`old=2 success=2 tx=0 rx=0 bad=63`となり、
+新規RXの未受信buffer内容まで成功として通知した。
+失敗時の試験後片付けではDeviceを先に切断したためHost SDKのhub abortも発生した。
+workerの解除→Host停止→Device停止へ試験側の順序を修正し、製品側は構成世代のfilterを追加した。
+失敗時の原本コピー/結果は`configuration-epoch-before*`として残した。
+
+構成世代はclass全体のreset時に進め、古いnon-control完了をendpoint flagsの変更前に捨てる。
+EP0のSETUP/bus世代、deferred fenceの後片付けは既存契約を維持する。
+queue深さ4/16/31で各3回、新規借用が実dataまで保持され、旧借用だけBusResetで返ることを確認した。
+
+`configuration-epoch-related.xml`はconfiguration_epoch、control_core、cancel_fence、
+cancel_lifecycle、allocation_failureの**5 passed、0 skipped、0 unfinished、204.34秒**。
+774取得点の失敗/回復を含む。10 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_13-42-09-573721/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/configuration-epoch-related*`。
+S2/P4 HSのcompile-only probeも成功。記録は`configuration-epoch-{s2,p4}-build.txt`。
+
+収集対象は31件となったが、全体試験の最新は構成世代追加前`105d998`の30件で、全31件一括成功ではない。
+今回の識別対象はqueue投入済みの旧完了であり、遅れて実行されるDCD ISRやlatched IRQ、
+armごとのtoken、全EP0順序、他SoC/HS実機の検証を完了した扱いにはしない。
+
+
+次の実験候補: workerへ再選択SETUPを投入した後、DCD割込みだけを止めて旧INを実Hostで完了させ、
+latched XFRCを残したまま再構成/新規armを行う。IRQ再開後に新規loanが早期返却されないか確認する。
+現DCDはclose_allでEPDISを要求するが非制御DEPINT全clearをせず、通常EP IRQ処理はtask側のhardware lockを取らない。
+このhardware側境界は構成世代だけでは証明できない。DMA停止待ち・IRQ clear・ISR/task同期と合わせて調べる。

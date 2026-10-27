@@ -231,3 +231,47 @@ S3 probeは既存no-op backend hookを置換し、clean失敗とinvalidate失敗
 
 この追加後に全30件を再実行したわけではない。全体試験は`105d998`、追加後の関連確認は上の2件と区別する。
 P4/HSの実cache coherency、他SoC実機、残るvendor DWC2 register/FIFOとABI/headerの撤去は未完了。
+
+
+## 構成を跨ぐqueue内の完了event
+
+SET_CONFIGURATIONで同じ値を再選択しても、endpointとclass transportを初期化し直す。
+この間に古い完了eventがqueueへ残ると、再openした同じendpoint番号の新しい転送へ適用され得る。
+coreはclass全体のresetごとに構成世代を進め、完了eventの投入時にその世代を記録する。
+non-control endpointの古い世代は、Busy/Claimedを変更する前に捨てる。
+EP0は従来のSETUP serial/bus世代で扱い、deferred fenceの後片付けは構成世代だけでは捨てない。
+
+S3の新しいconfiguration_epoch試験はworkerだけを止め、実Hostの構成再選択SETUPの後ろに
+新規投稿jobと古いTX/RX完了を並べる。修正前はHostのdata転送前に新規借用がSuccessで返り、
+RXは未受信のbuffer内容を成功結果として通知した。修正後は実data完了まで保持する。
+
+公開APIやborrowed bufferの契約は変えない。eventごとにuint32_t一つとcore側の世代を加えるため、
+begin時のqueue領域は増える。転送時のheap取得点は増やさない。
+これは投入済みeventを再構成後に適用しないための補強であり、DCDの遅れたISR/latched IRQや
+DMA armごとの識別をすべて解決したものではない。そこは独自DCDへの移行と合わせて検証する。
+
+
+## 再選択した構成への古い完了event混入
+
+2026-10-27。新規configuration_epochで、実HostのSET_CONFIGURATION 1をqueueへ入れた後に
+新規借用を投稿するdeferred job、旧TX/RX完了eventを並べ、workerを再開した。
+修正前はHost data転送前に`old=2 success=2 tx=0 rx=0 bad=63`となり、
+新規RXの未受信buffer内容まで成功として通知した。
+失敗時の試験後片付けではDeviceを先に切断したためHost SDKのhub abortも発生した。
+workerの解除→Host停止→Device停止へ試験側の順序を修正し、製品側は構成世代のfilterを追加した。
+失敗時の原本コピー/結果は`configuration-epoch-before*`として残した。
+
+構成世代はclass全体のreset時に進め、古いnon-control完了をendpoint flagsの変更前に捨てる。
+EP0のSETUP/bus世代、deferred fenceの後片付けは既存契約を維持する。
+queue深さ4/16/31で各3回、新規借用が実dataまで保持され、旧借用だけBusResetで返ることを確認した。
+
+`configuration-epoch-related.xml`はconfiguration_epoch、control_core、cancel_fence、
+cancel_lifecycle、allocation_failureの**5 passed、0 skipped、0 unfinished、204.34秒**。
+774取得点の失敗/回復を含む。10 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_13-42-09-573721/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/configuration-epoch-related*`。
+S2/P4 HSのcompile-only probeも成功。記録は`configuration-epoch-{s2,p4}-build.txt`。
+
+収集対象は31件となったが、全体試験の最新は構成世代追加前`105d998`の30件で、全31件一括成功ではない。
+今回の識別対象はqueue投入済みの旧完了であり、遅れて実行されるDCD ISRやlatched IRQ、
+armごとのtoken、全EP0順序、他SoC/HS実機の検証を完了した扱いにはしない。

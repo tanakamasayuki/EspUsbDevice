@@ -25,7 +25,7 @@ struct Endpoint {
 };
 struct Event {
   dcd_event_t data;
-  uint32_t bus = 0, setup = 0;
+  uint32_t bus = 0, setup = 0, configurationEpoch = 0;
 };
 struct Control {
   enum class Phase : uint8_t { Idle, Setup, Data, Status, Stalled } phase = Phase::Idle;
@@ -45,7 +45,7 @@ struct Core {
   portMUX_TYPE eventLock = portMUX_INITIALIZER_UNLOCKED;
   QueueHandle_t queue = nullptr;
   Control control;
-  std::atomic<uint32_t> bus{0}, setup{0}, workerBus{0};
+  std::atomic<uint32_t> bus{0}, setup{0}, workerBus{0}, configurationEpoch{0};
   std::atomic<bool> overflow{false}, connected{false}, suspended{false};
   std::atomic<uint8_t> configuration{0};
   std::atomic<tusb_speed_t> speed{TUSB_SPEED_INVALID};
@@ -80,6 +80,7 @@ struct Core {
     return ok;
   }
   void resetDrivers() {
+    configurationEpoch.fetch_add(1);
     configuration.store(0); remoteWakeup = selfPowered = false; sofConsumers = 0;
     control = {};
     for (unsigned i=0;i<unsigned(endpointCount)*2;++i) {
@@ -399,6 +400,10 @@ void runUsbDeviceCore(uint32_t milliseconds) {
       s->control={};s->control.request=e.setup_received;s->control.serial=event.setup;s->control.bus=event.bus;s->control.phase=Control::Phase::Setup;
       if(!s->dispatch() && s->currentControl())s->stallControl();break;
     case DCD_EVENT_XFER_COMPLETE: {
+      // Reconfiguration may already have reopened the same endpoint and
+      // armed a different buffer. Old queued data must not clear its flags
+      // or call the newly initialized class. EP0 uses its own SETUP serial.
+      if((e.xfer_complete.ep_addr&15) && event.configurationEpoch!=s->configurationEpoch.load())break;
       auto *ep=s->endpoint(e.xfer_complete.ep_addr);if(!ep)break;
       {portENTER_CRITICAL(&endpointLock);ep->flags &= uint8_t(~(Busy|Claimed));portEXIT_CRITICAL(&endpointLock);}
       if(!(e.xfer_complete.ep_addr&15))s->completedControl(event);
@@ -535,7 +540,7 @@ void dcd_event_handler(const dcd_event_t *data,bool inIsr) {
     if(s->suspended.exchange(false)) {dcd_event_t resume={};resume.rhport=s->port;resume.event_id=DCD_EVENT_RESUME;dcd_event_handler(&resume,inIsr);}
     if(!(s->sofConsumers&1))return;
   }
-  Event event={};event.data=*data;event.bus=s->bus.load();event.setup=s->setup.load();
+  Event event={};event.data=*data;event.bus=s->bus.load();event.setup=s->setup.load();event.configurationEpoch=s->configurationEpoch.load();
   if(!s->post(event,inIsr))s->overflow.store(true);
   tud_event_hook_cb(data->rhport,data->event_id,inIsr);
 }
