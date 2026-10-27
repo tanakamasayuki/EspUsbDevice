@@ -4,7 +4,11 @@
 派生forkへ移し、Device専用register mapとinterval検証を持つ。MIT/BSD由来表示は保持する。
 `tools/verify_usb_backend.py`をoffline検査入口とし、vendor自動updaterは終了した。
 control_core単独は1 passed（32.31秒）、S2/P4 HS compile-onlyと全29 source依存確認は成功。
-全31件の標準combo allは現在実行中（`native-dwc2-all.xml`）。この変更後の全体結果はまだ未確定。
+全31件の標準combo allは成功（1150.57秒、0 skipped/failed/error/unfinished）。
+62 serial全てSTOPPED、panicなし。774取得点の失敗/回復とheap一致も確認した。
+S3/S2/P4とも全29 sourceの依存とnative DWC2 symbol位置を確認。
+結果は`validation/.pytest-results/native-dwc2-all*`、`native-dwc2-audit.txt`。
+実装commitは`cd6dc24`。
 直前commit `3665309`の全体結果は31 passed（1123.26秒）、62 serial全てSTOPPED、panicなし。
 実機確認はS3–S3のみ。[core API](V3_CORE_API.ja.md)と[由来](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
 依存整理だけをv3完了とはしない。全EP0順序とclass HALT競合、最終API/sample、OS/他SoC/HS実機

@@ -665,4 +665,4 @@ FS ISOの指数表現は[Microsoft公開仕様](https://learn.microsoft.com/en-u
 control_coreの単独試験は1 passed、32.31秒。14 interval条件と不正open 64回の後の
 正常open、heap回復を確認した。最初のfixtureはbus reset前のFIFO未初期化で失敗し、
 private probeでFIFO初期化を明示して修正した。HSの算術確認とHS実通信の確認は区別する。
-全体試験結果は後記する。
+全体31件の結果と未検証範囲は[V3_CORE_API](V3_CORE_API.ja.md#native-dwc2整理後の全体確認)を参照。

@@ -561,4 +561,25 @@ FS ISOの指数表現は[Microsoft公開仕様](https://learn.microsoft.com/en-u
 control_coreの単独試験は1 passed、32.31秒。14 interval条件と不正open 64回の後の
 正常open、heap回復を確認した。最初のfixtureはbus reset前のFIFO未初期化で失敗し、
 private probeでFIFO初期化を明示して修正した。HSの算術確認とHS実通信の確認は区別する。
-全体試験結果は後記する。
+全体試験結果は末尾を参照。
+
+
+## native DWC2整理後の全体確認
+
+2026-10-28、実装`cd6dc24`。標準`pytest --combo all`は**31 passed、0 skipped、
+0 failed/error、0 unfinished、1150.57秒**。62 serial log全てSTOPPED、panicなし。
+774取得点で失敗/回復し、heapは346564→346564 byte。
+control_coreで14 interval条件、不正open 64回後の正常open、IRQ/VBUS/storage回復も成功した。
+
+S2/P4 HSはcompile-only成功。S3/S2/P4の現在の全29 C/C++ sourceについて、旧vendor path、
+TinyUSB設定header、SDK内TinyUSBへのfallback依存がないことを確認した。
+`nm`と`addr2line`でendpoint open/runtimeが`EspUsbDwc2Device.c`、PHY初期化が
+`EspUsbDwc2Phy.c`に解決し、旧`dwc2_core_init`がないことも確認した。
+S2/S3のweak cache no-op、P4のstrong cache処理、Vendor単独での未使用class除去を維持する。
+
+serial原本は`/tmp/pytest-embedded/2026-10-27_19-24-35-352209/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/native-dwc2-all*`、
+依存・symbol記録は`native-dwc2-audit.txt`と各targetのnm/build記録。
+`python3 tools/verify_usb_backend.py`と`git diff --check`も成功した。
+mainは全て取り込み済み、旧tests/examplesはmainとの差分なし。
+DWC2由来コードの本体保守への移行と、全protocol/全SoC実機確認の完了は区別する。

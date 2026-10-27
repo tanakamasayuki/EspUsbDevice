@@ -50,7 +50,8 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
-最新の全実行はplugin 1.10.0の標準`--combo all`による`runtime-core-all.xml`。
+当時の全実行はplugin 1.10.0の標準`--combo all`による`runtime-core-all.xml`。
+最新結果は末尾のnative DWC2確認を参照。
 **27 passed、0 skipped、0 unfinished、1743.12秒**。全caseで両board STOPPED、panicなし。
 serial原本は`/tmp/pytest-embedded/2026-10-27_03-35-23-682254/`、コピーとtranscriptは
 `.pytest-results/runtime-core-all-serial/`と`runtime-core-all-transcript.txt`へ保存した。
@@ -685,3 +686,24 @@ flagなしが成功、55旧flagの0指定も全て明示拒否することを確
 結果は`dwc2-platform-legacy-flags.txt`。旧tests/examplesはmainとの差分なし。
 DWC2のregister/PHY/endpointアルゴリズムは残るvendor 4 fileに依存している。
 mask/unmask SDK自身の故障注入、全EP0順序・class HALT競合、他SoC/HS実機、最終API/sampleは未完了。
+
+
+## native DWC2整理後の全体確認
+
+2026-10-28、実装`cd6dc24`。標準`pytest --combo all`は**31 passed、0 skipped、
+0 failed/error、0 unfinished、1150.57秒**。62 serial log全てSTOPPED、panicなし。
+774取得点で失敗/回復し、heapは346564→346564 byte。
+control_coreで14 interval条件、不正open 64回後の正常open、IRQ/VBUS/storage回復も成功した。
+
+S2/P4 HSはcompile-only成功。S3/S2/P4の現在の全29 C/C++ sourceについて、旧vendor path、
+TinyUSB設定header、SDK内TinyUSBへのfallback依存がないことを確認した。
+`nm`と`addr2line`でendpoint open/runtimeが`EspUsbDwc2Device.c`、PHY初期化が
+`EspUsbDwc2Phy.c`に解決し、旧`dwc2_core_init`がないことも確認した。
+S2/S3のweak cache no-op、P4のstrong cache処理、Vendor単独での未使用class除去を維持する。
+
+serial原本は`/tmp/pytest-embedded/2026-10-27_19-24-35-352209/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/native-dwc2-all*`、
+依存・symbol記録は`native-dwc2-audit.txt`と各targetのnm/build記録。
+`python3 tools/verify_usb_backend.py`と`git diff --check`も成功した。
+mainは全て取り込み済み、旧tests/examplesはmainとの差分なし。
+DWC2由来コードの本体保守への移行と、全protocol/全SoC実機確認の完了は区別する。
