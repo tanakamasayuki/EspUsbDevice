@@ -85,7 +85,7 @@
 // Independent CDC, Vendor, HID, MIDI, MSC and Audio drivers allocate only the
 // resources selected by each Function. Keep their legacy TinyUSB classes off
 // so the Arduino core's archive cannot supply a second class implementation.
-// NCM and Video still use the legacy class path during this migration.
+// Video still uses the legacy class path during this migration.
 #if defined(CFG_TUD_MSC) && CFG_TUD_MSC != 0
 #error "MSC uses runtime resources; do not enable TinyUSB MSC"
 #endif
@@ -112,8 +112,15 @@
 #if CFG_TUD_VENDOR
 #error "v3 Vendor uses instance configuration, not the TinyUSB Vendor driver"
 #endif
-#ifndef CFG_TUD_NCM
-#define CFG_TUD_NCM 1
+#if defined(CFG_TUD_NCM) && CFG_TUD_NCM
+#error "NCM uses runtime Function resources; do not enable TinyUSB NCM"
+#endif
+#undef CFG_TUD_NCM
+#define CFG_TUD_NCM 0
+#if defined(CFG_TUD_NCM_IN_NTB_N) || defined(CFG_TUD_NCM_OUT_NTB_N) || \
+    defined(CFG_TUD_NCM_IN_NTB_MAX_SIZE) || defined(CFG_TUD_NCM_OUT_NTB_MAX_SIZE) || \
+    defined(CFG_TUD_NCM_IN_MAX_DATAGRAMS_PER_NTB) || defined(CFG_TUD_NCM_OUT_MAX_DATAGRAMS_PER_NTB) || defined(CFG_TUD_NET_MTU)
+#error "NCM storage uses EspUsbNetConfig; remove TinyUSB NCM buffer flags"
 #endif
 #ifndef CFG_TUD_VIDEO
 #define CFG_TUD_VIDEO 1
@@ -147,15 +154,6 @@
     defined(CFG_TUD_MIDI_RX_EPSIZE) || defined(CFG_TUD_MIDI_TX_EPSIZE) || defined(CFG_TUD_MIDI_EP_BUFSIZE)
 #error "MIDI packet buffers use EspUsbMidiConfig; remove TinyUSB MIDI build flags"
 #endif
-
-// TinyUSB defaults both NCM NTB pools to 1, which leaves the transmitter with a
-// single buffer: it can only ever have one NTB in flight, so every frame waits
-// for the previous transfer to complete. Upstream measures up to 50% more
-// throughput at 2 and no "request blocked" at 3 (see class/net/ncm.h). Three
-// 3200-byte transmit NTBs cost ~9.6 KB of USB-capable RAM, which is worth it on
-// the S3/P4 parts this library targets.
-#define CFG_TUD_NCM_IN_NTB_N 3
-#define CFG_TUD_NCM_OUT_NTB_N 2
 
 // Audio storage and packet sizes come from the selected runtime formats.
 #if defined(CFG_TUD_AUDIO_CTRL_BUF_SZ) || defined(CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX) || \

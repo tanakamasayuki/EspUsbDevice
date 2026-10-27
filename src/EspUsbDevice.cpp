@@ -40,7 +40,6 @@
 #else
 #define ESP_USB_DEVICE_HAS_DMA_CAPABLE_CHECK 0
 #endif
-#include "class/net/net_device.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -54,19 +53,6 @@
 #else
 #define ESP_USB_DEVICE_HAS_TINYUSB 0
 #define ESP_USB_DEVICE_HAS_ESP_MAC 0
-#endif
-
-// esp_netif / lwIP integration for the NCM class (EspUsbDeviceNet::beginNetwork()).
-// Optional: only referenced when the sketch actually calls beginNetwork().
-#if ESP_USB_DEVICE_HAS_TINYUSB && __has_include("esp_netif.h")
-#include "esp_netif.h"
-#include "esp_netif_defaults.h"
-#include "esp_event.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#define ESP_USB_DEVICE_HAS_ESP_NETIF 1
-#else
-#define ESP_USB_DEVICE_HAS_ESP_NETIF 0
 #endif
 
 // OTA partition access for EspUsbDeviceFirmwareUpdate. Part of ESP-IDF's
@@ -164,7 +150,6 @@ static constexpr uint8_t USB_ENDPOINT_ATTR_INTERRUPT = 0x03;
 static constexpr uint8_t USB_SCSI_CMD_SYNCHRONIZE_CACHE_10 = 0x35;
 
 static EspUsbDevice *g_activeDevice = nullptr;
-static EspUsbDeviceNet *g_activeNet = nullptr;
 // The active Audio function registry lives in EspUsbAudio.cpp.
 
 static void put16(uint8_t *dst, uint16_t value)
@@ -453,9 +438,6 @@ static constexpr uint8_t SYSTEM_CONTROL_REPORT_DESCRIPTOR[] = {
     0xc0,             // End Collection
 };
 
-uint8_t tud_network_mac_address[6] = {0x02, 0x02, 0x84, 0x6a, 0x96, 0x00};
-static bool g_netMacUserSet = false;
-static char g_netMacString[13] = {};
 
 static constexpr uint8_t WEBUSB_VENDOR_CODE = 0x01;
 static constexpr uint8_t MICROSOFT_OS_20_VENDOR_CODE = 0x02;
@@ -656,33 +638,7 @@ extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_c
   return result;
 }
 
-// TinyUSB net (CDC-NCM) callbacks. Signatures must match class/net/net_device.h
-// (included above) so they get C linkage and override TinyUSB's weak defaults —
-// The callback signature must match the class header to override its weak stub.
-bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
-{
-  // Return true = we took ownership of this frame and TinyUSB may reuse its
-  // buffer. We copy out synchronously in handleRecv, so always accept.
-  if (g_activeNet)
-  {
-    return g_activeNet->handleRecv(src, size);
-  }
-  tud_network_recv_renew();
-  return true;
-}
 
-uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg)
-{
-  return g_activeNet ? g_activeNet->handleXmit(dst, ref, arg) : 0;
-}
-
-void tud_network_init_cb(void)
-{
-  if (g_activeNet)
-  {
-    g_activeNet->handleInit();
-  }
-}
 #endif
 
 
@@ -1233,8 +1189,6 @@ esp_err_t encodeUsbString(const char *text, uint16_t *output, size_t capacity, s
 
 bool EspUsbDevice::buildStringDescriptors()
 {
-  bool network = false;
-  for (size_t i = 0; i < classCount_; ++i) network |= classAt(i)->isNet();
   const size_t nameEnd = FIRST_FUNCTION_STRING_INDEX + classCount_;
   size_t stringEnd = nameEnd;
   for (size_t i = 0; i < classCount_; ++i) {
@@ -1246,7 +1200,7 @@ bool EspUsbDevice::buildStringDescriptors()
     if (index == 1) return config_.manufacturer;
     if (index == 2) return config_.product;
     if (index == 3) return config_.serialNumber;
-    if (index == 4) return network ? g_netMacString : nullptr;
+    if (index == 4) return nullptr;
     if (index < nameEnd) {
       const char *name = classAt(index - FIRST_FUNCTION_STRING_INDEX)->functionName();
       return name && *name ? name : nullptr;
@@ -1616,7 +1570,7 @@ bool EspUsbDevice::buildDescriptors()
   // CDC port() is a logical index in descriptor order. Its independent bulk
   // driver dispatches by interface number, without TinyUSB CDC instance slots.
   // HID functions are emitted first, but are never counted as CDC ports.
-  uint8_t cdcInstance = 0;
+  uint8_t cdcInstance = 0, netInstance = 0;
   size_t auxiliaryIndex = FIRST_FUNCTION_STRING_INDEX + classCount_;
   for (size_t i = 0; i < classCount_; i++)
   {
@@ -1630,7 +1584,7 @@ bool EspUsbDevice::buildDescriptors()
     {
       stringIndex = static_cast<uint8_t>(FIRST_FUNCTION_STRING_INDEX + i);
     }
-    classAt(i)->assignFunctionIds(classAt(i)->isCdc() ? cdcInstance++ : 0,
+    classAt(i)->assignFunctionIds(classAt(i)->isCdc() ? cdcInstance++ : classAt(i)->isNet() ? netInstance++ : 0,
                                    stringIndex);
     const size_t auxiliaryCount = classAt(i)->auxiliaryStringCount();
     if (auxiliaryCount > 256 - auxiliaryIndex) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
@@ -2510,551 +2464,6 @@ EspUsbDeviceClass::EspUsbDeviceClass(EspUsbDevice &device) : device_(device)
 EspUsbDeviceClass::~EspUsbDeviceClass()
 {
   device_.removeClass(this);
-}
-
-#if ESP_USB_DEVICE_HAS_TINYUSB
-// Shared TX path used by both the sendFrame() raw API and the esp_netif transmit
-// callback.
-//
-// TinyUSB requires that its device API be called from the same context as
-// tud_task() (see device/usbd.h). tud_network_xmit() is not an exception: it
-// copies the datagram via tud_network_xmit_cb() and then goes all the way to
-// usbd_edpt_xfer() in the caller's context. Calling it from lwIP's tcpip task,
-// as this path used to, therefore races the usbd task on the dwc2 endpoint and
-// FIFO state. Under a sustained device->host stream the two overlap constantly
-// (measured: ~70% of transfer completions landed inside such a call), and the
-// IN endpoint eventually ends up armed with packets to send but an empty FIFO.
-// No completion interrupt ever arrives, the NTB is never returned to the pool,
-// and tud_network_can_xmit() stays false forever — the USB network is dead
-// until reboot.
-//
-// So producers only ever copy the frame into a pooled buffer and hand it to the
-// usbd task through a queue; espUsbDeviceNetDrainTx() below does every TinyUSB
-// call, from the usbd task, in espusb::internal's tud_task() loop. The copy also
-// keeps callers free to pass a stack buffer or an lwIP pbuf that is released the
-// moment we return.
-static constexpr size_t NET_TX_FRAME_MAX = 1600;
-// Deep enough to absorb the burst lwIP hands us between two usbd task turns
-// without so much buffering that TCP loses its feedback signal. Four slots is
-// ~6.4 KB.
-static constexpr size_t NET_TX_SLOTS = 4;
-// How long a producer waits for a free slot before reporting the frame as
-// dropped. Dropping is the correct backpressure here: TCP retransmits, whereas
-// blocking the tcpip task stalls every other interface with it.
-static constexpr TickType_t NET_TX_ACQUIRE_TIMEOUT = pdMS_TO_TICKS(20);
-
-struct EspUsbDeviceNetTxSlot
-{
-  uint16_t len;
-  uint8_t data[NET_TX_FRAME_MAX];
-};
-
-static EspUsbDeviceNetTxSlot *g_netTxSlots = nullptr;
-static QueueHandle_t g_netTxPending = nullptr; // producer -> usbd task
-static QueueHandle_t g_netTxFree = nullptr;    // usbd task -> producer
-
-static bool espUsbDeviceNetTxInit()
-{
-  if (g_netTxPending && g_netTxFree && g_netTxSlots)
-  {
-    return true;
-  }
-  if (!g_netTxSlots)
-  {
-    g_netTxSlots = static_cast<EspUsbDeviceNetTxSlot *>(
-        calloc(NET_TX_SLOTS, sizeof(EspUsbDeviceNetTxSlot)));
-  }
-  if (!g_netTxPending)
-  {
-    g_netTxPending = xQueueCreate(NET_TX_SLOTS, sizeof(EspUsbDeviceNetTxSlot *));
-  }
-  if (!g_netTxFree)
-  {
-    g_netTxFree = xQueueCreate(NET_TX_SLOTS, sizeof(EspUsbDeviceNetTxSlot *));
-    if (g_netTxFree && g_netTxSlots)
-    {
-      for (size_t i = 0; i < NET_TX_SLOTS; i++)
-      {
-        EspUsbDeviceNetTxSlot *slot = &g_netTxSlots[i];
-        xQueueSend(g_netTxFree, &slot, 0);
-      }
-    }
-  }
-  return g_netTxSlots && g_netTxPending && g_netTxFree;
-}
-
-// Intentionally no teardown: the pool outlives any single EspUsbDeviceNet, and
-// freeing it would race the usbd task draining the queue. It is one allocation
-// for the lifetime of the process, as the old static transmit buffer was.
-
-static bool espUsbDeviceNetTxFrame(const uint8_t *data, uint16_t len)
-{
-  if (!data || len == 0 || len > NET_TX_FRAME_MAX)
-  {
-    return false;
-  }
-  if (!espUsbDeviceNetTxInit())
-  {
-    return false;
-  }
-
-  EspUsbDeviceNetTxSlot *slot = nullptr;
-  if (xQueueReceive(g_netTxFree, &slot, NET_TX_ACQUIRE_TIMEOUT) != pdTRUE)
-  {
-    return false; // transmitter is behind; drop and let TCP retransmit
-  }
-  memcpy(slot->data, data, len);
-  slot->len = len;
-  if (xQueueSend(g_netTxPending, &slot, 0) != pdTRUE)
-  {
-    xQueueSend(g_netTxFree, &slot, 0);
-    return false;
-  }
-  return true;
-}
-#endif
-
-// Hands queued frames to TinyUSB. Called only from the usbd task, between
-// tud_task() turns - this is the one place in the library that may call the
-// tud_network_* API.
-extern "C" void espUsbDeviceNetDrainTx(void)
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (!g_netTxPending)
-  {
-    return;
-  }
-  EspUsbDeviceNetTxSlot *slot = nullptr;
-  while (xQueuePeek(g_netTxPending, &slot, 0) == pdTRUE)
-  {
-    if (!tud_network_can_xmit(slot->len))
-    {
-      // All NTBs are in flight. Leave the frame queued; the next turn (or the
-      // transfer-complete callback that frees an NTB) picks it up.
-      break;
-    }
-    // Synchronous in current TinyUSB: copies through tud_network_xmit_cb() and
-    // starts the transfer before returning, so the slot is reusable right after.
-    tud_network_xmit(slot->data, slot->len);
-    xQueueReceive(g_netTxPending, &slot, 0);
-    xQueueSend(g_netTxFree, &slot, 0);
-  }
-#endif
-}
-
-#if ESP_USB_DEVICE_HAS_ESP_NETIF
-static esp_netif_driver_base_t g_netDriverBase = {};
-static esp_netif_ip_info_t g_netIpInfo = {};
-
-static esp_err_t espUsbDeviceNetPostAttach(esp_netif_t *netif, esp_netif_iodriver_handle h)
-{
-  esp_netif_driver_base_t *base = static_cast<esp_netif_driver_base_t *>(h);
-  base->netif = netif;
-  return ESP_OK;
-}
-
-static void espUsbDeviceNetFreeRx(void *h, void *buffer)
-{
-  (void)h;
-  free(buffer);
-}
-
-// esp_netif calls this from the tcpip task to send a frame to the USB host.
-static esp_err_t espUsbDeviceNetTransmit(void *h, void *buffer, size_t len)
-{
-  (void)h;
-  if (!g_activeNet || len == 0 || len > 0xffff)
-  {
-    return ESP_ERR_INVALID_STATE;
-  }
-  return espUsbDeviceNetTxFrame(static_cast<const uint8_t *>(buffer), static_cast<uint16_t>(len)) ? ESP_OK : ESP_FAIL;
-}
-#endif
-
-EspUsbDeviceNet::EspUsbDeviceNet(EspUsbDevice &device) : EspUsbDeviceClass(device)
-{
-}
-
-EspUsbDeviceNet::~EspUsbDeviceNet()
-{
-  end();
-#if ESP_USB_DEVICE_HAS_ESP_NETIF
-  if (netif_)
-  {
-    esp_netif_destroy(static_cast<esp_netif_t *>(netif_));
-    netif_ = nullptr;
-    g_netDriverBase.netif = nullptr;
-  }
-#endif
-  netStarted_ = false;
-}
-
-bool EspUsbDeviceNet::begin()
-{
-  if (g_activeNet && g_activeNet != this)
-  {
-    return false;
-  }
-  g_activeNet = this;
-  return true;
-}
-
-bool EspUsbDeviceNet::afterDeviceStarted()
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  // Bring the network link up so the host starts exchanging frames.
-  tud_network_link_state(0, true);
-#endif
-  return true;
-}
-
-void EspUsbDeviceNet::end()
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  // Device::end() deinitializes TinyUSB before ending its classes. An NCM
-  // link notification after that would use deleted synchronization objects
-  // and a stopped controller; only send it while the stack is initialized.
-  if (g_activeNet == this && tud_inited())
-  {
-    tud_network_link_state(0, false);
-  }
-#endif
-  if (g_activeNet == this)
-  {
-    g_activeNet = nullptr;
-  }
-}
-
-uint16_t EspUsbDeviceNet::configurationDescriptor(uint8_t *dst, uint8_t interfaceNumber, uint8_t endpointNumber, uint16_t endpointSize)
-{
-  if (endpointNumber == 0 || endpointNumber > 14)
-  {
-    return 0;
-  }
-  if (!dst) return TUD_CDC_NCM_DESC_LEN;
-#if ESP_USB_DEVICE_HAS_ESP_MAC
-  if (!g_netMacUserSet)
-  {
-    esp_read_mac(tud_network_mac_address, ESP_MAC_ETH);
-  }
-#endif
-  static const char hex[] = "0123456789ABCDEF";
-  for (size_t i = 0; i < 6; ++i)
-  {
-    g_netMacString[i * 2] = hex[tud_network_mac_address[i] >> 4];
-    g_netMacString[i * 2 + 1] = hex[tud_network_mac_address[i] & 0x0f];
-  }
-  g_netMacString[12] = '\0';
-
-  const uint8_t epNotification = static_cast<uint8_t>(0x80 | endpointNumber);
-  const uint8_t epOut = static_cast<uint8_t>(endpointNumber + 1);
-  const uint8_t epIn = static_cast<uint8_t>(0x80 | (endpointNumber + 1));
-  const uint8_t descriptor[] = {
-      TUD_CDC_NCM_DESCRIPTOR(interfaceNumber, 0, 4,
-                             epNotification, 64, epOut, epIn, endpointSize,
-                             1514, 16, 0),
-  };
-  memcpy(dst, descriptor, sizeof(descriptor));
-  return sizeof(descriptor);
-}
-
-void EspUsbDeviceNet::macAddress(const uint8_t mac[6])
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  memcpy(tud_network_mac_address, mac, 6);
-  g_netMacUserSet = true;
-#else
-  (void)mac;
-#endif
-}
-
-const uint8_t *EspUsbDeviceNet::macAddress() const
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  return tud_network_mac_address;
-#else
-  return nullptr;
-#endif
-}
-
-void EspUsbDeviceNet::onFrame(FrameCallback callback)
-{
-  frameCallback_ = callback;
-}
-
-bool EspUsbDeviceNet::linkUp() const
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  // Reflect the actual USB attach/detach state rather than latching true after
-  // the first configuration.
-  return tud_mounted();
-#else
-  return false;
-#endif
-}
-
-bool EspUsbDeviceNet::sendFrame(const uint8_t *data, size_t length)
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (length == 0 || length > 0xffff)
-  {
-    return false;
-  }
-  // Copies `data` into a pooled buffer and queues it for the usbd task, exactly
-  // like the esp_netif TX path, so the caller may pass a stack/temporary buffer
-  // and this is safe to mix with beginNetwork(). Returns false when the queue is
-  // full, i.e. the transmitter has not kept up.
-  return espUsbDeviceNetTxFrame(data, static_cast<uint16_t>(length));
-#else
-  (void)data;
-  (void)length;
-  return false;
-#endif
-}
-
-bool EspUsbDeviceNet::handleRecv(const uint8_t *src, uint16_t size)
-{
-#if ESP_USB_DEVICE_HAS_TINYUSB
-#if ESP_USB_DEVICE_HAS_ESP_NETIF
-  if (netStarted_ && netif_ && src && size)
-  {
-    // Copy out of TinyUSB's buffer into one esp_netif owns; it frees it via
-    // espUsbDeviceNetFreeRx once lwIP is done, so we can renew immediately.
-    uint8_t *buf = static_cast<uint8_t *>(malloc(size));
-    if (buf)
-    {
-      memcpy(buf, src, size);
-      if (esp_netif_receive(static_cast<esp_netif_t *>(netif_), buf, size, buf) != ESP_OK)
-      {
-        free(buf);
-      }
-    }
-  }
-  else
-#endif
-      if (frameCallback_ && src && size)
-  {
-    frameCallback_(src, size);
-  }
-  // We consumed the frame synchronously; allow TinyUSB to receive the next one.
-  tud_network_recv_renew();
-  return true;
-#else
-  (void)src;
-  (void)size;
-  return true;
-#endif
-}
-
-uint16_t EspUsbDeviceNet::handleXmit(uint8_t *dst, void *ref, uint16_t arg)
-{
-  if (!dst || !ref || arg == 0)
-  {
-    return 0;
-  }
-  // Runs inside tud_network_xmit(), i.e. on the usbd task, with `ref` pointing
-  // at the queued slot espUsbDeviceNetDrainTx() passed in.
-  memcpy(dst, ref, arg);
-  return arg;
-}
-
-void EspUsbDeviceNet::handleInit()
-{
-  // tud_network init hook; link state is derived from tud_mounted() in linkUp().
-}
-
-void EspUsbDeviceNet::ipConfig(IPAddress local, IPAddress gateway, IPAddress subnet)
-{
-  cfgIp_ = static_cast<uint32_t>(local);
-  cfgGateway_ = static_cast<uint32_t>(gateway);
-  cfgNetmask_ = static_cast<uint32_t>(subnet);
-}
-
-void EspUsbDeviceNet::dhcpServer(bool enable)
-{
-  dhcpServer_ = enable;
-  if (enable)
-  {
-    dhcpClient_ = false;
-  }
-}
-
-void EspUsbDeviceNet::dhcpClient(bool enable)
-{
-  dhcpClient_ = enable;
-  if (enable)
-  {
-    dhcpServer_ = false;
-  }
-}
-
-void EspUsbDeviceNet::dhcpAdvertiseGateway(bool enable)
-{
-  dhcpAdvertiseGateway_ = enable;
-}
-
-void EspUsbDeviceNet::dhcpDns(IPAddress dns)
-{
-  dhcpDns_ = static_cast<uint32_t>(dns);
-}
-
-void EspUsbDeviceNet::defaultRoute(bool enable)
-{
-  defaultRoute_ = enable;
-}
-
-bool EspUsbDeviceNet::networkUp() const
-{
-  return netStarted_;
-}
-
-IPAddress EspUsbDeviceNet::localIP() const
-{
-#if ESP_USB_DEVICE_HAS_ESP_NETIF
-  if (netif_)
-  {
-    esp_netif_ip_info_t info = {};
-    if (esp_netif_get_ip_info(static_cast<esp_netif_t *>(netif_), &info) == ESP_OK)
-    {
-      return IPAddress(info.ip.addr);
-    }
-  }
-#endif
-  return IPAddress(cfgIp_);
-}
-
-bool EspUsbDeviceNet::beginNetwork()
-{
-#if ESP_USB_DEVICE_HAS_ESP_NETIF
-  if (netStarted_)
-  {
-    return true;
-  }
-
-  // Ensure the TCP/IP stack and default event loop exist. Both are idempotent —
-  // ESP_ERR_INVALID_STATE just means something already initialized them.
-  esp_netif_init();
-  esp_err_t evt = esp_event_loop_create_default();
-  if (evt != ESP_OK && evt != ESP_ERR_INVALID_STATE)
-  {
-    return false;
-  }
-
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (!espUsbDeviceNetTxInit())
-  {
-    return false;
-  }
-#endif
-
-  // Defaults: 192.168.7.1 / gw 192.168.7.1 / mask 255.255.255.0 (network order).
-  const uint32_t defIp = static_cast<uint32_t>(IPAddress(192, 168, 7, 1));
-  const uint32_t defMask = static_cast<uint32_t>(IPAddress(255, 255, 255, 0));
-  g_netIpInfo.ip.addr = cfgIp_ ? cfgIp_ : defIp;
-  g_netIpInfo.gw.addr = cfgGateway_ ? cfgGateway_ : g_netIpInfo.ip.addr;
-  g_netIpInfo.netmask.addr = cfgNetmask_ ? cfgNetmask_ : defMask;
-
-  // Build a custom inherent config (avoids depending on esp_eth's event symbols
-  // that ESP_NETIF_INHERENT_DEFAULT_ETH would pull in). Our frames are standard
-  // Ethernet, so we reuse the ETH lwIP netstack glue.
-  esp_netif_inherent_config_t base = {};
-  uint32_t flags = ESP_NETIF_FLAG_AUTOUP;
-  if (dhcpServer_)
-  {
-    flags |= ESP_NETIF_DHCP_SERVER;
-  }
-  else if (dhcpClient_)
-  {
-    flags |= ESP_NETIF_DHCP_CLIENT;
-  }
-  base.flags = static_cast<esp_netif_flags_t>(flags);
-  base.ip_info = &g_netIpInfo;
-  base.if_key = "USB_NCM";
-  base.if_desc = "usbncm";
-  // Low priority by default so a coexisting Wi-Fi STA (100) stays the ESP's
-  // default netif; raise above it only when the USB host is meant to be our
-  // uplink (defaultRoute(true)). esp_netif auto-selects the default by priority.
-  base.route_prio = defaultRoute_ ? 255 : 10;
-
-  esp_netif_driver_ifconfig_t driver = {};
-  driver.handle = &g_netDriverBase;
-  driver.transmit = espUsbDeviceNetTransmit;
-  driver.driver_free_rx_buffer = espUsbDeviceNetFreeRx;
-
-  esp_netif_config_t cfg = {};
-  cfg.base = &base;
-  cfg.driver = &driver;
-  cfg.stack = ESP_NETIF_NETSTACK_DEFAULT_ETH;
-
-  esp_netif_t *netif = esp_netif_new(&cfg);
-  if (!netif)
-  {
-    return false;
-  }
-  netif_ = netif;
-
-  g_netDriverBase.post_attach = espUsbDeviceNetPostAttach;
-  if (esp_netif_attach(netif, &g_netDriverBase) != ESP_OK)
-  {
-    // Destroy the netif so a retry does not fail permanently on the duplicate
-    // if_key "USB_NCM", and so the netif is not leaked.
-    esp_netif_destroy(netif);
-    netif_ = nullptr;
-    return false;
-  }
-  // The iMACAddress descriptor (tud_network_mac_address) is the MAC assigned to
-  // the *host* end of the USB link, so our own netif must use a *different* MAC
-  // on this point-to-point segment — otherwise both ends share one MAC and ARP
-  // resolves the peer to the host's own address. Toggle the low bit of the last
-  // byte, exactly like TinyUSB's net_lwip_webserver. The USB link is an isolated
-  // segment, so this derived address never leaks onto a real network.
-  uint8_t devMac[6];
-  memcpy(devMac, tud_network_mac_address, 6);
-  devMac[5] ^= 0x01;
-  esp_netif_set_mac(netif, devMac);
-
-  // Start the interface, then apply addressing.
-  esp_netif_action_start(netif, nullptr, 0, nullptr);
-  if (dhcpClient_)
-  {
-    esp_netif_dhcpc_start(netif);
-  }
-  else
-  {
-    esp_netif_dhcps_stop(netif);
-    esp_netif_set_ip_info(netif, &g_netIpInfo);
-    if (dhcpServer_)
-    {
-      // By default advertise neither a router (option 3) nor DNS (option 6): the
-      // device is a local endpoint, not a forwarding gateway, so advertising
-      // itself as the host's default route would black-hole its off-link traffic.
-      // The host still gets the on-link route and reaches the device by IP; its
-      // real internet path is untouched. dhcpAdvertiseGateway()/dhcpDns() opt in
-      // when the device really does forward or has a reachable DNS.
-      const uint8_t routerOffer = dhcpAdvertiseGateway_ ? 1 : 0;
-      const uint8_t dnsOffer = dhcpDns_ ? 1 : 0;
-      if (dhcpDns_)
-      {
-        esp_netif_dns_info_t dns = {};
-        dns.ip.type = ESP_IPADDR_TYPE_V4;
-        dns.ip.u_addr.ip4.addr = dhcpDns_;
-        esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns);
-      }
-      esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS,
-                             const_cast<uint8_t *>(&routerOffer), sizeof(routerOffer));
-      esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
-                             const_cast<uint8_t *>(&dnsOffer), sizeof(dnsOffer));
-      esp_netif_dhcps_start(netif);
-    }
-  }
-  // Mark the link connected so lwIP brings the interface up.
-  esp_netif_action_connected(netif, nullptr, 0, nullptr);
-
-  netStarted_ = true;
-  return true;
-#else
-  return false;
-#endif
 }
 
 EspUsbDeviceMscRamDisk::EspUsbDeviceMscRamDisk(uint8_t *storage, uint32_t blockCount, uint16_t blockSize)

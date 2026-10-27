@@ -42,6 +42,8 @@ EspUsbDeviceMsc *msc[2] = {};
 EspUsbAudioFunction *audio = nullptr;
 EspUsbDeviceDfu *dfu[2] = {};
 uint8_t dfuBuffer[130];
+EspUsbDeviceNet *net[2] = {};
+alignas(64) uint8_t netRx[4096], netTx[4096];
 alignas(64) uint8_t mscBuffer[512];
 EspUsbDeviceMidiPacket midiRx[19], midiTx[21];
 EspUsbDeviceHidCustom *inputOnly = nullptr;
@@ -67,7 +69,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 32 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 37 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -132,13 +134,23 @@ void loop() {
           points += mode == 27 ? 8 : mode == 26 ? 5 : 6; // State, selected PCM buffers, feedback and class registry.
           if (mode != 25) ++points;
         }
-        if (mode >= 28) {
+        if (mode >= 28 && mode <= 31) {
           dfu[0] = new EspUsbDeviceDfu(device, mode == 28 ? EspUsbDeviceDfuMode::Runtime : EspUsbDeviceDfuMode::Download);
           EspUsbDfuConfig firmware; firmware.transferBytes = 129;
           if (mode == 30) firmware.transferBuffer = dfuBuffer + 1;
           ok &= dfu[0]->configure(firmware) == ESP_OK;
           points += mode == 29 || mode == 31 ? 4 : 3;
           if (mode == 31) { dfu[1] = new EspUsbDeviceDfu(device); points += 2; }
+        }
+        if (mode >= 32) {
+          net[0] = new EspUsbDeviceNet(device);
+          EspUsbNetConfig network; network.ntbInBytes = network.ntbOutBytes = 2048;
+          if (mode == 33) network.txBuffers = network.rxBuffers = 0;
+          if (mode == 34) network.txBuffers = 0;
+          if (mode == 35) network.rxBuffers = 0;
+          if (mode == 36) { network.txBuffers = network.rxBuffers = 2; network.txBuffer = netTx; network.rxBuffer = netRx; network.txBufferBytes = sizeof(netTx); network.rxBufferBytes = sizeof(netRx); }
+          ok &= net[0]->configure(network) == ESP_OK;
+          points += mode == 33 ? 4 : mode == 34 || mode == 35 ? 6 : mode == 36 ? 5 : 7;
         }
         points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.
         EspUsbDeviceConfig identity;
@@ -176,6 +188,23 @@ void loop() {
         for (auto &function : msc) { delete function; function = nullptr; }
         delete audio; audio = nullptr;
         for (auto &function : dfu) { delete function; function = nullptr; }
+        for (auto &function : net) { delete function; function = nullptr; }
+      }
+      {
+        // Two NCMs fit the S3's IN endpoints; a further Vendor does not.
+        EspUsbDevice pair; EspUsbDeviceNet first(pair), second(pair);
+        for (unsigned point = 1; point <= 15 && ok; ++point) {
+          calls = 0; failAt = point; failureReached = false;
+          const bool rejected = !pair.begin() && pair.lastError() == ESP_ERR_NO_MEM;
+          failAt = 0;
+          ok &= rejected && failureReached && pair.end() == ESP_OK && !outstanding && !badFree && !overflow;
+          if (!ok) { Serial.printf("PAIR_FAULT_FAILED point=%u live=%u\r\n",point,outstanding); break; }
+          ++failures; calls = 0;
+          const bool recovered = pair.begin();
+          if (!recovered || calls != 15) Serial.printf("PAIR_RECOVERY_FAILED point=%u calls=%u error=%d\r\n",point,calls,int(pair.lastError()));
+          ok &= recovered && calls == 15 && pair.end() == ESP_OK && !outstanding;
+          delay(10); if (ok) ++recoveries;
+        }
       }
       vendor.configure(EspUsbVendorConfig());
       delay(10);

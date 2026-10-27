@@ -568,3 +568,36 @@ countとtextはbeginの処理中に安定していることがwriter契約であ
 `validation/.pytest-results/function-auxiliary-strings*`。
 通常収集は17件のまま。今回の関連3件は、DFU段階の全17件成功とは別の結果である。
 NCMのclass/NTB pool/MAC globalはまだlegacyのままで、この変更だけで複数NCM通信に対応したとはしない。
+
+
+## NCM classの独自化
+
+2026-10-27。固定NTB poolとMAC、永続frame queue、network worker専用drainを撤去した。
+EspUsbDeviceNet.cppの独自driverでFunctionごとのNTBとslot metadata、mandatory通知を確保する。
+外部DMA領域/方向0/Host容量再交渉/alt時abortとFIFO fence、SET_INTERFACEだけのDATA PID初期化を実装した。
+補助文字列にMACを割当て、既定MACもFunctionごとに分ける。
+IP層はEspUsbDeviceNetif.cppへ分離し、beginNetworkを呼んだ場合だけglueを導入する。
+endNetworkとDevice.endでnetifとkey/IP stateを破棄する。通常rawではIP処理をリンクしない。
+APIと移行・残る検証はV3_NCM_API.ja.mdを参照。
+
+
+## S3–S3の実測
+
+`ncm-driver-related.xml`は**3 passed、0 skipped、0 unfinished、143.77秒**。
+NTB容量2048/3200/8192、1/2/3 buffer、外部pool、14..1514 byte frame、ZLP、まとめ送り、
+容量再交渉と不正要求後の復帰、heap回復と605取得点の確保失敗/回復を含む。
+手動Hostで22種類の不正NTBを捨てて直後の正常frameを返し、block長0、末尾NDP、逆順datagram、
+8128 byteのhardware armを跨いだpayload、独立2 NCMとMAC、12回のalt切替とPID初期化を確認した。
+serial原本は`/tmp/pytest-embedded/2026-10-26_20-17-53-324449/`。
+
+`ncm-ip-related.xml`は**2 passed、0 skipped、0 unfinished、154.11秒**。
+3構成ともDHCPで192.168.7.2を取得しTCPの8193 byteが一致、IP停止後にraw通信へ戻れた。
+2 NCMの別IP/keyでの同時作成・片方停止・再作成も成功した。
+serial原本は`/tmp/pytest-embedded/2026-10-27_00-57-48-429795/`。
+両実行とも各case両board STOPPED、panicなし。コピーとJUnit/transcriptは
+`validation/.pytest-results/ncm-driver-related*`と`ncm-ip-related*`。
+Netのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
+通常収集は19件で、直近の全17件成功はDFU時点。今回の関連結果と全19件一括を混同しない。
+
+次は全19件の一括確認。残るlegacy classはVideoで、共通EP0/core/DCDもまだTinyUSB。
+NCMはNTB16/CRCなし、PC/OS・他SoC/HSとroute optionの詳細は未検証。

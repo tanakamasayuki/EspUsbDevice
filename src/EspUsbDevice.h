@@ -711,8 +711,8 @@ private:
   friend class EspUsbDeviceMsc;
   friend class EspUsbHidFunction;
   friend struct EspUsbHidState;
-  // String descriptor indices 1-3 are manufacturer / product / serial and 4 is
-  // the CDC-NCM MAC address. Per-function names start after those.
+  // String descriptor indices 1-3 are manufacturer / product / serial. Index
+  // 4 is reserved; Function names precede their class-specific strings.
   static constexpr uint8_t FIRST_FUNCTION_STRING_INDEX = 5;
   bool buildDescriptors();
   bool buildStringDescriptors();
@@ -1154,6 +1154,21 @@ private:
   LineStateCallback lineStateCallback_;
 };
 
+struct EspUsbNetConfig {
+  size_t ntbInBytes = 3200, ntbOutBytes = 3200;
+  size_t txBuffers = 3, rxBuffers = 2;
+  size_t maxDatagrams = 8;
+  uint16_t maxFrameBytes = 1514;
+  uint8_t *txBuffer = nullptr, *rxBuffer = nullptr;
+  size_t txBufferBytes = 0, rxBufferBytes = 0;
+  const char *name = nullptr;
+};
+struct EspUsbNetStats {
+  uint32_t txFrames = 0, rxFrames = 0, invalidNtbs = 0;
+};
+struct EspUsbNetState;
+struct EspUsbNetifGlue;
+
 // CDC-NCM (USB network / "USB Ethernet") device function. Presents the device
 // to a USB host as a network adapter. Phase 1 exposes raw Ethernet frames via
 // onFrame() / sendFrame(); lwIP integration (a netif + DHCP server) is layered
@@ -1161,14 +1176,17 @@ private:
 class EspUsbDeviceNet : public EspUsbDeviceClass
 {
 public:
-  // callback(frame data, length): a complete Ethernet frame arrived from the host.
+  // A complete frame on the USB worker; data is valid until callback returns.
   using FrameCallback = std::function<void(const uint8_t *, size_t)>;
 
   explicit EspUsbDeviceNet(EspUsbDevice &device);
   ~EspUsbDeviceNet() override;
 
+  esp_err_t configure(const EspUsbNetConfig &config);
+  const EspUsbNetConfig &configuration() const { return netConfig_; }
   bool begin() override;
-  bool afterDeviceStarted() override;
+  esp_err_t startError() const override { return startError_; }
+  void prepareToStop() override;
   void end() override;
   bool isHid() const override { return false; }
   bool isNet() const override { return true; }
@@ -1177,67 +1195,82 @@ public:
   uint8_t endpointCount() const override { return 2; }          // notif IN + bulk duplex
 
   // Set the device's 6-byte MAC address. Call before EspUsbDevice::begin().
-  // Defaults to a fixed locally-administered address if not set.
-  void macAddress(const uint8_t mac[6]);
+  // Defaults to a locally-administered address derived per Function.
+  esp_err_t macAddress(const uint8_t mac[6]);
   const uint8_t *macAddress() const;
 
-  void onFrame(FrameCallback callback);
+  esp_err_t onFrame(FrameCallback callback);
   // Send one Ethernet frame to the host. Returns false if the link cannot
   // currently accept a frame of this size (caller may retry).
   bool sendFrame(const uint8_t *data, size_t length);
   bool linkUp() const;
+  size_t ntbInCapacity() const;
+  size_t ntbOutCapacity() const;
+  size_t txBufferCount() const;
+  size_t rxBufferCount() const;
+  EspUsbNetStats stats() const;
+  const char *functionName() const override { return netConfig_.name; }
+  void assignFunctionIds(uint8_t instance, uint8_t nameIndex) override;
+  size_t auxiliaryStringCount() const override { return 1; }
+  const char *auxiliaryString(size_t index) const override { return index ? nullptr : macString_; }
+  void assignAuxiliaryStringIds(uint8_t first) override { macIndex_ = first; }
 
   // --- Optional lwIP / esp_netif integration (Phase 2) ---
   // Configure the interface's IPv4 address, gateway, and subnet mask. Used for a
   // static address and as the DHCP server's own address/pool base. Defaults to
   // 192.168.7.1 / 192.168.7.1 / 255.255.255.0. Call before beginNetwork().
-  void ipConfig(IPAddress local, IPAddress gateway, IPAddress subnet);
+  esp_err_t ipConfig(IPAddress local, IPAddress gateway, IPAddress subnet);
   // Run a DHCP server so the USB host is handed an address automatically. OFF by
   // default (never enabled unless requested). Mutually exclusive with dhcpClient.
-  void dhcpServer(bool enable);
+  esp_err_t dhcpServer(bool enable);
   // Act as a DHCP client (get our address from the network, e.g. when the PC
   // bridges the USB NIC onto its LAN). OFF by default. Mutually exclusive with
   // dhcpServer. When neither is enabled the static ipConfig() address is used.
-  void dhcpClient(bool enable);
+  esp_err_t dhcpClient(bool enable);
   // By default the DHCP server does NOT advertise itself as a gateway or DNS —
   // the device is a local endpoint, and advertising a non-forwarding gateway as
   // the host's default route would black-hole its off-link traffic. Enable these
   // only if the device actually forwards (e.g. bridged to another uplink) or the
   // advertised DNS is reachable. Call before beginNetwork().
-  void dhcpAdvertiseGateway(bool enable);  // offer the ipConfig() gateway as the DHCP router (option 3)
-  void dhcpDns(IPAddress dns);             // offer this DNS server (option 6); 0.0.0.0 = do not offer
+  esp_err_t dhcpAdvertiseGateway(bool enable);  // offer the ipConfig() gateway as the DHCP router (option 3)
+  esp_err_t dhcpDns(IPAddress dns);             // offer this DNS server (option 6); 0.0.0.0 = do not offer
   // Make this interface the ESP's own default route (esp_netif default netif).
   // OFF by default: the USB netif uses a low route priority so a coexisting Wi-Fi
   // STA (priority 100) stays the default and the USB link never hijacks the ESP's
   // outbound traffic. Enable only when the ESP should reach the internet *through*
   // the USB host (e.g. a PC that bridges/NATs to it, with dhcpClient(true)). Call
   // before beginNetwork().
-  void defaultRoute(bool enable);
+  esp_err_t defaultRoute(bool enable);
   // Bring up the esp_netif/lwIP interface bound to this NCM function. Call once
   // after EspUsbDevice::begin(). If never called, the class stays a raw-frame
   // transport (onFrame/sendFrame) with no IP stack — useful for host-side bridging.
   bool beginNetwork();
+  bool endNetwork();
   bool networkUp() const;
   IPAddress localIP() const;
 
-  // Internal (called from TinyUSB tud_network_* callbacks).
-  bool handleRecv(const uint8_t *src, uint16_t size);
-  uint16_t handleXmit(uint8_t *dst, void *ref, uint16_t arg);
-  void handleInit();
-
 private:
+  friend struct EspUsbNetState;
+  friend struct EspUsbNetifGlue;
+  void handleRecv(const uint8_t *src, uint16_t size);
+  void refreshMacString();
+  EspUsbNetConfig netConfig_;
+  EspUsbNetState *state_ = nullptr;
+  esp_err_t startError_ = ESP_OK;
+  uint8_t interface_ = 255, nameIndex_ = 0, macIndex_ = 0;
+  uint8_t mac_[6] = {};
+  uint16_t defaultMacSuffix_ = 0;
+  bool macUserSet_ = false;
+  char macString_[13] = {};
   FrameCallback frameCallback_;
-
-  void *netif_ = nullptr;        // esp_netif_t* (opaque here to avoid leaking IDF types)
+  void *netif_ = nullptr, *networkContext_ = nullptr, *networkDriver_ = nullptr;
+  void (*networkReceive_)(void *, const uint8_t *, size_t) = nullptr;
+  void (*networkStop_)(EspUsbDeviceNet &) = nullptr;
+  std::atomic<unsigned> networkUsers_{0};
   bool netStarted_ = false;
-  bool dhcpServer_ = false;
-  bool dhcpClient_ = false;
-  bool dhcpAdvertiseGateway_ = false;
-  bool defaultRoute_ = false;
-  uint32_t dhcpDns_ = 0;         // network byte order; 0 => do not offer DNS
-  uint32_t cfgIp_ = 0;           // network byte order; 0 => use defaults in beginNetwork()
-  uint32_t cfgGateway_ = 0;
-  uint32_t cfgNetmask_ = 0;
+  bool dhcpServer_ = false, dhcpClient_ = false;
+  bool dhcpAdvertiseGateway_ = false, defaultRoute_ = false;
+  uint32_t dhcpDns_ = 0, cfgIp_ = 0, cfgGateway_ = 0, cfgNetmask_ = 0;
 };
 
 // USB CCID smart card reader function. The device side of what EspUsbHost's

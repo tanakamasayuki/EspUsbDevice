@@ -340,3 +340,20 @@ ClassのauxiliaryStringCount/auxiliaryStringで宣言し、assignAuxiliaryString
 不利益は派生Functionに3つの任意virtual hookとbegin中の安定性契約が加わることである。
 不要時の追加heap/instance fieldは持たず、begin時のvirtual呼出しは残る。
 MACの実際の移行はNCM driverの独自化と一緒に行い、現段階のlegacy通信制約を隠さない。
+
+## NCMのNTBとIP層をFunctionへ移す
+
+2026-10-27。固定NTB pool、単一MAC、1600 byte × 4件の永続送信queueを撤去し、
+EspUsbNetConfigでNTB容量・方向別buffer数・datagram数・frame上限・外部DMA領域を選ぶ。
+buffer数0の方向はpoolを省略する。末尾ZLP、Hostの容量再交渉とalt変更のDMA停止/排出を独自driverで扱う。
+設定では単位を分け、byteはntbIn/OutCapacity、bufferの数はtx/rxBufferCountへ揃える。
+
+sendFrameはNTBへcopyしてworkerへ渡し、満杯時に待たずfalseを返す。
+利点は中間frame queueのcopyと永続確保の削減、TCP/IP taskからDMAを触らないこと。
+不利益は配送完了通知を持たないbest effortと、再交渉/alt変更で送信待ちframeを捨てる点。
+NTB容量変更ではDATA PIDを保持し、SET_INTERFACEではDATA0へ戻す必要があるため、両者を区別する。
+
+MACは補助文字列を使ってFunctionごとにsnapshotする。IPは別ファイルのbeginNetworkからだけ導入し、
+raw transportにはesp_netif glueをリンクしない。netif/key/IPv4情報を分離し、endNetworkで破棄して再開始できる。
+IP用frame copyはlwIPの寿命に合わせて残し、IPを選んだ場合だけ費用を持たせる。
+基本のDevice/Net/onFrame/sendFrame/beginは維持し、setterはesp_err_t、稼働中は明示拒否へ変更する。

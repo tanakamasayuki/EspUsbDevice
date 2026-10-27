@@ -36,24 +36,15 @@ void runJobs()
   }
 }
 
-// Frames queued by EspUsbDeviceNet for transmission. Defined in EspUsbDevice.cpp
-// and a no-op when no network function is in use.
-extern "C" void espUsbDeviceNetDrainTx(void);
-
 void tinyUsbDeviceTask(void *)
 {
   while (!g_stop.load())
   {
     // tud_task() would block until the next USB event, which is not good enough:
-    // frames queued while the bus is quiet have to reach TinyUSB too. A 1 ms
+    // producer jobs queued while the bus is quiet must also run. A 1 ms
     // bounded wait keeps the task idle-cheap while giving the drain a floor on
     // how often it runs.
     tud_task_ext(1, false);
-    // TinyUSB's device API must be called from the tud_task() context. This is
-    // the only place the library calls tud_network_xmit(); doing it from lwIP's
-    // tcpip task races the endpoint state and permanently wedges the NCM
-    // transmitter (see espUsbDeviceNetTxFrame).
-    espUsbDeviceNetDrainTx();
     runJobs();
   }
   // DMA is stopped before class deinit returns borrowed buffers. Keep those

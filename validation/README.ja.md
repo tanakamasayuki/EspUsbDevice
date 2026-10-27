@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので17 tests。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので19 tests。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -53,7 +53,7 @@ payload・境界・末尾終端・分割後の取消しを確認する。
 **17 passed、0 skipped、0 unfinished、841.47秒**。全caseで両board STOPPED、panicなし。
 serial原本は`/tmp/pytest-embedded/2026-10-26_19-27-27-183733/`、コピーとtranscriptは
 `.pytest-results/runtime-dfu-all-serial/`と`runtime-dfu-all-transcript.txt`へ保存した。
-`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/DFU/descriptor/registryの502取得点を失敗させて回復を確認する。
+`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/DFU/NCM/descriptor/registryの605取得点を失敗させて回復を確認する。
 文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
 MIDIのqueue/callback/外部ring/片方向/複数instance、MSCの内部/外部DMA bufferと複数instanceも含む。
 `s3/midi_stream`はevent容量1から、外部ring、callback、片方向、2 MIDI、CDC+Keyboard併用、
@@ -80,7 +80,7 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 隣接sectorのguardと独立2 MSCを確認する。HostのPID同期は公開IDF APIでinterfaceを再取得して行う。
 `s3/audio_events`は任意容量/無効化、overflow、並列producerとUAC2の実Mute制御、稼働中破棄を確認する。
 手順・移行・PCMの対応範囲は[Audioガイド](../docs/V3_AUDIO_API.ja.md)を参照。
-通常実行は17 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
+通常実行は19 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -88,7 +88,7 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`17 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`19 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
@@ -202,3 +202,29 @@ countとtextはbeginの処理中に安定していることがwriter契約であ
 `validation/.pytest-results/function-auxiliary-strings*`。
 通常収集は17件のまま。今回の関連3件は、DFU段階の全17件成功とは別の結果である。
 NCMのclass/NTB pool/MAC globalはまだlegacyのままで、この変更だけで複数NCM通信に対応したとはしない。
+
+
+`s3/ncm_stream`はnative Hostで容量/方向/buffer/外部pool、frame往復とまとめ送り、
+NTB容量変更、DHCP/TCP、IP停止後のraw復帰を検証する。
+`s3/ncm_ntb`は公開IDF Hostで不正NTB、独立2 NCM、alt/PIDと長いOUTを検証する。
+`build_probes/ncm_only`はraw transportのみで、未使用IP glueのリンク除外を確認する。
+APIと移行は[NCMガイド](../docs/V3_NCM_API.ja.md)。
+
+
+## S3–S3の実測
+
+`ncm-driver-related.xml`は**3 passed、0 skipped、0 unfinished、143.77秒**。
+NTB容量2048/3200/8192、1/2/3 buffer、外部pool、14..1514 byte frame、ZLP、まとめ送り、
+容量再交渉と不正要求後の復帰、heap回復と605取得点の確保失敗/回復を含む。
+手動Hostで22種類の不正NTBを捨てて直後の正常frameを返し、block長0、末尾NDP、逆順datagram、
+8128 byteのhardware armを跨いだpayload、独立2 NCMとMAC、12回のalt切替とPID初期化を確認した。
+serial原本は`/tmp/pytest-embedded/2026-10-26_20-17-53-324449/`。
+
+`ncm-ip-related.xml`は**2 passed、0 skipped、0 unfinished、154.11秒**。
+3構成ともDHCPで192.168.7.2を取得しTCPの8193 byteが一致、IP停止後にraw通信へ戻れた。
+2 NCMの別IP/keyでの同時作成・片方停止・再作成も成功した。
+serial原本は`/tmp/pytest-embedded/2026-10-27_00-57-48-429795/`。
+両実行とも各case両board STOPPED、panicなし。コピーとJUnit/transcriptは
+`validation/.pytest-results/ncm-driver-related*`と`ncm-ip-related*`。
+Netのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
+通常収集は19件で、直近の全17件成功はDFU時点。今回の関連結果と全19件一括を混同しない。
