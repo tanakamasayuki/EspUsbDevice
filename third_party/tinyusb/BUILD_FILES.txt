@@ -5,14 +5,12 @@ class/midi/midi.h
 common/tusb_common.h
 common/tusb_compiler.h
 common/tusb_debug.h
-common/tusb_fifo.c
 common/tusb_fifo.h
 common/tusb_mcu.h
 common/tusb_private.h
 common/tusb_types.h
 common/tusb_verify.h
 device/dcd.h
-device/usbd.c
 device/usbd.h
 device/usbd_pvt.h
 osal/osal.h
@@ -22,6 +20,5 @@ portable/synopsys/dwc2/dwc2_common.c
 portable/synopsys/dwc2/dwc2_common.h
 portable/synopsys/dwc2/dwc2_esp32.h
 portable/synopsys/dwc2/dwc2_type.h
-tusb.c
 tusb.h
 tusb_option.h

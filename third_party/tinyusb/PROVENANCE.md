@@ -3,16 +3,17 @@
 [日本語](PROVENANCE.ja.md)
 
 All v3 USB classes use independent drivers. The ten TinyUSB class sources and
-unused class headers have been removed from the Arduino build tree. EP0/core,
-FreeRTOS integration, DWC2 and some protocol definitions remain temporarily.
+unused class headers have been removed from the Arduino build tree. The independent EP0/core also replaces usbd.c; the old bootstrap and FIFO
+implementations were removed. DWC2, private C ABI headers and some protocol
+definitions remain temporarily.
 These are also scheduled for replacement; removing class sources is not the
 completion of the stack migration.
 
 - Pin and rationale: `UPSTREAM.json`, using a full commit SHA.
 - License: MIT. Keep `LICENSE` and copyright/SPDX notices on remaining files.
-- Selection: `BUILD_FILES.txt`, 27 files (5 sources and 22 headers).
-- Sources: `tusb.c`, `common/tusb_fifo.c`, `device/usbd.c`,
-  `portable/synopsys/dwc2/dcd_dwc2.c`, `portable/synopsys/dwc2/dwc2_common.c`.
+- Selection: `BUILD_FILES.txt`, 24 files (2 sources and 22 headers).
+- Sources: `portable/synopsys/dwc2/dcd_dwc2.c` and
+  `portable/synopsys/dwc2/dwc2_common.c`.
 - Only the currently used Audio/CDC/HID/MIDI protocol headers remain under
   `class/`. Unused DFU/MSC/NCM/Video definitions were also removed.
 - `src/tusb_config.h` and `src/internal/EspUsbTinyUsbConfig.h` are first-party
@@ -33,9 +34,10 @@ The cache stays unchanged; exact replacements in `LOCAL_PATCHES.json` are applie
 for comparison. The update script uses the same manifest and does not restore
 removed classes.
 
-Remaining local patches support the temporary adapter:
+Remaining local patches support the temporary adapter. The patch for removed
+usbd.c is also retained only in Git history:
 
-- `device/dcd.h`, `device/usbd.c`, `device/usbd_pvt.h`: abort preserving DATA PID,
+- `device/dcd.h`, `device/usbd_pvt.h`: abort preserving DATA PID,
   nonblocking event fences reporting queue exhaustion, and actual control DATA
   byte counts.
 - `portable/synopsys/dwc2/dcd_dwc2.c`: stop without STALL and split DMA arms by

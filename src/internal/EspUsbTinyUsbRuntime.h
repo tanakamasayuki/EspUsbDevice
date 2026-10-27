@@ -16,6 +16,7 @@ struct TinyUsbRuntimeOptions {
   UsbController controller = UsbController::Auto;
   uint32_t taskStackSize = 4096;
   uint8_t taskPriority = 0;
+  uint16_t eventQueueDepth = 16;
   // Bitmap of IN endpoint numbers whose DWC2 transmit FIFO should hold two
   // packets instead of one. Only bulk endpoints are affected; the controller
   // ignores the rest. Applied through tud_configure() before tusb_init(),

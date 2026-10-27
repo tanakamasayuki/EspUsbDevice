@@ -161,3 +161,11 @@
     defined(ESP_USB_TINYUSB_AUDIO_SW_PACKETS)
 #error "Audio storage uses EspUsbAudioConfig and selected formats; remove TinyUSB Audio buffer flags"
 #endif
+
+#if defined(CFG_TUD_TASK_QUEUE_SZ)
+#error "USB event storage uses EspUsbDeviceConfig::eventQueueDepth; remove CFG_TUD_TASK_QUEUE_SZ"
+#endif
+
+#if defined(CFG_TUD_INTERFACE_MAX) || defined(CFG_TUD_ENDPPOINT_MAX) || defined(CFG_TUD_ENDPOINT0_BUFSIZE) || defined(CFG_TUD_TASK_EVENTS_PER_RUN)
+#error "USB core maps, packets and drain budget are derived at runtime; remove TinyUSB core capacity flags"
+#endif

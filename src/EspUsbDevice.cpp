@@ -805,6 +805,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
 
     runtimeOptions.bulkInDoubleBuffered = bulkInDoubleBuffered_;
     runtimeOptions.taskCoreId = config_.taskCoreId;
+    runtimeOptions.eventQueueDepth = config_.eventQueueDepth;
 
     const esp_err_t err = espusb::internal::startTinyUsbRuntime(runtimeOptions);
     if (err != ESP_OK)

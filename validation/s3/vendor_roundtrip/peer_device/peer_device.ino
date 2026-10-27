@@ -53,8 +53,7 @@ void fillFenceQueue(void *) {
 espusb::internal::TinyUsbRuntimeJob faultFillJob{fillFenceQueue, nullptr};
 void injectCancelFence(void *) {
   // Queue old completions on the worker before it can execute the abort job.
-  if (tud_task_event_ready() || CFG_TUD_TASK_EVENTS_PER_RUN == 0 ||
-      usbd_event_queue_capacity() < CFG_TUD_TASK_EVENTS_PER_RUN) { faultDone.store(true); return; }
+  if (tud_task_event_ready() || usbd_event_queue_capacity() < 4) { faultDone.store(true); return; }
   const uint8_t *descriptor = device.configurationDescriptor(0);
   const unsigned length = descriptor[2] | (unsigned(descriptor[3]) << 8);
   uint8_t in = 0, out = 0;

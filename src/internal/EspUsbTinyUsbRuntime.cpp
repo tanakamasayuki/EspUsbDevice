@@ -1,4 +1,5 @@
 #include "EspUsbTinyUsbRuntime.h"
+#include "EspUsbDeviceCore.h"
 
 #include "esp_private/usb_phy.h"
 #include "freertos/FreeRTOS.h"
@@ -36,20 +37,19 @@ void runJobs()
   }
 }
 
-void tinyUsbDeviceTask(void *)
+void usbDeviceTask(void *)
 {
   while (!g_stop.load())
   {
-    // tud_task() would block until the next USB event, which is not good enough:
-    // producer jobs queued while the bus is quiet must also run. A 1 ms
-    // bounded wait keeps the task idle-cheap while giving the drain a floor on
-    // how often it runs.
-    tud_task_ext(1, false);
-    runJobs();
+    // Bounded event draining leaves time for producer jobs while quiet USB
+    // waits without spinning. Reset events must retire the previous generation
+    // before those jobs are allowed to touch endpoints again.
+    espusb::internal::runUsbDeviceCore(1);
+    if (espusb::internal::usbDeviceCoreReadyForJobs()) runJobs();
   }
   // DMA is stopped before class deinit returns borrowed buffers. Keep those
   // completion callbacks on the USB worker, including the end() path.
-  tusb_deinit(g_rhport);
+  espusb::internal::stopUsbDeviceCore();
   g_rhport = 0xff;
   xSemaphoreGive(g_taskExited);
   vTaskDelete(nullptr);
@@ -134,7 +134,7 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
 
   g_rhport = selected == UsbController::HighSpeed ? 1 : 0;
 
-  // Has to come before tusb_init(): the DWC2 port reads this once, at
+  // Configure before starting the independent core: DWC2 reads this once at
   // dfifo_device_init(), and the transmit FIFO sizes are fixed from then on.
   // vbus_sensing keeps the value the default configuration would have used,
   // because this call replaces the whole structure rather than merging into it.
@@ -144,22 +144,19 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   };
   tud_configure(g_rhport, TUD_CFGID_DWC2, &dwc2Config);
 
-  const tusb_rhport_init_t init = {
-      .role = TUSB_ROLE_DEVICE,
-      .speed = selected == UsbController::HighSpeed ? TUSB_SPEED_HIGH : TUSB_SPEED_FULL,
-  };
-  if (!tusb_init(g_rhport, &init))
+  const esp_err_t coreError = startUsbDeviceCore(g_rhport, selected == UsbController::HighSpeed, options.eventQueueDepth);
+  if (coreError != ESP_OK)
   {
     usb_del_phy(g_phy);
     g_phy = nullptr;
     g_rhport = 0xff;
-    return ESP_FAIL;
+    return coreError;
   }
 
   g_taskExited = xSemaphoreCreateBinary();
   if (!g_taskExited)
   {
-    tusb_deinit(g_rhport);
+    espusb::internal::stopUsbDeviceCore();
     usb_del_phy(g_phy);
     g_phy = nullptr;
     g_rhport = 0xff;
@@ -175,9 +172,9 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   // was told.
   const BaseType_t created =
       options.taskCoreId < 0
-          ? xTaskCreate(tinyUsbDeviceTask, "espusb-device", options.taskStackSize,
+          ? xTaskCreate(usbDeviceTask, "espusb-device", options.taskStackSize,
                         nullptr, priority, &g_deviceTask)
-          : xTaskCreatePinnedToCore(tinyUsbDeviceTask, "espusb-device",
+          : xTaskCreatePinnedToCore(usbDeviceTask, "espusb-device",
                                     options.taskStackSize, nullptr, priority,
                                     &g_deviceTask,
                                     static_cast<BaseType_t>(options.taskCoreId));
@@ -185,7 +182,7 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   {
     vSemaphoreDelete(g_taskExited);
     g_taskExited = nullptr;
-    tusb_deinit(g_rhport);
+    espusb::internal::stopUsbDeviceCore();
     usb_del_phy(g_phy);
     g_phy = nullptr;
     g_rhport = 0xff;
@@ -214,7 +211,7 @@ bool stopTinyUsbRuntime()
   }
   if (g_rhport != 0xff)
   {
-    tusb_deinit(g_rhport);
+    espusb::internal::stopUsbDeviceCore();
     g_rhport = 0xff;
   }
   if (g_phy)

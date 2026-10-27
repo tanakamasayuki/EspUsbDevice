@@ -383,3 +383,18 @@ onFrameResultを加え、中断/reset/停止でも借用bufferを返す。callba
 取消しとalt/recommitではDMA停止後のevent fenceを通し、古い完了が次frameを返すことを防ぐ。
 Probe/Commitは広告した一形式・一固定frame intervalの範囲で受け付け、payload上限を実資源に合わせる。
 複数formatや可変intervalを未実装のままAPIで約束しない。詳細と移行例は[Videoガイド](V3_VIDEO_API.ja.md)。
+
+
+## 共通coreを独自化し、event容量を開始時設定へ移す
+
+TinyUSB usbd.cと未使用のbootstrap/FIFO実装を除去する。EP0の状態とevent世代を独自coreで持ち、
+selected interface/endpoint map、queue、64-byte EP0 DMA領域を一つのbegin時領域へ集める。
+eventQueueDepthはuint16_tの非ゼロ値で、確保できない構成はNoMem。任意の4096等の上限は設けない。
+利点は固定global領域と旧core依存の撤去、同一binaryの容量変更、旧SETUP/data混入の防止である。
+不利益は新しい開始時確保失敗と、queue過負荷時に接続を回復するため通信を中断する点。
+
+sendControlResponseの0-byte応答は、要求長0のstatusと、非ゼロIN要求への空dataを区別する。
+従来のように常にstatusへ飛ばすとHostがdataを待ち続けるため、後者はZLP dataを送る。
+空の返信が自然に使える利点があり、OUT要求を受信せずACKしていたコードは拒否へ変わる。
+通常操作は維持し、内部class/DWC2のC ABIとstartTinyUsb等の名前は残存依存の後に整理する。
+全標準要求・PID/所有権遷移の完成を今回の関連試験だけで主張しない。残りと実測は[共通coreガイド](V3_CORE_API.ja.md)。

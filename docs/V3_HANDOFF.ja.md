@@ -1,8 +1,9 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新確認: 全classを独自化し、legacy TinyUSB classソースを削除。標準`--combo all`で
-**26件全成功（1703.91秒）**。残るTinyUSBは27選択file / 5 compiled sourcesで、共通EP0/core/DCD等。
-[Video API](V3_VIDEO_API.ja.md)、[現在の暫定依存](../third_party/tinyusb/PROVENANCE.ja.md)、末尾の全体結果を参照。
+最新実装は共通core/EP0の独自化。関連5件と補強1件が成功した。
+[core APIと未完の境界](V3_CORE_API.ja.md)を参照。全体の直近成功はcore独自化前の26件で、
+現在の通常収集は27件。次に標準combo allで全27件を確認する。
+TinyUSBのコンパイル対象はDWC2関連2本、vendor選択は24 file。C ABI/headerとDWC2への依存は残る。
 
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
@@ -692,3 +693,23 @@ Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。conftestや独自pyt
 次は共通EP0/core/DCDを独自実装へ置き換える。reset/新SETUP/STALL/status、
 標準要求、event順序とDMA停止、suspend/remote wakeupを分けて検証する。
 他SoC/HS、PC/OS、長時間試験、出荷exampleと最終API整理は未完了。
+
+## 共通coreの関連検証
+
+2026-10-27。`core-controls-related.xml`は**5 passed、0 skipped、0 unfinished、323.22秒**。
+control_core、712取得点の確保失敗、cancel_fence、cancel_lifecycle、video_controlを実行した。
+core用private取得点はbegin時の一つで、全失敗点で回復・終了時の未回収0とheap回復を確認した。
+control_coreはキュー深さ1/4/16/31で、空・短い・64-byte境界を跨ぐIN/OUT、19件の不正標準要求、
+configuration解除と同値再選択、借用返却、意図的なqueue過負荷と自動再列挙後の正常通信を確認した。
+各構成でVendor control 20回（IN11、OUT7、no-data2）、借用TX成功2・reset返却3。
+FreeRTOSの自己削除taskのTCBはidle taskが回収するため、heap比較は各終了後10 ms待って行う。
+10 serial log全てSTOPPED、panicなし。原本`/tmp/pytest-embedded/2026-10-27_03-16-42-737527/`。
+コピー/JUnit/transcriptは`validation/.pytest-results/core-controls-related*`。
+
+`core-standard-final.xml`は1件成功（81.61秒）。GET_DESCRIPTORの長さ0/1/8/18/64も追加した。
+続いて未使用bootstrap/FIFO sourceを除去した`core-no-legacy-helpers.xml`も1件成功（52.57秒）。
+各2 serial logで停止とpanicなしを確認し、nmで独自coreの存在と旧core state/FIFO symbol不在を確認した。
+現在のvendor選択は24 file / 2 compiled sourcesで、コンパイルするTinyUSB sourceはDWC2関連だけ。
+ABI/header依存を含む全撤去はまだ完了していない。
+
+次は全27件を一括検証し、その後、SET_INTERFACE/HALTの転送中所有権、EP0世代境界・suspend等を補強してDWC2の独自化へ進む。

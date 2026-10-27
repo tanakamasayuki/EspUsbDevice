@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので26 tests（Videoの6 runtime構成と複数Function制御を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので27 tests（control_coreとVideoの6 runtime構成・複数Function制御を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -49,11 +49,11 @@ Vendorは独自クラスdriverへ移行した。短いwriteは自動送出し、
 `s3/cancel_lifecycle`はworkerを停止した状態で、取消しと実bus reset/endが重なる3条件を各3回確認する。
 `s3/transfer_limits`は公開APIだけで8128/16256 byteの分割境界前後、最大TX 65535/RX 65472 byte、
 payload・境界・末尾終端・分割後の取消しを確認する。
-最新の全実行はplugin 1.10.0の標準`--combo all`による`runtime-video-all.xml`。
+core独自化前の直近全実行はplugin 1.10.0の標準`--combo all`による`runtime-video-all.xml`。
 **26 passed、0 skipped、0 unfinished、1703.91秒**。全caseで両board STOPPED、panicなし。
 serial原本は`/tmp/pytest-embedded/2026-10-27_02-12-17-085198/`、コピーとtranscriptは
 `.pytest-results/runtime-video-all-serial/`と`runtime-video-all-transcript.txt`へ保存した。
-`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/DFU/NCM/Video/descriptor/registryの670取得点を失敗させて回復を確認する。
+`s3/allocation_failure`は内部確保境界を試験sketchだけで差し替え、Vendor/CDC/HID/MIDI/MSC/Audio/DFU/NCM/Video/descriptor/registryの712取得点を失敗させて回復を確認する。
 文字列なし/INのみHIDでの不要領域省略、WebUSB URL、HID共有state・snapshotと解析用stack、
 MIDIのqueue/callback/外部ring/片方向/複数instance、MSCの内部/外部DMA bufferと複数instanceも含む。
 `s3/midi_stream`はevent容量1から、外部ring、callback、片方向、2 MIDI、CDC+Keyboard併用、
@@ -316,3 +316,23 @@ Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。conftestや独自pyt
 次は共通EP0/core/DCDを独自実装へ置き換える。reset/新SETUP/STALL/status、
 標準要求、event順序とDMA停止、suspend/remote wakeupを分けて検証する。
 他SoC/HS、PC/OS、長時間試験、出荷exampleと最終API整理は未完了。
+
+## 共通coreの関連検証
+
+2026-10-27。`core-controls-related.xml`は**5 passed、0 skipped、0 unfinished、323.22秒**。
+control_core、712取得点の確保失敗、cancel_fence、cancel_lifecycle、video_controlを実行した。
+core用private取得点はbegin時の一つで、全失敗点で回復・終了時の未回収0とheap回復を確認した。
+control_coreはキュー深さ1/4/16/31で、空・短い・64-byte境界を跨ぐIN/OUT、19件の不正標準要求、
+configuration解除と同値再選択、借用返却、意図的なqueue過負荷と自動再列挙後の正常通信を確認した。
+各構成でVendor control 20回（IN11、OUT7、no-data2）、借用TX成功2・reset返却3。
+FreeRTOSの自己削除taskのTCBはidle taskが回収するため、heap比較は各終了後10 ms待って行う。
+10 serial log全てSTOPPED、panicなし。原本`/tmp/pytest-embedded/2026-10-27_03-16-42-737527/`。
+コピー/JUnit/transcriptは`validation/.pytest-results/core-controls-related*`。
+
+`core-standard-final.xml`は1件成功（81.61秒）。GET_DESCRIPTORの長さ0/1/8/18/64も追加した。
+続いて未使用bootstrap/FIFO sourceを除去した`core-no-legacy-helpers.xml`も1件成功（52.57秒）。
+各2 serial logで停止とpanicなしを確認し、nmで独自coreの存在と旧core state/FIFO symbol不在を確認した。
+現在のvendor選択は24 file / 2 compiled sourcesで、コンパイルするTinyUSB sourceはDWC2関連だけ。
+ABI/header依存を含む全撤去はまだ完了していない。
+
+現在のcore APIと残りは[共通coreガイド](../docs/V3_CORE_API.ja.md)。標準combo allの全27件を次に実行する。

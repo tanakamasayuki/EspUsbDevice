@@ -47,7 +47,7 @@ void espUsbDeviceUnregisterAppDrivers(const usbd_class_driver_t *drivers, uint8_
   }
 }
 
-// Strong override of the weak hook in usbd.c, read once by tusb_init().
+// Transitional C ABI: the independent core snapshots this selected table at start.
 extern "C" usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
 {
   *driver_count = g_appDriverCount;

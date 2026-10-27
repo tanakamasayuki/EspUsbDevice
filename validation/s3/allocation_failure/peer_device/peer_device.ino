@@ -168,7 +168,7 @@ void loop() {
             ok &= video[1]->configure(camera) == ESP_OK; points += 2;
           }
         }
-        points += 5; // Function index + exact FS, UTF-16 strings, MS OS, and BOS.
+        points += 6; // Function index + FS, strings, MS OS, BOS, and the selected core/event/DMA block.
         EspUsbDeviceConfig identity;
         if (mode == 8) { identity.webusbEnabled = true; identity.webusbUrl = "https://example.test/日本語"; ++points; }
         if (mode == 9) { identity.manufacturer = identity.product = nullptr; --points; }
@@ -210,7 +210,7 @@ void loop() {
       {
         // Two NCMs fit the S3's IN endpoints; a further Vendor does not.
         EspUsbDevice pair; EspUsbDeviceNet first(pair), second(pair);
-        for (unsigned point = 1; point <= 15 && ok; ++point) {
+        for (unsigned point = 1; point <= 16 && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;
           const bool rejected = !pair.begin() && pair.lastError() == ESP_ERR_NO_MEM;
           failAt = 0;
@@ -218,8 +218,8 @@ void loop() {
           if (!ok) { Serial.printf("PAIR_FAULT_FAILED point=%u live=%u\r\n",point,outstanding); break; }
           ++failures; calls = 0;
           const bool recovered = pair.begin();
-          if (!recovered || calls != 15) Serial.printf("PAIR_RECOVERY_FAILED point=%u calls=%u error=%d\r\n",point,calls,int(pair.lastError()));
-          ok &= recovered && calls == 15 && pair.end() == ESP_OK && !outstanding;
+          if (!recovered || calls != 16) Serial.printf("PAIR_RECOVERY_FAILED point=%u calls=%u error=%d\r\n",point,calls,int(pair.lastError()));
+          ok &= recovered && calls == 16 && pair.end() == ESP_OK && !outstanding;
           delay(10); if (ok) ++recoveries;
         }
       }

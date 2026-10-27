@@ -4,14 +4,14 @@
 
 v3では全USB classを独自driverへ移行した。TinyUSBのclass実装10本と関連headerを
 Arduino build treeから削除し、同じ場所へ別のvendor snapshotを重ねない。
-共通EP0/core、FreeRTOS adapter、DWC2と一部protocol定義は暫定依存として残る。
+共通EP0/coreも独自実装へ移行し、旧usbd.c・bootstrap・FIFO実装を除去した。
+DWC2、内部C ABI/headerと一部protocol定義は暫定依存として残る。
 最終方針はこれらも置換することであり、この削除だけでTinyUSB依存撤去完了とはしない。
 
 - Pinと選定理由: `UPSTREAM.json`。full commit SHAへ固定する。
 - License: MIT、`LICENSE`と残存fileのcopyright/SPDX表示を保持する。
-- 現在の選択: `BUILD_FILES.txt`の27 file（5 source、22 header）。
-- 残るsource: `tusb.c`、`common/tusb_fifo.c`、`device/usbd.c`、
-  `portable/synopsys/dwc2/dcd_dwc2.c`、`portable/synopsys/dwc2/dwc2_common.c`。
+- 現在の選択: `BUILD_FILES.txt`の24 file（2 source、22 header）。
+- 残るsource: `portable/synopsys/dwc2/dcd_dwc2.c`、`portable/synopsys/dwc2/dwc2_common.c`。
 - `class/`以下には現在利用するAudio/CDC/HID/MIDIのprotocol定義headerだけを残す。
   DFU/MSC/NCM/Videoの未使用定義headerも削除した。
 - `src/tusb_config.h`と`src/internal/EspUsbTinyUsbConfig.h`は独自integration。
@@ -29,9 +29,9 @@ ignored `.upstream-cache/`にない場合だけ必要fileを取得する。通�
 cacheは元のsnapshotのままで、`LOCAL_PATCHES.json`の正確な置換を比較時に適用する。
 更新scriptも同じmanifestとpatchを用い、削除したclassを復元しない。
 
-残るlocal patchは暫定adapter用である。
+残るlocal patchは暫定adapter用である。削除したusbd.cのpatchも履歴側へ移した。
 
-- `device/dcd.h`、`device/usbd.c`、`device/usbd_pvt.h`: DATA PIDを保持するabort、
+- `device/dcd.h`、`device/usbd_pvt.h`: DATA PIDを保持するabort、
   queue満杯を返すFIFO fence予約、control DATAの実byte数を取得する関数。
 - `portable/synopsys/dwc2/dcd_dwc2.c`: STALLしない停止と、GHWCFG3の実カウンタ幅に基づくDMA分割。
   S3のpacket数は7 bitであり、共通register型の10 bitとは異なる。

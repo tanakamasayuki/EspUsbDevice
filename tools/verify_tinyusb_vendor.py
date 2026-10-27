@@ -47,9 +47,6 @@ def expected_bytes(relative: str) -> bytes:
 
 
 SOURCE_FILES = {
-    "tusb.c",
-    "common/tusb_fifo.c",
-    "device/usbd.c",
     "portable/synopsys/dwc2/dcd_dwc2.c",
     "portable/synopsys/dwc2/dwc2_common.c",
 }
@@ -73,7 +70,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_upstream_files() -> set[str]:
-    files = {"tusb.c", "tusb.h", "tusb_option.h"}
+    files = {"tusb.h", "tusb_option.h"}
     for directory in UPSTREAM_DIRS:
         files.update(
             str(path.relative_to(BUILD))

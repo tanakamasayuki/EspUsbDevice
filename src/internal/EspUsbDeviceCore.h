@@ -1,0 +1,11 @@
+#pragma once
+#include <stdint.h>
+#include "esp_err.h"
+namespace espusb { namespace internal {
+// The DWC2 adapter still uses TinyUSB's private wire/driver types. This is the
+// independent core's lifecycle boundary, not a selectable second backend.
+esp_err_t startUsbDeviceCore(uint8_t port, bool highSpeed, uint16_t eventQueueDepth);
+void stopUsbDeviceCore();
+void runUsbDeviceCore(uint32_t timeoutMilliseconds);
+bool usbDeviceCoreReadyForJobs();
+} }
