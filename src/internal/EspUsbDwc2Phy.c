@@ -2,18 +2,16 @@
  * SPDX-FileCopyrightText: Copyright (c) 2024 Ha Thach (tinyusb.org)
  * SPDX-License-Identifier: MIT
  *
- * This file is part of the TinyUSB stack.
+ * Native ESP PHY/reset sequence adapted from TinyUSB DWC2.
+ * Origin: third_party/tinyusb/ORIGIN.json; MIT license retained there.
  */
 
-
-#define DWC2_COMMON_DEBUG   2
-
-#include "dwc2_common.h"
+#include "EspUsbDwc2Hardware.h"
 
 //--------------------------------------------------------------------
 //
 //--------------------------------------------------------------------
-static void reset_core(dwc2_regs_t* dwc2) {
+static void reset_core(EspUsbDwc2Registers* dwc2) {
   // The software must check that bit 31 in this register is set to 1 (AHB Master is Idle) before starting any operation
   while (!(dwc2->grstctl & GRSTCTL_AHBIDL)) {
   }
@@ -37,15 +35,13 @@ static void reset_core(dwc2_regs_t* dwc2) {
 }
 
 // Dedicated FS PHY is internal with a clock 48Mhz.
-static void phy_fs_init(dwc2_regs_t* dwc2) {
+static void phy_fs_init(EspUsbDwc2Registers* dwc2) {
 
   uint32_t gusbcfg = dwc2->gusbcfg;
 
   // Select FS PHY
   gusbcfg |= GUSBCFG_PHYSEL;
   dwc2->gusbcfg = gusbcfg;
-
-  // MCU specific PHY init before reset
 
   // Reset core after selecting PHY
   reset_core(dwc2);
@@ -57,7 +53,6 @@ static void phy_fs_init(dwc2_regs_t* dwc2) {
   gusbcfg |= 5u << GUSBCFG_TRDT_Pos;
   dwc2->gusbcfg = gusbcfg;
 
-  // MCU specific PHY update post reset
 }
 
 /* dwc2 has 2 highspeed PHYs options
@@ -66,10 +61,10 @@ static void phy_fs_init(dwc2_regs_t* dwc2) {
  *
  * In addition, UTMI+/ULPI can be shared to run at fullspeed mode with 48Mhz
  */
-static void phy_hs_init(dwc2_regs_t* dwc2) {
+static void phy_hs_init(EspUsbDwc2Registers* dwc2) {
   uint32_t gusbcfg = dwc2->gusbcfg;
-  const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
-  const dwc2_ghwcfg4_t ghwcfg4 = {.value = dwc2->ghwcfg4};
+  const EspUsbDwc2Ghwcfg2 ghwcfg2 = {.value = dwc2->ghwcfg2};
+  const EspUsbDwc2Ghwcfg4 ghwcfg4 = {.value = dwc2->ghwcfg4};
 
   const uint8_t phy_width = ghwcfg4.phy_data_width ? 16 : 8;
 
@@ -108,8 +103,6 @@ static void phy_hs_init(dwc2_regs_t* dwc2) {
   // Apply config
   dwc2->gusbcfg = gusbcfg;
 
-  // mcu specific phy init
-
   // Reset core after selecting PHY
   reset_core(dwc2);
 
@@ -120,12 +113,10 @@ static void phy_hs_init(dwc2_regs_t* dwc2) {
   gusbcfg |= (phy_width == 16 ? 5u : 9u) << GUSBCFG_TRDT_Pos;
   dwc2->gusbcfg = gusbcfg;
 
-  // MCU specific PHY update post reset
 }
 
-static bool check_dwc2(dwc2_regs_t* dwc2) {
+static bool check_dwc2(EspUsbDwc2Registers* dwc2) {
 
-  // For some reason: GD32VF103 gsnpsid and all hwcfg register are always zero (skip it)
   (void)dwc2;
   enum { GSNPSID_ID_MASK = ESPUSB_MASK(31, 16) };
   const uint32_t gsnpsid = dwc2->gsnpsid & GSNPSID_ID_MASK;
@@ -137,8 +128,8 @@ static bool check_dwc2(dwc2_regs_t* dwc2) {
 //--------------------------------------------------------------------
 //
 //--------------------------------------------------------------------
-bool dwc2_core_is_highspeed_phy(dwc2_regs_t* dwc2, bool prefer_hs_phy) {
-  const dwc2_ghwcfg2_t ghwcfg2    = {.value = dwc2->ghwcfg2};
+bool espusb_dwc2_highspeed_phy(EspUsbDwc2Registers* dwc2, bool prefer_hs_phy) {
+  const EspUsbDwc2Ghwcfg2 ghwcfg2    = {.value = dwc2->ghwcfg2};
   const bool           has_hs_phy = (ghwcfg2.hs_phy_type != GHWCFG2_HSPHY_NOT_SUPPORTED);
 
   if (prefer_hs_phy) {
@@ -150,8 +141,8 @@ bool dwc2_core_is_highspeed_phy(dwc2_regs_t* dwc2, bool prefer_hs_phy) {
   }
 }
 
-bool dwc2_core_init(uint8_t rhport, bool is_hs_phy) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+bool espusb_dwc2_phy_start(uint8_t rhport, bool is_hs_phy) {
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
 
   // Check Synopsys ID register, failed if controller clock/power is not enabled
   ESPUSB_REQUIRE(check_dwc2(dwc2));
@@ -177,14 +168,13 @@ bool dwc2_core_init(uint8_t rhport, bool is_hs_phy) {
   // Enable PHY clock TODO stop/gate clock when suspended mode
   dwc2->pcgcctl &= ~(PCGCCTL_STOPPCLK | PCGCCTL_GATEHCLK | PCGCCTL_PWRCLMP | PCGCCTL_RSTPDWNMODULE);
 
-  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
-  dfifo_flush_rx(dwc2);
+  espusb_dwc2_flush_tx(dwc2, 0x10); // all tx fifo
+  espusb_dwc2_flush_rx(dwc2);
 
   // Clear pending and disable all interrupts
   dwc2->gintsts = 0xFFFFFFFFU;
   dwc2->gotgint = 0xFFFFFFFFU;
   dwc2->gintmsk = 0;
-
 
   // The ESP device engine supports internal buffer DMA only.
   dwc2->gahbcfg |= GAHBCFG_DMAEN | GAHBCFG_HBSTLEN_2;
@@ -192,8 +182,8 @@ bool dwc2_core_init(uint8_t rhport, bool is_hs_phy) {
   return true;
 }
 
-void dwc2_core_deinit(uint8_t rhport) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+void espusb_dwc2_phy_stop(uint8_t rhport) {
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
 
   // Disable global interrupt
   dwc2->gahbcfg &= ~GAHBCFG_GINT;

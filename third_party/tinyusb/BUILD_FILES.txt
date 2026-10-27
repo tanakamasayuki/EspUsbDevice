@@ -1,4 +1,0 @@
-portable/synopsys/dwc2/dcd_dwc2.c
-portable/synopsys/dwc2/dwc2_common.c
-portable/synopsys/dwc2/dwc2_common.h
-portable/synopsys/dwc2/dwc2_type.h

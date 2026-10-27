@@ -32,7 +32,8 @@ profile別portを使い、未結線の組を登録しない。設定済みport�
 共有P4を使うFS/HSの組も逐次実行し、各caseの明示停止とpluginのdevice lockを使う。
 
 参照ガイド: [1.10.0の組合せと適用条件](https://github.com/tanakamasayuki/pytest-embedded-arduino-cli/blob/v1.10.0/TESTING_ADVANCED.ja.md#profile-の組合せと適用条件)。
-local pluginの作業ツリーは1.9.0のままだったため、配布版1.10.0と同tagのguideを確認した。
+導入時は配布版1.10.0と同tagのguideを確認した。2026-10-28にlocal pluginも再確認し、
+`698bb29`（v1.10.0）、標準comboと適用条件のguideに更新済みだった。
 `uv.lock`は配布版1.10.0に更新済み。plugin側の作業ツリーには変更を加えていない。
 
 `s3/vendor_roundtrip`は新規sketchと普通のtest関数一本で、1/63/64/65/127/128/129 byteの

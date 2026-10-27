@@ -6,8 +6,15 @@
 #include "../../../../src/internal/EspUsbDwc2Runtime.h"
 #include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
 #include <atomic>
+#include "../../../../src/internal/EspUsbDwc2Timing.h"
 #include "../../../../src/internal/EspUsbDwc2Platform.h"
 #include "soc/usb_dwc_struct.h"
+#include "../../../../src/internal/EspUsbDwc2Registers.h"
+static_assert(offsetof(EspUsbDwc2Registers, gotgctl)==offsetof(usb_dwc_dev_t, gotgctl_reg));
+static_assert(offsetof(EspUsbDwc2Registers, dcfg)==offsetof(usb_dwc_dev_t, dcfg_reg));
+static_assert(offsetof(EspUsbDwc2Registers, epin)==offsetof(usb_dwc_dev_t, diepctl0_reg));
+static_assert(offsetof(EspUsbDwc2Registers, epout)==offsetof(usb_dwc_dev_t, doepctl0_reg));
+static_assert(offsetof(EspUsbDwc2Registers, pcgcctl)==offsetof(usb_dwc_dev_t, pcgcctl_reg));
 bool failIrq=false;unsigned irqAttempts=0;
 extern "C" esp_err_t espusb_dwc2_allocate_interrupt(int source,int flags,intr_handler_t handler,
     void *context,intr_handle_t *result) {
@@ -120,9 +127,46 @@ bool irqFailures() {
   Serial.printf("IRQ_RECOVERY %u\r\n",unsigned(ok));
   return ok;
 }
+bool intervals() {
+  struct Sample {uint8_t type,encoded;bool high,valid;uint16_t ticks;};
+  const Sample cases[]={
+    {2,0,true,true,0},{2,255,true,true,0},{0,0,true,true,0},
+    {1,1,false,true,1},{1,3,false,true,4},{1,16,false,true,32768},
+    {1,9,true,true,256},{1,16,true,true,32768},{1,0,true,false,0},{1,17,false,false,0},
+    {3,255,false,true,255},{3,0,false,false,0},{3,16,true,true,32768},{3,17,true,false,0},
+  };
+  bool ok=true;
+  for(const auto &sample:cases) {
+    EspUsbEndpointDescriptor endpoint={7,5,0x81,sample.type,64,sample.encoded};uint16_t ticks=0;
+    const bool valid=espusb_dwc2_decode_interval(&endpoint,sample.high,&ticks);
+    const bool match=valid==sample.valid && (!valid || ticks==sample.ticks);
+    if(!match)Serial.printf("INTERVAL_CASE type=%u encoded=%u high=%u valid=%u ticks=%u\r\n",sample.type,sample.encoded,sample.high,valid,ticks);
+    ok &= match;
+  }
+  ok &= device.begin();
+  uint8_t address=0;
+  const auto *descriptor=device.configurationDescriptor(0);
+  const unsigned length=descriptor ? descriptor[2]|unsigned(descriptor[3])<<8:0;
+  for(unsigned offset=9;offset+2<=length && descriptor[offset]>=2 && descriptor[offset]<=length-offset;offset+=descriptor[offset])
+    if(descriptor[offset+1]==5 && (descriptor[offset+2]&128))address=descriptor[offset+2];
+  ok &= address!=0;
+  EspUsbEndpointDescriptor endpoint={7,5,address,1,64,0};
+  const auto port=espusb::internal::tinyUsbRuntimeRhport();
+  // Host has not reset/enumerated this metadata-only start. Initialize the
+  // FIFO accounting explicitly before testing the low-level open operation.
+  espusb_controller_edpt_close_all(port);
+  for(unsigned attempt=0;attempt<32;++attempt) {
+    endpoint.bInterval=0;ok &= !espusb_controller_edpt_open(port,&endpoint);
+    endpoint.bInterval=17;ok &= !espusb_controller_edpt_open(port,&endpoint);
+  }
+  endpoint.bInterval=1;const bool opened=espusb_controller_edpt_open(port,&endpoint);ok &= opened;
+  Serial.printf("INTERVAL_ENDPOINT address=%u opened=%u\r\n",unsigned(address),unsigned(opened));
+  ok &= device.end()==ESP_OK;delay(10);
+  Serial.printf("INTERVALS %u\r\n",unsigned(ok));return ok;
+}
 bool metadata() {
   EspUsbDeviceConfig cfg;
-  bool ok=selectedStorage() && cacheFailures() && vbusPolicy() && irqFailures();
+  bool ok=selectedStorage() && cacheFailures() && vbusPolicy() && irqFailures() && intervals();
   for (unsigned n:{0u}) {
     cfg.eventQueueDepth=n;
     ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_SIZE && device.end()==ESP_OK;

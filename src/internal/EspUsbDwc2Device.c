@@ -5,21 +5,18 @@
  * SPDX-FileCopyrightText: Copyright (c) 2020 Reinhard Panhuber
  * SPDX-License-Identifier: MIT
  *
- * This file is part of the TinyUSB stack.
+ * Native ESP device DMA engine, adapted from TinyUSB DWC2.
+ * Independently maintained with core-owned storage and native class/IRQ APIs.
+ * Origin: third_party/tinyusb/ORIGIN.json; license retained there.
  */
 
-#include "../../../internal/EspUsbDwc2Support.h"
-#include "../../../internal/EspUsbLegacyFlags.h"
+#include "EspUsbDwc2Support.h"
+#include "EspUsbLegacyFlags.h"
 
-
-
-
-// Debug level for DWC2
-#define DWC2_DEBUG    2
-
-#include "../../../internal/EspUsbController.h"
-#include "dwc2_common.h"
-#include "../../../internal/EspUsbDwc2Runtime.h"
+#include "EspUsbController.h"
+#include "EspUsbDwc2Hardware.h"
+#include "EspUsbDwc2Timing.h"
+#include "EspUsbDwc2Runtime.h"
 
 //--------------------------------------------------------------------+
 // MACRO TYPEDEF CONSTANT ENUM
@@ -29,13 +26,13 @@ typedef struct {
   uint16_t total_len;
   uint16_t max_size;
   uint16_t dma_done, dma_chunk; // Non-EP0 DMA segmentation; one final event.
-  uint8_t interval;
-  uint8_t iso_retry; // ISO retry counter
-} xfer_ctl_t;
+  uint16_t interval;
+  uint16_t iso_retry; // ISO retry counter
+} EspUsbDwc2Transfer;
 
 typedef struct {
   // EP0 transfers are limited to 1 packet - larger sizes has to be split
-  uint16_t ep0_pending[2];  // Index determines direction as tusb_dir_t type
+  uint16_t ep0_pending[2];  // Indexed by native OUT/IN direction
   uint16_t dfifo_top;      // top free location in DFIFO in words
 
   // Number of IN endpoints active
@@ -43,30 +40,28 @@ typedef struct {
 
   // SOF enabling flag - required for SOF to not get disabled in ISR when SOF was enabled by
   bool sof_en;
-} espusb_controller_data_t;
+} EspUsbDwc2ControllerState;
 
 // EspUsb owns this storage for exactly one active controller. Transfer records
 // are compact: OUT records followed by IN records, selected by descriptor masks.
 // SETUP DMA occupies its own full cache line after all metadata.
 typedef struct {
-  espusb_controller_data_t data;
+  EspUsbDwc2ControllerState controller;
   uint8_t *setup_buffer;
   size_t bytes;
   uint16_t mask[2];
   uint8_t count[2], ep_count, port;
-  xfer_ctl_t transfers[];
-} espusb_dwc2_runtime_t;
-static espusb_dwc2_runtime_t *runtime;
-#define _dcd_data (runtime->data)
+  EspUsbDwc2Transfer transfers[];
+} EspUsbDwc2RuntimeState;
+static EspUsbDwc2RuntimeState *runtime;
 #define DWC2_SETUP_STORAGE_BYTES 64u
 
 static inline unsigned selected_count(uint16_t mask) { return (unsigned)__builtin_popcount((unsigned)mask); }
-static inline xfer_ctl_t *selected_transfer(uint8_t ep, uint8_t dir) {
+static inline EspUsbDwc2Transfer *selected_transfer(uint8_t ep, uint8_t dir) {
   if (!runtime || dir > 1 || ep >= runtime->ep_count || !(runtime->mask[dir] & (1u << ep))) return NULL;
   const unsigned before = selected_count((uint16_t)(runtime->mask[dir] & ((1u << ep) - 1u)));
   return runtime->transfers + (dir == ESPUSB_DIR_IN ? runtime->count[ESPUSB_DIR_OUT] : 0) + before;
 }
-#define XFER_CTL_BASE(_ep, _dir) selected_transfer((_ep), (_dir))
 
 size_t espusb_dwc2_runtime_size(uint8_t port, uint16_t out_mask, uint16_t in_mask) {
   if (port >= ESPUSB_DWC2_PORT_COUNT) return 0;
@@ -74,14 +69,14 @@ size_t espusb_dwc2_runtime_size(uint8_t port, uint16_t out_mask, uint16_t in_mas
   if (!count || count > 16 || !(out_mask & 1u) || !(in_mask & 1u)) return 0;
   const uint32_t allowed = (1u << count) - 1u;
   if ((out_mask | in_mask) & ~allowed) return 0;
-  const size_t metadata = sizeof(espusb_dwc2_runtime_t) + (selected_count(out_mask) + selected_count(in_mask)) * sizeof(xfer_ctl_t);
+  const size_t metadata = sizeof(EspUsbDwc2RuntimeState) + (selected_count(out_mask) + selected_count(in_mask)) * sizeof(EspUsbDwc2Transfer);
   return ((metadata + 63u) & ~(size_t)63u) + DWC2_SETUP_STORAGE_BYTES;
 }
 bool espusb_dwc2_runtime_prepare(uint8_t port, void *memory, size_t bytes, uint16_t out_mask, uint16_t in_mask) {
   const size_t required = espusb_dwc2_runtime_size(port, out_mask, in_mask);
   if (runtime || !required || !memory || ((uintptr_t)memory & 63u) || bytes < required) return false;
   memset(memory, 0, required);
-  espusb_dwc2_runtime_t *state = (espusb_dwc2_runtime_t *)memory;
+  EspUsbDwc2RuntimeState *state = (EspUsbDwc2RuntimeState *)memory;
   state->mask[ESPUSB_DIR_OUT] = out_mask; state->mask[ESPUSB_DIR_IN] = in_mask;
   state->count[ESPUSB_DIR_OUT] = selected_count(out_mask); state->count[ESPUSB_DIR_IN] = selected_count(in_mask);
   state->ep_count = espusb_dwc2_port(port)->ep_count; state->port = port;
@@ -100,33 +95,31 @@ uint8_t espusb_dwc2_runtime_transfers(void) { return runtime ? runtime->count[0]
 
 static EspUsbControllerConfig controller_config = {0, false};
 
- static inline uint8_t dwc2_ep_count(const dwc2_regs_t* dwc2) {
-  const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
+static inline uint8_t dwc2_ep_count(const EspUsbDwc2Registers* dwc2) {
+  const EspUsbDwc2Ghwcfg2 ghwcfg2 = {.value = dwc2->ghwcfg2};
   return ghwcfg2.num_dev_ep + 1;
 }
 
 //--------------------------------------------------------------------+
 //
 //--------------------------------------------------------------------+
- static inline bool edpt_is_enabled(dwc2_dep_t* dep) {
+static inline bool edpt_is_enabled(EspUsbDwc2EndpointRegisters* dep) {
   return (dep->ctl & EPCTL_EPENA) != 0;
 }
-
 
   //--------------------------------------------------------------------
   // DMA
   //--------------------------------------------------------------------
 
-
- static inline bool dma_device_enabled(const dwc2_regs_t* dwc2) {
+static inline bool dma_device_enabled(const EspUsbDwc2Registers* dwc2) {
   (void) dwc2;
   // Internal DMA only
-  const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
+  const EspUsbDwc2Ghwcfg2 ghwcfg2 = {.value = dwc2->ghwcfg2};
   return ghwcfg2.arch == GHWCFG2_ARCH_INTERNAL_DMA;
 }
 
 static void dma_setup_prepare(uint8_t rhport) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
 
   if (dwc2->gsnpsid >= DWC2_CORE_REV_3_00a) {
     if(edpt_is_enabled(&dwc2->epout[0])) {
@@ -143,7 +136,6 @@ static void dma_setup_prepare(uint8_t rhport) {
 //--------------------------------------------------------------------+
 // Data FIFO
 //--------------------------------------------------------------------+
-
 
 /* Device Data FIFO scheme
   The controller has a single SPRAM of otg_dfifo_depth 32-bit words shared between all FIFOs and optional DMA metadata.
@@ -188,12 +180,12 @@ static void dma_setup_prepare(uint8_t rhport) {
     Therefore, GRXFSIZ = 13 + 1 + 2 x (Largest-EPsize/4 + 1) + 2 x EPOUTnum
 */
 
- static inline uint16_t calc_device_grxfsiz(uint16_t largest_ep_size, uint8_t ep_count) {
+static inline uint16_t calc_device_grxfsiz(uint16_t largest_ep_size, uint8_t ep_count) {
   return (uint16_t)(13 + 1 + 2 * ((largest_ep_size / 4) + 1) + 2 * ep_count);
 }
 
 static bool dfifo_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t packet_size, bool is_bulk) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   const EspUsbDwc2Port* dwc2_controller = espusb_dwc2_port(rhport);
   const uint8_t ep_count = dwc2_controller->ep_count;
   const uint8_t epnum = espusb_endpoint_number(ep_addr);
@@ -208,14 +200,14 @@ static bool dfifo_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t packet_size, b
 
     // If size_rx needs to be extended check if there is enough free space
     if (dwc2->grxfsiz < new_sz) {
-      ESPUSB_REQUIRE(new_sz <= _dcd_data.dfifo_top);
+      ESPUSB_REQUIRE(new_sz <= runtime->controller.dfifo_top);
       dwc2->grxfsiz = new_sz; // Enlarge RX FIFO
     }
   } else {
     // Check IN endpoints concurrently active limit
     if(0 != dwc2_controller->ep_in_count) {
-      ESPUSB_REQUIRE(_dcd_data.allocated_epin_count < dwc2_controller->ep_in_count);
-      _dcd_data.allocated_epin_count++;
+      ESPUSB_REQUIRE(runtime->controller.allocated_epin_count < dwc2_controller->ep_in_count);
+      runtime->controller.allocated_epin_count++;
     }
 
     // Enable double buffering if configured, only effective for non-periodic endpoints
@@ -225,15 +217,15 @@ static bool dfifo_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t packet_size, b
     }
 
     // Check if free space is available
-    ESPUSB_REQUIRE(_dcd_data.dfifo_top >= fifo_size + dwc2->grxfsiz);
-    _dcd_data.dfifo_top -= fifo_size;
+    ESPUSB_REQUIRE(runtime->controller.dfifo_top >= fifo_size + dwc2->grxfsiz);
+    runtime->controller.dfifo_top -= fifo_size;
 
     // Both TXFD and TXSA are in unit of 32-bit words.
     if (epnum == 0) {
-      dwc2->dieptxf0 = ((uint32_t) fifo_size << DIEPTXF0_TX0FD_Pos) | _dcd_data.dfifo_top;
+      dwc2->dieptxf0 = ((uint32_t) fifo_size << DIEPTXF0_TX0FD_Pos) | runtime->controller.dfifo_top;
     } else {
       // DIEPTXF starts at FIFO #1.
-      dwc2->dieptxf[epnum - 1] = ((uint32_t) fifo_size << DIEPTXF_INEPTXFD_Pos) | _dcd_data.dfifo_top;
+      dwc2->dieptxf[epnum - 1] = ((uint32_t) fifo_size << DIEPTXF_INEPTXFD_Pos) | runtime->controller.dfifo_top;
     }
   }
 
@@ -242,42 +234,36 @@ static bool dfifo_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t packet_size, b
 
 static void dfifo_device_init(uint8_t rhport) {
   const EspUsbDwc2Port* dwc2_controller = espusb_dwc2_port(rhport);
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   dwc2->grxfsiz = calc_device_grxfsiz(ESPUSB_CONTROL_PACKET_BYTES, dwc2_controller->ep_count);
 
   // Scatter/Gather DMA mode is not yet supported. Buffer DMA only need 1 words per endpoint direction
   const bool is_dma = dma_device_enabled(dwc2);
-  _dcd_data.dfifo_top = dwc2_controller->otg_dfifo_depth;
+  runtime->controller.dfifo_top = dwc2_controller->otg_dfifo_depth;
   if (is_dma) {
-    _dcd_data.dfifo_top -= 2 * dwc2_controller->ep_count;
+    runtime->controller.dfifo_top -= 2 * dwc2_controller->ep_count;
   }
-  dwc2->gdfifocfg = ((uint32_t) _dcd_data.dfifo_top << GDFIFOCFG_EPINFOBASE_SHIFT) | _dcd_data.dfifo_top;
+  dwc2->gdfifocfg = ((uint32_t) runtime->controller.dfifo_top << GDFIFOCFG_EPINFOBASE_SHIFT) | runtime->controller.dfifo_top;
 
   // Allocate FIFO for EP0 IN
   (void) dfifo_alloc(rhport, 0x80, ESPUSB_CONTROL_PACKET_BYTES, false);
 }
 
-
 //--------------------------------------------------------------------
 // Endpoint
 //--------------------------------------------------------------------
-static void edpt_activate(uint8_t rhport, const EspUsbEndpointDescriptor* p_endpoint_desc) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+static void edpt_activate(uint8_t rhport, const EspUsbEndpointDescriptor* p_endpoint_desc, uint16_t interval) {
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   const uint8_t epnum = espusb_endpoint_number(p_endpoint_desc->bEndpointAddress);
   const uint8_t dir = espusb_endpoint_direction(p_endpoint_desc->bEndpointAddress);
 
-  xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, dir);
+  EspUsbDwc2Transfer* xfer = selected_transfer(epnum, dir);
   xfer->max_size = espusb_endpoint_packet_size(p_endpoint_desc);
 
-  const dwc2_dsts_t dsts = {.value = dwc2->dsts};
-  if (dsts.enum_speed == DCFG_SPEED_HIGH) {
-    xfer->interval = 1 << (p_endpoint_desc->bInterval - 1);
-  } else {
-    xfer->interval =  p_endpoint_desc->bInterval;
-  }
+  xfer->interval = interval;
 
   // Endpoint control
-  dwc2_depctl_t depctl = {.value = 0};
+  EspUsbDwc2Depctl depctl = {.value = 0};
   depctl.mps = xfer->max_size;
   depctl.active = 1;
   depctl.type = espusb_endpoint_type(p_endpoint_desc);
@@ -288,7 +274,7 @@ static void edpt_activate(uint8_t rhport, const EspUsbEndpointDescriptor* p_endp
     depctl.tx_fifo_num = epnum;
   }
 
-  dwc2_dep_t* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
+  EspUsbDwc2EndpointRegisters* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
   dep->ctl = depctl.value;
   dwc2->daintmsk |= ESPUSB_BIT(epnum + DAINT_SHIFT(dir));
 }
@@ -296,10 +282,10 @@ static void edpt_activate(uint8_t rhport, const EspUsbEndpointDescriptor* p_endp
 static void edpt_disable(uint8_t rhport, uint8_t ep_addr, bool stall) {
   (void) rhport;
 
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   const uint8_t epnum = espusb_endpoint_number(ep_addr);
   const uint8_t dir = espusb_endpoint_direction(ep_addr);
-  dwc2_dep_t* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
+  EspUsbDwc2EndpointRegisters* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
 
   const uint32_t stall_mask = (stall ? EPCTL_STALL : 0);
 
@@ -319,7 +305,7 @@ static void edpt_disable(uint8_t rhport, uint8_t ep_addr, bool stall) {
     }
 
     // Flush the FIFO, and wait until we have confirmed it cleared.
-    dfifo_flush_tx(dwc2, epnum);
+    espusb_dwc2_flush_tx(dwc2, epnum);
   } else {
     if (!edpt_is_enabled(dep) || epnum == 0) {
       // non-control not-enabled: stall if set
@@ -354,24 +340,24 @@ static void edpt_disable(uint8_t rhport, uint8_t ep_addr, bool stall) {
 // We must make sure that this function is not called when the EP is disabled
 // Must be called from critical section
 static void edpt_schedule_packets(uint8_t rhport, const uint8_t epnum, const uint8_t dir) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
-  xfer_ctl_t* const xfer = XFER_CTL_BASE(epnum, dir);
-  dwc2_dep_t* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
+  EspUsbDwc2Transfer* const xfer = selected_transfer(epnum, dir);
+  EspUsbDwc2EndpointRegisters* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
 
   uint16_t num_packets;
   uint16_t total_bytes;
 
   // EP0 is limited to one packet per xfer
   if (epnum == 0) {
-    total_bytes = espusb_min_u16(_dcd_data.ep0_pending[dir], ESPUSB_CONTROL_PACKET_BYTES);
-    _dcd_data.ep0_pending[dir] -= total_bytes;
+    total_bytes = espusb_min_u16(runtime->controller.ep0_pending[dir], ESPUSB_CONTROL_PACKET_BYTES);
+    runtime->controller.ep0_pending[dir] -= total_bytes;
     num_packets = 1;
   } else {
     total_bytes = xfer->total_len;
     if (dma_device_enabled(dwc2)) {
       // GHWCFG3 describes the *implemented* counters. S3 has 7 packet bits,
       // even though the common TSIZ register type has space for 10.
-      const dwc2_ghwcfg3_t caps = {.value = dwc2->ghwcfg3};
+      const EspUsbDwc2Ghwcfg3 caps = {.value = dwc2->ghwcfg3};
       const uint32_t byte_limit = (1u << espusb_min_u8(19, 11 + caps.xfer_size_width)) - 1;
       const uint32_t packet_limit = (1u << espusb_min_u8(10, 4 + caps.packet_size_width)) - 1;
       const uint32_t limit = espusb_min_u32(byte_limit, packet_limit * xfer->max_size);
@@ -388,17 +374,17 @@ static void edpt_schedule_packets(uint8_t rhport, const uint8_t epnum, const uin
   }
 
   // transfer size: A full OUT transfer (multiple packets, possibly) triggers XFRC.
-  dwc2_ep_tsize_t deptsiz = {.value = 0};
+  EspUsbDwc2EpTsize deptsiz = {.value = 0};
   deptsiz.xfer_size = total_bytes;
   deptsiz.packet_count = num_packets;
   dep->tsiz = deptsiz.value;
 
   // control
-  dwc2_depctl_t depctl = {.value = dep->ctl};
+  EspUsbDwc2Depctl depctl = {.value = dep->ctl};
   depctl.clear_nak = 1;
   depctl.enable = 1;
   if (depctl.type == DEPCTL_EPTYPE_ISOCHRONOUS) {
-    const dwc2_dsts_t dsts = {.value = dwc2->dsts};
+    const EspUsbDwc2Dsts dsts = {.value = dwc2->dsts};
     const uint32_t odd_now = dsts.frame_number & 1u;
     if (odd_now != 0) {
       depctl.set_data0_iso_even = 1;
@@ -433,14 +419,14 @@ bool espusb_controller_configure(uint8_t rhport, const EspUsbControllerConfig *c
 bool espusb_controller_init(uint8_t rhport, bool highSpeed) {
   ESPUSB_REQUIRE(runtime && runtime->port == rhport);
 
-  ESPUSB_CLEAR_MEMORY(&_dcd_data, sizeof(_dcd_data));
+  ESPUSB_CLEAR_MEMORY(&runtime->controller, sizeof(runtime->controller));
 
   // Core Initialization
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
-  const bool is_hs_phy = dwc2_core_is_highspeed_phy(dwc2, highSpeed);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
+  const bool is_hs_phy = espusb_dwc2_highspeed_phy(dwc2, highSpeed);
   const bool is_dma = dma_device_enabled(dwc2);
   ESPUSB_REQUIRE(is_dma);
-  ESPUSB_REQUIRE(dwc2_core_init(rhport, is_hs_phy));
+  ESPUSB_REQUIRE(espusb_dwc2_phy_start(rhport, is_hs_phy));
 
   //------------- 7.1 Device Initialization -------------//
   // Set device max speed
@@ -450,7 +436,7 @@ bool espusb_controller_init(uint8_t rhport, bool highSpeed) {
 
     // XCVRDLY: transceiver delay between xcvr_sel and txvalid during device chirp is required
     // when using with some PHYs such as USB334x (USB3341, USB3343, USB3346, USB3347)
-    const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
+    const EspUsbDwc2Ghwcfg2 ghwcfg2 = {.value = dwc2->ghwcfg2};
     if (ghwcfg2.hs_phy_type == GHWCFG2_HSPHY_ULPI) {
       dcfg |= DCFG_XCVRDLY;
     }
@@ -473,7 +459,6 @@ bool espusb_controller_init(uint8_t rhport, bool highSpeed) {
   }
   dwc2->gotgctl = gotgctl;
 
-
   // Enable required interrupts
   dwc2->gintmsk |= GINTMSK_OTGINT | GINTMSK_USBRST | GINTMSK_ENUMDNEM | GINTMSK_WUIM;
 
@@ -488,7 +473,7 @@ bool espusb_controller_init(uint8_t rhport, bool highSpeed) {
 bool espusb_controller_deinit(uint8_t rhport) {
   espusb_controller_disconnect(rhport);
   espusb_dwc2_release_irq(rhport);
-  dwc2_core_deinit(rhport);
+  espusb_dwc2_phy_stop(rhport);
   return true;
 }
 
@@ -501,7 +486,7 @@ void espusb_controller_int_disable(uint8_t rhport) {
 }
 
 void espusb_controller_set_address(uint8_t rhport, uint8_t dev_addr) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   dwc2->dcfg = (dwc2->dcfg & ~DCFG_DAD_Msk) | (dev_addr << DCFG_DAD_Pos);
 
   // Response with status after changing device address
@@ -511,7 +496,7 @@ void espusb_controller_set_address(uint8_t rhport, uint8_t dev_addr) {
 void espusb_controller_remote_wakeup(uint8_t rhport) {
   (void) rhport;
 
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
 
   // set remote wakeup
   dwc2->dctl |= DCTL_RWUSIG;
@@ -527,7 +512,7 @@ void espusb_controller_remote_wakeup(uint8_t rhport) {
 }
 
 void espusb_controller_connect(uint8_t rhport) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
 
   espusb_dwc2_set_pulls(rhport, true);
 
@@ -535,7 +520,7 @@ void espusb_controller_connect(uint8_t rhport) {
 }
 
 void espusb_controller_disconnect(uint8_t rhport) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
 
   espusb_dwc2_set_pulls(rhport, false);
 
@@ -545,9 +530,9 @@ void espusb_controller_disconnect(uint8_t rhport) {
 // Be advised: audio, video and possibly other iso-ep classes use espusb_controller_sof_enable() to enable/disable its corresponding ISR on purpose!
 void espusb_controller_sof_enable(uint8_t rhport, bool en) {
   (void) rhport;
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
 
-  _dcd_data.sof_en = en;
+  runtime->controller.sof_en = en;
 
   if (en) {
     dwc2->gintsts = GINTSTS_SOF;
@@ -562,30 +547,33 @@ void espusb_controller_sof_enable(uint8_t rhport, bool en) {
  *------------------------------------------------------------------*/
 
 bool espusb_controller_edpt_open(uint8_t rhport, EspUsbEndpointDescriptor const* desc_edpt) {
-  ESPUSB_REQUIRE(XFER_CTL_BASE(espusb_endpoint_number(desc_edpt->bEndpointAddress), espusb_endpoint_direction(desc_edpt->bEndpointAddress)));
+  ESPUSB_REQUIRE(selected_transfer(espusb_endpoint_number(desc_edpt->bEndpointAddress), espusb_endpoint_direction(desc_edpt->bEndpointAddress)));
   espusb_controller_lock(false);
-  const bool opened = dfifo_alloc(rhport, desc_edpt->bEndpointAddress, espusb_endpoint_packet_size(desc_edpt),
-                                  espusb_endpoint_type(desc_edpt) == ESPUSB_XFER_BULK);
-  if (opened) edpt_activate(rhport, desc_edpt);
+  const EspUsbDwc2Dsts status = {.value = espusb_dwc2_registers(rhport)->dsts};
+  uint16_t interval = 0;
+  const bool opened = espusb_dwc2_decode_interval(desc_edpt, status.enum_speed == DCFG_SPEED_HIGH, &interval) &&
+      dfifo_alloc(rhport, desc_edpt->bEndpointAddress, espusb_endpoint_packet_size(desc_edpt),
+                  espusb_endpoint_type(desc_edpt) == ESPUSB_XFER_BULK);
+  if (opened) edpt_activate(rhport, desc_edpt, interval);
   espusb_controller_unlock(false);
   return opened;
 }
 
 // Close all non-control endpoints, cancel all pending transfers if any.
 void espusb_controller_edpt_close_all(uint8_t rhport) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   uint8_t const ep_count = espusb_dwc2_port(rhport)->ep_count;
 
   espusb_controller_lock(false);
 
-  _dcd_data.allocated_epin_count = 0;
+  runtime->controller.allocated_epin_count = 0;
 
   // Disable non-control interrupt
   dwc2->daintmsk = (1 << DAINTMSK_OEPM_Pos) | (1 << DAINTMSK_IEPM_Pos);
 
   for (uint8_t n = 1; n < ep_count; n++) {
     for (uint8_t d = 0; d < 2; d++) {
-      dwc2_dep_t* dep = &dwc2->ep[d][n];
+      EspUsbDwc2EndpointRegisters* dep = &dwc2->ep[d][n];
       if (edpt_is_enabled(dep)) {
         // EPDIS is asynchronous. Wait until DMA has actually stopped before
         // a class can return its buffers or reopen this endpoint number.
@@ -595,20 +583,20 @@ void espusb_controller_edpt_close_all(uint8_t rhport) {
       // A completed transfer may have left EPENA clear but XFRC latched.
       // It must not be interpreted using the next arm's transfer record.
       dep->intr = 0xffffffffu;
-      xfer_ctl_t *xfer = XFER_CTL_BASE(n, 1-d);
+      EspUsbDwc2Transfer *xfer = selected_transfer(n, 1-d);
       if (xfer) ESPUSB_CLEAR_MEMORY(xfer, sizeof(*xfer));
     }
   }
 
-  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
-  dfifo_flush_rx(dwc2);
+  espusb_dwc2_flush_tx(dwc2, 0x10); // all tx fifo
+  espusb_dwc2_flush_rx(dwc2);
   dfifo_device_init(rhport); // re-init dfifo
 
   espusb_controller_unlock(false);
 }
 
 bool espusb_controller_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet_size) {
-  ESPUSB_REQUIRE(XFER_CTL_BASE(espusb_endpoint_number(ep_addr), espusb_endpoint_direction(ep_addr)));
+  ESPUSB_REQUIRE(selected_transfer(espusb_endpoint_number(ep_addr), espusb_endpoint_direction(ep_addr)));
   espusb_controller_lock(false);
   const bool allocated = dfifo_alloc(rhport, ep_addr, largest_packet_size, false);
   espusb_controller_unlock(false);
@@ -616,20 +604,24 @@ bool espusb_controller_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t 
 }
 
 bool espusb_controller_edpt_iso_activate(uint8_t rhport,  EspUsbEndpointDescriptor const * p_endpoint_desc) {
-  ESPUSB_REQUIRE(XFER_CTL_BASE(espusb_endpoint_number(p_endpoint_desc->bEndpointAddress), espusb_endpoint_direction(p_endpoint_desc->bEndpointAddress)));
-  // Disable EP to clear potential incomplete transfers
+  ESPUSB_REQUIRE(selected_transfer(espusb_endpoint_number(p_endpoint_desc->bEndpointAddress), espusb_endpoint_direction(p_endpoint_desc->bEndpointAddress)));
   espusb_controller_lock(false);
-  edpt_disable(rhport, p_endpoint_desc->bEndpointAddress, false);
-  edpt_activate(rhport, p_endpoint_desc);
+  const EspUsbDwc2Dsts status = {.value = espusb_dwc2_registers(rhport)->dsts};
+  uint16_t interval = 0;
+  const bool valid = espusb_dwc2_decode_interval(p_endpoint_desc, status.enum_speed == DCFG_SPEED_HIGH, &interval);
+  if (valid) {
+    edpt_disable(rhport, p_endpoint_desc->bEndpointAddress, false);
+    edpt_activate(rhport, p_endpoint_desc, interval);
+  }
   espusb_controller_unlock(false);
-  return true;
+  return valid;
 }
 
 bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint16_t total_bytes, bool is_isr) {
   (void) is_isr;
   uint8_t const epnum = espusb_endpoint_number(ep_addr);
   uint8_t const dir = espusb_endpoint_direction(ep_addr);
-  xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, dir);
+  EspUsbDwc2Transfer* xfer = selected_transfer(epnum, dir);
   bool ret;
 
   espusb_controller_lock(is_isr);
@@ -644,7 +636,7 @@ bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffe
 
     // EP0 can only handle one packet
     if (epnum == 0) {
-      _dcd_data.ep0_pending[dir] = total_bytes;
+      runtime->controller.ep0_pending[dir] = total_bytes;
     }
 
     // Schedule packets to be sent within interrupt
@@ -658,7 +650,7 @@ bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffe
 }
 
 void espusb_controller_edpt_stall(uint8_t rhport, uint8_t ep_addr) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   espusb_controller_lock(false);
   edpt_disable(rhport, ep_addr, true);
 
@@ -676,10 +668,10 @@ bool espusb_controller_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
   const uint8_t epnum = espusb_endpoint_number(ep_addr), dir = espusb_endpoint_direction(ep_addr);
   if (epnum == 0 || epnum >= espusb_dwc2_port(rhport)->ep_count) return false;
   espusb_controller_lock(false);
-  xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, dir);
+  EspUsbDwc2Transfer* xfer = selected_transfer(epnum, dir);
   if (!xfer || xfer->max_size == 0) { espusb_controller_unlock(false); return false; }
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
-  dwc2_dep_t* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
+  EspUsbDwc2EndpointRegisters* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
   edpt_disable(rhport, ep_addr, false);
   // edpt_disable clears active-endpoint. Restore it without resetting PID or
   // reallocating the FIFO; the next submit will clear NAK and enable DMA.
@@ -696,10 +688,10 @@ bool espusb_controller_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
 }
 
 void espusb_controller_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   uint8_t const epnum = espusb_endpoint_number(ep_addr);
   uint8_t const dir = espusb_endpoint_direction(ep_addr);
-  dwc2_dep_t* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
+  EspUsbDwc2EndpointRegisters* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
 
   // Clear stall and reset data toggle
   espusb_controller_lock(false);
@@ -715,15 +707,15 @@ void espusb_controller_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr) {
 // 7.4.1 Initialization on USB Reset
 // Must be called from critical section
 static void handle_bus_reset(uint8_t rhport) {
-  dwc2_regs_t *dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers *dwc2 = espusb_dwc2_registers(rhport);
   const uint8_t ep_count =  dwc2_ep_count(dwc2);
 
-  ESPUSB_CLEAR_MEMORY(runtime->transfers, (runtime->count[0] + runtime->count[1]) * sizeof(xfer_ctl_t));
+  ESPUSB_CLEAR_MEMORY(runtime->transfers, (runtime->count[0] + runtime->count[1]) * sizeof(EspUsbDwc2Transfer));
 
-  _dcd_data.ep0_pending[ESPUSB_DIR_OUT] = 0;
-  _dcd_data.ep0_pending[ESPUSB_DIR_IN] = 0;
-  _dcd_data.sof_en = false;
-  _dcd_data.allocated_epin_count = 0;
+  runtime->controller.ep0_pending[ESPUSB_DIR_OUT] = 0;
+  runtime->controller.ep0_pending[ESPUSB_DIR_IN] = 0;
+  runtime->controller.sof_en = false;
+  runtime->controller.allocated_epin_count = 0;
 
   // 1. NAK for all OUT endpoints
   for (uint8_t n = 0; n < ep_count; n++) {
@@ -732,7 +724,7 @@ static void handle_bus_reset(uint8_t rhport) {
 
   // Disable all IN endpoints
   for (uint8_t n = 0; n < ep_count; n++) {
-    dwc2_dep_t* dep = &dwc2->epin[n];
+    EspUsbDwc2EndpointRegisters* dep = &dwc2->epin[n];
     if (edpt_is_enabled(dep)) {
       dep->diepctl |= DIEPCTL_SNAK | DIEPCTL_EPDIS;
     }
@@ -744,12 +736,12 @@ static void handle_bus_reset(uint8_t rhport) {
   dwc2->diepmsk = DIEPMSK_TOM | DIEPMSK_XFRCM;
 
   // 4. Set up DFIFO
-  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
-  dfifo_flush_rx(dwc2);
+  espusb_dwc2_flush_tx(dwc2, 0x10); // all tx fifo
+  espusb_dwc2_flush_rx(dwc2);
   dfifo_device_init(rhport);
 
   // 5. Reset device address
-  dwc2_dcfg_t dcfg = {.value = dwc2->dcfg};
+  EspUsbDwc2Dcfg dcfg = {.value = dwc2->dcfg};
   dcfg.address = 0;
   dwc2->dcfg = dcfg.value;
 
@@ -768,8 +760,8 @@ static void handle_bus_reset(uint8_t rhport) {
   dwc2->epin[0].ctl |= mps << DIEPCTL0_MPSIZ_Pos;
   dwc2->epout[0].ctl |= mps << DOEPCTL0_MPSIZ_Pos;
 
-  XFER_CTL_BASE(0, ESPUSB_DIR_OUT)->max_size = ESPUSB_CONTROL_PACKET_BYTES;
-  XFER_CTL_BASE(0, ESPUSB_DIR_IN)->max_size = ESPUSB_CONTROL_PACKET_BYTES;
+  selected_transfer(0, ESPUSB_DIR_OUT)->max_size = ESPUSB_CONTROL_PACKET_BYTES;
+  selected_transfer(0, ESPUSB_DIR_IN)->max_size = ESPUSB_CONTROL_PACKET_BYTES;
 
   uint32_t gintmsk = GINTMSK_OTGINT | GINTMSK_IEPINT | GINTMSK_IISOIXFRM;
   if(dma_device_enabled(dwc2)) {
@@ -783,8 +775,8 @@ static void handle_bus_reset(uint8_t rhport) {
 }
 
 static void handle_enum_done(uint8_t rhport) {
-  dwc2_regs_t *dwc2 = DWC2_REG(rhport);
-  const dwc2_dsts_t dsts = {.value = dwc2->dsts};
+  EspUsbDwc2Registers *dwc2 = espusb_dwc2_registers(rhport);
+  const EspUsbDwc2Dsts dsts = {.value = dwc2->dsts};
   EspUsbSpeed speed;
   switch (dsts.enum_speed) {
     case DCFG_SPEED_HIGH:
@@ -806,22 +798,20 @@ static void handle_enum_done(uint8_t rhport) {
   espusb_controller_event_bus_reset(rhport, speed, true);
 }
 
-
-
-static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepint_bm) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+static void handle_epout_dma(uint8_t rhport, uint8_t epnum, EspUsbDwc2Doepint doepint_bm) {
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
 
   if (doepint_bm.setup_phase_done) {
     // Cleanup previous pending EP0 IN transfer if any
-    dwc2_dep_t* epin0 = &dwc2->epin[0];
-    dwc2_dep_t* epout0 = &dwc2->epout[0];
+    EspUsbDwc2EndpointRegisters* epin0 = &dwc2->epin[0];
+    EspUsbDwc2EndpointRegisters* epout0 = &dwc2->epout[0];
     if (edpt_is_enabled(epin0)) {
       edpt_disable(rhport, 0x80, false);
     }
     // a new SETUP aborts any in-progress control transfer: drop leftover EP0 chunking state so a
     // stale latched completion cannot re-arm from it
-    _dcd_data.ep0_pending[ESPUSB_DIR_OUT] = 0;
-    _dcd_data.ep0_pending[ESPUSB_DIR_IN] = 0;
+    runtime->controller.ep0_pending[ESPUSB_DIR_OUT] = 0;
+    runtime->controller.ep0_pending[ESPUSB_DIR_IN] = 0;
 
     espusb_controller_dcache_invalidate(runtime->setup_buffer, DWC2_SETUP_STORAGE_BYTES);
 
@@ -842,8 +832,8 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
     // only handle data skip if it is setup or status related
     // Normal OUT transfer complete
     if (!doepint_bm.status_phase_rx && !doepint_bm.setup_packet_rx) {
-      xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, ESPUSB_DIR_OUT);
-      if ((epnum == 0) && _dcd_data.ep0_pending[ESPUSB_DIR_OUT]) {
+      EspUsbDwc2Transfer* xfer = selected_transfer(epnum, ESPUSB_DIR_OUT);
+      if ((epnum == 0) && runtime->controller.ep0_pending[ESPUSB_DIR_OUT]) {
         // EP0 can only handle one packet: invalidate and advance past the received bytes, then
         // schedule the next.
         if (xfer->buffer != NULL) {
@@ -852,11 +842,11 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
         }
         edpt_schedule_packets(rhport, epnum, ESPUSB_DIR_OUT);
       } else {
-        dwc2_dep_t* epout = &dwc2->epout[epnum];
+        EspUsbDwc2EndpointRegisters* epout = &dwc2->epout[epnum];
 
         // Non-EP0 DMA may require several hardware arms. Invalidate only
         // this chunk, and stop early on a short packet or ZLP.
-        const dwc2_ep_tsize_t tsiz = {.value = epout->tsiz};
+        const EspUsbDwc2EpTsize tsiz = {.value = epout->tsiz};
         const uint16_t remain = tsiz.xfer_size;
         if (epnum != 0) {
           const uint16_t actual = xfer->dma_chunk - remain;
@@ -892,8 +882,8 @@ static void handle_epout_dma(uint8_t rhport, uint8_t epnum, dwc2_doepint_t doepi
   }
 }
 
-static void handle_epin_dma(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepint_bm) {
-  xfer_ctl_t* xfer = XFER_CTL_BASE(epnum, ESPUSB_DIR_IN);
+static void handle_epin_dma(uint8_t rhport, uint8_t epnum, EspUsbDwc2Diepint diepint_bm) {
+  EspUsbDwc2Transfer* xfer = selected_transfer(epnum, ESPUSB_DIR_IN);
 
   if (diepint_bm.xfer_complete) {
     if (epnum != 0) {
@@ -906,7 +896,7 @@ static void handle_epin_dma(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepin
       }
       return;
     }
-    if ((epnum == 0) && _dcd_data.ep0_pending[ESPUSB_DIR_IN]) {
+    if ((epnum == 0) && runtime->controller.ep0_pending[ESPUSB_DIR_IN]) {
       // EP0 can only handle one packet: advance past the sent bytes, then schedule the next.
       if (xfer->buffer != NULL) {
         xfer->buffer += ESPUSB_CONTROL_PACKET_BYTES;
@@ -919,26 +909,26 @@ static void handle_epin_dma(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepin
 }
 
 static void handle_ep_irq(uint8_t rhport, uint8_t dir) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   const bool is_dma = dma_device_enabled(dwc2);
   const uint8_t ep_count = dwc2_ep_count(dwc2);
   const uint8_t daint_offset = (dir == ESPUSB_DIR_IN) ? DAINT_IEPINT_Pos : DAINT_OEPINT_Pos;
-  dwc2_dep_t* ep_base = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][0];
+  EspUsbDwc2EndpointRegisters* ep_base = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][0];
 
   // DAINT for a given EP clears when DEPINTx is cleared.
   // EPINT will be cleared when DAINT bits are cleared.
   for (uint8_t epnum = 0; epnum < ep_count; epnum++) {
     if (espusb_bit_test(dwc2->daint & dwc2->daintmsk,daint_offset + epnum)) {
-      dwc2_dep_t* epout = &ep_base[epnum];
+      EspUsbDwc2EndpointRegisters* epout = &ep_base[epnum];
       union {
         uint32_t value;
-        dwc2_diepint_t diepint_bm;
-        dwc2_doepint_t doepint_bm;
+        EspUsbDwc2Diepint diepint_bm;
+        EspUsbDwc2Doepint doepint_bm;
       } intr;
       intr.value = epout->intr;
 
       epout->intr = intr.value; // Clear interrupt //-V::2584::{otg_int}
-      if (!XFER_CTL_BASE(epnum, dir)) continue;
+      if (!selected_transfer(epnum, dir)) continue;
 
       if (is_dma) {
         if (dir == ESPUSB_DIR_IN) {
@@ -953,24 +943,24 @@ static void handle_ep_irq(uint8_t rhport, uint8_t dir) {
 }
 
 static void handle_incomplete_iso_in(uint8_t rhport) {
-  dwc2_regs_t      *dwc2    = DWC2_REG(rhport);
-  const dwc2_dsts_t dsts    = {.value = dwc2->dsts};
+  EspUsbDwc2Registers      *dwc2    = espusb_dwc2_registers(rhport);
+  const EspUsbDwc2Dsts dsts    = {.value = dwc2->dsts};
   const uint32_t    odd_now = dsts.frame_number & 1u;
 
   // Loop over all IN endpoints
   const uint8_t ep_count = dwc2_ep_count(dwc2);
   for (uint8_t epnum = 0; epnum < ep_count; epnum++) {
-    dwc2_dep_t   *epin   = &dwc2->epin[epnum];
-    dwc2_depctl_t depctl = {.value = epin->diepctl};
+    EspUsbDwc2EndpointRegisters   *epin   = &dwc2->epin[epnum];
+    EspUsbDwc2Depctl depctl = {.value = epin->diepctl};
     // Read DSTS and DIEPCTLn for all isochronous endpoints. If the current EP is enabled and the read value of
     // DSTS.SOFFN is the targeted uframe number for this EP, then this EP has an incomplete transfer.
     if (depctl.enable && depctl.type == DEPCTL_EPTYPE_ISOCHRONOUS && depctl.dpid_iso_odd == odd_now) {
-      xfer_ctl_t *xfer = XFER_CTL_BASE(epnum, ESPUSB_DIR_IN);
+      EspUsbDwc2Transfer *xfer = selected_transfer(epnum, ESPUSB_DIR_IN);
       if (!xfer) continue;
       if (xfer->iso_retry > 0) {
         xfer->iso_retry--;
         // Restart ISO transfe: re-write TSIZ and CTL
-        dwc2_ep_tsize_t deptsiz = {.value = 0};
+        EspUsbDwc2EpTsize deptsiz = {.value = 0};
         deptsiz.xfer_size       = xfer->total_len;
         deptsiz.packet_count    = espusb_div_ceil(xfer->total_len, xfer->max_size);
         epin->tsiz              = deptsiz.value;
@@ -1004,7 +994,7 @@ static void handle_incomplete_iso_in(uint8_t rhport) {
   are combined to generate dedicated interrupt line for each endpoint.
  */
 void espusb_controller_int_handler(uint8_t rhport) {
-  dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   const uint32_t gintmask = dwc2->gintmsk;
   const uint32_t gintsts = dwc2->gintsts & gintmask;
 
@@ -1061,7 +1051,7 @@ void espusb_controller_int_handler(uint8_t rhport) {
     const uint32_t frame = (dwc2->dsts & DSTS_FNSOF) >> DSTS_FNSOF_Pos;
 
     // Disable SOF interrupt if SOF was not explicitly enabled since SOF was used for remote wakeup detection
-    if (!_dcd_data.sof_en) {
+    if (!runtime->controller.sof_en) {
       dwc2->gintmsk &= ~GINTMSK_SOFM;
     }
 
@@ -1075,7 +1065,6 @@ void espusb_controller_int_handler(uint8_t rhport) {
     handle_ep_irq(rhport, ESPUSB_DIR_IN);
     espusb_controller_unlock(true);
   }
-
 
   // OUT endpoint interrupt handling.
   if (gintsts & GINTSTS_OEPINT) {

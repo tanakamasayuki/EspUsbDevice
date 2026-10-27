@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "repository": "hathach/tinyusb",
+  "commit": "53f8c53c2cbd73a91a172f1ae35e9abc00eb5075",
+  "tinyusb_version": "0.21.0",
+  "reviewed_with_arduino_esp32": "3.3.11",
+  "last_vendor_commit": "3665309506ba2dcac0fcbb34e3ca0d333a747a94",
+  "status": "Archived origin; no vendor build snapshot or automatic updater",
+  "maintained_files": [
+    "src/internal/EspUsbDwc2Device.c",
+    "src/internal/EspUsbDwc2Phy.c",
+    "src/internal/EspUsbDwc2Registers.h",
+    "src/internal/EspUsbDwc2Hardware.h"
+  ]
+}

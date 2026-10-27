@@ -537,3 +537,28 @@ flagなしが成功、55旧flagの0指定も全て明示拒否することを確
 結果は`dwc2-platform-legacy-flags.txt`。旧tests/examplesはmainとの差分なし。
 DWC2のregister/PHY/endpointアルゴリズムは残るvendor 4 fileに依存している。
 mask/unmask SDK自身の故障注入、全EP0順序・class HALT競合、他SoC/HS実機、最終API/sampleは未完了。
+
+
+## DWC2を本体で保守する段階へ移行
+
+2026-10-28。残るvendor 4 fileを`internal/EspUsbDwc2Device.c`、`EspUsbDwc2Phy.c`、
+`EspUsbDwc2Hardware.h`、`EspUsbDwc2Registers.h`へ整理し、自動vendor更新を終了した。
+これはMIT/BSD由来の保守forkで、clean-roomで全アルゴリズムを書き直したという意味ではない。
+[由来と保守方法](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
+register headerは2297→491行とし、Deviceで使うview/constantsだけを残す。
+26箇所のoffset/stride assertとS3 SDK構造との主要offset比較を追加した。
+
+周期endpointのinterval計算も整理した。従来のHS全endpointへの指数計算はbulkの
+bInterval=0で負のshiftを起こし得た。FS ISOの指数解釈と、256以上の値の切捨ても修正した。
+不正な周期値はFIFO確保やendpointの変更前に拒否する。counterをuint16_tにしたが、
+32bit targetのtransfer recordサイズは元のpadding内に収まり16 byteのまま。
+FS interruptの範囲とHS指数表現は[USB-IF CCID仕様](https://www.usb.org/sites/default/files/DWG_Smart-Card_CCID_Rev110.pdf)、
+FS ISOの指数表現は[Microsoft公開仕様](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gipusb/238f579d-fce4-47ee-8ee1-5651c59ff563)も参照した。
+
+利点はruntime構成とhardware処理を同じ保守境界で変更でき、vendor更新時のpatch再適用が
+不要になること。不利益はupstream hardware修正の追跡・選別を自分たちで担うことと、
+従来通っていた不正descriptorが拒否されること。公開APIの追加変更はない。
+control_coreの単独試験は1 passed、32.31秒。14 interval条件と不正open 64回の後の
+正常open、heap回復を確認した。最初のfixtureはbus reset前のFIFO未初期化で失敗し、
+private probeでFIFO初期化を明示して修正した。HSの算術確認とHS実通信の確認は区別する。
+全体試験結果は後記する。

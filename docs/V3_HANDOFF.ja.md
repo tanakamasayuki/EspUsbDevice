@@ -1,14 +1,14 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はESP DWC2 platformの専用化。generic TinyUSB common/compiler/MCU/optionsと旧ESP shimを撤去し、
-SDK IRQ/cache/pullとport選択を独自層へ移した。vendorは12→4 files、compiled sourceは2本のまま。
-標準combo allは**全31件成功（1123.26秒）**。62 serial log全てSTOPPED、panicなし。
-IRQ取得失敗/回収/再開始とmask時の登録再利用、774取得点の失敗/回復、S2/P4 HS compile-onlyも成功。
-実機確認はS3–S3のみ。全29 library sourceに汎用TinyUSB header/config/SDK fallback依存はない。
-直前のnative wire型/runtime VBUSは`72e59f3`。
-[core APIと未完の境界](V3_CORE_API.ja.md)を参照。残るvendor 4 fileのDWC2アルゴリズム・register定義、
-全EP0順序とclass HALT競合、最終API/sampleと他SoC/HS実機検証を続ける。
-
+最新実装は残るDWC2 vendor snapshotの整理。hardware DMA/PHY実装を本体内部で保守する
+派生forkへ移し、Device専用register mapとinterval検証を持つ。MIT/BSD由来表示は保持する。
+`tools/verify_usb_backend.py`をoffline検査入口とし、vendor自動updaterは終了した。
+control_core単独は1 passed（32.31秒）、S2/P4 HS compile-onlyと全29 source依存確認は成功。
+全31件の標準combo allは現在実行中（`native-dwc2-all.xml`）。この変更後の全体結果はまだ未確定。
+直前commit `3665309`の全体結果は31 passed（1123.26秒）、62 serial全てSTOPPED、panicなし。
+実機確認はS3–S3のみ。[core API](V3_CORE_API.ja.md)と[由来](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
+依存整理だけをv3完了とはしない。全EP0順序とclass HALT競合、最終API/sample、OS/他SoC/HS実機
+検証を続ける。
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
 旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/Videoのclassを独自化した。共通EP0/coreも独自化済みで、残るコンパイル依存はDWC2関連2本。
