@@ -437,3 +437,14 @@ INの切り詰め/short/ZLPも同じ定義にし、方向ごとに別の問い�
 利点はcallbackの値だけで長さを検証でき、TinyUSB由来のprivate headerを利用側から外せること。
 追加heapはなく、代償はcallback構造体の拡大と位置指定aggregate初期化への影響である。
 通常のcallback登録とsendControlResponseの呼出しは維持する。
+
+
+## HIDの標準要求と内部buffer寿命
+
+SET_INTERFACEの共通alt 0 ACKだけでは、送信中フラグとOUT組立て途中の状態が残る。
+HID内でDMA停止と方向別fenceを扱い、SET_INTERFACEは両方向、HALT/CLEAR_FEATUREは対象方向を回復する。
+既存SET_PROTOCOLのIN専用drainも同じjobへ整理し、format変更時はPID維持、標準再初期化ではDATA0と区別する。
+利点はHostの再初期化後に送受信を再開でき、他方向の部分転送を保てること。
+不利益は受理済みの未送信copyと受信途中レポートが破棄されること、HID選択時の回復コード・状態の増加。
+追加task/転送時heapはなく、未使用HIDにこの処理は持ち込まない。
+公開送信APIはcopy受理のままとし、借用buffer返却callbackを新設する変更は含めない。

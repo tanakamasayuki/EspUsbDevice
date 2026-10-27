@@ -1,8 +1,9 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はVendor controlの公開actualBytesとCDCの受信長検査。各関連3件が成功。
+最新実装はHIDの標準要求による転送回復。関連4件が成功。
+直前のVendor control公開actualBytesとCDC受信長検査は各関連3件が成功。
 直前のVendor/CDC標準要求の回復は関連10件と最終4件が成功。
-全体試験の最新記録は共通core/EP0独自化`ce6a444`の全27件成功（1743.12秒）で、補強後の全28件は未実行。
+全体試験の最新記録は共通core/EP0独自化`ce6a444`の全27件成功（1743.12秒）で、現在の全29件は未実行。
 [core APIと未完の境界](V3_CORE_API.ja.md)を参照。TinyUSBのコンパイル対象はDWC2関連2本、
 vendor選択は24 file。C ABI/headerとDWC2への依存は残る。
 
@@ -783,3 +784,24 @@ control_coreはSETUP=0、DATA/ACKのIN/OUT実量、0 byte返信、short返信、
 `validation/.pytest-results/vendor-control-actual*`。
 short OUTの物理検証や、全28件の一括再試験はこの結果に含まない。
 TinyUSB manifestは24 file / 2 compiled sourcesで一致し、旧tests/examplesはmainと同じ。
+
+
+## HID標準要求の回復
+
+2026-10-27。HIDのSET_INTERFACE alt 0とHALT/CLEAR_FEATUREに方向別DMA停止・fence回復を追加した。
+新規hid_standardは129 byteレポートの部分IN/OUTを3回再初期化し、未完成OUTの通知なしと再通信を確認する。
+HALT有無のCLEAR_FEATUREを両方向で行い、反対方向のDATA1から残り65 byteを継続する。
+両方向とも部分転送後にHALT/解除した条件ではHost pipeだけを再生成し、余分なSET_INTERFACEで回復を隠さない。
+公開HID APIはcopy受理のまま。Hostの初期化で受理済みの未完レポートが破棄され得ることを明記した。
+
+`hid-standard-related.xml`はhid_standard、hid_protocol、hid_transport、hid_report_stateの
+**4 passed、0 skipped、0 unfinished、636.88秒**。8 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_07-45-09-725494/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/hid-standard-related*`。
+Vendor copy最小buildのnmではHID本体・方向別drain処理のsymbol不在を確認した
+（`hid-standard-vendor-copy-build.txt`、`hid-standard-vendor-copy-nm.txt`）。
+
+plugin repoは1.10.0、commit `698bb29`で、combo/profileの最新ローカルガイドを再確認した。
+新試験もconftestや独自hookなし。標準combo allで29件を収集したが、現在の全29件一括実行は未完了。
+SET_INTERFACEとidleの同時条件、人工的な旧完了/queue満杯/reset/endの全競合順序、他SoC/OSは未検証。
+残るDWC2/ABI/header依存と他クラスの回復検証も継続する。

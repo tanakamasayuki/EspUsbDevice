@@ -132,3 +132,9 @@ control_coreはSETUP=0、DATA/ACKのIN/OUT実量、0 byte返信、short返信、
 `validation/.pytest-results/vendor-control-actual*`。
 short OUTの物理検証や、全28件の一括再試験はこの結果に含まない。
 TinyUSB manifestは24 file / 2 compiled sourcesで一致し、旧tests/examplesはmainと同じ。
+
+
+HIDの標準要求による方向別回復も追加済み。公開APIの影響と関連4件の実測は
+[HIDガイド](V3_HID_API.ja.md#標準interfaceendpoint要求による回復)を参照。
+共有bulkを使うMIDIはVendor/CDCと同じ回復経路に入るが、MIDI固有の標準要求試験はまだ追加していない。
+他クラスも個別の所有権・protocol契約と検証を継続する。

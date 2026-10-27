@@ -196,3 +196,42 @@ Keyboard29↔8 byte、Mouse4↔3 byteを各4回切替。二つ目の送信の拒
 serial原本は`/tmp/pytest-embedded/2026-10-26_14-27-21-836610/`、JUnit/transcript/serialコピーは`.pytest-results/hid-protocol-related*`。
 通常の`--combo all`の対象は12件になったが、今回実行したのは関連4件で、全12件実行済みとはしない。
 人工的な旧完了eventとqueue満杯の組合せ、protocol切替とreset/endの同時実行、他SoC/OSは未検証。
+
+## 標準interface/endpoint要求による回復
+
+SET_INTERFACE alt 0では、そのHID interfaceのIN/OUT DMAを停止し、旧完了eventのfence後に
+送信中フラグと受信途中の組立て状態を解放し、両endpointをDATA0へ戻す。
+SET_FEATURE ENDPOINT_HALTでは指定方向を停止し、CLEAR_FEATUREではその方向をDATA0へ戻して再開する。
+もう一方のendpointの転送・DATA PIDは維持する。OUTは内部で再投稿する。
+
+HID sendInput/sendReportは内部bufferへのcopyの受理を返すため、受理済みでも未完了のレポートは
+これらの初期化で破棄され得る。HALT中とfence待ちは新しいINを受理しない。
+受信途中のOUTを新しいレポートへ連結せず、未完成のレポートのcallbackも発生させない。
+GET_REPORT用の保存値、protocol、idle設定は保持する。idle有効時は保存値の通常の再送を再開する。
+これらの標準要求はbus resetとは異なり、protocolをreportへ戻す操作ではない。
+SET_PROTOCOLによるformat変更では従来どおりINだけを止め、PIDを維持する。
+
+新たな専用task・転送時heap確保を追加せず、既存idle jobを方向別fence予約にも使う。
+追加費用はHIDを使う場合の方向別drain/PID-reset状態と回復コード。
+公開send/callback APIの形は変えない。確実な配送確認が必要な用途ではHostとアプリで確認・再送を行う。
+
+
+## HID標準要求の回復
+
+2026-10-27。HIDのSET_INTERFACE alt 0とHALT/CLEAR_FEATUREに方向別DMA停止・fence回復を追加した。
+新規hid_standardは129 byteレポートの部分IN/OUTを3回再初期化し、未完成OUTの通知なしと再通信を確認する。
+HALT有無のCLEAR_FEATUREを両方向で行い、反対方向のDATA1から残り65 byteを継続する。
+両方向とも部分転送後にHALT/解除した条件ではHost pipeだけを再生成し、余分なSET_INTERFACEで回復を隠さない。
+公開HID APIはcopy受理のまま。Hostの初期化で受理済みの未完レポートが破棄され得ることを明記した。
+
+`hid-standard-related.xml`はhid_standard、hid_protocol、hid_transport、hid_report_stateの
+**4 passed、0 skipped、0 unfinished、636.88秒**。8 serial log全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-27_07-45-09-725494/`、コピー/JUnit/transcriptは
+`validation/.pytest-results/hid-standard-related*`。
+Vendor copy最小buildのnmではHID本体・方向別drain処理のsymbol不在を確認した
+（`hid-standard-vendor-copy-build.txt`、`hid-standard-vendor-copy-nm.txt`）。
+
+plugin repoは1.10.0、commit `698bb29`で、combo/profileの最新ローカルガイドを再確認した。
+新試験もconftestや独自hookなし。標準combo allで29件を収集したが、現在の全29件一括実行は未完了。
+SET_INTERFACEとidleの同時条件、人工的な旧完了/queue満杯/reset/endの全競合順序、他SoC/OSは未検証。
+残るDWC2/ABI/header依存と他クラスの回復検証も継続する。
