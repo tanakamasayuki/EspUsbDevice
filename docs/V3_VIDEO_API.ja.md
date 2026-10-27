@@ -1,7 +1,7 @@
 # v3 Video: 実行時設定と借用frame
 
-Videoのクラス処理を`EspUsbVideoTransport`へ移し、TinyUSB Video driverを無効にした。
-共通EP0/core/DCDは暫定的にTinyUSBを使う。今回も明示的なDevice/Function/config/beginという基本方針を維持する。
+Videoのクラス処理は`EspUsbVideoTransport`が持ち、共通EP0/coreとDevice専用DWC2も本体内部で保守する。
+明示的なDevice/Function/config/beginという基本方針を維持する。
 
 ```cpp
 EspUsbDevice device;
@@ -133,3 +133,50 @@ Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。conftestや独自pyt
 次は共通EP0/core/DCDを独自実装へ置き換える。reset/新SETUP/STALL/status、
 標準要求、event順序とDMA停止、suspend/remote wakeupを分けて検証する。
 他SoC/HS、PC/OS、長時間試験、出荷exampleと最終API整理は未完了。
+
+
+## bulk endpointのHALTとCLEAR
+
+bulk endpointへのSET_FEATURE ENDPOINT_HALTでは、DMAと古い完了eventを退役させ、
+借用中frameを`TransferError`で一度だけ返却する。送信中の量を確定できなければ
+`actualBytesKnown=false`とし、確認済み部分だけを`actualBytes`へ入れる。
+HALT中は`streaming()`がfalse、`submitFrame()`はInvalidStateでid=0、
+単純な`sendFrame()`はfalseになる。拒否した投稿の所有権を受け取らず、返却callbackも発行しない。
+
+CLEAR_FEATUREでは対象endpointだけDATA0へ戻し、既存のCommit設定のまま再開する。
+HALTなしのCLEAR中にframeがあればCancelledで返却する。HALTによる退役がまだ続いている場合、
+後から届いたCLEARでTransferErrorをCancelledへ上書きしない。
+繰り返しSET/CLEARで返却が重複したり、別VideoのframeやPIDを初期化したりしない。
+再開後は新しいframeを投稿する。中断したframeの途中からの継続は保証しない。
+
+既存のfence/job/stateを利用し、追加のqueueやbufferは確保しない。
+利用側の通常の呼出し方は変わらず、HALT時の受付拒否と借用frameの回収が明確になる。
+代わりに、エラー返却後はHostの回復を待って再投稿する必要がある。
+ISOのalternate制御は従来どおりで、このbulk回復経路の対象にはしない。
+
+試験は2 Videoを別Functionとして使う。Hostの対象PIDをDATA0へそろえた準備後、
+新しいSET_INTERFACEや再Commitに頼らずHALT/CLEARで復帰させる。
+privateなendpoint busy照会はDMAへの登録後を狙う試験専用であり、公開利用例には含めない。
+途中payloadを2 FS packetだけ読んだ条件も確認し、Hostの古いPIDを引き継ぐSDKの制約と分ける。
+
+
+## Video bulk HALTの実測
+
+2026-10-28。修正前はSET_FEATURE成功後も借用frameが返らず、`HALTED 0`となった
+（`video-halt-baseline.xml`、41.34秒）。修正後の境界単独は31.29秒で成功。
+関連control 2件、ISO/bulkの6 runtime構成、allocation_failure、control_coreの
+**10 passed、0 skipped/failed/error/unfinished、154.16秒**を確認した。
+
+2 Videoで16回のSET/CLEAR、途中payload読出し2回、復帰後/別Functionの正常frame 10回を確認。
+各Videoのloan返却は計8件（Success 5、Cancelled 1、TransferError 2）、重複/誤id/残留loanなし。
+送信中HALTの4件はactualBytesKnown=false。HALT中の投稿は拒否し、CLEAR後は再Commitなしで再開した。
+774取得点の失敗/回復、heap 346564→346564 byte、20 serial全てSTOPPED、panicなし。
+S2/P4はcompile-only成功。全体の収集は32件で、今回の製品変更後は関連10件を実行した。
+
+標準pluginは同じsketchを複数のtest関数で再利用するため、試験sketchの通常のstartで
+カウンタを初期化する。stopで旧loanを退役してから次を開始し、conftestによるresetは使わない。
+この初期化不足で一括実行が一度失敗した記録も残した。
+
+原本は`/tmp/pytest-embedded/2026-10-27_20-05-52-165319/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/video-halt-final*`、集計は`video-halt-audit.txt`。
+全EP0順序、SET/CLEARの全競合とbus reset/end、OSや他SoC/HS実通信は別の未検証範囲として残す。

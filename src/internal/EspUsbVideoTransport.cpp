@@ -1,4 +1,5 @@
 #include "EspUsbDeviceEndpoint.h"
+#include "EspUsbDeviceCore.h"
 #include "EspUsbVideoTransport.h"
 #include "../EspUsbDevice.h"
 #include "EspUsbDeviceAppDriver.h"
@@ -44,7 +45,7 @@ struct EspUsbVideoState {
     espusb::internal::removeTinyUsbRuntimeJob(job);
     if (owned) espusb::internal::freeUsbMemory(packet);
   }
-  bool canStream() const { return opened && committed && !draining && !owner.stopping_.load() && (owner.bulkStreaming() || alternate == 1); }
+  bool canStream() const { return opened && committed && !draining && !owner.stopping_.load() && !espusb_device_edpt_stalled(port,endpoint) && (owner.bulkStreaming() || alternate == 1); }
   uint32_t payloadLimit() const { return owner.bulkStreaming() ? uint32_t(owner.videoConfig_.payloadBytes) : std::min(uint32_t(owner.videoConfig_.payloadBytes),uint32_t(packetSize ? packetSize : owner.isochronousPacketSize(false))); }
   void defaults(uint8_t *p) const {
     memset(p,0,48); p[2]=p[3]=1; put32(p+4,10000000u/owner.frameRate_);
@@ -87,7 +88,8 @@ struct EspUsbVideoState {
     // Called on the USB worker with the lock held, before acknowledging a
     // reconfiguration. The fence excludes every queued old completion.
     retireKnown = draining ? retireKnown : !busy;
-    retireStatus=status; resetPid|=pid; draining=true; ++epoch;
+    if(!draining || (retireStatus==EspUsbTransferStatus::Cancelled && status==EspUsbTransferStatus::TransferError))retireStatus=status;
+    resetPid|=pid; draining=true; ++epoch;
     if (opened && !espusb_device_edpt_abort(port,endpoint)) return false;
     return espusb::internal::postTinyUsbRuntimeJob(job);
   }
@@ -160,9 +162,20 @@ struct EspUsbVideoState {
     s->defaults(s->probe); memcpy(s->commit,s->probe,48); return uint16_t(offset);
   }
   static bool control(uint8_t port,uint8_t stage,const EspUsbControlRequest *r) {
+    const bool feature=r->bmRequestType==2 && (r->bRequest==1 || r->bRequest==3) && !r->wValue && !r->wLength;
     auto *s=first;
-    while (s && r->wIndex!=s->interface && r->wIndex!=s->interface+1) s=s->next;
+    while (s && (feature ? r->wIndex!=s->endpoint : (r->wIndex!=s->interface && r->wIndex!=s->interface+1))) s=s->next;
     if (!s || s->owner.stopping_.load()) return false;
+    if(feature) {
+      if(!s->owner.bulkStreaming())return false;
+      if(stage!=ESPUSB_CONTROL_STAGE_SETUP)return true;
+      VideoGuard guard;
+      const bool clear=r->bRequest==1;
+      // A later HALT supersedes a queued CLEAR's PID reset. Retire the loan
+      // behind the event fence, preserving an earlier transfer-error result.
+      s->resetPid=clear;
+      return s->requestFence(clear ? EspUsbTransferStatus::Cancelled : EspUsbTransferStatus::TransferError,clear) || espusb::internal::rejectUsbControl();
+    }
     const bool streamingInterface=r->wIndex==s->interface+1;
     if (stage==ESPUSB_CONTROL_STAGE_SETUP) s->pendingValid=false;
     if (r->bmRequestType==0x81 && r->bRequest==10 && !r->wValue && r->wLength==1) {

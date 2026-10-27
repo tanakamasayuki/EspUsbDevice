@@ -1,17 +1,17 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はCCIDのHALT/CLEAR回復。対象readerの未完bulk交換をfenceで退役し、通知は独立に
-回復する。CLEARの対象だけPIDを戻し、別方向のHALT/PID、別readerとカード状態は維持する。
-Host PIDをそろえた修正前の失敗も確認した。[CCID APIと実測](V3_CCID_API.ja.md)を参照。
-関連3件は**3 passed（146.41秒）、0 skipped/failed/error/unfinished**。
-260 HALT/CLEAR要求、34の状態確認、通知復帰をまたぐ未読返信6回、774取得点の失敗/回復と
-heap一致を確認。6 serial全てSTOPPED、panicなし。S2/P4はcompile-only成功。
-結果は`validation/.pytest-results/ccid-halt-final*`と`ccid-halt-audit.txt`。
-直前`cd6dc24`のDWC2依存整理後の全体結果は31 passed（1150.57秒）。CCID変更後は関連3件を確認し、
-全31件の再実行はしていない。vendor snapshot/updaterの撤去と派生コードの由来は
+最新実装はVideo bulkのHALT/CLEAR回復。HALT時に借用frameをTransferErrorで一度返し、
+HALT中の投稿を拒否する。CLEAR後はCommitを維持して再開し、別Videoのloan/PIDへ影響しない。
+修正前の返却漏れもS3–S3で確認した。[Video APIと実測](V3_VIDEO_API.ja.md)を参照。
+関連10件は**10 passed（154.16秒）、0 skipped/failed/error/unfinished**。
+20 serial全てSTOPPED、panicなし。16 SET/CLEAR、部分payload 2回、正常frame 10回、
+各Videoで8 loanの一度だけの返却、774取得点の失敗/回復とheap一致を確認。
+S2/P4はcompile-only成功。結果は`validation/.pytest-results/video-halt-final*`と`video-halt-audit.txt`。
+新testを含む全体収集は32件。直前`f6bc5dd`はCCID回復、`cd6dc24`後の全31件は成功済みだが、
+今回の製品変更後に全32件を実行したわけではない。
+実機確認はS3–S3のみ。次はNCMのHALT回復、全EP0順序とreset/end競合、最終API/sample、
+OS/他SoC/HS実機検証を続ける。DWC2派生コードの保守方針は
 [由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
-実機確認はS3–S3のみ。NCM/VideoのHALT回復、全EP0順序とreset/end競合、最終API/sample、
-OS/他SoC/HS実機検証を続ける。
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
 旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/Videoのclassを独自化した。共通EP0/coreも独自化済みで、残るコンパイル依存はDWC2関連2本。

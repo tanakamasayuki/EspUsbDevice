@@ -680,3 +680,13 @@ CLEAR対象のPIDだけを戻す。SETの後に反対endpointまで解除する�
 カード状態と登録callbackは維持するが、途中のbulk交換の継続は保証せずHostの再送を必要とする。
 理由と移行時の意味は[CCID API](V3_CCID_API.ja.md#endpoint-haltからの復帰)を参照。
 任意のbus reset/endやEP0競合までの検証完了とは扱わない。
+
+
+## 採用記録: VideoのHALTと借用frame
+
+bulk HALT後もframeInFlightが残り、返却されない問題をS3–S3の修正前試験で再現した。
+SETはTransferError、HALTなしのCLEARはCancelledで旧frameを退役し、HALT中の新規投稿を拒否する。
+一度受け取ったloanの返却は一度だけとし、DMA停止・event fenceを越えてからcallbackを呼ぶ。
+後続のCLEARで既に生じたTransferErrorを消さず、後続のSETで古いPID解除がHALTを消さないようにする。
+別VideoのloanとCommit設定は維持し、追加の常駐資源は持たせない。
+利点、不利益、再投稿の扱いは[Video API](V3_VIDEO_API.ja.md#bulk-endpointのhaltとclear)を参照。

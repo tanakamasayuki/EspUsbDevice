@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので31 tests（core/control、標準要求の回復とVideoの6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので32 tests（core/control、VideoのHALT回復と6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -728,3 +728,25 @@ JUnit/transcript/serialコピーと集計は`validation/.pytest-results/ccid-hal
 `ccid-halt-audit.txt`。最初の試験用buffer不足・Host PID不一致と、PIDをそろえた製品回帰を
 区別してtranscriptを保存した。旧tests/examplesはmainとの差分なし。
 この実測は全EP0順序、bus reset/endとの全競合、OS/PCSC、他SoC/HS実通信を証明しない。
+
+
+## Video bulk HALTの実測
+
+2026-10-28。修正前はSET_FEATURE成功後も借用frameが返らず、`HALTED 0`となった
+（`video-halt-baseline.xml`、41.34秒）。修正後の境界単独は31.29秒で成功。
+関連control 2件、ISO/bulkの6 runtime構成、allocation_failure、control_coreの
+**10 passed、0 skipped/failed/error/unfinished、154.16秒**を確認した。
+
+2 Videoで16回のSET/CLEAR、途中payload読出し2回、復帰後/別Functionの正常frame 10回を確認。
+各Videoのloan返却は計8件（Success 5、Cancelled 1、TransferError 2）、重複/誤id/残留loanなし。
+送信中HALTの4件はactualBytesKnown=false。HALT中の投稿は拒否し、CLEAR後は再Commitなしで再開した。
+774取得点の失敗/回復、heap 346564→346564 byte、20 serial全てSTOPPED、panicなし。
+S2/P4はcompile-only成功。全体の収集は32件で、今回の製品変更後は関連10件を実行した。
+
+標準pluginは同じsketchを複数のtest関数で再利用するため、試験sketchの通常のstartで
+カウンタを初期化する。stopで旧loanを退役してから次を開始し、conftestによるresetは使わない。
+この初期化不足で一括実行が一度失敗した記録も残した。
+
+原本は`/tmp/pytest-embedded/2026-10-27_20-05-52-165319/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/video-halt-final*`、集計は`video-halt-audit.txt`。
+全EP0順序、SET/CLEARの全競合とbus reset/end、OSや他SoC/HS実通信は別の未検証範囲として残す。

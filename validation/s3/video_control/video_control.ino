@@ -68,18 +68,40 @@ bool probe(unsigned i,unsigned length,unsigned payload) {
   bool ok=data[2]==1 && data[3]==1 && u32(data+18)==(i ? 512u : 65536u) && u32(data+22)==payload;
   return ok && request(0x21,1,0x200,1+2*i,length,data);
 }
+bool waitInput(usb_transfer_t *t) {
+  if(wait())return true;
+  usb_host_endpoint_halt(handle,t->bEndpointAddress);usb_host_endpoint_flush(handle,t->bEndpointAddress);
+  if(wait())usb_host_endpoint_clear(handle,t->bEndpointAddress);
+  return false;
+}
+bool packet(unsigned i) {
+  auto *t=input[i];t->device_handle=handle;t->bEndpointAddress=endpoints[i];t->num_bytes=128;t->callback=completed;
+  done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
+  return waitInput(t) && t->status==USB_TRANSFER_STATUS_COMPLETED && t->actual_num_bytes==(i ? 128:65) &&
+      t->data_buffer[0]==2 && (t->data_buffer[1]&128) && !(t->data_buffer[1]&2);
+}
+bool prepare(unsigned i) {
+  if(i>=2 || !request(1,11,0,1+2*i,0) || usb_host_interface_release(client,handle,1+2*i)!=ESP_OK)return false;
+  claimed[i]=false;claimed[i]=usb_host_interface_claim(client,handle,1+2*i,0)==ESP_OK;return claimed[i];
+}
 bool readFrame(unsigned i,unsigned expected) {
   unsigned offset=0;bool eof=false;uint8_t fid=0;
   while (!eof && offset<=expected) {
     auto *t=input[i];t->device_handle=handle;t->bEndpointAddress=endpoints[i];t->num_bytes=128;t->callback=completed;
     done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
-    if(!wait() || t->status!=USB_TRANSFER_STATUS_COMPLETED || t->actual_num_bytes<2)return false;
+    if(!waitInput(t) || t->status!=USB_TRANSFER_STATUS_COMPLETED || t->actual_num_bytes<2)return false;
     const auto *d=t->data_buffer;unsigned n=t->actual_num_bytes;
     if(n>(i ? 128u : 65u) || d[0]!=2 || !(d[1]&128) || (offset && (d[1]&1)!=fid) || offset+n-2>expected)return false;
     fid=d[1]&1;eof=d[1]&2;
     for(unsigned j=2;j<n;++j,++offset) if(d[j]!=uint8_t(i ? offset*17+7 : offset*37+13))return false;
   }
   return eof && offset==expected;
+}
+bool feature(unsigned i,bool setting) {
+  if(i>=2)return false;
+  if(!setting && (usb_host_endpoint_halt(handle,endpoints[i])!=ESP_OK || usb_host_endpoint_flush(handle,endpoints[i])!=ESP_OK || usb_host_endpoint_clear(handle,endpoints[i])!=ESP_OK))return false;
+  return request(2,setting ? 3:1,0,endpoints[i],0) && request(0x82,0,0,endpoints[i],2) &&
+      control->data_buffer[8]==unsigned(setting) && !control->data_buffer[9];
 }
 bool stop() {
   if(!done.load())return false;bool ok=true;
@@ -141,6 +163,10 @@ void loop(){
       ok &= probe(i,48,i ? 128 : 65);
     }
     Serial.printf("ERRORS %u\r\n",unsigned(ok));
+  } else if(c.startsWith("prepare "))Serial.printf("PREPARED %u\r\n",unsigned(prepare(c.substring(8).toInt())));
+  else if(c.startsWith("packet "))Serial.printf("PACKET %u\r\n",unsigned(packet(c.substring(7).toInt())));
+  else if(c.startsWith("set ") || c.startsWith("clear ")) {
+    const bool setting=c.startsWith("set ");Serial.printf("FEATURE %u\r\n",unsigned(feature(c.substring(setting ? 4:6).toInt(),setting)));
   } else if(c=="alternate") {
     Serial.printf("ALTERNATE %u\r\n",unsigned(request(1,11,0,1,0)));
   } else if(c=="recommit") {
