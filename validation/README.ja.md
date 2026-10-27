@@ -351,3 +351,28 @@ TinyUSB manifestは24 file / 2 compiled sourcesで照合成功し、旧test/samp
 転送中のSET_INTERFACEとHALT/CLEAR_FEATUREにおけるクラス別PID・所有権回復、
 新SETUPと旧status/dataの到着順、物理short/overrun、suspend/remote wakeupは引き続き対象。
 残るDWC2・ABI/header依存、公開APIの最終整理、出荷exampleとOS互換性も未完了。
+
+
+## Vendor/CDC標準要求の回復
+
+2026-10-27。独立bulk_standardを追加し、収集対象は28件となった。
+共通bulkのSET_INTERFACE、HALT/CLEAR_FEATUREでのDMA停止・fence返却・DATA PID回復を検証した。
+2 Vendor、Vendor+CDC、2 Vendor copyを同一binaryで切り替える。
+借用のpointer/id/status/actual/payload/canary、一度だけの返却、他Function/方向の継続、
+CDC control/data interfaceの区別、DTR/line coding維持、部分転送からの回復を確認する。
+copy modeでは対象queue/ringの破棄、HALT中write/writeAvailableが0、解除後の再通信も確認する。
+
+- `bulk-standard-related.xml`: **10 passed、0 skipped、0 unfinished、676.03秒**。
+  control_core、bulk_standard、vendor_roundtrip、cdc_stream、cancel_fence、cancel_lifecycle、
+  allocation_failure、descriptor_storage、audio_stream、video_control。
+  原本`/tmp/pytest-embedded/2026-10-27_07-00-04-793606/`、20 serial log全てSTOPPED、panicなし。
+- 最後のHALT中copy書込み拒否の補強後、`bulk-standard-final.xml`: **4 passed、0 skipped、0 unfinished、247.86秒**。
+  control_core、bulk_standard、vendor_roundtrip、cdc_stream。
+  原本`/tmp/pytest-embedded/2026-10-27_07-18-07-957970/`、8 serial log全てSTOPPED、panicなし。
+- Vendor copy最小buildも成功。`vendor-copy-standard-nm.txt`で必須abort/fenceの存在、
+  公開cancelDirectTx/Rx、未使用CDC/Audio/Video、legacy Vendor/FIFO symbolの不在を確認した。
+
+JUnit/transcript/serialコピーとnmは`validation/.pytest-results/`（git対象外）。
+Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。conftestや独自pytest hookは使わない。
+最新の全体試験27件は`ce6a444`に対する結果で、この変更後の全28件一括成功を意味しない。
+他クラスの同要求での回復、EP0世代境界、残存DWC2/ABI/header依存の撤去は引き続き未完了。

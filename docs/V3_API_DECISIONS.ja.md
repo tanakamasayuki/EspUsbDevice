@@ -398,3 +398,23 @@ sendControlResponseの0-byte応答は、要求長0のstatusと、非ゼロIN要�
 空の返信が自然に使える利点があり、OUT要求を受信せずACKしていたコードは拒否へ変わる。
 通常操作は維持し、内部class/DWC2のC ABIとstartTinyUsb等の名前は残存依存の後に整理する。
 全標準要求・PID/所有権遷移の完成を今回の関連試験だけで主張しない。残りと実測は[共通coreガイド](V3_CORE_API.ja.md)。
+
+
+## Vendor/CDCの標準要求とcopy専用構成の費用
+
+2026-10-27。SET_INTERFACEをACKするだけでは借用が返らず、HALT解除後の再開にもPIDの不整合が残る。
+共有bulk transportで対象interface/endpointのDMA停止、既存fence、typed callback返却を扱う。
+APIの呼出し形は維持し、SET_INTERFACEはCancelled、HALTはTransferError、CLEAR_FEATUREはCancelledとする。
+既に保留中のTransferErrorや競合するBusReset/Stoppedを弱い結果で上書きしない。
+
+利点はHostによる再初期化でもbuffer寿命が決まり、無関係なFunction・方向の通信を保てること。
+不利益は対象方向のcopy queue/ringを破棄すること、HALT中のcopy writeが0になること、
+copy専用でも必須回復用abort/fenceコードが入ること。追加の転送時heap確保はない。
+copy最小buildのnmで必須回復の存在、公開cancelDirectTx/Rxと未使用CDC/Audio/Video等の不在を確認した。
+
+queue depth 1ではfenceとEP0 statusが競合するため、指定深さにhardware event用1枠を追加する。
+小さな固定追加費用で、正常な標準要求が意図しない再列挙を起こす条件を避ける。
+物理queue全体の過負荷時には既存のDMA停止・返却・自動再列挙を維持する。
+試験は独立bulk_standardを追加し、他Function/方向のPID継続、部分転送、copy回復も確認する。
+Host側のpipe再開が旧PIDを維持する条件では、両方向の初期化後にHost pipeだけを再生成した。
+Deviceへ余分なSET_INTERFACEを送って回復を隠す方法は用いていない。

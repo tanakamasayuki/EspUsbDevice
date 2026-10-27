@@ -1,5 +1,6 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbMemory.h"
+#include "internal/EspUsbDeviceCore.h"
 #include "tusb.h"
 #include "class/cdc/cdc.h"
 #include "device/usbd_pvt.h"
@@ -104,6 +105,14 @@ void EspUsbDeviceCdcSerial::onBulkReset() {
 bool EspUsbDeviceCdcSerial::onBulkExtraCompletion(uint8_t ep, uint8_t, uint32_t) { return notifyEndpoint_ && ep == notifyEndpoint_; }
 bool EspUsbDeviceCdcSerial::onBulkControl(uint8_t port, uint8_t stage, const void *raw) {
   const auto *r = static_cast<const tusb_control_request_t *>(raw);
+  if (r && r->bmRequestType == 1 && r->bRequest == 11 && r->wIndex == interfaceNumber_ && !r->wValue && !r->wLength) {
+    if (stage != CONTROL_STAGE_SETUP) return true;
+    // This implementation never posts serial-state notifications. The control
+    // interface therefore has no application loan or completion to fence.
+    if (!notifyEndpoint_ || !usbd_edpt_abort(port, notifyEndpoint_)) return espusb::internal::rejectUsbControl();
+    usbd_edpt_clear_stall(port, notifyEndpoint_);
+    return tud_control_status(port, r);
+  }
   if (!r || !controlBuffer_ || r->bmRequestType_bit.type != TUSB_REQ_TYPE_CLASS ||
       r->bmRequestType_bit.recipient != TUSB_REQ_RCPT_INTERFACE || r->wIndex != interfaceNumber_) return false;
   switch (r->bRequest) {

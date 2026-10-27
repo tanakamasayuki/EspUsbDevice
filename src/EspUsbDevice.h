@@ -185,6 +185,7 @@ struct EspUsbDeviceConfig
   uint16_t msOs20VendorRevision = 0;
   bool startTinyUsb = true;
   // Event slots owned by the selected USB configuration; must be nonzero.
+  // One additional slot is reserved for hardware events, excluded from fences.
   uint16_t eventQueueDepth = 16;
   EspUsbController controller = EspUsbController::Auto;
   EspUsbBulkInBuffering bulkInBuffering = EspUsbBulkInBuffering::Auto;

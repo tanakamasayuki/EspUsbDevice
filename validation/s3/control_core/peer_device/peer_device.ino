@@ -14,7 +14,8 @@ uint64_t ticket=0;
 void noop(void *) {}
 void overflow(void *) {
   while(usbd_try_defer_func(noop,nullptr)) {}
-  dcd_event_bus_signal(espusb::internal::tinyUsbRuntimeRhport(),DCD_EVENT_RESUME,false);
+  // Fill the hardware reserve, then exceed physical queue capacity.
+  for(unsigned i=0;i<2;++i)dcd_event_bus_signal(espusb::internal::tinyUsbRuntimeRhport(),DCD_EVENT_RESUME,false);
 }
 espusb::internal::TinyUsbRuntimeJob overflowJob{overflow,nullptr};
 bool metadata() {

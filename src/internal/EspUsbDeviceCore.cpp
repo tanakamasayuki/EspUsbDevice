@@ -18,7 +18,7 @@ constexpr size_t PacketBytes = 64;
 portMUX_TYPE hardwareLock = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE endpointLock = portMUX_INITIALIZER_UNLOCKED;
 struct Endpoint {
-  uint8_t driver = Invalid, type = 0;
+  uint8_t driver = Invalid, type = 0, interfaceNumber = Invalid;
   std::atomic<bool> opened{false};
   std::atomic<uint8_t> flags{0};
 };
@@ -41,6 +41,7 @@ struct Core {
   Endpoint *endpoints = nullptr;
   uint8_t *interfaces = nullptr, *packet = nullptr;
   StaticQueue_t queueState{};
+  portMUX_TYPE eventLock = portMUX_INITIALIZER_UNLOCKED;
   QueueHandle_t queue = nullptr;
   Control control;
   std::atomic<uint32_t> bus{0}, setup{0}, workerBus{0};
@@ -62,17 +63,26 @@ struct Core {
   }
   bool post(const Event &event, bool inIsr) {
     if (!queue || stopping) return false;
-    if (!inIsr) return xQueueSendToBack(queue,&event,0) == pdTRUE;
     BaseType_t woken = pdFALSE;
-    const bool ok = xQueueSendToBackFromISR(queue,&event,&woken) == pdTRUE;
-    if (woken) portYIELD_FROM_ISR();
+    portENTER_CRITICAL(&eventLock);
+    // Keep one physical slot for hardware events. A queued fence must not
+    // prevent the pending control status (or next SETUP) from being recorded.
+    const bool deferred = event.data.event_id == USBD_EVENT_FUNC_CALL;
+    const UBaseType_t pending = inIsr ? uxQueueMessagesWaitingFromISR(queue) : uxQueueMessagesWaiting(queue);
+    bool ok = false;
+    if (!deferred || pending < queueDepth) {
+      ok = inIsr ? xQueueSendToBackFromISR(queue,&event,&woken) == pdTRUE
+                 : xQueueSendToBack(queue,&event,0) == pdTRUE;
+    }
+    portEXIT_CRITICAL(&eventLock);
+    if (inIsr && woken) portYIELD_FROM_ISR();
     return ok;
   }
   void resetDrivers() {
     configuration.store(0); remoteWakeup = selfPowered = false; sofConsumers = 0;
     control = {};
     for (unsigned i=0;i<unsigned(endpointCount)*2;++i) {
-      endpoints[i].driver=Invalid; endpoints[i].type=0; endpoints[i].opened.store(false); endpoints[i].flags.store(0);
+      endpoints[i].driver=Invalid; endpoints[i].type=0; endpoints[i].interfaceNumber=Invalid; endpoints[i].opened.store(false); endpoints[i].flags.store(0);
     }
     memset(interfaces,Invalid,interfaceCount);
     for (unsigned i=0;i<driverCount;++i) if (drivers[i].reset) drivers[i].reset(port);
@@ -180,17 +190,18 @@ struct Core {
         const uint16_t used=drivers[i].open(port,reinterpret_cast<const tusb_desc_interface_t *>(p+offset),uint16_t(length-offset));
         if (!used) continue;
         if (used<9 || used>length-offset) return false;
-        size_t n=0;
+        size_t n=0; uint8_t interfaceNumber=Invalid;
         while (n<used) {
           const auto *d=p+offset+n;
           if (n+2>used || d[0]<2 || d[0]>used-n) return false;
           if (d[1]==4) {
             if (d[0]!=9 || d[2]>=interfaceCount || (interfaces[d[2]]!=Invalid && interfaces[d[2]]!=i)) return false;
-            interfaces[d[2]]=uint8_t(i);
+            interfaces[d[2]]=uint8_t(i); interfaceNumber=d[2];
           } else if (d[1]==5) {
             auto *ep=d[0]>=7 ? endpoint(d[2]) : nullptr;
             if (!ep || !(d[2]&15) || (ep->driver!=Invalid && ep->driver!=i)) return false;
-            ep->driver=uint8_t(i);
+            if (interfaceNumber==Invalid || (ep->interfaceNumber!=Invalid && ep->interfaceNumber!=interfaceNumber)) return false;
+            ep->driver=uint8_t(i); ep->interfaceNumber=interfaceNumber;
           }
           n+=d[0];
         }
@@ -314,7 +325,7 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   size_t epOffset=aligned(sizeof(Core),alignof(Endpoint));
   size_t itfOffset=epOffset+epCount*2*sizeof(Endpoint);
   size_t queueOffset=aligned(itfOffset+count,alignof(Event));
-  size_t packetOffset=aligned(queueOffset+queueDepth*sizeof(Event),64);
+  size_t packetOffset=aligned(queueOffset+(size_t(queueDepth)+1)*sizeof(Event),64);
   auto *memory=static_cast<uint8_t *>(allocateUsbMemory(packetOffset+64,64,true));
   if (!memory) return ESP_ERR_NO_MEM;
   auto *s=new (memory) Core;
@@ -323,7 +334,7 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   for (unsigned i=0;i<epCount*2;++i) new(s->endpoints+i) Endpoint;
   memset(s->interfaces,Invalid,count);
   s->drivers=usbd_app_driver_get_cb(&s->driverCount);
-  s->queue=xQueueCreateStatic(queueDepth,sizeof(Event),memory+queueOffset,&s->queueState);
+  s->queue=xQueueCreateStatic(UBaseType_t(queueDepth)+1,sizeof(Event),memory+queueOffset,&s->queueState);
   if (!s->queue) { s->~Core(); freeUsbMemory(s); return ESP_ERR_NO_MEM; }
   core=s;
   for (unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].init) s->drivers[i].init();
@@ -338,6 +349,14 @@ void stopUsbDeviceCore() {
   for(unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].deinit)s->drivers[i].deinit();
   if(mounted)tud_umount_cb();
   vQueueDelete(s->queue); core=nullptr; s->~Core(); freeUsbMemory(s);
+}
+uint8_t usbEndpointInterface(uint8_t port,uint8_t address) {
+  auto *ep=core && core->port==port ? core->endpoint(address) : nullptr;
+  return ep ? ep->interfaceNumber : Invalid;
+}
+bool rejectUsbControl() {
+  if(core && core->currentControl())core->stallControl();
+  return false;
 }
 bool usbDeviceCoreReadyForJobs() {
   return core && !core->overflow.load() && core->workerBus.load()==core->bus.load();

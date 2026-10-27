@@ -8,4 +8,6 @@ esp_err_t startUsbDeviceCore(uint8_t port, bool highSpeed, uint16_t eventQueueDe
 void stopUsbDeviceCore();
 void runUsbDeviceCore(uint32_t timeoutMilliseconds);
 bool usbDeviceCoreReadyForJobs();
+uint8_t usbEndpointInterface(uint8_t port, uint8_t address);
+bool rejectUsbControl();
 } }

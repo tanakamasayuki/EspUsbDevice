@@ -172,3 +172,32 @@ RX ring/packetを確保せず、OUTをarmしない。USB descriptorの必須OUT 
 `available/read`は0、`maxDirectReceive()`は0、`readDirect()`はNotSupportedを返す。
 TXは従来通りcopyまたはborrowedを選べる。借用TXはTX完了callbackが必要。
 これはBorrowed RXの未投稿状態とは異なり、受信操作自体を使わない明示設定である。
+
+
+## 標準要求による転送の再初期化
+
+VendorとCDCのbulk transportでは、Hostの要求に応じてDMAを停止し、旧完了eventのfence後に
+借用bufferを一度だけ返す。要求のACKとcallbackの実行時点は同じとは限らない。
+返却まで同方向への新規投稿を拒否し、callbackから再投稿できる。
+
+| Host要求 | 対象 | 進行中の借用の結果 | DATA PID |
+| --- | --- | --- | --- |
+| SET_INTERFACE、alt 0 | 指定data interfaceのTX/RX | Cancelled | 両方向DATA0 |
+| SET_FEATURE ENDPOINT_HALT | 指定endpointだけ | TransferError | HALTを維持 |
+| CLEAR_FEATURE ENDPOINT_HALT | 指定endpointだけ | Cancelled | DATA0 |
+
+既に返却待ちのTransferErrorは、続くCLEAR_FEATUREでCancelledへ上書きしない。
+reset/endが競合した場合のBusReset/Stoppedも維持する。
+他Functionと、endpoint要求で指定していない方向の転送・PIDは維持する。
+CDCのcontrol interfaceのSET_INTERFACEは通知endpointだけを初期化し、data interfaceの借用、
+DTR、line codingを維持する。現在のCDCはserial-state通知転送自体を投稿しない。
+
+copy modeも対象方向の送信queue・受信ringを破棄するため、writeで受理済みでも未送信のbyteは失われ得る。
+INがHALT中、または初期化のfence待ちならwrite/writeAvailableは0を返す。
+OUTは回復後に受信を再開する。配送保証が必要な用途はアプリケーション側で確認・再送を行う。
+標準要求の回復処理は内部で扱う。監視にはDeviceのonAnyControlRequestを使い、
+Vendorの独自control callbackでこの必須処理を置き換えることを前提にしない。
+
+この回復処理にはcopy専用構成でもabort/fenceのコードが必要となる。
+取消しごとのheap確保は増やさず、使わない公開cancelDirectTx/cancelDirectRxは最小buildでリンクされない。
+以前の「copy専用ではabortもリンクされない」という測定条件は、この標準要求対応で変更した。

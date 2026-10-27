@@ -109,3 +109,12 @@ RX ring/packetを確保せず、OUTをarmしない。USB descriptorの必須OUT 
 `available/read`は0、`maxDirectReceive()`は0、`readDirect()`はNotSupportedを返す。
 TXは従来通りcopyまたはborrowedを選べる。借用TXはTX完了callbackが必要。
 これはBorrowed RXの未投稿状態とは異なり、受信操作自体を使わない明示設定である。
+
+
+## Hostによるinterface/endpointの初期化
+
+bulk dataのSET_INTERFACE、HALT/CLEAR_FEATUREは[Vendorと共通の回復契約](V3_VENDOR_API.ja.md#標準要求による転送の再初期化)を使う。
+data interfaceの再選択は借用TX/RXをCancelledで返し、copy queue/ringを破棄する。
+control interfaceの再選択では通知endpointだけを初期化し、data転送、DTR、line codingを維持する。
+HALTされたINへのcopy write/writeAvailableは0となる。APIの形は維持し、Host要求時の動作を明確にする。
+S3–S3のbulk_standardでVendor+CDCと2 Vendorを別構成で検証した。OS互換性や通知送信の実装完了は含まない。

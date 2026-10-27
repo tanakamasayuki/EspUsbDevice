@@ -19,7 +19,9 @@ if (!device.begin(config)) {
 `eventQueueDepth`は非ゼロのuint16_t。旧`CFG_TUD_TASK_QUEUE_SZ`は拒否し、この設定へ移す。
 必要容量の確保に失敗すればNoMemで開始を失敗させる。型の上限は全機種での確保成功保証ではない。
 同一binaryでend→設定変更→beginできる。キュー深さは待ち時間・処理速度の保証ではなく、
-割込みイベントの一時保持量である。深さを小さくすると費用は減るが、同時転送の多い構成では過負荷になりやすい。
+割込みイベントの一時保持量である。
+指定深さに加えてhardware event用に1件を確保する。deferred job/fenceはこの予備枠を使わず、
+投入可否の確認と投入は同じlockで行う。深さ1でもfenceがEP0 statusの記録枠を占有しない。深さを小さくすると費用は減るが、同時転送の多い構成では過負荷になりやすい。
 
 core状態、選択configurationのinterface/endpoint map、event queue storage、EP0のDMA packetを
 begin時の一つの内部DMA領域に確保する。EP0 packetは64-byte境界でmetadataから分離する。
@@ -85,9 +87,9 @@ ABI/header依存を含む全撤去はまだ完了していない。
 
 
 新SETUPと旧完了の全到着順、OUTの物理的なshort/overrun、suspend/resume・remote wakeup、
-各クラスの転送中SET_INTERFACE・HALT/CLEAR_FEATUREでのPID/所有権回復は追加検証・実装の対象とする。
+Vendor/CDC以外のクラスの転送中SET_INTERFACE・HALT/CLEAR_FEATUREでのPID/所有権回復は追加検証・実装の対象とする。
 特にaltを実装しないクラスへの共通fallbackは現在alt 0のACKを扱い、
-転送中再選択に必要なクラス別回復契約はまだ整理していない。
+Vendor/CDCでは実際のdata interfaceとendpointを対応付けて回復する。他クラスの転送中再選択は未完了。
 DWC2、残存helper・protocol定義、内部ABI、他SoC/HS、PC/OSの確認は未完了。
 
 要求の基準は[USB-IF USB 2.0 specification](https://www.usb.org/document-library/usb-20-specification)。
@@ -107,3 +109,12 @@ TinyUSB manifestは24 file / 2 compiled sourcesで照合成功し、旧test/samp
 転送中のSET_INTERFACEとHALT/CLEAR_FEATUREにおけるクラス別PID・所有権回復、
 新SETUPと旧status/dataの到着順、物理short/overrun、suspend/remote wakeupは引き続き対象。
 残るDWC2・ABI/header依存、公開APIの最終整理、出荷exampleとOS互換性も未完了。
+
+
+## Vendor/CDC標準要求の補強
+
+SET_INTERFACEとHALT/CLEAR_FEATUREで転送を停止し、fence後の返却とDATA PIDの回復を行う。
+詳細とcopy queue破棄の影響は[Vendorガイド](V3_VENDOR_API.ja.md#標準要求による転送の再初期化)。
+指定interfaceをendpoint metadataに保持し、CDCのcontrol/data interfaceと複数Functionを区別する。
+関連10件と最終4件のS3–S3試験は[試験記録](../validation/README.ja.md#vendorcdc標準要求の回復)を参照。
+全体27件の記録はこの補強前の実装に対する結果であり、現在の全28件を再実行した結果ではない。
