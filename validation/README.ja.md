@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので19 tests。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので20 tests。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -80,7 +80,7 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 隣接sectorのguardと独立2 MSCを確認する。HostのPID同期は公開IDF APIでinterfaceを再取得して行う。
 `s3/audio_events`は任意容量/無効化、overflow、並列producerとUAC2の実Mute制御、稼働中破棄を確認する。
 手順・移行・PCMの対応範囲は[Audioガイド](../docs/V3_AUDIO_API.ja.md)を参照。
-通常実行は19 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
+通常実行は20 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
 
 ## plugin側で解決する候補
 
@@ -88,7 +88,7 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 conftestを別helperや別pluginへ隠して持ち込まない。
 
 - 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`19 passed`であることを確認する。
+  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`20 passed`であることを確認する。
 - 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
 
 pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
@@ -239,3 +239,30 @@ serial原本は`/tmp/pytest-embedded/2026-10-27_01-02-46-482679/`、コピーと
 NCMのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
 TinyUSB treeは51 file / 15 compiled sourcesで一致。旧tests/examplesはmainと同一で、mainはv3の祖先。
 残るlegacy classはVideo。共通EP0/core/DCDと他SoC/HSの置換・実機検証は未完。
+
+
+## Video独自化前の設定・寿命の修正
+
+2026-10-27。Videoの稼働中破棄はDeviceを停止し、USB worker/DMAが止まってから状態を解放する。
+prepareToStopで新規frameを拒否するが、稼働中フラグは終了処理まで保持して設定変更を防ぐ。
+未登録/二重begin/別runtimeの稼働中beginはInvalidStateとし、startErrorで理由を返す。
+raw descriptor writerも稼働中の書換えを拒否する。
+
+format/size/fps/最大frameを候補全体で検証し、失敗時に旧値を保持する。
+未知format、YUY2の奇数幅・実サイズと異なる固定frame、32 bit bit rateのoverflowを拒否する。
+MJPEGの奇数サイズと1..255 fpsを受け付け、transportと関係しない120 fps制限を撤去した。
+開始時にも構成を再検証する。最大4096の寸法制約とVideoの一形式という構成は現状維持。
+
+`video-lifecycle-related.xml`は**2 passed、0 skipped、0 unfinished、344.96秒**。
+metadataの反復とheap回復、257/511/512/1021 byteの実ISO frame一致と完了callback、
+未登録Videoの生成/破棄後の正常通信、64 KiB送信中のFunction破棄とbuffer解放、既存descriptor試験を含む。
+Hostの公開FIFO設定はRX160/NPTX16/PTX16 lines。両case両board STOPPED、panicなし。
+serial原本は`/tmp/pytest-embedded/2026-10-27_01-30-16-696638/`、コピーとJUnit/transcriptは`validation/.pytest-results/video-lifecycle-related*`。
+通常収集は20件。全体の直近成功はNCM時点の19件で、今回の関連2件と区別する。
+
+Videoのclass/FIFO/global ownerはまだTinyUSBのまま。payload容量/ISO・BulkのAPI化と独自driver、
+Probe/Commit検証、reset/alt/end時のframe所有権通知、callback contextの統一は次の実装対象。
+今回の実転送はsynthetic MJPEG payloadのUSB転送検証であり、JPEG decode・PC/OS・他SoC/HSの検証ではない。
+
+`s3/video_lifecycle`は新規のS3–S3 ISO probe。設定拒否と実frame、送信中破棄を検証する。
+現段階の範囲は[Videoガイド](../docs/V3_VIDEO_API.ja.md)。

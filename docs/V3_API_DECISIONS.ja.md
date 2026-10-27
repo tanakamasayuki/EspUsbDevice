@@ -357,3 +357,14 @@ MACは補助文字列を使ってFunctionごとにsnapshotする。IPは別フ�
 raw transportにはesp_netif glueをリンクしない。netif/key/IPv4情報を分離し、endNetworkで破棄して再開始できる。
 IP用frame copyはlwIPの寿命に合わせて残し、IPを選んだ場合だけ費用を持たせる。
 基本のDevice/Net/onFrame/sendFrame/beginは維持し、setterはesp_err_t、稼働中は明示拒否へ変更する。
+
+
+## Video設定の検証と稼働中破棄
+
+2026-10-27。Video独自化の前に、active Function破棄がDeviceを停止せずframeの寿命を切っていた経路を修正する。
+他Functionと同じDevice停止に揃え、prepareToStopで次のframe投稿を拒否する。
+descriptorの32 bit bit rateがoverflowした値を送らず、setterの候補全体を検証して旧値を保つ。
+MJPEGにYUY2の幅制約を持ち込まず、fpsの上限を255とwireのbit rate上限で決める。
+利点は破棄後のDMA参照の防止と不正descriptorの早期拒否、不要なサイズ/fps制約の削減。
+不利益は稼働中破棄がDevice全体を停止し、不正な上限申告を従来どおり受け付けなくなる点。
+payload容量やtransfer方式はまだbuild flagなので、これだけをVideoの独自化完了とはしない。

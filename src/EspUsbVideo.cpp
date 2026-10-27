@@ -1,4 +1,5 @@
 #include "EspUsbDevice.h"
+#include "internal/EspUsbTinyUsbRuntime.h"
 
 #include <string.h>
 
@@ -62,6 +63,18 @@ constexpr uint8_t TERMINAL_CAMERA = 1;
 constexpr uint8_t TERMINAL_OUTPUT = 2;
 
 constexpr uint16_t MAX_DIMENSION = 4096;
+
+// Validate the complete candidate before mutating any published format field.
+bool validVideoParameters(EspUsbDeviceVideoFormat format, uint16_t width,
+                          uint16_t height, uint8_t fps, uint32_t maximum) {
+  if ((format != EspUsbDeviceVideoFormat::Mjpeg && format != EspUsbDeviceVideoFormat::Yuy2) ||
+      !width || !height || width > MAX_DIMENSION || height > MAX_DIMENSION || !fps) return false;
+  const uint32_t raw = uint32_t(width) * height * 2;
+  if (format == EspUsbDeviceVideoFormat::Yuy2 && ((width & 1) || (maximum && maximum != raw))) return false;
+  const uint32_t bytes = maximum ? maximum : format == EspUsbDeviceVideoFormat::Yuy2 ? raw : raw / 8;
+  return bytes && uint64_t(bytes) * 8 * fps <= UINT32_MAX;
+}
+
 
 // YUY2, as a Windows-style format GUID. The first four bytes are the FourCC
 // and the rest is the fixed USB/DirectShow suffix.
@@ -158,23 +171,14 @@ void EspUsbDeviceVideo::assignFunctionIds(uint8_t instance, uint8_t stringIndex)
 
 bool EspUsbDeviceVideo::setFormat(EspUsbDeviceVideoFormat format)
 {
-  if (running_)
-  {
-    return false;
-  }
+  if (running_ || !validVideoParameters(format,width_,height_,frameRate_,maxFrameSize_)) return false;
   format_ = format;
   return true;
 }
 
 bool EspUsbDeviceVideo::setFrameSize(uint16_t width, uint16_t height)
 {
-  // Both dimensions must be even for YUY2: it packs two pixels into four
-  // bytes, so an odd width has no whole macropixel at the end of a line.
-  if (running_ || width == 0 || height == 0 || width > MAX_DIMENSION ||
-      height > MAX_DIMENSION || (width & 1) != 0 || (height & 1) != 0)
-  {
-    return false;
-  }
+  if (running_ || !validVideoParameters(format_,width,height,frameRate_,maxFrameSize_)) return false;
   width_ = width;
   height_ = height;
   return true;
@@ -182,23 +186,14 @@ bool EspUsbDeviceVideo::setFrameSize(uint16_t width, uint16_t height)
 
 bool EspUsbDeviceVideo::setFrameRate(uint8_t framesPerSecond)
 {
-  // 1..120. The frame interval is 10^7 / fps in 100 ns units, so 0 would
-  // divide by zero and anything above 120 is beyond what the transport can
-  // carry at any size worth sending.
-  if (running_ || framesPerSecond == 0 || framesPerSecond > 120)
-  {
-    return false;
-  }
+  if (running_ || !validVideoParameters(format_,width_,height_,framesPerSecond,maxFrameSize_)) return false;
   frameRate_ = framesPerSecond;
   return true;
 }
 
 bool EspUsbDeviceVideo::setMaxFrameSize(uint32_t bytes)
 {
-  if (running_)
-  {
-    return false;
-  }
+  if (running_ || !validVideoParameters(format_,width_,height_,frameRate_,bytes)) return false;
   maxFrameSize_ = bytes;
   return true;
 }
@@ -278,7 +273,7 @@ uint16_t EspUsbDeviceVideo::configurationDescriptorForSpeed(
     uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
     uint8_t endpointNumber, bool highSpeed)
 {
-  if (endpointNumber == 0 || endpointNumber > 15 ||
+  if (running_ || endpointNumber == 0 || endpointNumber > 15 ||
       (dst && descriptorLength(highSpeed) > capacity))
   {
     return 0;
@@ -509,23 +504,27 @@ uint16_t EspUsbDeviceVideo::configurationDescriptor(uint8_t *dst, uint8_t interf
 
 bool EspUsbDeviceVideo::begin()
 {
+  if (!registered_ || running_ || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  if (!validVideoParameters(format_,width_,height_,frameRate_,maxFrameSize_)) { startError_ = ESP_ERR_INVALID_ARG; return false; }
 #if ESP_USB_VIDEO_HAS_TINYUSB
   // One camera per device: TinyUSB's video driver is built with CFG_TUD_VIDEO
   // control interfaces, and the callbacks above have one destination.
-  if (g_activeVideo && g_activeVideo != this)
-  {
-    return false;
-  }
+  if (g_activeVideo && g_activeVideo != this) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   g_activeVideo = this;
 #endif
   inFlight_.store(false);
   commit_ = EspUsbDeviceVideoCommit{};
-  running_ = true;
+  stopping_.store(false); running_ = true; startError_ = ESP_OK;
   return true;
 }
 
+void EspUsbDeviceVideo::prepareToStop() { stopping_.store(true); }
+
 void EspUsbDeviceVideo::end()
 {
+#if ESP_USB_VIDEO_HAS_TINYUSB
+  if (g_activeVideo == this && device_.tinyusbStarted_) { device_.end(); return; }
+#endif
   running_ = false;
   inFlight_.store(false);
 #if ESP_USB_VIDEO_HAS_TINYUSB
@@ -539,7 +538,7 @@ void EspUsbDeviceVideo::end()
 bool EspUsbDeviceVideo::streaming() const
 {
 #if ESP_USB_VIDEO_HAS_TINYUSB
-  return running_ && tud_video_n_streaming(instance_, 0);
+  return running_ && !stopping_.load() && tud_video_n_streaming(instance_, 0);
 #else
   return false;
 #endif

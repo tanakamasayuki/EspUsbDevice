@@ -705,6 +705,7 @@ private:
   friend class EspUsbDeviceHidSystemControl;
   friend class EspUsbDeviceVendor;
   friend class EspUsbAudioFunction;
+  friend class EspUsbDeviceVideo;
   friend class EspUsbDeviceNet;
   friend class EspUsbDeviceCcid;
   friend class EspUsbDeviceDfu;
@@ -1800,6 +1801,8 @@ public:
   bool setMaxFrameSize(uint32_t bytes);
 
   bool begin() override;
+  esp_err_t startError() const override { return startError_; }
+  void prepareToStop() override;
   void end() override;
   bool isHid() const override { return false; }
   bool isVideo() const override { return true; }
@@ -1882,7 +1885,8 @@ private:
   uint16_t height_ = 240;
   uint8_t frameRate_ = 15;
   uint32_t maxFrameSize_ = 0;
-  bool running_ = false;
+  std::atomic<bool> running_{false}, stopping_{false};
+  esp_err_t startError_ = ESP_OK;
   // Owned by whoever wins the exchange in sendFrame(), released by the
   // completion callback. Atomic because those two run on different tasks.
   std::atomic<bool> inFlight_{false};
