@@ -170,7 +170,9 @@ esp_err_t EspUsbAudioFunction::configure(const EspUsbAudioConfig &config)
   if (started_.load()) return ESP_ERR_INVALID_STATE;
   if (config.eventCapacity > SIZE_MAX / sizeof(espusb::internal::AudioRuntimeEvent)) return ESP_ERR_INVALID_SIZE;
   if (config.playbackBufferFrames > SIZE_MAX / 8 || config.captureBufferFrames > SIZE_MAX / 8) return ESP_ERR_INVALID_SIZE;
-  if ((config.playbackBuffer && !config.playbackBufferFrames) || (config.captureBuffer && !config.captureBufferFrames)) return ESP_ERR_INVALID_ARG;
+  if ((config.playbackBuffer && (!config.playbackBufferFrames || !config.playbackBufferBytes)) ||
+      (config.captureBuffer && (!config.captureBufferFrames || !config.captureBufferBytes)) ||
+      (!config.playbackBuffer && config.playbackBufferBytes) || (!config.captureBuffer && config.captureBufferBytes)) return ESP_ERR_INVALID_ARG;
   config_ = config; return ESP_OK;
 }
 size_t EspUsbAudioFunction::eventCapacity() const { return events_.capacity(); }

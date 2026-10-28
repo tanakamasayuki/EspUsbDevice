@@ -1692,6 +1692,10 @@ struct EspUsbAudioConfig {
   size_t captureBufferFrames = 256;
   uint8_t *playbackBuffer = nullptr;
   uint8_t *captureBuffer = nullptr;
+  // Extents of optional CPU ring storage, kept alive through end().
+  // Must cover bufferFrames * largest registered PCM frame. Null uses 0.
+  size_t playbackBufferBytes = 0;
+  size_t captureBufferBytes = 0;
 };
 
 class EspUsbAudioFunction : public EspUsbDeviceClass

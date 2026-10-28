@@ -113,3 +113,13 @@ writeDirect/readDirectは65535 byteの内部制約を外し、より大きな所
 buffer容量以下・query上限以下で投稿し、拒否ならcallerが所有を保持、受理ならcallbackまで保持する。
 分割単位に合わせた利用側の手動分割や、途中の完了通知への対応は不要。
 [Vendorの詳細と費用](V3_VENDOR_API.ja.md#65535-byteを跨ぐ借用転送)を参照。
+
+
+## Audioの外部buffer
+
+v3開発途中の外部ring指定には提供長を追加した。
+playbackBufferと同時にplaybackBufferBytes、captureBufferと同時にcaptureBufferBytesへsizeof配列等を渡す。
+内部確保（pointer=nullptr、byte長=0）の基本利用は変更不要。
+形式追加で必要量が増えても不足を検出できるよう、byte長省略を旧動作へ読み替える互換処理は入れない。
+容量不足のbeginはESP_ERR_INVALID_SIZE、pointerとbyte長の組の誤りはconfigureがESP_ERR_INVALID_ARG。
+configureは戻り値、beginはboolとDevice.lastErrorを確認する。

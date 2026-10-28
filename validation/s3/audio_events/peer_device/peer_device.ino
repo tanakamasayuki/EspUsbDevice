@@ -59,6 +59,7 @@ bool metadata() {
     EspUsbAudioConfig config; config.eventCapacity = 0;
     config.playbackBufferFrames = config.captureBufferFrames = 8;
     config.playbackBuffer = buffers + 1; config.captureBuffer = buffers + 17;
+    config.playbackBufferBytes = config.captureBufferBytes = 32;
     EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= function.configure(config) == ESP_OK && !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_ARG;
     config.captureBuffer = buffers + 33;
@@ -122,7 +123,28 @@ bool capabilities() {
       EspUsbAudioConfig config; config.eventCapacity = 0;
       config.playbackBufferFrames = config.captureBufferFrames = 8;
       config.playbackBuffer = buffers + 1; config.captureBuffer = buffers + 33;
+      config.playbackBufferBytes = config.captureBufferBytes = 64;
       EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
+      ok &= function.configure(config) == ESP_OK;
+      for (unsigned invalidPair = 0; invalidPair < 4; ++invalidPair) {
+        auto invalid = config;
+        if (invalidPair == 0) invalid.playbackBufferBytes = 0;
+        if (invalidPair == 1) invalid.captureBufferBytes = 0;
+        if (invalidPair == 2) invalid.playbackBuffer = nullptr;
+        if (invalidPair == 3) invalid.captureBuffer = nullptr;
+        ok &= function.configure(invalid) == ESP_ERR_INVALID_ARG;
+        ok &= function.configuration().playbackBufferBytes == 64 && function.configuration().captureBufferBytes == 64;
+      }
+      // Both the first-format budget and a one-byte shortage must fail without writes.
+      for (size_t supplied : {32u,63u}) for (unsigned direction = 0; direction < 2; ++direction) {
+        auto shortBuffer = config;
+        if (direction == 0) shortBuffer.playbackBufferBytes = supplied;
+        else shortBuffer.captureBufferBytes = supplied;
+        ok &= function.configure(shortBuffer) == ESP_OK && !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_SIZE;
+        ok &= !local.started() && !input.capacity() && !output.capacity();
+        for (uint8_t byte : buffers) ok &= byte == 0xc3;
+      }
+      Serial.printf("EXTENTS protocol=%u rejected=4 badPairs=4 guards=%u\r\n", unsigned(protocol), unsigned(ok));
       // First-format 32-byte sizing would incorrectly accept this overlap.
       ok &= function.configure(config) == ESP_OK && !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_ARG;
       ok &= !local.started() && !input.capacity() && !output.capacity();

@@ -821,3 +821,14 @@ subslot/有効bit数ごとにalternateを作り、rateは各形状の一覧へ�
 currentFormatはcopyのsnapshotで、read/writeとの形式の同期はアプリ側で行う。
 旧DMA停止と完了fence後に再activateし、形状が異なる旧ringは破棄する。
 API・外部ringの必要長・関連7件の結果は[Audioガイド](V3_AUDIO_API.ja.md#pcm形状のalternate選択)。
+
+
+## Audio外部ringの提供長
+
+NCM/Videoと同様に、Audioの外部pointerにもbyte長を持たせる。
+frame数はアプリが望むring量、byte長は提供する配列の範囲と役割を分ける。
+利点はPCM形状追加で最大frame幅が変わっても不足を開始前に拒否でき、sizeof配列を直接渡せること。
+不利益はAudio configにsize_tを2個保持し、既存の外部ring利用に長さ指定の移行が必要なこと。
+未選択Audioには費用を持ち込まず、転送時の新しいheap取得や容量検査は追加しない。
+全クラスのconfigureはesp_err_tの戻り値を確認する既存方針を維持し、Device.lastErrorへの新たな横断書換えはしない。
+検証結果は[Audioガイド](V3_AUDIO_API.ja.md#外部ringのbyte長指定)を参照。

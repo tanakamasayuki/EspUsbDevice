@@ -313,12 +313,14 @@ esp_err_t AudioTransport::begin(EspUsbAudioFunction &owner) {
   size_t sizes[2] = {};
   const AudioStreamModel *streams[] = {&owner.model_.playback(), &owner.model_.capture()};
   const size_t counts[] = {owner.config_.playbackBufferFrames, owner.config_.captureBufferFrames};
+  const uint8_t *external[] = {owner.config_.playbackBuffer, owner.config_.captureBuffer};
+  const size_t supplied[] = {owner.config_.playbackBufferBytes, owner.config_.captureBufferBytes};
   for (unsigned i = 0; i < 2; ++i) {
     if (!streams[i]->formatCount()) continue;
-    const auto *format = streams[i]->format(0);
     const size_t frame = streams[i]->maximumFrameBytes();
     if (counts[i] > SIZE_MAX / frame) return ESP_ERR_INVALID_SIZE;
     sizes[i] = counts[i] * frame;
+    if (external[i] && supplied[i] < sizes[i]) return ESP_ERR_INVALID_SIZE;
   }
   const uintptr_t rx = reinterpret_cast<uintptr_t>(owner.config_.playbackBuffer), tx = reinterpret_cast<uintptr_t>(owner.config_.captureBuffer);
   if ((sizes[0] && rx > UINTPTR_MAX - sizes[0]) || (sizes[1] && tx > UINTPTR_MAX - sizes[1]) ||

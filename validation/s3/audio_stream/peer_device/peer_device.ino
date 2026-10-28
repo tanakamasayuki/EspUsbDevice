@@ -75,7 +75,10 @@ void loop() {
     externalRingBytes = external ? frames * (alternates ? 8 : 4) : 0;
     if (externalRingBytes > sizeof(rx) - 2) { Serial.println("STARTED 0"); return; }
     memset(rx, 0xc3, sizeof(rx)); memset(tx, 0xc3, sizeof(tx));
-    if (external) { config.playbackBuffer = rx + 1; config.captureBuffer = tx + 1; }
+    if (external) {
+      config.playbackBuffer = rx + 1; config.captureBuffer = tx + 1;
+      config.playbackBufferBytes = sizeof(rx) - 2; config.captureBufferBytes = sizeof(tx) - 2;
+    }
     ok &= audio->configure(config) == ESP_OK && device.begin();
     ok &= (!playback || playback->capacity() == frames * (alternates ? 8 : 4)) && (!capture || capture->capacity() == frames * (alternates ? 8 : 4));
     if (capture) { ok &= capture->write(samples, 3) == 0; capture->clearBuffer(); }

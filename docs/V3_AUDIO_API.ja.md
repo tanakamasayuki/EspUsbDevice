@@ -64,9 +64,12 @@ PCM bufferはsample frame数で指定する。1 frameは全channelの1 sampleで
 登録format中の最大値(channels × subslotBytes) × bufferFrames。単一formatならそのframe幅を使う。
 read/writeと利用可能容量は、選択中のPCMのframe境界へ切り下げる。
 選択した方向だけにringと最大packet分のDMA bufferを確保し、UAC2 Playbackだけに4 byte feedbackを加える。
-既定は各256 frame。playbackBuffer/captureBufferに外部byte配列を渡せる。必要長は上記byte数で、
+既定は各256 frame。playbackBuffer/captureBufferに外部byte配列を渡す場合は、
+playbackBufferBytes/captureBufferBytesへ提供する領域長も指定する。必要長は上記byte数で、
 Device.endまで有効に保ちアプリが直接書き換えない。ringはCPU copy用なのでDMA alignmentは不要。
 両方向の実使用領域が重なる指定、pointer/size overflow、外部buffer付きの容量0を拒否する。
+pointer/byte長の片方だけを指定した場合はconfigureがInvalidArg、必要量に足りない場合はbeginがInvalidSize。
+提供長が必要量より大きくてもringは要求したframe数分だけを使い、末尾を追加容量として扱わない。
 
 容量0ならringを確保しない。Playbackは受信を捨てoverrunへ記録する。
 CaptureはDMA packetを無音で埋めunderrunへ記録する。USB転送に必要なDMA buffer自体は残る。
@@ -321,3 +324,36 @@ heap357280→357280。`.pytest-results/audio-capability-settings*`、
 4構成の実bus休止、13 rateと158 byte RANGE、停止後のrate入替えを維持し、6 logs STOPPED/panicなし。
 `.pytest-results/audio-external-shared-probe*`、原本`/tmp/pytest-embedded/2026-10-28_23-25-39-968972/`。
 この追加試験後に全38件を再実行した結果とは扱わず、全38件の基準は前節の033f2d8を参照する。
+
+
+## 外部ringのbyte長指定
+
+```cpp
+uint8_t storage[520]; // Keep alive until device.end().
+EspUsbAudioConfig config;
+config.playbackBufferFrames = 65;
+config.playbackBuffer = storage;
+config.playbackBufferBytes = sizeof(storage);
+esp_err_t error = audio.configure(config);
+if (error != ESP_OK) return;
+if (!device.begin()) { /* Inspect device.lastError(). */ return; }
+```
+
+外部storageには、その方向の登録済み最大frame幅×bufferFrames以上が必要。
+例えばstereo 16-bitと32-bitを登録した65 frameは520 byteで、先頭の16-bitだけから計算した260 byteでは不足する。
+formatを後から追加できるため、最終的な必要量の検証はbegin時に行う。拒否時は外部領域へ書き込まず、
+byte長を直してconfigure→beginを再試行できる。内部確保の既定利用では追加の指定は不要。
+サイズ指定を含む外部領域が本当に有効かは呼出側の責任である。
+
+configureのesp_err_tをその場で確認し、Device.beginの失敗はDevice.lastErrorで確認する。
+これは他クラスのconfigureと同じ流れで、configure失敗時にDevice.lastErrorが更新される前提にはしない。
+
+
+提供長を含む製品変更後の関連6件は**6 passed、0 skipped/error/failure/unfinished、369.22秒**。
+12 logs全てSTOPPED/panicなし。両規格・両方向の長さ32/63 byte不足を計16回、pointer/長さの
+不正な組を計16回拒否し、外部storageのguardを維持した。32 ISO交換・36 guard照会、
+4構成の実bus休止・rate変更・停止後の再構成も成功。816開始取得点＋14設定取得点の失敗から回復し、
+heap346704→346704。Function本体は296→304 byte（提供長2項目）、model16/control52は不変で、
+heap取得点は増えていない。S2/P4 AudioPlayback compileと、S3/S2/P4各29 sourceの依存/nmも成功した。
+この6件は全38件の再実行ではなく、外部長追加に対応する関連試験である。
+記録は`.pytest-results/audio-buffer-extents*`、原本`/tmp/pytest-embedded/2026-10-28_23-29-42-188475/`。

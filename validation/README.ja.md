@@ -7,6 +7,21 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## Audio外部ring長指定後の関連6件
+
+2026-10-29、Audio ConfigへplaybackBufferBytes/captureBufferBytesを追加。
+提供長不足は開始前に拒否し、pointer/長さの片方だけの指定はconfigureで拒否する。
+関連6件は**6 passed、0 skipped/failed/error/unfinished、369.22秒**、12 logs全てSTOPPED/panicなし。
+不足長16回・不正な組16回の拒否、修正後の再開始、32 ISO交換、36 guard検査、
+実bus休止・複数rate・停止後の再構成を確認した。816開始取得点＋14設定取得点の失敗から回復し、
+heap346704→346704。Audio本体は304 byte（+8）で、新規heap取得点はない。
+
+S2/P4 AudioPlayback compileも成功。S3/S2/P4各29 sourceの依存とAudio構成のELFで、
+SDK TinyUSB fallback/旧stack、未選択NCM/Video/CCID/keymapの混入がないことを確認した。
+serial原本は`/tmp/pytest-embedded/2026-10-28_23-29-42-188475/`、
+JUnit/transcript/serial/監査と各nmは`.pytest-results/audio-buffer-extents*`。
+全38件の再実行ではない。今回の変更前の全体基準とS2/P4 compile-onlyの範囲を区別する。
+
 ## 外部Audio ringと能力表拒否の追加確認
 
 2026-10-29、製品は`033f2d8`から変更せずprobeを拡張した。
