@@ -6,6 +6,9 @@
 - Replace startTinyUsb with typed startMode, remove the empty task() call, expose started() and worker stack/priority settings. Defaults retain ordinary begin()/Stream/HID usage.
 - 開始mode・worker設定と移行は docs/V3_MIGRATION.ja.md を参照。古いfield/空の互換関数は残さず、version metadataを3.0.0へ変更。
 
+- Add six fresh v3 examples for basic, composite and runtime reconfiguration usage. Archive 2.x examples/tests and retire the old unit/matrix workflows.
+- 新しいREADMEとCH32RV比較メモを追加。v3の試験入口は独立validationと標準comboを維持する。
+
 ## 2.6.1
 - (EN) Honor HID `timeoutMs`: wait for a busy IN endpoint, with zero retaining
   polling behavior and a busy timeout reporting `ESP_ERR_TIMEOUT`. Consecutive

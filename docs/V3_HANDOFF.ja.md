@@ -76,10 +76,24 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 実機pytestは一つずつ。対応するbuild/test中は製品・probe sketchを変更しない。
 失敗を隠すskipは追加しない。両boardの明示停止までをtestの合否に含める。
 
+## examples・旧資産・CIの整理
+
+公開APIだけでKeyboard/CdcConsole/VendorEcho/MidiEcho/CompositeCdcMidi/ReconfigureVendorを新規作成。
+全6例をCore3.3.12/S3でcompile成功。`.pytest-results/v3-examples-s3-build.txt`へ記録した。
+S2/P4のexample profileはcompile CI用に用意したが、この6例のlocal cross-build・実機確認ではない。
+旧examples156/旧tests347ファイルはmainと内容一致を確認して`legacy/v2/`へ保管。
+旧unit/互換matrix workflowを保管し、native構造検査＋独立suite収集のCIへ変更。
+34件の収集を実機なしで確認。新examplesのビルドCIは各profileを対象にする。
+READMEをv3向けに書き直し、[CH32RV比較](V3_CH32RV_API_ALIGNMENT.ja.md)も追加した。
+
+共有toolkit管理のrelease workflowは未変更で、archive exportは旧`tests/`除外のまま。
+公開前にvalidation/legacyの配布範囲をtoolkit側と調整する必要がある。release/tag/pushはしていない。
+古い非V3文書は履歴資料として残っており、全リンクをv3向けに修復した意味ではない。
+
 ## 次の単位と未完了
 
 1. API整理後の全34件を確定し、serial・依存記録・symbol・回収を監査して記録する。
-2. 公開APIから新しい基本/複合/再構成exampleを用意し、旧examples/testsとCI・READMEを整理する。
+2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
 3. 新APIの残る不自然さとprotocol/所有権の不足を実測で検討し、必要な変更だけ行う。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
