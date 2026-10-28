@@ -85,7 +85,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 公開APIだけでKeyboard/CdcConsole/VendorEcho/MidiEcho/CompositeCdcMidi/ReconfigureVendorを新規作成。
 全6例をCore3.3.12/S3でcompile成功。`.pytest-results/v3-examples-s3-build.txt`へ記録した。
-S2/P4のexample profileはcompile CI用に用意したが、この6例のlocal cross-build・実機確認ではない。
+native Stream変更後に全6例×S3/S2/P4の18ビルドも成功。実機の確認範囲はS3–S3のまま。
 旧examples156/旧tests347ファイルはmainと内容一致を確認して`legacy/v2/`へ保管。
 旧unit/互換matrix workflowを保管し、native構造検査＋独立suite収集のCIへ変更。
 34件の収集を実機なしで確認。新examplesのビルドCIは各profileを対象にする。
@@ -124,11 +124,25 @@ heap346704→346704 byte。S2/P4と新CdcConsoleのcompile、依存/nmも成功�
 原本`/tmp/pytest-embedded/2026-10-28_12-23-52-104927/`、`.pytest-results/cdc-native-stream-related*`へ保存。
 全34件は次に実行する。実行中は製品/probeを固定する。
 
+## exampleのprofile別ビルド
+
+全6例×S3/S2/P4の18ビルドが成功し、各ELFのarchitectureとbuild.optionsのFQBNを確認した。
+最初の並列実行ではArduinoのsketch-pathだけの既定cacheへ異なるarchitectureが混在し、
+linkのEM:243/94不一致・同時cleanupが発生した。自分の3 build treeだけを停止し、
+自分の6 sketchの生成cacheだけをmetadataで特定して回収した。
+helperの出力先を`build/examples/<profile>/<sketch>/`へ分離し、同じ並列実行で18件全て成功。
+実機pytestはvalidation配下の別build pathなので継続しており、製品/probeソースは変更していない。
+記録は`.pytest-results/stream-examples-*-build.txt`、`stream-examples-build-audit.txt`。
+初回の衝突記録は`stream-examples-*-initial-cache-collision.txt`へ分けて保存。
+
 ## 次の単位と未完了
 
 1. native Streamのclass構造変更後の全34件を確認する。関連5件は完了。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
-3. 既存API/資源管理の残る問題は実測で判断する。旧互換性だけのshimを増やさない。
+3. borrowed bulkの65535 byte上限は現在も内部uint16_tの入口/計数に由来して残る。
+   次に、DMA分割を保ちながらこの16 bit制約を外せるか調べる。DWC2 recordのISO専用interval/retryと
+   非ISOのDMA進捗を共有できれば、recordを増やさず計数を広げる案もある。実装・採用は未検証。
+   既存API/資源管理の残る問題は実測で判断し、旧互換性だけのshimを増やさない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
 

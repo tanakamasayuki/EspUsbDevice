@@ -45,6 +45,15 @@ arduino-cli upload --profile esp32s3 --port <debug-port> examples/CdcConsole
 python3 tools/build_check.py esp32s3
 ```
 
+The build helper stores output under `build/examples/<profile>/<sketch>/`.
+All six examples compiled for S3/S2/P4 with Core 3.3.12 (18 builds) after the
+native CDC Stream change. This verifies build compatibility, not USB operation
+on S2/P4.
+
+ビルドhelperの生成物は`build/examples/<profile>/<sketch>/`へ保存します。
+CDCのStream化後、Core 3.3.12で6例×S3/S2/P4の全18ビルドを確認しました。
+S2/P4のUSB実機動作を確認した意味ではありません。
+
 ## Operation / 動作
 
 CDC can be used with a serial terminal; turn off local echo to see the returned

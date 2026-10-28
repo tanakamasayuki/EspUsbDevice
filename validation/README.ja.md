@@ -55,6 +55,15 @@ S2/P4 compileと更新したCdcConsoleのS3 compileも成功。全29 sourceの�
 XML/transcript/serial/集計は`.pytest-results/cdc-native-stream-related*`へ保存した。
 変更後の全34件の結果ではなく、関連5件の結果である。
 
+## 新examplesの全profileビルド
+
+native Stream変更後の6例をS3/S2/P4全profileでcompileし、**18 passed、0 failed**。
+生成ELFのmachine値（Xtensa94/RISC-V243）と各FQBNも確認した。S2/P4のUSB実機試験ではない。
+最初の並列ビルドでは既定のsketch-path cacheがprofile間で衝突したため、helperを
+`build/examples/<profile>/<sketch>/`へ分離した。製品/probeを変更せず同じ並列実行で全件成功。
+記録は`.pytest-results/stream-examples-*-build.txt`と`stream-examples-build-audit.txt`。
+初回失敗/中止の記録は`stream-examples-*-initial-cache-collision.txt`へ分けている。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

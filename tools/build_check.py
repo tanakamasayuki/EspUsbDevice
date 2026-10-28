@@ -19,6 +19,9 @@ Examples:
   python tools/build_check.py esp32p4 --only Audio
   python tools/build_check.py --list           # which examples declare which profiles
 
+Build output goes to build/examples/<profile>/<sketch>/, keeping concurrent
+profiles out of the sketch-path-only default Arduino cache.
+
 The profile's platform is installed by arduino-cli on first use, so the first run
 for a new target downloads a toolchain.
 """
@@ -119,8 +122,13 @@ def main() -> int:
     for sketch_dir in targets:
         rel = sketch_dir.relative_to(REPO_ROOT)
         print(f"==> {rel}")
+        # Arduino's default cache key is the sketch path, so concurrent
+        # profiles can overwrite each other's architecture-specific objects.
+        build_path = REPO_ROOT / "build" / "examples" / args.profile / sketch_dir.relative_to(EXAMPLES_ROOT)
+        build_path.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(
-            ["arduino-cli", "compile", "--profile", args.profile, str(sketch_dir)],
+            ["arduino-cli", "compile", "--profile", args.profile,
+             "--build-path", str(build_path), str(sketch_dir)],
             capture_output=True,
             text=True,
         )

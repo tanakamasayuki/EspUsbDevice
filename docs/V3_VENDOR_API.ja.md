@@ -84,7 +84,7 @@ auto submission = vendor.writeDirect(buffer, length,
 上限は`maxDirectTransfer()`で実効接続から照会する。内部転送の呼出し長は16 bitで、現在のTX上限は65535 byte。
 controllerの実装カウンタ幅は能力レジスタから読み、内部でDMA armを分割する。
 S3実機はpacket数7 bitで、一armの上限はMPS64で8128 byteである。利用者がこの単位に分割する必要はない。
-全体に対して一度だけ返却し、途中にshort/ZLPを挿入しない。新DCDへ移す際に16 bit上限を公開定数として固定しない。
+全体に対して一度だけ返却し、途中にshort/ZLPを挿入しない。現在も16 bitの入口/計数が残るための上限であり、今後の内部計数の整理で見直す。
 
 `Continue`はZLPを追加しない。`EndWithShortPacket`はMPS倍数長なら末尾ZLPまで含めて返却する。
 data転送とZLPの間に次の送信が割り込まない。普通のwriteの戻り値とwire完了は区別する。
