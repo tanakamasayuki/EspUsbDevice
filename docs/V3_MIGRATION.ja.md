@@ -35,6 +35,9 @@ void loop() {
 
 `begin()`成功は資源とUSB workerの開始を表す。Hostからの構成を待つ場合は`ready()`を使う。
 `started()`は成功したbeginからendまでtrueで、USB接続待ち・reset中にも資源所有を表す。
+`suspended()`は実際のbus休止状態を示す。Hostの構成は休止中も維持するためready()はtrueのまま。
+USB開始前、DescriptorsOnly、end後はfalse。送信受付・完了の可否はFunctionの転送APIで判断する。
+休止はresetや停止ではなく、借用bufferは完了・取消し・reset・endによる返却まで保持する。
 `end()`はworker/DMAを停止し、借用bufferの返却と資源解放を待つ。戻り値はesp_err_t。
 callback内のbegin/endや再設定は行わず、callbackは結果の処理や次の転送投稿に使う。
 

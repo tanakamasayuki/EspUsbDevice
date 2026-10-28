@@ -608,6 +608,9 @@ public:
   // DescriptorsOnly mode. ready() additionally requires Host configuration.
   bool started() const;
   bool ready() const;
+  // Bus suspend is independent of Host configuration: ready() stays true.
+  // False before USB startup, in DescriptorsOnly mode, and after end().
+  bool suspended() const;
 
   const EspUsbDeviceConfig &config() const;
   uint16_t hidEndpointSize() const;

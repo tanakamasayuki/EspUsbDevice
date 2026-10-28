@@ -763,3 +763,21 @@ recordは4 byte増え、代表構成の実確保量はVendor192のまま、CDC�
 公開メソッド名・引数・返却型を増やさず、callback/pointer/id・reset/endの所有権契約を維持する。
 S3の131072 byte wire転送と、131008 byte後のcancel/reset/endを確認した。
 実験結果・移行は[Vendorガイド](V3_VENDOR_API.ja.md#65535-byteを跨ぐ借用転送)。
+
+## Deviceのsuspended照会と実際のbus休止
+
+従来はcore内部だけが休止状態を持ち、利用者はHost構成を表すready()から区別できなかった。
+`bool EspUsbDevice::suspended() const`を追加し、started/ready/suspendedを別々に照会する。
+休止中も構成と資源を維持するため、既存ready()の意味は変更しない。
+開始前・DescriptorsOnly・end後はfalse。既存coreのatomic flagを読む非virtual methodで、
+object field、buffer、queue、task、callback監視費用を追加しない。未使用methodはlink時に除去できる。
+
+利点は、applicationが休止中の仕事を減らす判断を内部headerなしで行えること。
+不利益は状態照会が一つ増えることと、pollingが必要なこと。照会と次の操作の間にbus状態は変わるため、
+ready() && !suspended()は転送成功の予約ではない。転送APIの戻り値・完了通知を引き続き使う。
+既存の転送・開始停止APIの移行は不要。休止で借用bufferを自動返却する意味も追加しない。
+利用者callbackやremote wakeup機能を追加した変更ではない。
+
+新しい独立S3 probeで、Hostのroot portを実際に休止・再開した。新規投稿と休止前の投稿、
+cancel、end、再開始をqueue深さ1/16/31で確認。結果と制限は
+[独立試験](../validation/README.ja.md#実際のsuspendresumeと状態照会)を参照。

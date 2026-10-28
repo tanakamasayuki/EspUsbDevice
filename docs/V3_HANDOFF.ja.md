@@ -183,6 +183,19 @@ S2/P4 compile成功。S3/S2/P4の29 source依存とnmにも旧stack/SDK fallback
 `.pytest-results/bulk-packet-policy*`。構造検査とgit diff --checkも成功。
 pluginのlocal最新`698bb29`/1.10.0のcombo guideを再確認。標準combo/allとnoconftestを維持する。
 
+## 実busのsuspend/resume
+
+Deviceへsuspended()を追加し、既存coreの状態を公開。object field/task/bufferの追加なし。
+ready()は従来どおりHost構成を表し、休止中もtrueを維持する。開始前/metadata/end後はsuspended=false。
+独立suspend_resume probeはHostのLLで実際のroot portを休止し、Deviceのeventは注入しない。
+queue深さ1/16/31で計12 suspend、9 resume、9往復、30 loanの一度だけの返却を確認。
+休止前/休止中の投稿を保持し、休止中cancel/endでも正しいstatus/id/pointer/長さ/canaryを確認した。
+
+最終probeは**1 passed、0 skipped/error/failure/unfinished、43.95秒**。2 logs STOPPED/panicなし。
+S2/P4 compileと3 targetの全29 source依存/nmも成功。全体収集は35件で、一括再実行の結果ではない。
+原本`/tmp/pytest-embedded/2026-10-28_16-04-36-084373/`、`.pytest-results/suspend-resume*`へ保存。
+Host起点のS3 FS L2休止の結果。remote wakeup、消費電力、周期HID/ISO、OS起点の試験は別に残る。
+
 ## 次の単位と未完了
 
 1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
@@ -192,7 +205,8 @@ pluginのlocal最新`698bb29`/1.10.0のcombo guideを再確認。標準combo/all
    MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
    class内に分散したSoC別MPS判定は共通化済み。P4 HSではCCIDの既定320がMPS512を満たさない点は残る。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
-4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
+4. S3 FSのHost起点suspend/resumeは確認済み。OS互換、remote wakeup、周期HID/ISOの休止、
+   長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
 
 任意の全EP0順序や全競合順序を検証済みとは扱わない。

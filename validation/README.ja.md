@@ -109,6 +109,28 @@ XML/transcript/serialと各nmは`.pytest-results/wide-loan-all*`、集計は`wid
 実行中の製品/probeは変更していない。`verify_usb_backend.py`と`git diff --check`も成功。
 実機はS3–S3のみ。OS/他SoC/HS実機と任意の全競合順序までの確認を意味しない。
 
+## 実際のsuspend/resumeと状態照会
+
+`s3/suspend_resume`はSDK Hostの通常のenumeration/転送を使い、休止操作だけをprobe内の
+ESP-IDF LLで行う。plugin/conftestやDevice側のevent注入ではない。Hostに未完transferがない状態で
+root portを休止し、Deviceの実IRQ由来のsuspended状態と構成維持を照会する。
+再開信号は30 ms、解除後の回復待ちは20 ms。20 ms以上/10 ms以上というtimingは
+[IntelのUSB resume解説](https://www.intel.com/content/www/us/en/developer/articles/technical/usb-resume-optimization-spec-minimum-delays.html)
+とSDK HALの契約を参照した。
+
+queue深さ1/16/31で、休止前のloanと休止中に投稿したloanを保持し、再開後のwire payloadを比較。
+休止中のcancelはCancelled、endはStoppedで一度ずつ返す。pointer/id/要求長/実長とcanaryも確認する。
+各構成で10結果、計30結果。休止12回、明示resume9回、双方向交換9回、静止確認9回。
+ready()はHost構成を示してtrueを維持し、DescriptorsOnlyとend後はsuspended=false。
+
+Host probeの不要なcontrol経路を除いた最終版は**1 passed、0 skipped/error/failure/unfinished、43.95秒**。
+2 serial全てSTOPPED、STOP_FAILED/panicなし。S2/P4 compileも成功、全29 source依存/nmに
+SDK TinyUSB fallback・旧stack symbolなし。標準combo/allのcollect-onlyは35件となった。
+原本`/tmp/pytest-embedded/2026-10-28_16-04-36-084373/`、結果は`.pytest-results/suspend-resume*`。
+初回のHost側SDK型不一致のbuild errorと、整理前の成功結果も別名で保持した。
+全35件の一括実行とは異なる。実機確認はS3 FSのみ、Host起点のL2休止が対象。
+remote wakeup・LPM・低消費電力値・休止中のISO/周期HID・OS suspendの確認は含まない。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

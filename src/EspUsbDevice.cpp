@@ -925,6 +925,15 @@ bool EspUsbDevice::ready() const
   return ready_;
 }
 
+bool EspUsbDevice::suspended() const
+{
+#if ESP_USB_DEVICE_HAS_OTG
+  return usbStarted_ && espusb_device_suspended();
+#else
+  return false;
+#endif
+}
+
 const EspUsbDeviceConfig &EspUsbDevice::config() const
 {
   return config_;
