@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので33 tests（core/control、NCM/VideoのHALT回復と6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので34 tests（reset開始、core/control、NCM/VideoのHALT回復と6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -797,3 +797,17 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/class-halt-all*`�
 `class-halt-audit.txt`、`class-halt-{s3,s2,p4}-nm.txt`。
 `python3 tools/verify_usb_backend.py`、git diff --checkも成功し、mainは取り込み済み。
 旧tests/examplesはmainとの差分なし。
+
+
+## reset開始を実IRQで観測するprobe
+
+`s3/reset_start`はprivate IRQ allocatorのwrapperでUSBRSTの開始直後を観測する。
+workerをparkしたまま通常のHost stop/startで実resetを発生させ、古いmounted/job-readyが無効になること、
+endpoint再登録・data/EP0 DMAが拒否されることを確認する。IRQ内では待機/ログ出力をしない。
+ENUMDNE後はworkerをreleaseし、旧loanが一度だけ返り、新しいHost往復が正しいことを確認する。
+Hostは独立v3 configuration_epochのraw SDK sketchを再利用し、conftestやplugin追加操作はない。
+
+修正前は実IRQ直後もmounted=1/jobs=1で失敗。修正後は深度4/16/31の3 resetを含む
+1 passed、0 skipped/unfinished、119.10秒。2 logs全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-28_07-43-39-489897/`、結果は`.pytest-results/reset-start-guard*`。
+この変更後の全34件は次に一括確認する。

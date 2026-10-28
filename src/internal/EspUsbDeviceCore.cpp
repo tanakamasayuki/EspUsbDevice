@@ -53,7 +53,7 @@ struct Core {
   std::atomic<uint8_t> configuration{0};
   std::atomic<EspUsbSpeed> speed{ESPUSB_SPEED_INVALID};
   bool addressed = false, selfPowered = false;
-  std::atomic<bool> remoteWakeup{false}, recovering{false}, stopping{false};
+  std::atomic<bool> remoteWakeup{false}, recovering{false}, stopping{false}, resetting{false};
   Endpoint *endpoint(uint8_t address) {
     if ((address & 0x70) || (address & 15) >= endpointCount) return nullptr;
     return endpoints + (address & 15)*2 + (address >> 7);
@@ -61,8 +61,11 @@ struct Core {
   const espusb::internal::UsbClassDriver *driver(uint8_t index) const {
     return index < driverCount ? drivers + index : nullptr;
   }
+  void invalidateBus() {
+    resetting.store(true);configuration.store(0);connected.store(false);suspended.store(false);bus.fetch_add(1);
+  }
   bool currentControl() const {
-    return control.serial == setup.load() && control.bus == bus.load() && !stopping && !recovering;
+    return control.serial == setup.load() && control.bus == bus.load() && !stopping && !recovering && !resetting;
   }
   bool post(const Event &event, bool inIsr) {
     if (!queue || stopping) return false;
@@ -304,7 +307,7 @@ struct Core {
     // Let old fences retire their own queued bookkeeping after reset. Posting
     // new fences is refused until recovery ends; other old events are obsolete.
     while (xQueueReceive(queue,&old,0)==pdTRUE) if (old.data.event_id==DeferredCall && old.data.func_call.func) old.data.func_call.func(old.data.func_call.param);
-    workerBus.store(bus.load()); overflow.store(false); recovering=false;
+    workerBus.store(bus.load()); overflow.store(false); resetting=false; recovering=false;
     vTaskDelay(std::max(TickType_t(1),pdMS_TO_TICKS(20)));
     espusb_controller_connect(port); if(!espusb_controller_int_enable(port))overflow.store(true);
   }
@@ -375,7 +378,7 @@ bool rejectUsbControl() {
   return false;
 }
 bool usbDeviceCoreReadyForJobs() {
-  return core && !core->overflow.load() && core->workerBus.load()==core->bus.load();
+  return core && !core->overflow.load() && espusb_controller_io_ready(core->port);
 }
 void runUsbDeviceCore(uint32_t milliseconds) {
   auto *s=core;if(!s)return;
@@ -392,10 +395,10 @@ void runUsbDeviceCore(uint32_t milliseconds) {
     case ESPUSB_CONTROLLER_EVENT_BUS_RESET:
       s->workerBus.store(event.bus);
       s->addressed=false;s->connected.store(false);s->suspended.store(false);s->speed=e.bus_reset.speed;
-      s->resetDrivers();break;
+      s->resetDrivers();s->resetting=false;break;
     case ESPUSB_CONTROLLER_EVENT_UNPLUGGED:
       s->workerBus.store(event.bus);
-      s->addressed=false;s->connected.store(false);s->suspended.store(false);s->resetDrivers();espusb_device_on_unmount();break;
+      s->addressed=false;s->connected.store(false);s->suspended.store(false);s->resetDrivers();espusb_device_on_unmount();s->resetting=false;break;
     case ESPUSB_CONTROLLER_EVENT_SETUP_RECEIVED:
       if(event.setup!=s->setup.load())break;
       s->connected.store(true);s->endpoints[0].flags=s->endpoints[1].flags=0;
@@ -422,8 +425,14 @@ void runUsbDeviceCore(uint32_t milliseconds) {
 extern "C" {
 void espusb_controller_lock(bool) {portENTER_CRITICAL(&hardwareLock);}
 void espusb_controller_unlock(bool) {portEXIT_CRITICAL(&hardwareLock);}
+void espusb_controller_reset_begin(uint8_t port) {
+  if(core && port==core->port && !core->stopping)core->invalidateBus();
+}
+bool espusb_controller_io_ready(uint8_t port) {
+  return core && port==core->port && !core->stopping && !core->recovering && !core->resetting && core->workerBus.load()==core->bus.load();
+}
 EspUsbSpeed espusb_device_speed() {return core ? core->speed.load() : ESPUSB_SPEED_INVALID;}
-bool espusb_device_mounted() {return core && core->configuration.load();}
+bool espusb_device_mounted() {return core && espusb_controller_io_ready(core->port) && core->configuration.load();}
 bool espusb_device_suspended() {return core && core->suspended.load();}
 bool espusb_device_disconnect() {if(!core)return false;espusb_controller_disconnect(core->port);return true;}
 bool espusb_device_events_pending() {return core && (core->overflow.load() || uxQueueMessagesWaiting(core->queue));}
@@ -435,7 +444,7 @@ bool espusb_device_control_status(uint8_t port,const EspUsbControlRequest *reque
   return core && port==core->port && request && !request->wLength && core->control.phase==Control::Phase::Setup && !memcmp(request,&core->control.request,sizeof(*request)) && core->status();
 }
 bool espusb_device_edpt_open(uint8_t port,const EspUsbEndpointDescriptor *descriptor) {
-  if(!core || port!=core->port || !descriptor || descriptor->bLength<7 || descriptor->bDescriptorType!=5)return false;
+  if(!espusb_controller_io_ready(port) || !descriptor || descriptor->bLength<7 || descriptor->bDescriptorType!=5)return false;
   auto *ep=core->endpoint(descriptor->bEndpointAddress);if(!ep || !(descriptor->bEndpointAddress&15))return false;
   const unsigned type=espusb_endpoint_type(descriptor), packet=espusb_endpoint_packet_size(descriptor);
   if(!packet || type==0 || (type==2 && (core->speed==ESPUSB_SPEED_HIGH ? packet!=512 : (packet!=8 && packet!=16 && packet!=32 && packet!=64))) ||
@@ -445,7 +454,7 @@ bool espusb_device_edpt_open(uint8_t port,const EspUsbEndpointDescriptor *descri
   ep->opened=true;ep->type=uint8_t(type);ep->flags=0;return true;
 }
 bool espusb_device_edpt_claim(uint8_t port,uint8_t address) {
-  if(!core || port!=core->port || core->stopping || core->recovering)return false;
+  if(!espusb_controller_io_ready(port))return false;
   auto *ep=core->endpoint(address);if(!ep || ((address&15) && !ep->opened))return false;
   portENTER_CRITICAL(&endpointLock);bool ok=!(ep->flags&(Busy|Claimed|Halted));if(ok)ep->flags|=Claimed;portEXIT_CRITICAL(&endpointLock);return ok;
 }
@@ -454,7 +463,7 @@ bool espusb_device_edpt_release(uint8_t port,uint8_t address) {
   portENTER_CRITICAL(&endpointLock);bool ok=(ep->flags&Claimed) && !(ep->flags&Busy);if(ok)ep->flags &= uint8_t(~Claimed);portEXIT_CRITICAL(&endpointLock);return ok;
 }
 bool espusb_device_edpt_xfer(uint8_t port,uint8_t address,uint8_t *buffer,uint16_t bytes,bool inIsr) {
-  if(!core || port!=core->port || core->stopping || core->recovering || (bytes && !buffer))return false;
+  if(!espusb_controller_io_ready(port) || (bytes && !buffer))return false;
   if((address&15) && (core->workerBus.load()!=core->bus.load() || !core->configuration.load()))return false;
   auto *ep=core->endpoint(address);if(!ep || ((address&15) && !ep->opened))return false;
   portENTER_CRITICAL(&endpointLock);bool ok=!(ep->flags&(Busy|Halted));if(ok)ep->flags|=Busy;portEXIT_CRITICAL(&endpointLock);
@@ -488,7 +497,7 @@ void espusb_controller_event(const EspUsbControllerEvent *data,bool inIsr) {
   auto *s=core;if(!s || !data || data->rhport!=s->port || s->stopping ||
       data->event_id<=ESPUSB_CONTROLLER_EVENT_INVALID || data->event_id>=ESPUSB_CONTROLLER_EVENT_COUNT)return;
   if(data->event_id==ESPUSB_CONTROLLER_EVENT_BUS_RESET || data->event_id==ESPUSB_CONTROLLER_EVENT_UNPLUGGED) {
-    s->configuration.store(0);s->connected.store(false);s->suspended.store(false);s->bus.fetch_add(1);
+    s->invalidateBus();
   }
   if(data->event_id==ESPUSB_CONTROLLER_EVENT_SETUP_RECEIVED)s->setup.fetch_add(1);
   if(data->event_id==ESPUSB_CONTROLLER_EVENT_SUSPEND || data->event_id==ESPUSB_CONTROLLER_EVENT_RESUME) {

@@ -91,6 +91,11 @@ bool espusb_controller_dcache_clean_invalidate(const void *, uint32_t bytes);
 // Same critical section on the worker/sketch and in the controller ISR.
 void espusb_controller_lock(bool inIsr);
 void espusb_controller_unlock(bool inIsr);
+// Reset starts before link speed is known. Invalidate old core work while the
+// controller lock is held; driver cleanup still follows the final reset event.
+void espusb_controller_reset_begin(uint8_t port);
+// Read under that same lock before opening an endpoint or publishing DMA.
+bool espusb_controller_io_ready(uint8_t port);
 void espusb_controller_event(const EspUsbControllerEvent *, bool inIsr);
 // helper to send bus signal event
 static inline void espusb_controller_event_bus_signal (uint8_t rhport, EspUsbControllerEventKind eid, bool in_isr) {

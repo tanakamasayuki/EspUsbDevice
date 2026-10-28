@@ -487,7 +487,10 @@ void espusb_controller_int_disable(uint8_t rhport) {
 
 void espusb_controller_set_address(uint8_t rhport, uint8_t dev_addr) {
   EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
+  espusb_controller_lock(false);
+  if (!espusb_controller_io_ready(rhport)) { espusb_controller_unlock(false); return; }
   dwc2->dcfg = (dwc2->dcfg & ~DCFG_DAD_Msk) | (dev_addr << DCFG_DAD_Pos);
+  espusb_controller_unlock(false);
 
   // Response with status after changing device address
   espusb_controller_edpt_xfer(rhport, espusb_endpoint_address(0, ESPUSB_DIR_IN), NULL, 0, false);
@@ -551,7 +554,7 @@ bool espusb_controller_edpt_open(uint8_t rhport, EspUsbEndpointDescriptor const*
   espusb_controller_lock(false);
   const EspUsbDwc2Dsts status = {.value = espusb_dwc2_registers(rhport)->dsts};
   uint16_t interval = 0;
-  const bool opened = espusb_dwc2_decode_interval(desc_edpt, status.enum_speed == DCFG_SPEED_HIGH, &interval) &&
+  const bool opened = espusb_controller_io_ready(rhport) && espusb_dwc2_decode_interval(desc_edpt, status.enum_speed == DCFG_SPEED_HIGH, &interval) &&
       dfifo_alloc(rhport, desc_edpt->bEndpointAddress, espusb_endpoint_packet_size(desc_edpt),
                   espusb_endpoint_type(desc_edpt) == ESPUSB_XFER_BULK);
   if (opened) edpt_activate(rhport, desc_edpt, interval);
@@ -598,7 +601,7 @@ void espusb_controller_edpt_close_all(uint8_t rhport) {
 bool espusb_controller_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet_size) {
   ESPUSB_REQUIRE(selected_transfer(espusb_endpoint_number(ep_addr), espusb_endpoint_direction(ep_addr)));
   espusb_controller_lock(false);
-  const bool allocated = dfifo_alloc(rhport, ep_addr, largest_packet_size, false);
+  const bool allocated = espusb_controller_io_ready(rhport) && dfifo_alloc(rhport, ep_addr, largest_packet_size, false);
   espusb_controller_unlock(false);
   return allocated;
 }
@@ -608,7 +611,7 @@ bool espusb_controller_edpt_iso_activate(uint8_t rhport,  EspUsbEndpointDescript
   espusb_controller_lock(false);
   const EspUsbDwc2Dsts status = {.value = espusb_dwc2_registers(rhport)->dsts};
   uint16_t interval = 0;
-  const bool valid = espusb_dwc2_decode_interval(p_endpoint_desc, status.enum_speed == DCFG_SPEED_HIGH, &interval);
+  const bool valid = espusb_controller_io_ready(rhport) && espusb_dwc2_decode_interval(p_endpoint_desc, status.enum_speed == DCFG_SPEED_HIGH, &interval);
   if (valid) {
     edpt_disable(rhport, p_endpoint_desc->bEndpointAddress, false);
     edpt_activate(rhport, p_endpoint_desc, interval);
@@ -626,7 +629,7 @@ bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffe
 
   espusb_controller_lock(is_isr);
 
-  if (!xfer || xfer->max_size == 0) {
+  if (!espusb_controller_io_ready(rhport) || !xfer || xfer->max_size == 0) {
     ret = false;  // Endpoint is closed
   } else {
     xfer->buffer = buffer;
@@ -669,7 +672,7 @@ bool espusb_controller_edpt_abort(uint8_t rhport, uint8_t ep_addr) {
   if (epnum == 0 || epnum >= espusb_dwc2_port(rhport)->ep_count) return false;
   espusb_controller_lock(false);
   EspUsbDwc2Transfer* xfer = selected_transfer(epnum, dir);
-  if (!xfer || xfer->max_size == 0) { espusb_controller_unlock(false); return false; }
+  if (!espusb_controller_io_ready(rhport) || !xfer || xfer->max_size == 0) { espusb_controller_unlock(false); return false; }
   EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
   EspUsbDwc2EndpointRegisters* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
   edpt_disable(rhport, ep_addr, false);
@@ -1003,6 +1006,7 @@ void espusb_controller_int_handler(uint8_t rhport) {
     dwc2->gintsts = GINTSTS_USBRST;
 
     espusb_controller_lock(true);
+    espusb_controller_reset_begin(rhport);
     handle_bus_reset(rhport);
     espusb_controller_unlock(true);
   }

@@ -700,3 +700,13 @@ SETはTransferError、HALTなしのCLEARはCancelledで旧frameを退役し、HA
 IN HALT中のcopy投稿は拒否し、OUT HALT中のcopy投稿は許可する。
 通常のsendFrame/onFrame/config/beginを維持し、追加のqueue/bufferや未選択Functionの常駐処理を持たせない。
 対象方向の未完NTBは破棄するため上位の再送を必要とする。詳しくは[NCM API](V3_NCM_API.ja.md#endpointごとのhalt回復)を参照。
+
+
+## 採用記録: reset開始で旧jobとDMA登録を無効化
+
+ENUMDNEだけでなく実USBRSTの開始でcore世代を無効化する。ready/mountedは直ちにfalseとなり、
+workerが最終reset eventでdriverとloanを整理するまでjobを再開しない。
+coreでの早期拒否とhardware lock内でのready再確認を併用し、旧endpoint再登録とEP0/data DMAを拒否する。
+公開API、返却callbackのworker context、begin/endの操作感は維持し、追加のtask/queue/bufferは持たせない。
+reset中の投稿は拒否されるため、利用側は再構成後に投稿する。
+実測と未検証範囲は[Core API](V3_CORE_API.ja.md#reset開始時の世代無効化)を参照。

@@ -1,23 +1,20 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新の全体確認は製品`8064804`を固定した**33 passed（2588.65秒）**。
-0 skipped/failed/error/unfinished、66 serial全てSTOPPED、STOP_FAILED/panicなし。
-CCID/Video/NCMのHALT回復、774取得点の失敗/回復とheap一致、3構成のDHCP/TCPも一括で成功した。
-S3/S2/P4の全29 source依存とcontroller/DMA/PHYのリンク先を再確認し、旧vendor/SDK TinyUSB fallbackなし。
-S3はVendor単独、S2/P4のcompile probeはVendorとCCID。未使用NCM/Video/keymapは含まれない。
-直前のNCM記録でS2/P4をVendor単独とした表記は訂正した。
-結果は`validation/.pytest-results/class-halt-all*`、`class-halt-audit.txt`と各nm。
-この一括確認中の製品/sketch変更はない。実機はS3–S3のみ、S2/P4はcompile-only。
+最新実装はUSBRST開始でcore世代を無効化し、workerのdriver reset完了まで旧jobとDMA登録を拒否する。
+修正前は実IRQ直後もmounted=1/jobs=1だった。修正後はqueue深度4/16/31すべてで
+mounted=0/jobs=0、native endpoint再登録・data DMA・EP0 DMAの拒否が成功。
+旧loanの一度だけの返却と新しい往復まで1 passed（119.10秒）、2 logs STOPPED、panicなし。
+[Core APIと実測](V3_CORE_API.ja.md#reset開始時の世代無効化)を参照。結果は`validation/.pytest-results/reset-start-guard*`。
+実装後の全体34件は次に実行する。今回の前の一括確認は`97ddbb0`の製品`8064804`固定で
+33 passed（2588.65秒）、66 logs STOPPED、panicなし。S2/P4はVendorとCCIDのcompile probeで、実機はS3–S3のみ。
 
-次はreset開始とcore世代の境界を実IRQで観測する。USBRSTでhardware recordが初期化され、
-coreのbus更新がENUMDNEまで遅れる点を調査中。既存のclosed endpoint guardもあり、まだバグとは断定しない。
-prototypeは`/tmp/espusb-reset-start-work/`に準備済み。実行/validationへの追加は未実施。
-Hostは独立v3 configuration_epochのraw SDK sketchを再利用し、Deviceはprivate IRQ allocatorで
-USBRST前後のmounted/job-readyを観測する。worker park中に本物のHost再開始でresetし、
-旧loanの一度の返却と新しい往復まで確認する設計。IRQ内では待機/ログ出力/driver callbackを追加しない。
-その後は最終API/version/sample整理を進める。startTinyUsb等の旧実装名と空task APIは整理候補。
-OS/他SoC/HS実機は未検証で、DWC2派生コードの保守方針は
-[由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
+reset_startはvalidationに追加済み。private IRQ allocatorで実IRQを観測し、IRQ中に待機/ログを行わない。
+Host/Deviceのstart/stopとworker park/releaseはtest本文に明示する。実装はcore/Controller/DWC2に限定し、
+coreの早期確認に加えてhardware lock内でreadyを再確認する。cleanupの全close経路は維持する。
+任意の旧SET_CONFIGURATION/SETUP/reset/endの全順序を実証したわけではない。
+全体確認後、残る世代境界の検証と最終API/version/sample整理を進める。
+startTinyUsb等の旧実装名と空task APIは整理候補。OS/他SoC/HS実機も未検証。
+DWC2派生コードの保守方針は[由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
 旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/Videoのclassを独自化した。共通EP0/coreも独自化済みで、残るコンパイル依存はDWC2関連2本。

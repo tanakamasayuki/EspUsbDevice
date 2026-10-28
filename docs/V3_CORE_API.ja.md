@@ -607,12 +607,29 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/class-halt-all*`�
 旧tests/examplesはmainとの差分なし。
 
 
-## 次の調査: reset開始とcoreの世代境界
+## reset開始時の世代無効化
 
-USBRSTではDWC2転送recordを初期化する一方、coreのbus世代更新とdriver resetは
-ENUMDNEからのBUS_RESET eventで行う。closed endpointのmax_size=0 guardは既にあり、
-この時間差だけで転送が壊れると断定はしない。
-reset開始中に旧worker処理や旧SET_CONFIGURATIONが進められるか、実IRQで観測する。
-workerを一時停止し、通常のHost再開始によるUSBRST直後のmounted/job-readyを記録し、
-ENUMDNE後のborrowed buffer返却と新しい送受信まで確認する試験を準備した。まだ実行していない。
-未確認の疑いに基づく製品修正は加えていない。
+2026-10-28。実USBRST IRQの入口ではmounted=1だった構成が、元のIRQ処理の直後も
+mounted=1/job-ready=1で残ることを再現した。ENUMDNEまでcoreへresetを伝えていなかったためである。
+closed endpointのmax_size=0 guardは存在するが、それだけでは旧jobやendpoint再登録を拒否できない。
+
+USBRSTのhardware lock内でcoreのbus世代とresetting flagを更新し、構成・接続・suspendを無効にする。
+ENUMDNEからの最終BUS_RESET eventは引き続きworkerで扱い、driver resetと借用buffer返却が終わるまで
+新しいjobを実行しない。開始と終了で内部世代は進むが、classのBusReset返却を二重には発行しない。
+coreのclaim/open/xferと、DWC2のopen/ISO予約・有効化/xfer/abort/SET_ADDRESSは同じready条件を使う。
+DWC2側はhardware lock内で再確認し、reset処理と新しい登録が競合しないようにする。
+DMA停止と全endpoint closeによるcleanupの入口は維持する。
+
+公開APIは変更しない。利点はreset開始から古い構成で送信できる時間をなくすこと。
+代償はreset中の受付拒否と各hardware操作での短い状態確認であり、追加task/queue/bufferは確保しない。
+実resetの観測はprivate IRQ allocatorを使う試験内のwrapperで行い、IRQ内で待機やログ出力はしない。
+Host/Deviceの通常のstart/stopと、試験sketchが明示するworker park/releaseだけを使う。
+
+修正前は1 failed（288.91秒）、mounted=1/jobs=1を確認した。
+修正後はqueue深度4/16/31の3 resetで、mounted=0/jobs=0、endpoint再登録・data DMA・EP0 DMAの拒否、
+各2旧loanの一度だけのBusReset返却と各2新転送が成功。1 passed、0 skipped/unfinished、119.10秒。
+2 serial全てSTOPPED、panicなし。原本`/tmp/pytest-embedded/2026-10-28_07-43-39-489897/`、
+コピー/JUnit/transcriptは`validation/.pytest-results/reset-start-guard*`、集計は`reset-start-guard-audit.txt`。
+初回probeのheader不足によるcompile errorと、実IRQでの製品回帰は区別して保存した。
+任意の進行中SET_CONFIGURATION/SETUP/reset/endの全順序までを実証したわけではない。
+全体試験は次に実行する。
