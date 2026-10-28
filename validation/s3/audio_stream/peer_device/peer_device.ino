@@ -41,6 +41,14 @@ void loop() {
     activeDirections = directions; activeRate = rate;
     if (directions & 1) { playback = &audio->addPlaybackStream(); ok &= playback->addFormat({rate,2,2,16}); }
     if (directions & 2) { capture = &audio->addCaptureStream(); ok &= capture->addFormat({rate,2,2,16}); }
+    if (command.endsWith(" multi")) {
+      if (playback) ok &= playback->addFormat({44100,2,2,16});
+      if (capture) ok &= capture->addFormat({44100,2,2,16});
+      for (unsigned r = 8000; r <= 18000; r += 1000) {
+        if (playback) ok &= playback->addFormat({r,2,2,16});
+        if (capture) ok &= capture->addFormat({r,2,2,16});
+      }
+    }
     EspUsbAudioConfig config; config.eventCapacity = 0; config.playbackBufferFrames = config.captureBufferFrames = frames;
     if (external) { config.playbackBuffer = rx + 1; config.captureBuffer = tx + 1; }
     ok &= audio->configure(config) == ESP_OK && device.begin();
@@ -48,6 +56,11 @@ void loop() {
     if (capture) { ok &= capture->write(samples, 3) == 0; capture->clearBuffer(); }
     feeding = true; received = bad = 0;
     Serial.printf("STARTED %u\r\n", unsigned(ok));
+  } else if (command == "clock") {
+    Serial.printf("CLOCK %u\r\n", unsigned(audio->currentSampleRate()));
+  } else if (command == "resetstats") {
+    if (playback) playback->resetStats(); if (capture) capture->resetStats(); received = bad = 0;
+    Serial.println("STATS_RESET");
   } else if (command == "locked") {
     bool ok = !playback || playback->clearFormats() == ESP_ERR_INVALID_STATE;
     ok &= !capture || capture->clearFormats() == ESP_ERR_INVALID_STATE;

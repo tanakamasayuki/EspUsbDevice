@@ -19,6 +19,7 @@ struct AudioTransport {
   static size_t read(EspUsbAudioFunction &, void *, size_t);
   static size_t write(EspUsbAudioFunction &, const void *, size_t);
   static bool clear(EspUsbAudioFunction &, bool playback);
+  static bool replyEntity(EspUsbAudioFunction &, uint8_t port, const void *request);
   static bool reply(EspUsbAudioFunction &, uint8_t port, const void *request, const void *, size_t);
 };
 } }

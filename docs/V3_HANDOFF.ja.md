@@ -249,7 +249,7 @@ S3の同じtarget compilerで測ったsizeof:
 測定は`.pytest-results/audio-storage-layout-{before,after}.json`。
 内部model/controlでは13 format・12 rate、設定追加14箇所の確保失敗とrollback・再試行を確認。
 公開APIでも、追加失敗後のsingle-format beginが成功することを確認した。
-複数formatのwire対応を完了した意味ではなく、descriptor/beginの一方向一形式制限は残る。
+この保存領域整理の時点では、descriptor/beginの一方向一形式制限を残していた。
 formatの入替えAPI、alternate選択、range応答領域等は続けて整理する。
 
 設定・確保失敗・Audio event/control・PCMの関連3件は**3 passed、0 skipped/error/failure/unfinished、242.85秒**。
@@ -269,6 +269,18 @@ formatの入替えAPI、alternate選択、range応答領域等は続けて整理
 原本`/tmp/pytest-embedded/2026-10-28_21-30-54-318752/`、`.pytest-results/audio-reconfigure*`。
 初回は空設定beginのエラー期待値を誤ったprobe失敗で、記録を保存済み。現在の全体収集は36件。
 
+## Audioの複数sample rate
+
+同じPCM形状のrate違いをUAC1/UAC2とも受け付ける。共通clockに両方向のrate集合を合わせる。
+UAC1はdescriptorの離散一覧・endpoint CUR、UAC2はClock CUR/RANGEへ同じ能力を出す。
+最大packet/DMAは全登録rateから求め、UAC2の複数rate時だけRANGE領域を開始時に確保する。
+PCM形状変更のalternateはまだ拒否。上限・費用は[Audio API](V3_AUDIO_API.ja.md#同じpcm形状での複数sample-rate)。
+
+関連5件は5 passed（175.61秒）、10 logs STOPPED/panicなし。13 rateの両規格で48→44.1→48 kHz、
+158 byte RANGEの10要求長、未知rate拒否、開始794＋設定14取得点の失敗回復、heap346704→346704を確認。
+S2/P4 compile・全29 sourceの依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_21-46-07-520296/`、
+`.pytest-results/audio-rates*`。最適化前5件の記録も保持。全体収集37件、一括再実行の結果ではない。
+
 ## 次の単位と未完了
 
 1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
@@ -278,8 +290,9 @@ formatの入替えAPI、alternate選択、range応答領域等は続けて整理
    MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
    class内に分散したSoC別MPS判定は共通化済み。P4 HSではCCIDの既定320がMPS512を満たさない点は残る。
    Audioのformat/rate固定配列は撤去済み。end後の入替えAPIも追加済み。
-   次は複数formatをdescriptor/beginで拒否する暫定制限、alternate切替、control応答容量を整理する。
-   13 format/12 rateは内部metadata確認であり、wireは従来の一方向一形式のまま。
+   同じPCM形状の複数rateとRANGEの実容量も対応済み。次は異なるPCM形状のalternate選択、
+   選択formatに応じたframe/packet/ring境界と共有clockの能力表現を整理する。
+   旧13 format/12 rateの混在形状はmetadata確認。新しい13 rateの試験は同一PCM形状をwireで確認した。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
 4. S3 FSのHost起点suspend/resumeは確認済み。Vendor HIDの周期InputとAudio ISOの4構成も確認済み。OS互換、remote wakeup、
    長時間、S2/P4の実機FS/HSを後段で確認する。

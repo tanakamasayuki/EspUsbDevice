@@ -35,7 +35,7 @@ queueは短いcritical sectionで保護し、USB workerとアプリのevent追�
 稼働中のconfigure、addFormat、新しい方向のaddPlaybackStream/addCaptureStreamは拒否する。
 configureはInvalidState、addFormatはfalseを返す。streamを返す従来APIは既存参照を返して
 構成を保ち、Device.lastErrorにInvalidStateを設定する。raw descriptor writerも稼働中の再構築を拒否する。
-停止後のformat入替えはclearFormatsで行う。一方向一形式の制限は引き続き残る。
+停止後のformat入替えはclearFormatsで行う。同じPCM形状の複数rateに対応するが、異なる形状のalternateは後続。
 
 未登録Audioの手動beginはInvalidStateで拒否し、そのstreamから既存Audioのbufferへアクセスしない。
 稼働中のFunction破棄はDeviceを停止し、USB worker/DMAが止まってからevent領域を解放する。
@@ -93,7 +93,7 @@ Device + Function + addStream/addFormat + begin、read/write/pollEventという�
 
 未完の範囲は複数formatのalternate選択、外部clock feedback、
 callback/borrowed PCMの所有権API、OS音声アプリ、P4/S2/S31/HSである。
-現在は方向ごとに一形式だけ対応し、worker再armの連続性は実機で評価する。
+現在は方向ごと同じPCM形状の複数rateに対応する。異なる形状のalternate選択は未対応。
 
 
 独自PCM driverの関連試験audio-pcm-related.xmlは**3 passed、0 skipped、0 unfinished、145.99秒**。
@@ -156,7 +156,7 @@ S3の同じtarget compilerで測ったsizeof:
 測定は`.pytest-results/audio-storage-layout-{before,after}.json`。
 内部model/controlでは13 format・12 rate、設定追加14箇所の確保失敗とrollback・再試行を確認。
 公開APIでも、追加失敗後のsingle-format beginが成功することを確認した。
-複数formatのwire対応を完了した意味ではなく、descriptor/beginの一方向一形式制限は残る。
+この節の保存領域変更の時点では、descriptor/beginの一方向一形式制限を残していた。
 formatの入替えAPI、alternate選択、range応答領域等は続けて整理する。
 
 設定・確保失敗・Audio event/control・PCMの関連3件は**3 passed、0 skipped/error/failure/unfinished、242.85秒**。
@@ -198,3 +198,43 @@ heap346704→346704 byte、S2/P4 compile成功、全29 sourceの依存/nmに旧s
 原本`/tmp/pytest-embedded/2026-10-28_21-30-54-318752/`、結果は`.pytest-results/audio-reconfigure*`。
 初回のprobe期待値誤りは`audio-reconfigure-initial-expectation-error*`へ記録した。
 標準combo/allの収集は36件。この結果は関連4件の実行で、全36件の一括実行ではない。
+
+## 同じPCM形状での複数sample rate
+
+同じstreamへ、channel数・subslot byte数・有効bit数が同じformatをrate違いで登録できる。
+
+```cpp
+if (!playback.addFormat({48000, 2, 2, 16})) return;
+if (!playback.addFormat({44100, 2, 2, 16})) return;
+// With both directions selected, register the same rate set for capture.
+if (!device.begin()) return;
+```
+
+一つのFunctionのclockは共有するため、両方向を使う場合はrate集合を一致させる。
+開始時は最初のPlayback format（PlaybackなしならCapture）のrateを使い、Hostが登録済みrateを選ぶ。
+UAC1はType I descriptorへ離散rate一覧を出し、endpointのSET_CUR/GET_CURも実clockへ合わせる。
+UAC2はClock SourceのCUR/RANGEへ一覧を出す。未登録rateは拒否し、現在のrateを変更しない。
+PCM形状が変わらないrate変更なので、streaming alternateは従来どおり0/1。
+異なるPCM形状のalternate切替は、まだbegin/descriptorで拒否する。
+
+endpointのpacketサイズとDMA容量は、登録rateの最大packet要求に合わせて確保する。
+UAC2の複数rate時だけ、`2 + 12 × rate数` byteのRANGE応答領域を開始時に確保し、endで回収する。
+単一rateとUAC1は追加のRANGE領域を持たない。選択済みAudio stateに管理pointerを一つ追加したが、
+Function本体の296 byteは変わらない。control要求・PCM転送時に新規確保しない。
+rate一覧が重複しないactive modelでは直接indexを使い、RANGEの生成をrate数に比例させる。
+
+残る上限は保存用の8要素配列ではない。UAC1の1 byte descriptor長から1一覧82 rateまで、
+UAC2の16 bit control長から5461 subrangeまでとし、超える設定を拒否する。実際のheap・FIFO・FS packet上限も適用する。
+rate変更の無音期間や外部codec clockへの追従を保証するものではない。
+規格とdriver上の参照は[USB Audio 1.0](https://www.usb.org/sites/default/files/audio10.pdf)と
+[MicrosoftのUAC2 clock/range要件](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/usb-2-0-audio-drivers)。
+
+S3の関連5件は**5 passed、0 skipped/error/failure/unfinished、175.61秒**。
+13 rateを登録したUAC1/UAC2で、再構成せず48→44.1→48 kHzを各1系列転送し、実clockとPCMを照合。
+未登録22050 Hzは拒否し、clockを維持。158 byteのUAC2 RANGEを2/3/13/14/15/64/65/127/158/200 byte要求で
+内容・実長・guardまで確認した。794開始取得点の失敗/回復、設定追加14箇所、heap346704→346704、
+既存の停止後format入替え・ISO休止4構成・event/controlも成功。10 serial全てSTOPPED、panicなし。
+S2/P4 compileと全29 sourceの依存/nmも成功し、未選択Audioの除外を維持した。
+原本`/tmp/pytest-embedded/2026-10-28_21-46-07-520296/`、`.pytest-results/audio-rates*`。
+rate一覧の直接参照へ整理する前の関連5件（268.82秒）も別名で保持する。
+収集は37件。この5件の結果を、全37件の一括試験や異なるPCM形状のalternate対応とは扱わない。

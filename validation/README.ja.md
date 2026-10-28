@@ -206,6 +206,16 @@ S2/P4 compileと依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_21-3
 `.pytest-results/audio-reconfigure*`。初回の期待値誤りも別名保存。収集は36件、一括実行とは異なる。
 契約と制限は[Audio API](../docs/V3_AUDIO_API.ja.md#停止後のformat入替え)。
 
+## Audioの複数sample rate
+
+`audio_sample_rates`を追加し、同じPCM形状で13 rateを登録したUAC1/UAC2の48→44.1→48 kHzを確認。
+clock未変更での未知rate拒否、158 byte RANGEの10要求長でのpayload/実長/guardを検査する。
+関連5件は**5 passed、175.61秒**、10 logs STOPPED/panicなし。開始794取得点の失敗/回復、
+設定追加14箇所、heap346704→346704、既存のISO休止と再構成も成功。S2/P4 compile・依存/nm成功。
+原本`/tmp/pytest-embedded/2026-10-28_21-46-07-520296/`、`.pytest-results/audio-rates*`。
+最適化前の5件も別名保存。現在の収集は37件、一括実行とは異なる。
+範囲・費用・残るalternate制限は[Audio API](../docs/V3_AUDIO_API.ja.md#同じpcm形状での複数sample-rate)。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

@@ -143,11 +143,15 @@ bool writeStreamingInterface(DescriptorBuildContext &context,
   const AudioPcmFormat *format = model.format(0);
   AudioPacketRequirement packet;
   if (!format ||
-      validateAudioFormat(*format, context.speed(),
-                          defaultAudioBusLimits(context.speed()), &packet) !=
-          AudioFormatError::None)
+      !model.hasUniformPcmFormat())
   {
     return false;
+  }
+
+  for (size_t i = 0; i < model.formatCount(); ++i) {
+    AudioPacketRequirement candidate;
+    if (validateAudioFormat(*model.format(i), context.speed(), defaultAudioBusLimits(context.speed()), &candidate) != AudioFormatError::None) return false;
+    if (candidate.maxPacketSize > packet.maxPacketSize) packet = candidate;
   }
 
   const uint8_t endpointCount =
@@ -276,14 +280,19 @@ bool writeUac1StreamingInterface(DescriptorBuildContext &context,
                                  const AudioStreamLayout &layout,
                                  const AudioDescriptorConfig &config)
 {
+  if (model.formatCount() > (UINT8_MAX - 8u) / 3u) return false;
   const AudioPcmFormat *format = model.format(0);
   AudioPacketRequirement packet;
   if (!format ||
-      validateAudioFormat(*format, context.speed(),
-                          defaultAudioBusLimits(context.speed()), &packet) !=
-          AudioFormatError::None)
+      !model.hasUniformPcmFormat())
   {
     return false;
+  }
+
+  for (size_t i = 0; i < model.formatCount(); ++i) {
+    AudioPacketRequirement candidate;
+    if (validateAudioFormat(*model.format(i), context.speed(), defaultAudioBusLimits(context.speed()), &candidate) != AudioFormatError::None) return false;
+    if (candidate.maxPacketSize > packet.maxPacketSize) packet = candidate;
   }
 
   const uint8_t endpointCount =
@@ -300,20 +309,20 @@ bool writeUac1StreamingInterface(DescriptorBuildContext &context,
   }
 
   DescriptorBuffer &buffer = context.buffer();
-  const uint32_t rate = format->sampleRate;
   if (!(buffer.writeU8(7) && buffer.writeU8(DESC_CS_INTERFACE) &&
         buffer.writeU8(AS_GENERAL) && buffer.writeU8(layout.terminalLink) &&
         buffer.writeU8(1) && buffer.writeU16(0x0001) &&
-        buffer.writeU8(11) && buffer.writeU8(DESC_CS_INTERFACE) &&
+        buffer.writeU8(uint8_t(8 + 3 * model.formatCount())) && buffer.writeU8(DESC_CS_INTERFACE) &&
         buffer.writeU8(AS_FORMAT_TYPE) && buffer.writeU8(0x01) &&
         buffer.writeU8(format->channels) &&
         buffer.writeU8(format->subslotBytes) &&
-        buffer.writeU8(format->validBits) && buffer.writeU8(1) &&
-        buffer.writeU8(static_cast<uint8_t>(rate & 0xffU)) &&
-        buffer.writeU8(static_cast<uint8_t>((rate >> 8) & 0xffU)) &&
-        buffer.writeU8(static_cast<uint8_t>((rate >> 16) & 0xffU))))
+        buffer.writeU8(format->validBits) && buffer.writeU8(uint8_t(model.formatCount()))))
   {
     return false;
+  }
+  for (size_t i = 0; i < model.formatCount(); ++i) {
+    const uint32_t rate = model.format(i)->sampleRate;
+    if (!(buffer.writeU8(uint8_t(rate)) && buffer.writeU8(uint8_t(rate >> 8)) && buffer.writeU8(uint8_t(rate >> 16)))) return false;
   }
 
   const uint16_t maxPacket = packet.maxPacketSize;
@@ -372,8 +381,8 @@ bool writeUac1Function(DescriptorBuildContext &context,
     setError(error, AudioDescriptorError::UnsupportedProtocol);
     return false;
   }
-  if ((graph.playback.present && function.playback().formatCount() != 1) ||
-      (graph.capture.present && function.capture().formatCount() != 1))
+  if ((graph.playback.present && !function.playback().hasUniformPcmFormat()) ||
+      (graph.capture.present && !function.capture().hasUniformPcmFormat()))
   {
     setError(error, AudioDescriptorError::UnsupportedFormatCount);
     return false;
@@ -472,8 +481,8 @@ bool writeUac2Function(DescriptorBuildContext &context,
     setError(error, AudioDescriptorError::UnsupportedProtocol);
     return false;
   }
-  if ((graph.playback.present && function.playback().formatCount() != 1) ||
-      (graph.capture.present && function.capture().formatCount() != 1))
+  if ((graph.playback.present && !function.playback().hasUniformPcmFormat()) ||
+      (graph.capture.present && !function.capture().hasUniformPcmFormat()))
   {
     setError(error, AudioDescriptorError::UnsupportedFormatCount);
     return false;

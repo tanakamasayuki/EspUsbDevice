@@ -324,6 +324,9 @@ bool AudioControlState::range(uint8_t entityId,
 uint32_t AudioControlState::sampleRate(size_t index) const
 {
   if (!rateSource_ || index >= sampleRateCount_) return 0;
+  // With no duplicate rates, indexing is direct. In particular, active uniform
+  // PCM models always satisfy this: duplicate addFormat entries are rejected.
+  if (sampleRateCount_ == rateSource_->formatCount()) return rateSource_->format(index)->sampleRate;
   for (size_t i = 0; i < rateSource_->formatCount(); ++i) {
     const uint32_t rate = rateSource_->format(i)->sampleRate;
     bool duplicate = false;

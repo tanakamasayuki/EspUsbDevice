@@ -110,3 +110,48 @@ def test_audio_reconfigure(dut, peers):
             except Exception as exc:
                 errors.append(f"{name}: {exc}")
         assert not errors, "USB stop failed: " + "; ".join(errors)
+
+
+def test_audio_sample_rates(dut, peers):
+    """Thirteen runtime rates, long UAC2 RANGE, rate changes without rebuilding."""
+    device = peers["device"]
+    try:
+        for protocol in (2, 1):
+            device.write(f"start {protocol} 3 48000 64 0 multi")
+            device.expect_exact("STARTED 1\r\n", timeout=30)
+            dut.write("start")
+            dut.expect_exact("HOST_READY 1\r\n", timeout=30)
+            if protocol == 2:
+                dut.write("ranges")
+                dut.expect_exact("RANGES 1 bytes=158 checks=10\r\n", timeout=20)
+            dut.write(f"invalid_rate {protocol}")
+            dut.expect_exact("UNSUPPORTED_RATE 1\r\n", timeout=5)
+            device.write("clock")
+            device.expect_exact("CLOCK 48000\r\n", timeout=5)
+            for rate in (48000, 44100, 48000):
+                device.write("resetstats")
+                device.expect_exact("STATS_RESET\r\n", timeout=5)
+                dut.write(f"run 3 {rate}")
+                r = dut.expect(r"PCM ok=1 bytes=(\d+) bad=0 filled=(\d+) feedback=(\d+) rejects=0\r\n", timeout=20)
+                assert int(r.group(1)) > rate * 4 * 1.3 and int(r.group(2)) > 0
+                if protocol == 2:
+                    assert int(r.group(3)) > 0
+                device.write("clock")
+                device.expect_exact(f"CLOCK {rate}\r\n", timeout=5)
+                device.write("stats")
+                r = device.expect(r"STATS received=(\d+) bad=0 rx=(\d+) tx=(\d+) underrun=\d+\r\n", timeout=5)
+                assert int(r.group(1)) > 0 and int(r.group(2)) > rate * 4 * 1.3 and int(r.group(3)) > rate * 4 * 1.3
+                dut.write("pause")
+                dut.expect_exact("PAUSED 1\r\n", timeout=10)
+            for board in (dut, device):
+                board.write("stop")
+                board.expect_exact("STOPPED\r\n", timeout=30)
+    finally:
+        errors = []
+        for name, board in (("host", dut), ("device", device)):
+            try:
+                board.write("stop")
+                board.expect_exact("STOPPED\r\n", timeout=30)
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+        assert not errors, "USB stop failed: " + "; ".join(errors)

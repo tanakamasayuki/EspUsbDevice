@@ -41,6 +41,24 @@ void loop() {
     if (directions & 2) ok &= host.audioInputStart(2, 16, rate, address.load());
     delay(1500);
     Serial.printf("PCM ok=%u bytes=%u bad=%u filled=%u feedback=%u rejects=%u\r\n", unsigned(ok), unsigned(received.load()), unsigned(bad.load()), unsigned(filled.load()), unsigned(directions & 1 ? host.audioOutputFeedbackUpdates(address.load()) : 0), unsigned(directions & 1 ? host.audioOutputFeedbackRejects(address.load()) : 0));
+  } else if (command == "ranges") {
+    const uint32_t rates[] = {48000,44100,8000,9000,10000,11000,12000,13000,14000,15000,16000,17000,18000};
+    uint8_t expected[158] = {13,0};
+    for (unsigned i = 0; i < 13; ++i) for (unsigned repeat = 0; repeat < 2; ++repeat)
+      for (unsigned b = 0; b < 4; ++b) expected[2 + i*12 + repeat*4 + b] = uint8_t(rates[i] >> (b*8));
+    bool ok = true;
+    for (unsigned requested : {2u,3u,13u,14u,15u,64u,65u,127u,158u,200u}) {
+      uint8_t data[200]; memset(data,0xa5,sizeof(data)); size_t actual = 0;
+      ok &= host.vendorControlTransfer(0xa1,2,0x0100,0x0100,data,requested,&actual,address.load(),1000)
+        && actual == std::min(size_t(requested),sizeof(expected)) && !memcmp(data,expected,actual);
+      for (size_t i = actual; i < sizeof(data); ++i) ok &= data[i] == 0xa5;
+    }
+    Serial.printf("RANGES %u bytes=158 checks=10\r\n", unsigned(ok));
+  } else if (command.startsWith("invalid_rate ")) {
+    unsigned protocol = command.substring(13).toInt();
+    uint8_t data[4] = {0x22,0x56,0,0}; size_t actual = 0; // 22050 Hz is absent.
+    bool accepted = host.vendorControlTransfer(protocol == 2 ? 0x21 : 0x22,1,0x0100,protocol == 2 ? 0x0100 : 1,data,protocol == 2 ? 4 : 3,&actual,address.load(),1000);
+    Serial.printf("UNSUPPORTED_RATE %u\r\n", unsigned(!accepted));
   } else if (command == "suspend") {
     usb_dwc_ll_hprt_set_port_suspend(USB_DWC_LL_GET_HW(0)); delay(50);
     const uint32_t before = received.load(); delay(150);

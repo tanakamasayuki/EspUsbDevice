@@ -173,8 +173,8 @@ bool EspUsbAudioFunction::begin()
   if (!registered_ || started_.load() || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   startError_ = ESP_ERR_INVALID_ARG;
   if ((!playbackEnabled_ && !captureEnabled_) ||
-      (playbackEnabled_ && model_.playback().formatCount() != 1) ||
-      (captureEnabled_ && model_.capture().formatCount() != 1))
+      (playbackEnabled_ && !model_.playback().hasUniformPcmFormat()) ||
+      (captureEnabled_ && !model_.capture().hasUniformPcmFormat()))
   {
     return false;
   }
@@ -625,7 +625,7 @@ bool EspUsbAudioFunction::handleGetEntityRequest(uint8_t rhport,
         static_cast<uint8_t>(value & 0xff),
         static_cast<uint8_t>((value >> 8) & 0xff),
     };
-    // wLength bounds what the host accepts; TinyUSB clips the data stage to
+    // wLength bounds what the host accepts; the native EP0 engine clips to
     // min(wLength, responseLength), so only a zero-length read is invalid.
     const uint16_t responseLength = selector == 1 ? 1 : 2;
     if (request->wLength == 0)
@@ -635,18 +635,7 @@ bool EspUsbAudioFunction::handleGetEntityRequest(uint8_t rhport,
     return espusb::internal::AudioTransport::reply(*this,
         rhport, request, response, responseLength);
   }
-  uint8_t responseData[14] = {};
-  espusb::internal::DescriptorBuffer response(responseData,
-                                              sizeof(responseData));
-  if (!espusb::internal::writeUac2EntityResponse(
-          controls_, graph_.controlInterface, toEntityRequest(request),
-          response))
-  {
-    return false;
-  }
-  return espusb::internal::AudioTransport::reply(*this,
-      rhport, request, response.data(),
-      static_cast<uint16_t>(response.size()));
+  return espusb::internal::AudioTransport::replyEntity(*this, rhport, request);
 #else
   (void)rhport;
   (void)rawRequest;
@@ -754,8 +743,15 @@ bool EspUsbAudioFunction::handleGetEndpointRequest(uint8_t rhport,
   {
     return false;
   }
-  const uint32_t rate =
-      request->bRequest == 0x84 ? 0 : format->sampleRate;
+  uint32_t rate = controls_.currentSampleRate();
+  if (request->bRequest == 0x84) rate = 0;
+  else if (request->bRequest == 0x82 || request->bRequest == 0x83) {
+    rate = controls_.sampleRate(0);
+    for (size_t i = 1; i < controls_.sampleRateCount(); ++i) {
+      const uint32_t candidate = controls_.sampleRate(i);
+      if ((request->bRequest == 0x82 && candidate < rate) || (request->bRequest == 0x83 && candidate > rate)) rate = candidate;
+    }
+  }
   const uint8_t response[3] = {
       static_cast<uint8_t>(rate & 0xffU),
       static_cast<uint8_t>((rate >> 8) & 0xffU),
@@ -800,12 +796,9 @@ bool EspUsbAudioFunction::handleSetEndpointRequest(const void *rawRequest,
   const uint32_t rate = static_cast<uint32_t>(data[0]) |
                         (static_cast<uint32_t>(data[1]) << 8) |
                         (static_cast<uint32_t>(data[2]) << 16);
-  if (format->sampleRate != rate)
-  {
-    return false;
-  }
-  // Each UAC1 endpoint currently advertises one discrete, fixed rate. SET_CUR
-  // confirms that rate; it does not mutate the function-wide UAC2 clock state.
+  const uint32_t previous = controls_.currentSampleRate();
+  if (!controls_.setCurrent(graph_.clockSourceId, espusb::internal::AudioControlSelector::SampleRate, 0, int32_t(rate))) return false;
+  if (previous != rate) pushControlEvent(espusb::internal::AudioControlSelector::SampleRate, graph_.clockSourceId, 0, int32_t(rate));
   return true;
 #else
   (void)rawRequest;

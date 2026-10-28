@@ -82,6 +82,7 @@ public:
   bool addFormat(const AudioPcmFormat &format, UsbSpeed speed,
                  const AudioBusLimits &limits);
   void clearFormats();
+  bool hasUniformPcmFormat() const;
   AudioDirection direction() const { return direction_; }
   size_t formatCount() const { return formatCount_; }
   const AudioPcmFormat *format(size_t index) const;

@@ -124,6 +124,14 @@ bool AudioStreamModel::addFormat(const AudioPcmFormat &format, UsbSpeed speed,
   return true;
 }
 
+bool AudioStreamModel::hasUniformPcmFormat() const
+{
+  if (!formatCount_) return false;
+  for (size_t i = 1; i < formatCount_; ++i)
+    if (formats_[i].channels != formats_[0].channels || formats_[i].subslotBytes != formats_[0].subslotBytes || formats_[i].validBits != formats_[0].validBits) return false;
+  return true;
+}
+
 const AudioPcmFormat *AudioStreamModel::format(size_t index) const
 {
   return index < formatCount_ ? &formats_[index] : nullptr;
