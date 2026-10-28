@@ -1,7 +1,7 @@
 # v3 HIDのruntime転送領域
 
 2026-10-26。HID class driverを独自実装へ変更した。TinyUSBのHID class、固定instance配列、
-IN/OUT/control bufferを使用しない。暫定の共通EP0/DCDはまだTinyUSBである。
+IN/OUT/control bufferを使用しない。共通EP0/coreとDWC2も本体内部で保守する。
 
 ## 通常の利用
 
@@ -25,9 +25,9 @@ reportSizeに応じたReport Countをdescriptorへ出力し、それを解析し
 packetの大きさとreport全体の大きさを同じビルド定数へ結び付けない。
 複合HIDでは既存どおり一つのinterface/report descriptorへまとめ、各Functionは共通の転送領域を参照する。
 
-`CFG_TUD_HID_EP_BUFSIZE`、旧`CFG_TUD_HID_BUFSIZE`、非zeroの`CFG_TUD_HID`指定は削除する。
+`CFG_TUD_HID_EP_BUFSIZE`、旧`CFG_TUD_HID_BUFSIZE`、`CFG_TUD_HID`指定（0を含む）は削除する。
 古い指定を残したbuildは移行を促すエラーとなる。
-`HidVendor::maxReportSize()`は現在65534で、暫定転送長uint16_tからreport IDを除いた上限を返す。
+`HidVendor::maxReportSize()`は現在65534で、内部転送長uint16_tからreport IDを除いた上限を返す。
 SoCや速度のpacket上限ではなく、確保成功を保証する値でもない。使用可能メモリとHost側の対応は別の制約になる。
 HSのpacket希望値は最大1024へ収めるが、P4/S31の実機検証はまだ行っていない。
 

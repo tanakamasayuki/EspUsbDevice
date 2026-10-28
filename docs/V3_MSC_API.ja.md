@@ -1,7 +1,7 @@
 # v3 MSCのruntime構成
 
 2026-10-27。MSC classと固定4096 byte bufferを独自BOT driverへ置き換えた。
-共通EP0/DCDはまだ暫定TinyUSBである。TinyUSB MSC classのCFG_TUD_MSCは0へ固定する。
+共通EP0/coreとDWC2も本体内部で保守する。CFG_TUD_MSC等の旧flagは0指定も含めcompile errorとなる。
 
 ```cpp
 EspUsbDevice device;
@@ -30,7 +30,7 @@ EspUsbMscConfig.transferBytesの既定は512 byte。一つのBOT commandでIN/OU
 64 byteからの小さい転送でも512 byte sectorをoffset付きで処理できる。sector長とbuffer容量は独立する。
 
 現在はtransferBytesが64の倍数、最大65472 byte。選択controllerでHSを使う場合は512の倍数を要求する。
-暫定coreのuint16_t投稿長による上限であり、最終coreの上限ではない。
+native coreのuint16_t投稿長による上限である。
 transferBufferを指定すれば内部DMA buffer確保を省略する。64 byte境界のinternal DMA対応領域を
 指定容量分用意し、beginからendまで保持する。外部bufferはfreeしない。
 transferCapacityは開始前/終了後0、開始後は実効容量を返す。nameは任意のFunction名で、
@@ -68,7 +68,7 @@ MODE SENSE(6/10)のheader、START STOP、PREVENT/ALLOW、SYNCHRONIZE CACHE、
 比較なしVERIFY、READ/WRITE(10)を処理する。MODE SENSEのoptional pageは実装しない。
 不明opcode、存在しないLUN、範囲外LBA等は失敗として返す。read-onlyはData Protect、
 mediaなしはNot Ready、callback失敗はMedium ErrorのSenseを設定する。
-CFG_TUD_MSC_EP_BUFSIZEと非zeroのCFG_TUD_MSC指定、tud_msc_*直接呼出しは削除する。
+CFG_TUD_MSC_EP_BUFSIZEとCFG_TUD_MSC指定（0を含む）、tud_msc_*直接呼出しは削除する。
 
 ## 実験と残る条件
 

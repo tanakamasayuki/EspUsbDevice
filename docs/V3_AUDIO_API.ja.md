@@ -2,7 +2,7 @@
 
 2026-10-27。Audio classを独自driverへ移し、TinyUSB Audio class/FIFOと単一global instanceを撤去した。
 通知とPCM ringの容量を停止中APIで指定する。Function、control/model、queueの管理情報は残る。
-共通EP0/core/DCDは引き続きTinyUSBを使う。
+共通EP0/coreとDWC2も本体内部で保守する。
 
 ```cpp
 EspUsbDevice device;

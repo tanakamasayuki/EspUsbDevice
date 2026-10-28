@@ -1,8 +1,7 @@
 # v3 Vendor APIの実装と移行
 
-2026-10-26、S3–S3で検証中の実装。Vendor/CDCクラス処理は共通の独自bulk driverへ移し、
-TinyUSBのVendor/CDC driverは無効化した。共通EP0、device state、DWC2は引き続き暫定TinyUSB adapterを使う。
-他クラスの置換とP4/S2/S31の実機検証はこれからである。
+Vendor/CDCは共通の独自bulk driverを使う。共通EP0/coreとDWC2も本体内部で保守し、TinyUSB build設定は使わない。
+実機確認はS3–S3、他SoC/HSは未検証。[開始modeと移行](V3_MIGRATION.ja.md)も参照。
 共通設定型とCDC固有の契約は[CDCガイド](V3_CDC_API.ja.md)を参照。
 
 ## 設定して開始する
@@ -78,7 +77,7 @@ auto submission = vendor.writeDirect(buffer, length,
 ```
 
 一instanceにつき未完borrowed TXは一つ。copy TXが残る場合もBusyとなる。
-上限は`maxDirectTransfer()`で実効接続から照会する。暫定adapterの呼出し長は16 bitで、現在のTX上限は65535 byte。
+上限は`maxDirectTransfer()`で実効接続から照会する。内部転送の呼出し長は16 bitで、現在のTX上限は65535 byte。
 controllerの実装カウンタ幅は能力レジスタから読み、内部でDMA armを分割する。
 S3実機はpacket数7 bitで、一armの上限はMPS64で8128 byteである。利用者がこの単位に分割する必要はない。
 全体に対して一度だけ返却し、途中にshort/ZLPを挿入しない。新DCDへ移す際に16 bit上限を公開定数として固定しない。

@@ -2,7 +2,7 @@
 
 2026-10-27。DFU Runtime/DownloadのTinyUSB classと固定global bufferを独自driverへ置き換える。
 既定のOTA更新はDevice + Dfu + Device.beginで使い、転送サイズはconfigureで指定する。
-共通EP0/core/DCDは暫定TinyUSBのままである。
+共通EP0/coreとDWC2も本体内部で保守する。
 
 ```cpp
 EspUsbDevice device;

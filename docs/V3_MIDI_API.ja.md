@@ -48,8 +48,7 @@ configureは全設定値を置換するので、constructorの値を引き継ぐ
 
 cable数はclampせず、範囲外を拒否する。旧コードで0/17以上を指定していた場合は修正が必要。
 16という上限はUSB-MIDI 1.0の4 bit cable fieldによるもので、TinyUSB instance数の定数ではない。
-暫定coreへの一回の転送投稿長はuint16_tなので、transferPacketsの明示指定は現在16383以下。
-これは最終v3 coreの上限を確定するものではない。使用可能RAM、endpoint数、Host実装も別の制約になる。
+native coreへの一回の転送投稿長はuint16_tなので、transferPacketsの明示指定は16383以下。使用可能RAM、endpoint数、Host実装も別の制約になる。
 
 `availablePackets()`と`availableForWritePackets()`は、今読める/書ける完全event数を返す。
 receiveCapacity/sendCapacityは確保したringのevent数、transferCapacityは実効TX staging容量をevent数で返す。
@@ -87,7 +86,7 @@ receiveErrorsは無効event一つまたは端数一つごとの累積数で、be
 これはMIDIメッセージ全体やSysEx sequenceのsemantic検証ではなく、有効eventのpayloadは変更しない。
 既存のchannel/valueをclampする便利helperの動作は維持する。
 
-`CFG_TUD_MIDI_*`のFIFO/endpoint buffer指定と、非zeroのCFG_TUD_MIDIは削除する。
+`CFG_TUD_MIDI_*`のFIFO/endpoint buffer指定と、CFG_TUD_MIDI（0を含む）は削除する。
 外部コードがTinyUSBのtud_midi_*を直接呼んでいた場合も、Functionのpacket APIへ移す。
 MIDI 2.0/UMPはこのFunctionの対象外。
 

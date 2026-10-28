@@ -3,7 +3,7 @@
 2026-10-26。CDC-ACMのクラス処理を独自実装へ移し、TinyUSB CDCを無効化した。
 VendorとCDCは`EspUsbDeviceBulkStream`のring、DMA、借用・返却、取消しを共有する。
 MIDIも同じcopy転送を使うが、公開APIは4 byte event単位とし、byte streamや借用転送を直接使わせない。
-共通EP0、device state、DWC2は引き続き暫定TinyUSB adapterである。
+共通EP0/coreとDWC2も本体内部で保守する。開始modeとworker設定は[移行ガイド](V3_MIGRATION.ja.md)を参照。
 
 ## 普通の利用
 

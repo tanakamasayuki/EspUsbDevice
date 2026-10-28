@@ -25,7 +25,11 @@ void setup() {
 }
 
 void loop() {
-  while (usbSerial.available()) usbSerial.write(uint8_t(usbSerial.read()));
+  while (usbSerial.available() && usbSerial.writeAvailable()) {
+    const int value = usbSerial.read();
+    if (value >= 0) usbSerial.write(uint8_t(value));
+  }
+  delay(1);
 }
 ```
 

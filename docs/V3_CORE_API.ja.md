@@ -1,7 +1,7 @@
 # v3 共通coreとEP0の独自化
 
 TinyUSBの`device/usbd.c`をビルド対象から削除し、`EspUsbDeviceCore`へ置き換える。
-クラス実装と共通coreは独自側で扱い、DWC2・protocol型・一部helperは暫定依存として残す。
+クラス実装、共通core、protocol型は独自側で扱う。DWC2は由来とライセンスを保持した本体内の保守forkを使う。
 一つの独自coreだけを起動し、旧coreへfallbackする二重backendは持たない。
 
 ## 設定と資源
@@ -58,8 +58,8 @@ DMA停止、クラスresetによる所有権返却、旧eventの回収、disconn
 resetが割込みで通知済みの場合は、workerがresetを処理するまで旧構成のproducer jobを進めない。
 
 通常のクラス完了・reset/end通知はUSB worker上で扱う。
-現在の内部class/DWC2接続は暫定C ABIを用い、TinyUSB由来の型名・関数名を残している。
-これを最終公開APIとして追加したわけではなく、残るDWC2/helperの置換後に整理する。
+内部class/controller接続には独自のdriver/event型とespusb_controller_*境界を用いる。
+これらの内部headerは利用者APIではない。旧TinyUSB coreやSDK内の同名headerへのfallbackは持たない。
 開始modeとworker設定の現行APIは[v3移行ガイド](V3_MIGRATION.ja.md)を参照。旧startTinyUsbと空task()は撤去した。
 
 ## 検証と残り
