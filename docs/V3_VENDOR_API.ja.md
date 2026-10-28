@@ -267,3 +267,8 @@ sparse構成256→256 byte。cache lineへの丸めで増分が出る構成が�
 最大131072 byte、92件の返却、2種類の終端、short/ZLP、返却pointer/id、canaryと全byteを確認。
 patternはoffsetの高位bitも混ぜ、64 KiBでpointerが折り返しても一致させない。
 S2/P4はcompile成功、実機の確認はS3–S3のみ。結果はvalidation/.pytest-results/wide-loan-*。
+
+
+製品`f1c9f29`固定の全34件も成功（1631.13秒、0 skipped/error/failure/unfinished）。
+68 serial全てSTOPPED、panicなし。774取得点の回復とheap前後同量、他classとの回帰も確認。
+詳細は[一括結果](../validation/README.ja.md#wide-loan変更後の全34件)。

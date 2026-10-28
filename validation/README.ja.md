@@ -95,6 +95,20 @@ CDC＋HIDは192→256 byte。Control/ISOの投稿上限は維持する。
 high-progress原本`/tmp/pytest-embedded/2026-10-28_15-02-00-787930/`、資源比較は
 `wide-loan-controller-layout.json`。これは関連scopeの結果で、変更後の全34件の確認は次に行う。
 
+## wide loan変更後の全34件
+
+製品`f1c9f29`を固定し、標準`pytest --combo all`は**34 passed、0 skipped、0 failed/error、
+0 unfinished、1631.13秒**。68 serial全てSTOPPED、STOP_FAILED/panicなし。
+131072 byteまでの転送と92結果、131008 byte後のcancel/reset/end、native Stream、
+実IRQ reset開始3深度、CCID/Video/NCM HALTとTCP3構成が同じ実行で成功した。
+774取得点の失敗/回復とheap346704→346704 byte、controller確保量128/192/256/256も確認。
+S2/P4 compileと全29 sourceの依存/nm/addr2lineも成功。旧tud/usbd/dcd/tusb symbolやSDK fallbackはない。
+
+原本`/tmp/pytest-embedded/2026-10-28_15-15-08-529975/`。
+XML/transcript/serialと各nmは`.pytest-results/wide-loan-all*`、集計は`wide-loan-all-audit.txt`。
+実行中の製品/probeは変更していない。`verify_usb_backend.py`と`git diff --check`も成功。
+実機はS3–S3のみ。OS/他SoC/HS実機と任意の全競合順序までの確認を意味しない。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

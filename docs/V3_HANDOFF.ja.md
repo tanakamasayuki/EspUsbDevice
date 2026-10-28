@@ -160,15 +160,21 @@ S2/P4 compile成功。原本は`.pytest-results/wide-loan-{baseline,related,life
 XML/transcript/serial/集計を保存。high-progress原本は
 `/tmp/pytest-embedded/2026-10-28_15-02-00-787930/`。
 資源比較は`wide-loan-controller-layout.json`。移行は[Vendor API](V3_VENDOR_API.ja.md#65535-byteを跨ぐ借用転送)。
-次にこの低level ABI/record変更後の全34件を固定して確認する。
+製品`f1c9f29`を固定した全34件も**34 passed、0 skipped/error/failure/unfinished、1631.13秒**。
+68 logs全てSTOPPED、STOP_FAILED/panicなし。774取得点で失敗/回復、heap346704→346704 byte。
+92結果、131008 byte後のcancel/reset/end、native Stream、各class HALT、実IRQ reset開始3深度、TCP3構成を確認。
+S2/P4 compileと全29 sourceの依存/nm/addr2lineも成功。旧tud/usbd/dcd/tusb symbolとSDK fallbackはない。
+原本`/tmp/pytest-embedded/2026-10-28_15-15-08-529975/`、結果は`.pytest-results/wide-loan-all*`、
+集計は`wide-loan-all-audit.txt`。実行中の製品/probeを変更していない。mainの取り込みも維持している。
 
 ## 次の単位と未完了
 
-1. native Streamの全34件/18 buildsは確認済み。次はwide loanの低level変更後の全34件。
+1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
-3. wide loanの関連確認は完了。全体検証後、残る既存API/資源管理の問題を実測で判断する。
+3. wide loanの全体確認は完了。残る既存API/資源管理の問題は実測で判断する。
    CCIDのmessage>=MPS制約は仕様§5.1で確認済みのため維持する。
-   controllerごとの既定値/自動値を解決する時点と、class内に分散したSoC別MPS判定は次の整理候補。
+   MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
+   class内に分散したSoC別MPS判定と、P4 HSではCCIDの既定320がMPS512を満たさない点は整理候補。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
