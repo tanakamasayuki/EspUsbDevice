@@ -2,7 +2,7 @@
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbMemory.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include <algorithm>
 #include <limits.h>
 #include <new>
@@ -64,7 +64,7 @@ struct EspUsbBulkState {
   void *directRxBuffer = nullptr;
   size_t directRxCapacity = 0;
   uint64_t txId = 0, rxId = 0;
-  espusb::internal::TinyUsbRuntimeJob cancelJob{nullptr, nullptr};
+  espusb::internal::UsbRuntimeJob cancelJob{nullptr, nullptr};
   bool cancelTx = false, cancelRx = false, abortedTx = false, abortedRx = false;
   bool fenceTx = false, fenceRx = false, resetTxPid = false, resetRxPid = false;
   EspUsbTransferStatus cancelTxStatus = EspUsbTransferStatus::Cancelled;
@@ -86,7 +86,7 @@ struct EspUsbBulkState {
 
   explicit EspUsbBulkState(EspUsbDeviceBulkStream &o) : owner(o) {}
   ~EspUsbBulkState() {
-    espusb::internal::removeTinyUsbRuntimeJob(cancelJob);
+    espusb::internal::removeUsbRuntimeJob(cancelJob);
     if (rx.owned) espusb::internal::freeUsbMemory(rx.data);
     if (tx.owned) espusb::internal::freeUsbMemory(tx.data);
     espusb::internal::freeUsbMemory(rxPacket); espusb::internal::freeUsbMemory(txPacket);
@@ -160,7 +160,7 @@ struct EspUsbBulkState {
     pending = true;
     (input ? cancelTxStatus : cancelRxStatus) = EspUsbTransferStatus::Cancelled;
     cancelJob.run = cancelPump; cancelJob.context = this;
-    if (!espusb::internal::postTinyUsbRuntimeJob(cancelJob)) {
+    if (!espusb::internal::postUsbRuntimeJob(cancelJob)) {
       pending = false;
       return ESP_ERR_INVALID_STATE;
     }
@@ -181,7 +181,7 @@ struct EspUsbBulkState {
     if (input) { tx.clear(); flushing = copyZlp = false; }
     else { rx.clear(); rxPendingOffset = rxPendingLength = 0; }
     cancelJob.run = cancelPump; cancelJob.context = this;
-    const bool posted = espusb::internal::postTinyUsbRuntimeJob(cancelJob);
+    const bool posted = espusb::internal::postUsbRuntimeJob(cancelJob);
     return aborted && posted;
   }
   static void cancelPump(void *context) {
@@ -195,7 +195,7 @@ struct EspUsbBulkState {
       if (s->cancelTx && s->abortedTx && !s->fenceTx) s->fenceTx = espusb_device_try_defer(finishCancelTx, s);
       if (s->cancelRx && s->abortedRx && !s->fenceRx) s->fenceRx = espusb_device_try_defer(finishCancelRx, s);
       if ((s->cancelTx && !s->fenceTx) || (s->cancelRx && !s->fenceRx))
-        espusb::internal::postTinyUsbRuntimeJob(s->cancelJob);
+        espusb::internal::postUsbRuntimeJob(s->cancelJob);
     }
     portEXIT_CRITICAL(&bulkLock);
   }
@@ -376,7 +376,7 @@ esp_err_t EspUsbDeviceBulkStream::configure(const EspUsbBulkStreamConfig &c) {
   return ESP_OK;
 }
 bool EspUsbDeviceBulkStream::begin() {
-  if (!registered_ || state_ || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  if (!registered_ || state_ || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   const size_t unit = bulkPacketUnit();
   if (!unit || (unit > 1 && (config_.rxCapacity % unit || config_.txCapacity % unit || config_.transferBytes % unit))) {
     startError_ = ESP_ERR_INVALID_ARG; return false;
@@ -403,7 +403,7 @@ void EspUsbDeviceBulkStream::prepareToStop() {
   portEXIT_CRITICAL(&bulkLock);
 }
 void EspUsbDeviceBulkStream::end() {
-  if (device_.tinyusbStarted_ && state_) { device_.end(); return; }
+  if (device_.usbStarted_ && state_) { device_.end(); return; }
   portENTER_CRITICAL(&bulkLock);
   auto *state = state_;
   state_ = nullptr;

@@ -44,7 +44,7 @@ bool metadata() {
     ok &= function.configure(config) == ESP_OK;
     auto invalid = config; invalid.eventCapacity = SIZE_MAX;
     ok &= function.configure(invalid) == ESP_ERR_INVALID_SIZE && function.configuration().eventCapacity == cap;
-    EspUsbDeviceConfig identity; identity.startTinyUsb = false;
+    EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= local.begin(identity) && function.eventCapacity() == cap;
     ok &= function.configure(config) == ESP_ERR_INVALID_STATE && !stream.addFormat({44100,2,2,16});
     ok &= !function.hasCaptureStream(); function.addCaptureStream(); ok &= !function.hasCaptureStream();
@@ -59,7 +59,7 @@ bool metadata() {
     EspUsbAudioConfig config; config.eventCapacity = 0;
     config.playbackBufferFrames = config.captureBufferFrames = 8;
     config.playbackBuffer = buffers + 1; config.captureBuffer = buffers + 17;
-    EspUsbDeviceConfig identity; identity.startTinyUsb = false;
+    EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= function.configure(config) == ESP_OK && !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_ARG;
     config.captureBuffer = buffers + 33;
     ok &= function.configure(config) == ESP_OK && local.begin(identity);

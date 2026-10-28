@@ -3,7 +3,7 @@
 #include "../EspUsbDevice.h"
 #include "EspUsbDeviceAppDriver.h"
 #include "EspUsbMemory.h"
-#include "EspUsbTinyUsbRuntime.h"
+#include "EspUsbRuntime.h"
 #include "EspUsbDeviceBus.h"
 #include <algorithm>
 #include <string.h>
@@ -59,10 +59,10 @@ struct EspUsbAudioState {
   uint8_t control[14] = {}, alternateResponse = 0;
   bool stopping = false, fenceQueued = false;
   uint32_t epoch = 0, fenceEpoch = 0, intervals = 1000;
-  espusb::internal::TinyUsbRuntimeJob changeJob{changePump, this};
+  espusb::internal::UsbRuntimeJob changeJob{changePump, this};
   explicit EspUsbAudioState(EspUsbAudioFunction &function) : owner(function) {}
   ~EspUsbAudioState() {
-    espusb::internal::removeTinyUsbRuntimeJob(changeJob);
+    espusb::internal::removeUsbRuntimeJob(changeJob);
     espusb::internal::freeUsbMemory(feedback);
   }
   bool allocateStream(AudioPacketStream &stream, const espusb::internal::AudioPcmFormat *format, size_t capacity, uint8_t *external) {
@@ -115,13 +115,13 @@ struct EspUsbAudioState {
     stream.active = false; stream.desired = alternate; stream.draining = true;
     if (!espusb_device_edpt_abort(port, stream.endpoint) || (isPlayback && feedbackEndpoint && !espusb_device_edpt_abort(port, feedbackEndpoint))) return false;
     ++epoch;
-    return espusb::internal::postTinyUsbRuntimeJob(changeJob);
+    return espusb::internal::postUsbRuntimeJob(changeJob);
   }
   static void finishChange(void *context) {
     auto *s = static_cast<EspUsbAudioState *>(context); AudioGuard guard;
     s->fenceQueued = false;
     if (s->stopping) return;
-    if (s->fenceEpoch != s->epoch) { espusb::internal::postTinyUsbRuntimeJob(s->changeJob); return; }
+    if (s->fenceEpoch != s->epoch) { espusb::internal::postUsbRuntimeJob(s->changeJob); return; }
     for (AudioPacketStream *stream : {&s->playback, &s->capture}) {
       if (!stream->draining) continue;
       if (stream->discard) stream->ring.clear();
@@ -136,7 +136,7 @@ struct EspUsbAudioState {
     if (s->stopping || s->fenceQueued || (!s->playback.draining && !s->capture.draining)) return;
     s->fenceEpoch = s->epoch;
     s->fenceQueued = espusb_device_try_defer(finishChange, s);
-    if (!s->fenceQueued) espusb::internal::postTinyUsbRuntimeJob(s->changeJob);
+    if (!s->fenceQueued) espusb::internal::postUsbRuntimeJob(s->changeJob);
   }
   static void init() {}
   static void resetAll(uint8_t) {
@@ -155,7 +155,7 @@ struct EspUsbAudioState {
   static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t available) {
     if (available < 9 || itf->bLength != 9 || itf->bInterfaceClass != 1 || itf->bInterfaceSubClass != 1) return 0;
     auto *s = first;
-    while (s && (s->owner.graph_.controlInterface != itf->bInterfaceNumber || !s->owner.device_.config().startTinyUsb)) s = s->next;
+    while (s && (s->owner.graph_.controlInterface != itf->bInterfaceNumber || s->owner.device_.config().startMode != EspUsbDeviceStartMode::Usb)) s = s->next;
     if (!s) return 0;
     const auto *data = reinterpret_cast<const uint8_t *>(itf);
     size_t offset = 0; uint8_t current = itf->bInterfaceNumber;

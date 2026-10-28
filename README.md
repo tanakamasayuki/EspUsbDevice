@@ -1,5 +1,7 @@
 # EspUsbDevice
 
+> v3 development branch: metadata is 3.0.0, with no release/tag published. Use the [v3 API migration guide](docs/V3_MIGRATION.ja.md) and [independent validation suite](validation/README.ja.md). The older 2.x examples/guides remain reference material during migration.
+
 > 日本語版: [README.ja.md](README.ja.md)
 
 EspUsbDevice is a new ESP32 Arduino USB Device library.

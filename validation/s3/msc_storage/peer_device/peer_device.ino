@@ -37,7 +37,7 @@ bool metadata() {
     ok &= function.configure(invalid) == ESP_ERR_INVALID_SIZE && function.configuration().transferBytes == 64;
     invalid = config; invalid.transferBuffer = external + 1;
     ok &= function.configure(invalid) == ESP_ERR_INVALID_ARG;
-    EspUsbDeviceConfig identity; identity.startTinyUsb = false;
+    EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= local.begin(identity) && function.transferCapacity() == 64;
     ok &= function.configure(config) == ESP_ERR_INVALID_STATE && !function.begin(64, 512) && function.onRead(nullptr) == ESP_ERR_INVALID_STATE;
     ok &= function.vendorID("changed") == ESP_ERR_INVALID_STATE && function.onStartStop(nullptr) == ESP_ERR_INVALID_STATE;

@@ -2,7 +2,7 @@
 #include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbMemory.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include "internal/EspUsbDeviceBus.h"
 #include "internal/EspUsbDeviceEndpoint.h"
 #include <algorithm>
@@ -69,7 +69,7 @@ struct EspUsbHidState {
   size_t reportCount = 0, capacity[3] = {};
   uint8_t *input = nullptr, *output = nullptr, *packet = nullptr, *control = nullptr, *snapshots = nullptr;
   Report *pendingInput = nullptr;
-  espusb::internal::TinyUsbRuntimeJob idleJob{idlePump, this};
+  espusb::internal::UsbRuntimeJob idleJob{idlePump, this};
   size_t assembled = 0;
   const uint8_t *hidDescriptor = nullptr;
   uint8_t rhport = 0, interface = 0xff, in = 0, out = 0, protocol = 1, response = 0, boot = 0;
@@ -79,7 +79,7 @@ struct EspUsbHidState {
   bool outputDraining = false, outputFenceQueued = false, resetInputPid = false, resetOutputPid = false;
   explicit EspUsbHidState(EspUsbDevice &owner) : device(owner) {}
   ~EspUsbHidState() {
-    espusb::internal::removeTinyUsbRuntimeJob(idleJob);
+    espusb::internal::removeUsbRuntimeJob(idleJob);
     espusb::internal::freeUsbMemory(reports);
     for (auto *p : {input, output, packet, control, snapshots}) espusb::internal::freeUsbMemory(p);
   }
@@ -138,7 +138,7 @@ struct EspUsbHidState {
     if (stopping || !espusb_device_edpt_abort(rhport, endpoint)) return false;
     (inputDirection ? inputDraining : outputDraining) = true;
     (inputDirection ? resetInputPid : resetOutputPid) = resetPid;
-    return espusb::internal::postTinyUsbRuntimeJob(idleJob);
+    return espusb::internal::postUsbRuntimeJob(idleJob);
   }
   // Reuse the existing allocation-free worker job for endpoint fence retries.
   // A full core event queue must not make the old DMA buffer reusable early.
@@ -171,7 +171,7 @@ struct EspUsbHidState {
       }
     }
     portEXIT_CRITICAL(&hidLock);
-    if (again) espusb::internal::postTinyUsbRuntimeJob(s->idleJob);
+    if (again) espusb::internal::postUsbRuntimeJob(s->idleJob);
   }
   esp_err_t allocate() {
     const auto *descriptor = device.hidReportDescriptor(0);
@@ -311,7 +311,7 @@ struct EspUsbHidState {
   static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t available) {
     if (itf->bInterfaceClass != 3 || available < 18 || itf->bLength != 9) return 0;
     auto *s = first;
-    while (s && !s->device.config().startTinyUsb) s = s->next;
+    while (s && s->device.config().startMode != EspUsbDeviceStartMode::Usb) s = s->next;
     if (!s) return 0;
     if ((itf->bInterfaceSubClass == 1 ? itf->bInterfaceProtocol : 0) != s->boot) return 0;
     // One merged HID interface per currently active Device.
@@ -413,7 +413,7 @@ struct EspUsbHidState {
           }
         }
         portEXIT_CRITICAL(&hidLock);
-        espusb::internal::postTinyUsbRuntimeJob(s->idleJob);
+        espusb::internal::postUsbRuntimeJob(s->idleJob);
       }
       return true;
     }
@@ -517,7 +517,7 @@ void EspUsbHidFunction::prepareToStop() {
   portENTER_CRITICAL(&hidLock); if (hidState_) hidState_->stopping = true; portEXIT_CRITICAL(&hidLock);
 }
 void EspUsbHidFunction::end() {
-  if (device_.tinyusbStarted_ && hidState_) { device_.end(); return; }
+  if (device_.usbStarted_ && hidState_) { device_.end(); return; }
   portENTER_CRITICAL(&hidLock);
   auto *s = hidState_; hidState_ = nullptr;
   bool remove = s && !--s->references;
@@ -532,7 +532,7 @@ void EspUsbHidFunction::end() {
   if (empty) espUsbDeviceUnregisterAppDrivers(&hidDriver, 1);
 }
 bool EspUsbHidFunction::sendHidInput(uint8_t id, const void *data, size_t length, uint32_t timeoutMs) {
-  if (timeoutMs && espusb::internal::tinyUsbRuntimeInTask()) { device_.setLastError(ESP_ERR_INVALID_STATE); return false; }
+  if (timeoutMs && espusb::internal::usbRuntimeInTask()) { device_.setLastError(ESP_ERR_INVALID_STATE); return false; }
   const uint32_t start = millis();
   do {
     portENTER_CRITICAL(&hidLock);

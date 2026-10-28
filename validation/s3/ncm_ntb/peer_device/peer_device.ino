@@ -2,7 +2,7 @@
 #include <EspUsbDevice.h>
 #include <atomic>
 #include "../../../../src/internal/EspUsbDeviceEndpoint.h"
-#include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
+#include "../../../../src/internal/EspUsbRuntime.h"
 EspUsbDevice device;
 EspUsbDeviceNet first(device), second(device);
 EspUsbDeviceNet *net[] = {&first,&second};
@@ -15,7 +15,7 @@ bool armed(unsigned i,unsigned which) {
     if(d[n+1]==5 && d[n]==7 && ((which==2 && interface==2*i && (d[n+3]&3)==3) ||
         (which<2 && interface==2*i+1 && (d[n+3]&3)==2 && bool(d[n+2]&128)==bool(which))))endpoint=d[n+2];
   }
-  const uint8_t port=espusb::internal::tinyUsbRuntimeRhport();const uint32_t until=millis()+2000;
+  const uint8_t port=espusb::internal::usbRuntimeRhport();const uint32_t until=millis()+2000;
   while(endpoint && !espusb_device_edpt_busy(port,endpoint) && int32_t(until-millis())>0)delay(1);
   return endpoint && espusb_device_edpt_busy(port,endpoint) && !espusb_device_edpt_stalled(port,endpoint);
 }

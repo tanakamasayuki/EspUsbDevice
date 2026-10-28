@@ -11,14 +11,14 @@ bool metadata() {
     EspUsbDevice local;EspUsbDeviceCcid card(local);EspUsbCcidConfig cfg;cfg.messageBytes=capacity;
     ok &= card.configure(cfg)==ESP_OK;
     auto invalid=cfg;invalid.messageBytes=63;ok &= card.configure(invalid)==ESP_ERR_INVALID_SIZE && card.configuration().messageBytes==capacity;
-    EspUsbDeviceConfig identity;identity.startTinyUsb=false;
+    EspUsbDeviceConfig identity;identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= local.begin(identity) && card.messageCapacity()==capacity;
     ok &= card.configure(cfg)==ESP_ERR_INVALID_STATE && card.onApdu(nullptr)==ESP_ERR_INVALID_STATE;
     ok &= local.end()==ESP_OK && !card.messageCapacity();
   }
   {
     EspUsbDevice local;EspUsbDeviceCcid card(local);EspUsbCcidConfig cfg;cfg.removable=false;cfg.messageBytes=64;
-    ok &= card.configure(cfg)==ESP_OK;EspUsbDeviceConfig identity;identity.startTinyUsb=false;
+    ok &= card.configure(cfg)==ESP_OK;EspUsbDeviceConfig identity;identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= !local.begin(identity) && local.lastError()==ESP_ERR_INVALID_STATE && local.end()==ESP_OK;
     ok &= card.insertCard(atrValue,sizeof(atrValue)) && local.begin(identity);
     ok &= !card.insertCard(atrValue,sizeof(atrValue)) && card.removeCard()==ESP_ERR_INVALID_STATE;

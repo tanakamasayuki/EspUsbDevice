@@ -80,7 +80,7 @@ private:
 bool badSizes() {
   for (bool unstable : {false, true}) {
     EspUsbDevice device; BadSize function(device, unstable);
-    EspUsbDeviceConfig config; config.startTinyUsb = false;
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     if (device.begin(config) || device.lastError() != ESP_ERR_INVALID_SIZE || function.writes) return false;
     if (device.bosDescriptor() || device.microsoftOs20Descriptor()) return false;
   }
@@ -105,7 +105,7 @@ public:
 };
 bool detached() {
   EspUsbDevice device; EspUsbDeviceCdcSerial serial(device);
-  EspUsbDeviceConfig config; config.startTinyUsb = false;
+  EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   if (!device.begin(config) || device.bosDescriptor() || device.microsoftOs20Descriptor()) return false;
   const uint8_t *fs = device.configurationDescriptor(0);
   const uint8_t *hs = device.configurationDescriptorForSpeed(0, true);
@@ -130,7 +130,7 @@ bool detached() {
   }
   {
     EspUsbDevice sized; SpeedSized function(sized);
-    EspUsbDeviceConfig detached; detached.startTinyUsb = false;
+    EspUsbDeviceConfig detached; detached.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= sized.begin(detached);
     const auto *full = sized.configurationDescriptor(0);
     const auto *high = sized.configurationDescriptorForSpeed(0, true);
@@ -156,7 +156,7 @@ public:
   }
 };
 bool auxiliaryMetadata() {
-  EspUsbDeviceConfig c; c.startTinyUsb = false;
+  EspUsbDeviceConfig c; c.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   bool ok = true;
   {
     EspUsbDevice d; AuxiliaryControl a(d), b(d);
@@ -191,7 +191,7 @@ bool auxiliaryMetadata() {
 
 bool textMetadata() {
   EspUsbDevice device;
-  EspUsbDeviceConfig config; config.startTinyUsb = false;
+  EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   config.manufacturer = config.product = config.serialNumber = nullptr;
   bool ok = device.begin(config) && !device.stringDescriptor(1, 0x409) &&
       !device.webUsbUrlDescriptor() && !device.bosDescriptor();
@@ -217,7 +217,7 @@ bool textMetadata() {
   ok &= device.stringDescriptor(5, 0) == name && name[1] == 0x8a08;
   ok &= device.end() == ESP_OK;
   serial.setName(nullptr);
-  config = EspUsbDeviceConfig(); config.startTinyUsb = false;
+  config = EspUsbDeviceConfig(); config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   memset(ascii, 'a', 127); ascii[127] = 0; config.manufacturer = ascii;
   ok &= !device.begin(config) && device.lastError() == ESP_ERR_INVALID_SIZE;
   // The limit is UTF-16 units, not UTF-8 bytes or Unicode scalar count.

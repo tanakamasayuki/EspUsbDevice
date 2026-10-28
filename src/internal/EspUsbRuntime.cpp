@@ -1,4 +1,4 @@
-#include "EspUsbTinyUsbRuntime.h"
+#include "EspUsbRuntime.h"
 #include "EspUsbDeviceCore.h"
 
 #include "esp_private/usb_phy.h"
@@ -16,8 +16,8 @@ TaskHandle_t g_deviceTask = nullptr;
 uint8_t g_rhport = 0xff;
 std::atomic<bool> g_stop{false};
 SemaphoreHandle_t g_taskExited = nullptr;
-using espusb::internal::TinyUsbRuntimeJob;
-TinyUsbRuntimeJob *g_jobs = nullptr, *g_jobsTail = nullptr;
+using espusb::internal::UsbRuntimeJob;
+UsbRuntimeJob *g_jobs = nullptr, *g_jobsTail = nullptr;
 portMUX_TYPE g_jobsLock = portMUX_INITIALIZER_UNLOCKED;
 
 void runJobs()
@@ -61,7 +61,7 @@ void usbDeviceTask(void *)
 namespace espusb {
 namespace internal {
 
-bool postTinyUsbRuntimeJob(TinyUsbRuntimeJob &job)
+bool postUsbRuntimeJob(UsbRuntimeJob &job)
 {
   portENTER_CRITICAL(&g_jobsLock);
   const bool active = g_deviceTask && !g_stop.load();
@@ -77,11 +77,11 @@ bool postTinyUsbRuntimeJob(TinyUsbRuntimeJob &job)
   return active;
 }
 
-void removeTinyUsbRuntimeJob(TinyUsbRuntimeJob &job)
+void removeUsbRuntimeJob(UsbRuntimeJob &job)
 {
   portENTER_CRITICAL(&g_jobsLock);
   auto **link = &g_jobs;
-  TinyUsbRuntimeJob *previous = nullptr;
+  UsbRuntimeJob *previous = nullptr;
   while (*link && *link != &job) { previous = *link; link = &(*link)->next; }
   if (*link)
   {
@@ -93,12 +93,17 @@ void removeTinyUsbRuntimeJob(TinyUsbRuntimeJob &job)
   portEXIT_CRITICAL(&g_jobsLock);
 }
 
-esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
+esp_err_t startUsbRuntime(const UsbRuntimeOptions &options)
 {
   if (g_phy || g_deviceTask)
   {
     return ESP_ERR_INVALID_STATE;
   }
+
+  // Reject unusable worker settings before acquiring a PHY or controller.
+  if (options.taskStackBytes < uint32_t(configMINIMAL_STACK_SIZE) || options.taskStackBytes > uint32_t(PTRDIFF_MAX)) return ESP_ERR_INVALID_SIZE;
+  if (options.taskPriority < -1 || (options.taskPriority >= 0 && unsigned(options.taskPriority) >= configMAX_PRIORITIES) ||
+      options.taskCoreId < -1 || (options.taskCoreId >= 0 && unsigned(options.taskCoreId) >= configNUMBER_OF_CORES)) return ESP_ERR_INVALID_ARG;
 
   uint8_t port = 255;
   if (options.controller == UsbController::Auto) {
@@ -164,7 +169,7 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   }
   g_stop.store(false);
   const UBaseType_t priority =
-      options.taskPriority == 0 ? configMAX_PRIORITIES - 1 : options.taskPriority;
+      options.taskPriority < 0 ? configMAX_PRIORITIES - 1 : static_cast<UBaseType_t>(options.taskPriority);
   // xTaskCreate() leaves the task unpinned, which on a dual-core ESP32 means it
   // can run beside whatever else is busy. Pinning it away from the core the
   // sketch produces data on is what keeps the two from taking slices from each
@@ -172,10 +177,10 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   // was told.
   const BaseType_t created =
       options.taskCoreId < 0
-          ? xTaskCreate(usbDeviceTask, "espusb-device", options.taskStackSize,
+          ? xTaskCreate(usbDeviceTask, "espusb-device", options.taskStackBytes,
                         nullptr, priority, &g_deviceTask)
           : xTaskCreatePinnedToCore(usbDeviceTask, "espusb-device",
-                                    options.taskStackSize, nullptr, priority,
+                                    options.taskStackBytes, nullptr, priority,
                                     &g_deviceTask,
                                     static_cast<BaseType_t>(options.taskCoreId));
   if (created != pdPASS)
@@ -191,14 +196,14 @@ esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options)
   return ESP_OK;
 }
 
-bool tinyUsbRuntimeInTask()
+bool usbRuntimeInTask()
 {
   return g_deviceTask && xTaskGetCurrentTaskHandle() == g_deviceTask;
 }
 
-bool stopTinyUsbRuntime()
+bool stopUsbRuntime()
 {
-  if (tinyUsbRuntimeInTask()) return false;
+  if (usbRuntimeInTask()) return false;
   if (g_deviceTask)
   {
     // Finish the current event/callback before deinitializing endpoints or
@@ -222,12 +227,12 @@ bool stopTinyUsbRuntime()
   return true;
 }
 
-bool tinyUsbRuntimeStarted()
+bool usbRuntimeStarted()
 {
   return g_phy != nullptr && g_deviceTask != nullptr;
 }
 
-uint8_t tinyUsbRuntimeRhport()
+uint8_t usbRuntimeRhport()
 {
   return g_rhport;
 }

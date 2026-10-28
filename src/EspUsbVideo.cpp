@@ -1,5 +1,5 @@
 #include "EspUsbDevice.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include "internal/EspUsbVideoTransport.h"
 
 #include <string.h>
@@ -430,7 +430,7 @@ uint16_t EspUsbDeviceVideo::configurationDescriptor(uint8_t *dst, uint8_t interf
 }
 
 bool EspUsbDeviceVideo::begin() {
-  if (!registered_ || running_ || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  if (!registered_ || running_ || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   if (!validVideoParameters(format_,width_,height_,frameRate_,maxFrameSize_)) { startError_ = ESP_ERR_INVALID_ARG; return false; }
   startError_ = configure(videoConfig_); if (startError_ != ESP_OK) return false;
   commit_ = {}; inFlight_.store(false); stopping_.store(false);
@@ -439,7 +439,7 @@ bool EspUsbDeviceVideo::begin() {
 }
 void EspUsbDeviceVideo::prepareToStop() { stopping_.store(true); }
 void EspUsbDeviceVideo::end() {
-  if (state_ && device_.tinyusbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.end(); return; }
   espusb::internal::VideoTransport::end(*this);
   running_.store(false); inFlight_.store(false); commit_ = {};
 }

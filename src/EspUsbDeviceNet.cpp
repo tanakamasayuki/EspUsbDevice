@@ -3,7 +3,7 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbMemory.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include "internal/EspUsbNetLock.h"
 #include "internal/EspUsbDeviceBus.h"
 #include "esp_memory_utils.h"
@@ -46,10 +46,10 @@ struct EspUsbNetState {
   uint8_t control[28] = {};
   uint32_t epoch = 0, fenceEpoch = 0;
   std::atomic<uint32_t> txFrames{0}, rxFrames{0}, invalidNtbs{0};
-  espusb::internal::TinyUsbRuntimeJob job{pump, this};
+  espusb::internal::UsbRuntimeJob job{pump, this};
   explicit EspUsbNetState(EspUsbDeviceNet &o) : owner(o) {}
   ~EspUsbNetState() {
-    espusb::internal::removeTinyUsbRuntimeJob(job);
+    espusb::internal::removeUsbRuntimeJob(job);
     espusb::internal::freeUsbMemory(slots);
     if (ownTx) espusb::internal::freeUsbMemory(txStorage);
     if (ownRx) espusb::internal::freeUsbMemory(rxStorage);
@@ -99,7 +99,7 @@ struct EspUsbNetState {
       auto *s = &slots[c.txBuffers + i];
       if (s->phase != NetSlot::Free) continue;
       s->phase = NetSlot::Hardware; rx = s;
-      if (!espusb_device_edpt_xfer(port,out,s->data,rxArm,false)) { s->phase = NetSlot::Free; rx = nullptr; espusb::internal::postTinyUsbRuntimeJob(job); }
+      if (!espusb_device_edpt_xfer(port,out,s->data,rxArm,false)) { s->phase = NetSlot::Free; rx = nullptr; espusb::internal::postUsbRuntimeJob(job); }
       return;
     }
   }
@@ -110,7 +110,7 @@ struct EspUsbNetState {
     if (!espusb_device_edpt_xfer(port,in,tx->data,tx->used,false)) {
       tx->phase = NetSlot::Queued; tx->next = head; head = tx;
       if (!tail) tail = tx; tx = nullptr;
-      espusb::internal::postTinyUsbRuntimeJob(job);
+      espusb::internal::postUsbRuntimeJob(job);
     }
   }
   void armNotification() {
@@ -124,13 +124,13 @@ struct EspUsbNetState {
       put32(notification+8,speed); put32(notification+12,speed);
     } else { notification[1] = 0; put16(notification+2,active ? 1 : 0); }
     notifyBusy = espusb_device_edpt_xfer(port,notify,notification,bytes,false);
-    if (!notifyBusy) espusb::internal::postTinyUsbRuntimeJob(job);
+    if (!notifyBusy) espusb::internal::postUsbRuntimeJob(job);
   }
   bool retire(uint8_t mask,uint8_t pid) {
     draining|=mask;resetPid|=pid;++epoch;
     const uint8_t endpoints[]={in,out,notify};
     for(unsigned i=0;i<3;++i)if((mask&(1u<<i)) && !espusb_device_edpt_abort(port,endpoints[i]))return false;
-    return espusb::internal::postTinyUsbRuntimeJob(job);
+    return espusb::internal::postUsbRuntimeJob(job);
   }
   bool change(uint8_t alternate, bool resetData = false, bool resetNotify = false) {
     active = false; desired = alternate;
@@ -140,7 +140,7 @@ struct EspUsbNetState {
     auto *s = static_cast<EspUsbNetState *>(context); NetGuard guard;
     s->fenceQueued = false;
     if (s->stopping.load() || !s->draining) return;
-    if (s->epoch != s->fenceEpoch) { espusb::internal::postTinyUsbRuntimeJob(s->job); return; }
+    if (s->epoch != s->fenceEpoch) { espusb::internal::postUsbRuntimeJob(s->job); return; }
     const uint8_t retired=s->draining;
     s->clear(retired);
     if(retired&4)s->notifyBusy=false;
@@ -150,7 +150,7 @@ struct EspUsbNetState {
     if(retired&4)s->notificationStage=s->active ? 0:1;
     s->armNotification(); s->armRx(); s->armTx();
     // A direction that was not retired may still have a queued ZLP retry.
-    espusb::internal::postTinyUsbRuntimeJob(s->job);
+    espusb::internal::postUsbRuntimeJob(s->job);
   }
   static void pump(void *context) {
     auto *s = static_cast<EspUsbNetState *>(context); NetGuard guard;
@@ -159,12 +159,12 @@ struct EspUsbNetState {
       if (s->fenceQueued) return;
       s->fenceEpoch = s->epoch;
       s->fenceQueued = espusb_device_try_defer(fence,s);
-      if (!s->fenceQueued) espusb::internal::postTinyUsbRuntimeJob(s->job);
+      if (!s->fenceQueued) espusb::internal::postUsbRuntimeJob(s->job);
       return;
     }
     if (s->zlpPending) {
       s->zlpPending = !espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);
-      if (s->zlpPending) espusb::internal::postTinyUsbRuntimeJob(s->job);
+      if (s->zlpPending) espusb::internal::postUsbRuntimeJob(s->job);
     }
     s->armTx(); s->armRx(); s->armNotification();
   }
@@ -186,7 +186,7 @@ struct EspUsbNetState {
     memcpy(s->data+offset,data,bytes);
     put16(s->data+20+4*s->count,uint16_t(offset)); put16(s->data+22+4*s->count,uint16_t(bytes));
     ++s->count; s->used = uint16_t(offset+bytes); put16(s->data+8,s->used);
-    espusb::internal::postTinyUsbRuntimeJob(job); return true;
+    espusb::internal::postUsbRuntimeJob(job); return true;
   }
   bool parse(const uint8_t *data, size_t bytes) {
     const auto &c = owner.netConfig_;
@@ -220,7 +220,7 @@ struct EspUsbNetState {
   static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t available) {
     if (available < 77 || itf->bLength != 9 || itf->bInterfaceClass != 2 || itf->bInterfaceSubClass != 0x0d) return 0;
     auto *s = first;
-    while (s && (s->owner.interface_ != itf->bInterfaceNumber || !s->owner.device_.config().startTinyUsb)) s = s->next;
+    while (s && (s->owner.interface_ != itf->bInterfaceNumber || s->owner.device_.config().startMode != EspUsbDeviceStartMode::Usb)) s = s->next;
     if (!s) return 0;
     const auto *data = reinterpret_cast<const uint8_t *>(itf); size_t offset = 0;
     while (offset+2 <= available) {
@@ -314,7 +314,7 @@ struct EspUsbNetState {
         if (!s->zlp && result == ESPUSB_TRANSFER_SUCCESS && s->tx->used % s->packet == 0 && s->tx->used < s->maxIn) {
           s->zlp = true;
           s->zlpPending = !espusb_device_edpt_xfer(s->port,s->in,nullptr,0,false);
-          if (s->zlpPending) espusb::internal::postTinyUsbRuntimeJob(s->job);
+          if (s->zlpPending) espusb::internal::postUsbRuntimeJob(s->job);
           return true;
         }
         if (result == ESPUSB_TRANSFER_SUCCESS) s->txFrames += s->tx->count;
@@ -364,7 +364,7 @@ esp_err_t EspUsbDeviceNet::configure(const EspUsbNetConfig &c) {
   netConfig_ = c; return ESP_OK;
 }
 bool EspUsbDeviceNet::begin() {
-  if (state_ || !registered_ || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  if (state_ || !registered_ || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   startError_ = configure(netConfig_); if (startError_ != ESP_OK) return false;
   bool high = device_.config().controller == EspUsbController::HighSpeed;
 #if CONFIG_IDF_TARGET_ESP32P4
@@ -390,7 +390,7 @@ bool EspUsbDeviceNet::begin() {
 }
 void EspUsbDeviceNet::prepareToStop() { NetGuard guard; if (state_) state_->stopping.store(true); }
 void EspUsbDeviceNet::end() {
-  if (state_ && device_.tinyusbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.end(); return; }
   endNetwork();
   if (!state_) return;
   EspUsbNetState *s;
@@ -442,7 +442,7 @@ void EspUsbDeviceNet::handleRecv(const uint8_t *data, uint16_t bytes) {
   else if (frameCallback_) frameCallback_(data,bytes);
 }
 bool EspUsbDeviceNet::endNetwork() {
-  if (espusb::internal::tinyUsbRuntimeInTask()) return false;
+  if (espusb::internal::usbRuntimeInTask()) return false;
   void (*stop)(EspUsbDeviceNet &);
   { NetGuard guard; networkReceive_ = nullptr; networkContext_ = nullptr; stop = networkStop_; networkStop_ = nullptr; }
   while (networkUsers_.load()) vTaskDelay(1);

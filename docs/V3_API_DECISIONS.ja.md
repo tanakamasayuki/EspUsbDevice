@@ -710,3 +710,15 @@ coreでの早期拒否とhardware lock内でのready再確認を併用し、旧e
 公開API、返却callbackのworker context、begin/endの操作感は維持し、追加のtask/queue/bufferは持たせない。
 reset中の投稿は拒否されるため、利用側は再構成後に投稿する。
 実測と未検証範囲は[Core API](V3_CORE_API.ja.md#reset開始時の世代無効化)を参照。
+
+
+## 採用記録: 開始modeとworker設定の公開API
+
+startTinyUsbのboolをEspUsbDeviceStartModeに置き換え、UsbとDescriptorsOnlyを明示する。
+既定のbeginは維持し、意味を持たないdevice.task()は削除する。started()で資源所有とHost構成済みのready()を分ける。
+workerのstack/priorityはconfigへ出し、taskCoreId/eventQueueDepthと同じbegin/end契約にする。
+startMode不正は設定保存前、USB workerの不正設定はPHY取得前に拒否する。DescriptorsOnlyではworker設定を使わない。
+内部名もUsbRuntimeへ統一し、旧名aliasや二つのbackendを残さない。version metadataは3.0.0とするが、release/tagは作らない。
+利点は実装名を意識しない構成確認、明示的な状態、必要時だけのworker調整。不利益は旧field/task呼出しのsource互換性を失うことと、
+小さいstackや低い優先度を選ぶ利用側が自分のcallback負荷を考慮する必要があること。
+移行例は[V3_MIGRATION](V3_MIGRATION.ja.md)を参照。旧sample/testを互換gateへ戻さない。

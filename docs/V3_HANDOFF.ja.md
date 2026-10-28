@@ -1,21 +1,21 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装`929f206`はUSBRST開始でcore世代を無効化し、workerのdriver reset完了まで旧jobとDMA登録を拒否する。
-修正前は実IRQ直後もmounted=1/jobs=1。修正後は深度4/16/31でmounted=0/jobs=0となり、
-native再登録/data DMA/EP0 DMAの拒否、各2旧loanの一度の返却と各2新転送が成功した。
-実装後の標準combo allは**34 passed（2274.81秒）、0 skipped/failed/error/unfinished**。
-68 logs全てSTOPPED、STOP_FAILED/panicなし。774取得点の失敗/回復とheap一致、3構成DHCP/TCPも成功。
-S2/P4はcompile-only。全29 sourceの依存とDWC2/PHY/io-readyのリンク先を確認し、旧vendor/SDK fallbackなし。
-結果は`validation/.pytest-results/reset-start-all*`、`reset-start-audit.txt`と各nm。
-実機はS3–S3のみ。S2/P4 probeはVendor＋CCID、S3最小nmはVendor単独。
+最新実装はv3の開始/worker API整理。metadata/headerを3.0.0へ上げたが、公開release/tagは作っていない。
+startTinyUsbをEspUsbDeviceStartModeへ置換し、started()とready()を区別した。空task()は削除。
+内部Runtime名もUsbRuntimeへ変更。taskStackBytes/taskPriorityを公開し、不正値をPHY取得前に拒否する。
+既定のbegin動作、4096 byte・最高priority・affinityなしは維持する。
+[移行ガイド](V3_MIGRATION.ja.md)を追加し、README/CHANGELOGも開発中であることを明示した。
+旧2.x examples/testsは互換gateにしていない。出荷用の新しいexamplesと既存資産の整理はこれから。
 
-[Core APIと実測](V3_CORE_API.ja.md#reset開始時の世代無効化)を参照。
-reset_startは実IRQを観測し、IRQ中に待機/ログを行わない。Host/Deviceのstart/stopとworker park/releaseは
-本文に明示し、conftest操作はない。coreの早期確認に加えhardware lock内でreadyを再確認する。
-cleanupの全close経路は維持する。任意の旧SET_CONFIGURATION/SETUP/reset/endの全順序を実証したわけではない。
-次は最終API/version/sample整理を進める。startTinyUsb等の旧実装名と空task APIが残る。
-既存の単純なDevice/Function/beginの手順を軸に、不自然な依存名と意味のない互換入口を整理する。
-OS/他SoC/HS実機は未検証。DWC2派生コードの保守方針は[由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
+開始mode変更後にcontrol_core/Vendor 2 passed（432.33秒）。worker/started補強後はcontrol_core
+1 passed（89.59秒）。invalid enum/worker設定、DescriptorsOnlyの無worker、実priority/coreと回収を確認。
+API整理後の全34件とS2/P4 compileは次に実行する。製品/sketchを固定してから行う。
+直前`929f206`後の全34件は2274.81秒で成功し、68 logs STOPPED/panicなし、reset実IRQの3深度も確認済み。
+
+次は全体確認、その後v3用の基本/複合/高度な新examplesとv2資産・CIの整理を進める。
+legacyのsample/testを新APIの合否基準へ戻さない。任意の全競合順序やOS/他SoC/HS実機は未検証。
+S2/P4はVendor＋CCID compile probe、S3最小nmはVendor単独。
+DWC2派生コードの保守方針は[由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や
 旧testへの整合維持を最初の目的にしない。CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/Videoのclassを独自化した。共通EP0/coreも独自化済みで、残るコンパイル依存はDWC2関連2本。

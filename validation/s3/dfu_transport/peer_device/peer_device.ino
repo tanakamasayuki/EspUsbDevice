@@ -22,7 +22,7 @@ bool metadata() {
   ok &= runtime.setBackend(b) == ESP_ERR_INVALID_ARG;
   uint8_t external[131]; c = {}; c.transferBytes = 129; c.transferBuffer = external + 1;
   ok &= f.configure(c) == ESP_OK;
-  EspUsbDeviceConfig identity; identity.startTinyUsb = false;
+  EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   for (unsigned i = 0; i < 3; ++i) {
     ok &= local.begin(identity) && f.transferCapacity() == 129 && !runtime.transferCapacity();
     ok &= local.end() == ESP_OK && !f.transferCapacity();

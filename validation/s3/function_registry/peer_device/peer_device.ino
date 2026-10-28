@@ -34,7 +34,7 @@ bool metadataChecks() {
   EspUsbDevice device;
   NamedControl *items[7];
   for (auto &item : items) item = new NamedControl(device, "function");
-  EspUsbDeviceConfig config; config.startTinyUsb = false;
+  EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   bool ok = device.begin(config);
   const auto *descriptor = device.configurationDescriptor(0);
   ok &= descriptor && descriptor[4] == 7 && (descriptor[2] | unsigned(descriptor[3]) << 8) == 72;

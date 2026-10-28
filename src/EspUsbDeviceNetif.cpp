@@ -1,7 +1,7 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbNetLock.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include "esp_netif.h"
 #include "esp_netif_defaults.h"
 #include "esp_event.h"
@@ -44,7 +44,7 @@ struct EspUsbNetifGlue {
   }
 };
 bool EspUsbDeviceNet::beginNetwork() {
-  if (espusb::internal::tinyUsbRuntimeInTask() || !state_ || !device_.tinyusbStarted_ || netConfig_.maxFrameBytes < 1514 || !netConfig_.txBuffers || !netConfig_.rxBuffers) return false;
+  if (espusb::internal::usbRuntimeInTask() || !state_ || !device_.usbStarted_ || netConfig_.maxFrameBytes < 1514 || !netConfig_.txBuffers || !netConfig_.rxBuffers) return false;
   if (netStarted_) return true;
   if (esp_netif_init() != ESP_OK) return false;
   esp_err_t error = esp_event_loop_create_default();

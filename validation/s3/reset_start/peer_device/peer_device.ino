@@ -5,7 +5,7 @@
 #include "../../../../src/internal/EspUsbDeviceBus.h"
 #include "../../../../src/internal/EspUsbDeviceCore.h"
 #include "../../../../src/internal/EspUsbDwc2Hardware.h"
-#include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
+#include "../../../../src/internal/EspUsbRuntime.h"
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 alignas(64) uint8_t oldTx[129],oldRx[192],newTx[64],newRx[64];
@@ -41,7 +41,7 @@ void park(void *) {
   if(!released.load())++bad;
   parked=false;
 }
-espusb::internal::TinyUsbRuntimeJob parkJob{park,nullptr};
+espusb::internal::UsbRuntimeJob parkJob{park,nullptr};
 void setup() {
   Serial.begin(115200);Serial.setTimeout(100);
   memset(oldTx,0xdd,sizeof(oldTx));memset(oldRx,0xcc,sizeof(oldRx));
@@ -75,7 +75,7 @@ void loop() {
     Serial.printf("PRIMED %u\r\n",unsigned(bool(tx) && bool(rx)));
   } else if(s=="park") {
     released=false;seen=beforeMounted=afterMounted=afterReady=openBlocked=dataBlocked=controlBlocked=0;
-    bool ok=espusb::internal::postTinyUsbRuntimeJob(parkJob);const uint32_t until=millis()+2000;
+    bool ok=espusb::internal::postUsbRuntimeJob(parkJob);const uint32_t until=millis()+2000;
     while(ok && !parked.load() && int32_t(until-millis())>0)delay(1);
     monitor=ok && parked.load();Serial.printf("PARKED %u\r\n",unsigned(monitor.load()));
   } else if(s=="observe") {

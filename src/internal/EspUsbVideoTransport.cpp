@@ -4,7 +4,7 @@
 #include "../EspUsbDevice.h"
 #include "EspUsbDeviceAppDriver.h"
 #include "EspUsbMemory.h"
-#include "EspUsbTinyUsbRuntime.h"
+#include "EspUsbRuntime.h"
 #include "EspUsbDeviceBus.h"
 #include "esp_memory_utils.h"
 #include <algorithm>
@@ -39,10 +39,10 @@ struct EspUsbVideoState {
   const uint8_t *frame = nullptr;
   size_t length = 0, done = 0;
   uint64_t id = 0;
-  espusb::internal::TinyUsbRuntimeJob job{pump,this};
+  espusb::internal::UsbRuntimeJob job{pump,this};
   explicit EspUsbVideoState(EspUsbDeviceVideo &o) : owner(o) { defaults(probe); memcpy(commit,probe,48); }
   ~EspUsbVideoState() {
-    espusb::internal::removeTinyUsbRuntimeJob(job);
+    espusb::internal::removeUsbRuntimeJob(job);
     if (owned) espusb::internal::freeUsbMemory(packet);
   }
   bool canStream() const { return opened && committed && !draining && !owner.stopping_.load() && !espusb_device_edpt_stalled(port,endpoint) && (owner.bulkStreaming() || alternate == 1); }
@@ -91,7 +91,7 @@ struct EspUsbVideoState {
     if(!draining || (retireStatus==EspUsbTransferStatus::Cancelled && status==EspUsbTransferStatus::TransferError))retireStatus=status;
     resetPid|=pid; draining=true; ++epoch;
     if (opened && !espusb_device_edpt_abort(port,endpoint)) return false;
-    return espusb::internal::postTinyUsbRuntimeJob(job);
+    return espusb::internal::postUsbRuntimeJob(job);
   }
   static void fence(void *context) {
     auto *s=static_cast<EspUsbVideoState *>(context);
@@ -99,13 +99,13 @@ struct EspUsbVideoState {
     {
       VideoGuard guard; s->fenceQueued=false;
       if (s->owner.stopping_.load()) return;
-      if (s->fenceEpoch!=s->epoch) { espusb::internal::postTinyUsbRuntimeJob(s->job); return; }
+      if (s->fenceEpoch!=s->epoch) { espusb::internal::postUsbRuntimeJob(s->job); return; }
       if (s->resetPid && s->opened) espusb_device_edpt_clear_stall(s->port,s->endpoint);
       s->resetPid=false; s->busy=s->zlp=false; s->draining=false;
       status=s->retireStatus; known=s->retireKnown;
     }
     s->finish(status,known);
-    espusb::internal::postTinyUsbRuntimeJob(s->job);
+    espusb::internal::postUsbRuntimeJob(s->job);
   }
   void arm() {
     if (!canStream() || !frame || busy) return;
@@ -125,7 +125,7 @@ struct EspUsbVideoState {
     if (s->draining) {
       if (s->fenceQueued) return;
       s->fenceEpoch=s->epoch; s->fenceQueued=espusb_device_try_defer(fence,s);
-      if (!s->fenceQueued) espusb::internal::postTinyUsbRuntimeJob(s->job);
+      if (!s->fenceQueued) espusb::internal::postUsbRuntimeJob(s->job);
       return;
     }
     s->arm();
@@ -141,7 +141,7 @@ struct EspUsbVideoState {
   static uint16_t open(uint8_t port,const EspUsbInterfaceDescriptor *itf,uint16_t available) {
     if (available<9 || itf->bLength!=9 || itf->bInterfaceClass!=14 || itf->bInterfaceSubClass!=1) return 0;
     auto *s=first;
-    while (s && (s->owner.instance_!=itf->bInterfaceNumber || !s->owner.device_.config().startTinyUsb)) s=s->next;
+    while (s && (s->owner.instance_!=itf->bInterfaceNumber || s->owner.device_.config().startMode != EspUsbDeviceStartMode::Usb)) s=s->next;
     if (!s) return 0;
     const auto *data=reinterpret_cast<const uint8_t *>(itf); size_t offset=0; bool endpoint=false;
     while (offset+2<=available) {
@@ -305,13 +305,13 @@ esp_err_t VideoTransport::submit(EspUsbDeviceVideo &o,const void *data,size_t n,
   if (!nextFrameId) return ESP_ERR_INVALID_STATE;
   s->frame=static_cast<const uint8_t *>(data); s->length=n; s->done=0; s->fid^=1; s->id=nextFrameId++;
   o.inFlight_.store(true);
-  if (!postTinyUsbRuntimeJob(s->job)) { s->frame=nullptr; o.inFlight_.store(false); return ESP_ERR_INVALID_STATE; }
+  if (!postUsbRuntimeJob(s->job)) { s->frame=nullptr; o.inFlight_.store(false); return ESP_ERR_INVALID_STATE; }
   id=s->id; return ESP_OK;
 }
 esp_err_t VideoTransport::cancel(EspUsbDeviceVideo &o,uint64_t id) {
   VideoGuard guard; auto *s=o.state_;
   if (!s || !id || s->id!=id || !s->frame) return ESP_ERR_NOT_FOUND;
   if (o.stopping_.load()) return ESP_ERR_INVALID_STATE;
-  s->cancelRequested=true; return postTinyUsbRuntimeJob(s->job) ? ESP_OK : ESP_ERR_INVALID_STATE;
+  s->cancelRequested=true; return postUsbRuntimeJob(s->job) ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 } }

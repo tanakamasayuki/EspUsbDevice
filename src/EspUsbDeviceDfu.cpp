@@ -3,7 +3,7 @@
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbDeviceRestart.h"
 #include "internal/EspUsbMemory.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include "internal/EspUsbDeviceBus.h"
 #include <string.h>
 #include <utility>
@@ -58,7 +58,7 @@ struct EspUsbDfuState {
     if (size < 18 || itf->bLength != 9 || itf->bInterfaceClass != 0xfe ||
         itf->bInterfaceSubClass != 1 || itf->bNumEndpoints || itf->bAlternateSetting) return 0;
     auto *s = first;
-    while (s && (s->owner.interface_ != itf->bInterfaceNumber || !s->owner.device_.config().startTinyUsb)) s = s->next;
+    while (s && (s->owner.interface_ != itf->bInterfaceNumber || s->owner.device_.config().startMode != EspUsbDeviceStartMode::Usb)) s = s->next;
     if (!s || itf->bInterfaceProtocol != (s->owner.mode_ == EspUsbDeviceDfuMode::Runtime ? 1 : 2)) return 0;
     const auto *f = reinterpret_cast<const uint8_t *>(itf) + 9;
     if (f[0] != 9 || f[1] != 0x21 || (f[5] | uint16_t(f[6]) << 8) != s->owner.transferSize()) return 0;
@@ -182,7 +182,7 @@ esp_err_t EspUsbDeviceDfu::setBackend(const EspUsbDfuBackend &b) {
   backend_ = b; return ESP_OK;
 }
 bool EspUsbDeviceDfu::begin() {
-  if (state_ || !registered_ || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  if (state_ || !registered_ || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   startError_ = configure(config_); if (startError_ != ESP_OK) return false;
   auto *s = espusb::internal::newUsbObject<EspUsbDfuState>(*this);
   if (s && mode_ == EspUsbDeviceDfuMode::Download) {
@@ -198,7 +198,7 @@ bool EspUsbDeviceDfu::begin() {
 }
 void EspUsbDeviceDfu::prepareToStop() { if (state_) state_->stopping.store(true); }
 void EspUsbDeviceDfu::end() {
-  if (state_ && device_.tinyusbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.end(); return; }
   if (!state_) return;
   handleAbort();
   auto **link = &EspUsbDfuState::first;

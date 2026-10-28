@@ -3,7 +3,7 @@
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbMemory.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include "internal/EspUsbDeviceEndpoint.h"
 #include "internal/EspUsbDeviceBus.h"
 #include <algorithm>
@@ -108,10 +108,10 @@ struct EspUsbCcidState {
   uint8_t draining=0,resetPid=0; // bulk exchange = bits 0/1, slot notification = bit 2
   std::atomic<bool> stopping{false};
   uint32_t epoch=0,fenceEpoch=0;
-  espusb::internal::TinyUsbRuntimeJob job{pump,this};
+  espusb::internal::UsbRuntimeJob job{pump,this};
   explicit EspUsbCcidState(EspUsbDeviceCcid &o):owner(o) {}
   ~EspUsbCcidState() {
-    espusb::internal::removeTinyUsbRuntimeJob(job);
+    espusb::internal::removeUsbRuntimeJob(job);
     for(auto *p:{packet,message,notify,owner.response_})espusb::internal::freeUsbMemory(p);
     owner.response_=nullptr;
   }
@@ -127,7 +127,7 @@ struct EspUsbCcidState {
   static void finishDrain(void *context) {
     auto *s=static_cast<EspUsbCcidState *>(context);s->fenceQueued=false;
     if(s->stopping || !s->draining)return;
-    if(s->epoch!=s->fenceEpoch){espusb::internal::postTinyUsbRuntimeJob(s->job);return;}
+    if(s->epoch!=s->fenceEpoch){espusb::internal::postUsbRuntimeJob(s->job);return;}
     const uint8_t retired=s->draining;
     const uint8_t endpoints[]={s->in,s->out,s->interrupt};
     for(unsigned i=0;i<3;++i)if((s->resetPid&(1u<<i)) && endpoints[i])
@@ -136,7 +136,7 @@ struct EspUsbCcidState {
     if(retired&3){s->received=s->stored=0;s->txBusy=s->zlp=false;}
     s->receive();
     if(retired&4)s->owner.notifySlotState();
-    else if(s->owner.notifyPending_.load())espusb::internal::postTinyUsbRuntimeJob(s->job);
+    else if(s->owner.notifyPending_.load())espusb::internal::postUsbRuntimeJob(s->job);
   }
   bool retire(uint8_t mask,uint8_t resetDataPid) {
     // A CCID command/response spans both bulk directions. Discard the whole
@@ -146,14 +146,14 @@ struct EspUsbCcidState {
     for(unsigned i=0;i<3;++i)if((mask&(1u<<i)) && endpoints[i] &&
         !espusb_device_edpt_abort(port,endpoints[i]))return false;
     if(mask&3)owner.aborted_=false;
-    return espusb::internal::postTinyUsbRuntimeJob(job);
+    return espusb::internal::postUsbRuntimeJob(job);
   }
 
   static void pump(void *context) {
     auto *s=static_cast<EspUsbCcidState *>(context);
     if(s->stopping)return;
     if(s->draining) {
-      if(!s->fenceQueued){s->fenceEpoch=s->epoch;s->fenceQueued=espusb_device_try_defer(finishDrain,s);if(!s->fenceQueued)espusb::internal::postTinyUsbRuntimeJob(s->job);}
+      if(!s->fenceQueued){s->fenceEpoch=s->epoch;s->fenceQueued=espusb_device_try_defer(finishDrain,s);if(!s->fenceQueued)espusb::internal::postUsbRuntimeJob(s->job);}
       return;
     }
     if(s->interrupt && s->owner.notifyPending_.load() && espusb_device_edpt_claim(s->port,s->interrupt)) {
@@ -279,7 +279,7 @@ bool EspUsbDeviceCcid::begin() {
 }
 void EspUsbDeviceCcid::prepareToStop(){portENTER_CRITICAL(&ccidLock);if(state_)state_->stopping=true;portEXIT_CRITICAL(&ccidLock);}
 void EspUsbDeviceCcid::end() {
-  if(state_ && device_.tinyusbStarted_){device_.end();return;}
+  if(state_ && device_.usbStarted_){device_.end();return;}
   portENTER_CRITICAL(&ccidLock);
   auto *s=state_;state_=nullptr;auto **link=&EspUsbCcidState::first;while(*link && *link!=s)link=&(*link)->next;if(*link)*link=s->next;
   bool empty=!EspUsbCcidState::first;portEXIT_CRITICAL(&ccidLock);
@@ -449,7 +449,7 @@ uint8_t EspUsbDeviceCcid::iccStatus() const
 void EspUsbDeviceCcid::notifySlotState() {
   portENTER_CRITICAL(&ccidLock);
   notifyPending_=true;
-  if(state_ && !state_->stopping && config_.removable)espusb::internal::postTinyUsbRuntimeJob(state_->job);
+  if(state_ && !state_->stopping && config_.removable)espusb::internal::postUsbRuntimeJob(state_->job);
   portEXIT_CRITICAL(&ccidLock);
 }
 void EspUsbDeviceCcid::handleNotifyComplete(){if(notifyPending_)notifySlotState();}

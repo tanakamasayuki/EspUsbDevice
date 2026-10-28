@@ -28,7 +28,7 @@ FS専用機種でHSを検討する場合は、PHYを開始しない構成で明�
 
 ```cpp
 EspUsbDeviceConfig config;
-config.startTinyUsb = false;
+config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
 if (!device.begin(config)) return;
 const uint8_t *fs = device.configurationDescriptor(0);
 const uint8_t *hs = device.configurationDescriptorForSpeed(0, true);

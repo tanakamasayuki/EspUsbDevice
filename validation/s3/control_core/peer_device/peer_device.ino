@@ -4,7 +4,7 @@
 #include "../../../../src/internal/EspUsbDeviceEndpoint.h"
 #include "../../../../src/internal/EspUsbController.h"
 #include "../../../../src/internal/EspUsbDwc2Runtime.h"
-#include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
+#include "../../../../src/internal/EspUsbRuntime.h"
 #include <atomic>
 #include "../../../../src/internal/EspUsbDwc2Timing.h"
 #include "../../../../src/internal/EspUsbDwc2Platform.h"
@@ -43,9 +43,9 @@ void noop(void *) {}
 void overflow(void *) {
   while(espusb_device_try_defer(noop,nullptr)) {}
   // Fill the hardware reserve, then exceed physical queue capacity.
-  for(unsigned i=0;i<2;++i)espusb_controller_event_bus_signal(espusb::internal::tinyUsbRuntimeRhport(),ESPUSB_CONTROLLER_EVENT_RESUME,false);
+  for(unsigned i=0;i<2;++i)espusb_controller_event_bus_signal(espusb::internal::usbRuntimeRhport(),ESPUSB_CONTROLLER_EVENT_RESUME,false);
 }
-espusb::internal::TinyUsbRuntimeJob overflowJob{overflow,nullptr};
+espusb::internal::UsbRuntimeJob overflowJob{overflow,nullptr};
 bool selectedStorage() {
   bool ok=true;size_t minimal=0,paired=0,sparse=0;
   {
@@ -112,12 +112,12 @@ bool irqFailures() {
   for(unsigned attempt=0;attempt<2;++attempt) {
     failIrq=true;const unsigned before=irqAttempts;
     ok &= !device.begin() && device.lastError()==ESP_FAIL && irqAttempts==before+1;
-    ok &= !espusb_dwc2_runtime_bytes() && !espusb::internal::tinyUsbRuntimeStarted() && device.end()==ESP_OK;
+    ok &= !espusb_dwc2_runtime_bytes() && !espusb::internal::usbRuntimeStarted() && device.end()==ESP_OK;
     failIrq=false;ok &= device.begin();
     const unsigned installed=irqAttempts;
     failIrq=true;
     for(unsigned mask=0;mask<3;++mask) {
-      const auto port=espusb::internal::tinyUsbRuntimeRhport();
+      const auto port=espusb::internal::usbRuntimeRhport();
       espusb_controller_int_disable(port);ok &= espusb_controller_int_enable(port);
     }
     ok &= irqAttempts==installed;
@@ -151,7 +151,7 @@ bool intervals() {
     if(descriptor[offset+1]==5 && (descriptor[offset+2]&128))address=descriptor[offset+2];
   ok &= address!=0;
   EspUsbEndpointDescriptor endpoint={7,5,address,1,64,0};
-  const auto port=espusb::internal::tinyUsbRuntimeRhport();
+  const auto port=espusb::internal::usbRuntimeRhport();
   // Host has not reset/enumerated this metadata-only start. Initialize the
   // FIFO accounting explicitly before testing the low-level open operation.
   espusb_controller_edpt_close_all(port);
@@ -164,9 +164,49 @@ bool intervals() {
   ok &= device.end()==ESP_OK;delay(10);
   Serial.printf("INTERVALS %u\r\n",unsigned(ok));return ok;
 }
+std::atomic<int> inspectedPriority{-1},inspectedCore{-1};
+void inspectWorker(void *) {
+  inspectedPriority=int(uxTaskPriorityGet(nullptr));inspectedCore=int(xPortGetCoreID());
+}
+espusb::internal::UsbRuntimeJob inspectJob{inspectWorker,nullptr};
+bool workerSettings() {
+  EspUsbDeviceConfig cfg;bool ok=true;
+  const uint32_t invalidSizes[]={0,1,UINT32_MAX};
+  for(uint32_t bytes:invalidSizes) {
+    cfg.taskStackBytes=bytes;
+    ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_SIZE && !device.started() && device.end()==ESP_OK && !espusb_dwc2_runtime_bytes();
+  }
+  cfg=EspUsbDeviceConfig();
+  for(int value:{-2,127}) {
+    cfg.taskPriority=int8_t(value);
+    ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_ARG && !device.started() && device.end()==ESP_OK && !espusb_dwc2_runtime_bytes();
+  }
+  cfg=EspUsbDeviceConfig();
+  for(int value:{-2,127}) {
+    cfg.taskCoreId=int8_t(value);
+    ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_ARG && !device.started() && device.end()==ESP_OK && !espusb_dwc2_runtime_bytes();
+  }
+  for(unsigned bytes:{4096u,8192u}) {
+    cfg=EspUsbDeviceConfig();cfg.taskStackBytes=bytes;cfg.taskPriority=bytes==4096 ? 3:-1;cfg.taskCoreId=bytes==4096 ? 0:-1;
+    inspectedPriority=inspectedCore=-1;
+    ok &= device.begin(cfg) && device.started() && espusb::internal::postUsbRuntimeJob(inspectJob);
+    const uint32_t until=millis()+2000;while(inspectedCore.load()<0 && int32_t(until-millis())>0)delay(1);
+    ok &= inspectedPriority.load()==(cfg.taskPriority<0 ? configMAX_PRIORITIES-1:cfg.taskPriority) &&
+        inspectedCore.load()>=0 && inspectedCore.load()<configNUMBER_OF_CORES && (cfg.taskCoreId<0 || inspectedCore.load()==cfg.taskCoreId);
+    ok &= device.end()==ESP_OK && !device.started();delay(10);
+  }
+  Serial.printf("WORKER_SETTINGS %u\r\n",unsigned(ok));return ok;
+}
 bool metadata() {
   EspUsbDeviceConfig cfg;
-  bool ok=selectedStorage() && cacheFailures() && vbusPolicy() && irqFailures() && intervals();
+  bool ok=selectedStorage() && cacheFailures() && vbusPolicy() && irqFailures() && intervals() && workerSettings();
+  cfg.startMode=static_cast<EspUsbDeviceStartMode>(255);
+  ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_ARG && !device.started() && !device.ready() && !espusb_dwc2_runtime_bytes() && device.end()==ESP_OK;
+  cfg.startMode=EspUsbDeviceStartMode::DescriptorsOnly;cfg.eventQueueDepth=0;cfg.taskStackBytes=0;cfg.taskPriority=127;cfg.taskCoreId=127;
+  ok &= device.begin(cfg) && device.configurationDescriptor(0) && device.started() && !device.ready() && !espusb_device_queue_capacity() && !espusb_dwc2_runtime_bytes();
+  ok &= device.end()==ESP_OK;
+  cfg=EspUsbDeviceConfig();
+  Serial.printf("START_MODES %u\r\n",unsigned(ok));
   for (unsigned n:{0u}) {
     cfg.eventQueueDepth=n;
     ok &= !device.begin(cfg) && device.lastError()==ESP_ERR_INVALID_SIZE && device.end()==ESP_OK;
@@ -232,7 +272,7 @@ void loop() {
     Serial.printf("QUEUED %u\r\n",unsigned(bool(r)));
   } else if(c=="overflow") {
     const unsigned before=resets.load();
-    bool ok=espusb::internal::postTinyUsbRuntimeJob(overflowJob);
+    bool ok=espusb::internal::postUsbRuntimeJob(overflowJob);
     uint32_t until=millis()+3000;
     while(resets.load()==before && int32_t(until-millis())>0)delay(1);
     ok &= resets.load()==before+1 && !device.ready() && !bad.load();

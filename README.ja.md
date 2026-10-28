@@ -1,5 +1,7 @@
 # EspUsbDevice
 
+> v3開発branchです。version metadataは3.0.0ですが未公開です。現行APIは[v3移行ガイド](docs/V3_MIGRATION.ja.md)、実機試験は[validation](validation/README.ja.md)を参照してください。旧2.xのexample/guideは移行中の参照資産です。
+
 > English: [README.md](README.md)
 
 EspUsbDevice は、新しい ESP32 Arduino USB Device ライブラリです。

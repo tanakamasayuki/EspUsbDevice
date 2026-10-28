@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- v3 development: native core/classes and maintained DWC2 backend; runtime Function resources replace TinyUSB build settings. This branch is not a published release.
+- Replace startTinyUsb with typed startMode, remove the empty task() call, expose started() and worker stack/priority settings. Defaults retain ordinary begin()/Stream/HID usage.
+- 開始mode・worker設定と移行は docs/V3_MIGRATION.ja.md を参照。古いfield/空の互換関数は残さず、version metadataを3.0.0へ変更。
+
 ## 2.6.1
 - (EN) Honor HID `timeoutMs`: wait for a busy IN endpoint, with zero retaining
   polling behavior and a busy timeout reporting `ESP_ERR_TIMEOUT`. Consecutive

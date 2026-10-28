@@ -17,7 +17,7 @@ bool metadata() {
   ok &= !v.setMaxFrameSize(543) && v.maxFrameSize()==544;
   ok &= v.setFrameRate(255) && !v.setFrameSize(4096,4096) && v.width()==16;
   ok &= v.setFrameRate(1) && v.setFrameSize(4096,4096) && !v.setFrameRate(255) && v.frameRate()==1;
-  EspUsbDeviceConfig identity; identity.startTinyUsb=false;
+  EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   ok &= d.begin(identity) && !v.setFrameSize(16,16) && !v.setFrameRate(15) && !v.setMaxFrameSize(65536);
   ok &= !v.begin() && v.startError()==ESP_ERR_INVALID_STATE;
   ok &= !v.configurationDescriptorForSpeed(nullptr,0,0,1,false);

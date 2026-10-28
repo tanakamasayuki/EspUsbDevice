@@ -3,7 +3,7 @@
 #include "internal/EspUsbAudioTransport.h"
 #include <limits.h>
 #include <algorithm>
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 
 #include <string.h>
 
@@ -147,7 +147,7 @@ size_t EspUsbAudioFunction::eventCapacity() const { return events_.capacity(); }
 
 bool EspUsbAudioFunction::begin()
 {
-  if (!registered_ || started_.load() || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  if (!registered_ || started_.load() || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   startError_ = ESP_ERR_INVALID_ARG;
   if ((!playbackEnabled_ && !captureEnabled_) ||
       (playbackEnabled_ && model_.playback().formatCount() != 1) ||
@@ -177,7 +177,7 @@ bool EspUsbAudioFunction::begin()
 void EspUsbAudioFunction::prepareToStop() { espusb::internal::AudioTransport::prepareToStop(*this); }
 void EspUsbAudioFunction::end()
 {
-  if (state_ && device_.tinyusbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.end(); return; }
   espusb::internal::AudioTransport::end(*this);
   started_.store(false);
   playbackAlternate_ = captureAlternate_ = 0;

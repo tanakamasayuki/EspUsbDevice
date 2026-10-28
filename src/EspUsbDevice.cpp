@@ -1,6 +1,6 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbHidDescriptor.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbDeviceRestart.h"
 #include <memory>
@@ -43,7 +43,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#define ESP_USB_DEVICE_HAS_TINYUSB 1
+#define ESP_USB_DEVICE_HAS_OTG 1
 #if __has_include("esp_mac.h")
 #include "esp_mac.h"
 #define ESP_USB_DEVICE_HAS_ESP_MAC 1
@@ -51,7 +51,7 @@
 #define ESP_USB_DEVICE_HAS_ESP_MAC 0
 #endif
 #else
-#define ESP_USB_DEVICE_HAS_TINYUSB 0
+#define ESP_USB_DEVICE_HAS_OTG 0
 #define ESP_USB_DEVICE_HAS_ESP_MAC 0
 #endif
 
@@ -443,7 +443,7 @@ static constexpr uint8_t WEBUSB_VENDOR_CODE = 0x01;
 static constexpr uint8_t MICROSOFT_OS_20_VENDOR_CODE = 0x02;
 static constexpr uint16_t MICROSOFT_OS_20_DESCRIPTOR_INDEX = 0x0007;
 
-#if ESP_USB_DEVICE_HAS_TINYUSB
+#if ESP_USB_DEVICE_HAS_OTG
 static constexpr uint8_t USB_REQ_GET_DESCRIPTOR = 0x06;
 
 // Note for the descriptor callbacks below: each one records the length it just
@@ -709,6 +709,9 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
   if (classCount_ > size_t(UINT8_MAX) - FIRST_FUNCTION_STRING_INDEX + 1) {
     setLastError(ESP_ERR_INVALID_SIZE); return false;
   }
+  if (config.startMode != EspUsbDeviceStartMode::Usb && config.startMode != EspUsbDeviceStartMode::DescriptorsOnly) {
+    setLastError(ESP_ERR_INVALID_ARG); return false;
+  }
   config_ = config;
   // Checked before the descriptors are built: the registry property writes a
   // constant length, so a GUID of the wrong shape would produce a set Windows
@@ -726,7 +729,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
   }
 
   // Decided here rather than beside the runtime start so a sketch that only
-  // builds descriptors (config.startTinyUsb = false) can still read it back,
+  // builds descriptors (config.startMode = EspUsbDeviceStartMode::DescriptorsOnly) can still read it back,
   // which is how the arithmetic is checked without a host.
   const bool highSpeedBudget =
       config_.controller == EspUsbController::HighSpeed ||
@@ -770,9 +773,9 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     }
     ++begunClassCount;
   }
-  if (config_.startTinyUsb && classCount_ > 0)
+  if (config_.startMode == EspUsbDeviceStartMode::Usb && classCount_ > 0)
   {
-#if ESP_USB_DEVICE_HAS_TINYUSB
+#if ESP_USB_DEVICE_HAS_OTG
     if (g_activeDevice && g_activeDevice != this)
     {
       while (begunClassCount > 0)
@@ -785,7 +788,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
     }
     g_activeDevice = this;
 
-    espusb::internal::TinyUsbRuntimeOptions runtimeOptions;
+    espusb::internal::UsbRuntimeOptions runtimeOptions;
     switch (config_.controller)
     {
     case EspUsbController::FullSpeed:
@@ -802,10 +805,12 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
 
     runtimeOptions.bulkInDoubleBuffered = bulkInDoubleBuffered_;
     runtimeOptions.vbusSensing = config_.vbusSensing;
+    runtimeOptions.taskStackBytes = config_.taskStackBytes;
+    runtimeOptions.taskPriority = config_.taskPriority;
     runtimeOptions.taskCoreId = config_.taskCoreId;
     runtimeOptions.eventQueueDepth = config_.eventQueueDepth;
 
-    const esp_err_t err = espusb::internal::startTinyUsbRuntime(runtimeOptions);
+    const esp_err_t err = espusb::internal::startUsbRuntime(runtimeOptions);
     if (err != ESP_OK)
     {
       g_activeDevice = nullptr;
@@ -817,13 +822,13 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
       setLastError(err);
       return false;
     }
-    tinyusbStarted_ = true;
+    usbStarted_ = true;
     for (size_t i = 0; i < classCount_; i++)
     {
       if (classAt(i) && !classAt(i)->afterDeviceStarted())
       {
-        espusb::internal::stopTinyUsbRuntime();
-        tinyusbStarted_ = false;
+        espusb::internal::stopUsbRuntime();
+        usbStarted_ = false;
         g_activeDevice = nullptr;
         while (begunClassCount > 0)
         {
@@ -847,15 +852,15 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
 
   registryGuard.keep = true;
   running_ = true;
-  ready_ = tinyusbStarted_;
+  ready_ = usbStarted_;
   setLastError(ESP_OK);
   return true;
 }
 
 esp_err_t EspUsbDevice::end()
 {
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (espusb::internal::tinyUsbRuntimeInTask())
+#if ESP_USB_DEVICE_HAS_OTG
+  if (espusb::internal::usbRuntimeInTask())
   {
     setLastError(ESP_ERR_INVALID_STATE);
     return ESP_ERR_INVALID_STATE;
@@ -865,15 +870,15 @@ esp_err_t EspUsbDevice::end()
   {
     if (classAt(i)) classAt(i)->prepareToStop();
   }
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (tinyusbStarted_)
+#if ESP_USB_DEVICE_HAS_OTG
+  if (usbStarted_)
   {
-    if (!espusb::internal::stopTinyUsbRuntime())
+    if (!espusb::internal::stopUsbRuntime())
     {
       setLastError(ESP_FAIL);
       return ESP_FAIL;
     }
-    tinyusbStarted_ = false;
+    usbStarted_ = false;
   }
 #endif
   if (running_)
@@ -907,14 +912,12 @@ bool EspUsbDevice::handleVendorControlRequest(uint8_t rhport, uint8_t stage, con
   return false;
 }
 
-void EspUsbDevice::task()
-{
-}
+bool EspUsbDevice::started() const { return running_.load(); }
 
 bool EspUsbDevice::ready() const
 {
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (tinyusbStarted_)
+#if ESP_USB_DEVICE_HAS_OTG
+  if (usbStarted_)
   {
     return espusb_device_mounted();
   }
@@ -1036,7 +1039,7 @@ void EspUsbDevice::removeClass(EspUsbDeviceClass *function)
 
 bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs)
 {
-  if (!tinyusbStarted_) { setLastError(ESP_ERR_INVALID_STATE); return false; }
+  if (!usbStarted_) { setLastError(ESP_ERR_INVALID_STATE); return false; }
   if (instance != 0 || !data || !length) { setLastError(ESP_ERR_INVALID_ARG); return false; }
   for (size_t i = 0; i < classCount_; ++i) {
     if (classAt(i)->isHid()) return classAt(i)->sendHidInput(reportId, data, length, timeoutMs);
@@ -1067,7 +1070,7 @@ const uint8_t *EspUsbDevice::configurationDescriptorForSpeed(uint8_t index, bool
   if (highSpeed && !configDescriptorHighSpeed_) {
     // On FS-only hardware this is an explicit detached inspection, never a
     // USB worker allocation. Dual-speed controllers prepare both at begin.
-    if (tinyusbStarted_) { setLastError(ESP_ERR_NOT_SUPPORTED); return nullptr; }
+    if (usbStarted_) { setLastError(ESP_ERR_NOT_SUPPORTED); return nullptr; }
     if (!buildConfigurationDescriptor(true)) return nullptr;
   }
   return highSpeed ? configDescriptorHighSpeed_ : configDescriptor_;
@@ -3441,7 +3444,7 @@ bool EspUsbDeviceFirmwareUpdate::cancelPendingBoot()
 
 // --- Restarting into the ROM ----------------------------------------------
 
-#if ESP_USB_DEVICE_HAS_TINYUSB
+#if ESP_USB_DEVICE_HAS_OTG
 // A restart cannot be issued from the callback that decided to restart.
 //
 // Every class callback runs on the usbd task, and the host is mid-transfer when
@@ -3502,11 +3505,11 @@ bool espusb::internal::scheduleDeviceRestart(EspUsbDevice *device, uint32_t dela
 bool EspUsbDevice::rebootToBootloader()
 {
 #if ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT
-#if ESP_USB_DEVICE_HAS_TINYUSB
+#if ESP_USB_DEVICE_HAS_OTG
   // Remove the pull-up so the host records a disconnect rather than a device
   // that stopped answering. Safe from any task, unlike end(), which deletes the
   // usbd task and would therefore never return when called from it.
-  if (tinyusbStarted_)
+  if (usbStarted_)
   {
     espusb_device_disconnect();
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -3575,8 +3578,8 @@ bool EspUsbDevice::rebootToRomDfu()
     return false;
   }
 #endif
-#if ESP_USB_DEVICE_HAS_TINYUSB
-  if (tinyusbStarted_)
+#if ESP_USB_DEVICE_HAS_OTG
+  if (usbStarted_)
   {
     espusb_device_disconnect();
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -4390,7 +4393,7 @@ bool EspUsbDeviceMscFirmwareDisk::commit()
     EspUsbDeviceFirmwareUpdate::cancelPendingBoot();
     return false;
   }
-#if ESP_USB_DEVICE_HAS_TINYUSB
+#if ESP_USB_DEVICE_HAS_OTG
   if (restartWhenComplete_)
   {
     // Long enough for the host to finish the command that carried the last

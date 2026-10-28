@@ -6,7 +6,7 @@
 #include "../../../../src/internal/EspUsbDeviceBus.h"
 #include "../../../../src/internal/EspUsbDeviceEndpoint.h"
 #include "../../../../src/internal/EspUsbController.h"
-#include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
+#include "../../../../src/internal/EspUsbRuntime.h"
 #endif
 
 EspUsbDevice device;
@@ -50,7 +50,7 @@ void fillFenceQueue(void *) {
   while (espusb_device_try_defer(faultNoop, nullptr)) {}
   faultSaturated.store(true);
 }
-espusb::internal::TinyUsbRuntimeJob faultFillJob{fillFenceQueue, nullptr};
+espusb::internal::UsbRuntimeJob faultFillJob{fillFenceQueue, nullptr};
 void injectCancelFence(void *) {
   // Queue old completions on the worker before it can execute the abort job.
   if (espusb_device_events_pending() || espusb_device_queue_capacity() < 4) { faultDone.store(true); return; }
@@ -65,12 +65,12 @@ void injectCancelFence(void *) {
     }
   }
   if (!in || !out) { faultDone.store(true); return; }
-  espusb::internal::postTinyUsbRuntimeJob(faultFillJob);
+  espusb::internal::postUsbRuntimeJob(faultFillJob);
   faultTx.store(vendor.cancelDirectTx()); faultRx.store(vendor.cancelDirectRx());
   if (faultTx.load() == ESP_OK && faultRx.load() == ESP_OK) {
     // This callback consumes one event of the per-run budget, leaving at
     // least one old completion queued when the worker first services abort.
-    const auto port = espusb::internal::tinyUsbRuntimeRhport();
+    const auto port = espusb::internal::usbRuntimeRhport();
     for (unsigned i = 0; i < espusb_device_queue_capacity(); ++i)
       espusb_controller_event_xfer_complete(port, i & 1 ? out : in, 0, ESPUSB_TRANSFER_SUCCESS, false);
     faultEvents.store(espusb_device_queue_capacity());
@@ -97,13 +97,13 @@ void parkLifecycle(void *) {
   lifecycleTimedOut.store(!lifecycleRelease.load());
   lifecycleParked.store(false);
 }
-espusb::internal::TinyUsbRuntimeJob lifecycleParkJob{parkLifecycle, nullptr};
+espusb::internal::UsbRuntimeJob lifecycleParkJob{parkLifecycle, nullptr};
 void cancelThenPark(void *) {
   lifecycleTx.store(vendor.cancelDirectTx(lastTxId));
   lifecycleRx.store(vendor.cancelDirectRx(lastRxId));
   // FIFO jobs: abort runs first and queues its fences, then this job parks the
   // worker before it can process those fences. end must safely discard them.
-  espusb::internal::postTinyUsbRuntimeJob(lifecycleParkJob);
+  espusb::internal::postUsbRuntimeJob(lifecycleParkJob);
 }
 void endLifecycle(void *) {
   lifecycleEndResult.store(device.end());
@@ -449,10 +449,10 @@ void loop() {
 #endif
       if (device.end() != ESP_OK) { Serial.println("STOP_FAILED"); return; }
 #ifdef ESPUSB_CANCEL_FENCE_FAULT
-      espusb::internal::removeTinyUsbRuntimeJob(faultFillJob);
+      espusb::internal::removeUsbRuntimeJob(faultFillJob);
 #endif
 #ifdef ESPUSB_CANCEL_LIFECYCLE_FAULT
-      espusb::internal::removeTinyUsbRuntimeJob(lifecycleParkJob);
+      espusb::internal::removeUsbRuntimeJob(lifecycleParkJob);
 #endif
       started = false;
       expected = received = 0;

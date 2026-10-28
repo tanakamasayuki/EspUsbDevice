@@ -21,7 +21,7 @@ bool metadata() {
   c={}; c.txBuffers=SIZE_MAX; ok &= f.configure(c)==ESP_ERR_INVALID_SIZE;
   const uint8_t bad[]={1,2,3,4,5,6}, zero[]={0,0,0,0,0,0};
   ok &= f.macAddress(bad)==ESP_ERR_INVALID_ARG && f.macAddress(zero)==ESP_ERR_INVALID_ARG;
-  EspUsbDeviceConfig identity; identity.startTinyUsb=false;
+  EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   c={}; c.ntbInBytes=c.ntbOutBytes=2048; c.txBuffers=c.rxBuffers=2;
   c.txBuffer=externalTx+1; c.rxBuffer=externalRx; c.txBufferBytes=sizeof(externalTx)-1; c.rxBufferBytes=sizeof(externalRx);
   ok &= f.configure(c)==ESP_OK && !d.begin(identity) && d.lastError()==ESP_ERR_INVALID_ARG;

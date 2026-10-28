@@ -3,7 +3,7 @@
 #include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbMemory.h"
-#include "internal/EspUsbTinyUsbRuntime.h"
+#include "internal/EspUsbRuntime.h"
 #include "internal/EspUsbDeviceBus.h"
 #include "esp_memory_utils.h"
 #include <algorithm>
@@ -33,10 +33,10 @@ struct EspUsbMscState {
   uint32_t tag = 0, hostBytes = 0, deviceBytes = 0, done = 0, limit = 0, lba = 0, armed = 0;
   bool hostIn = false, deviceIn = false, blockIo = false;
   uint32_t resetEpoch = 0, fenceEpoch = 0;
-  espusb::internal::TinyUsbRuntimeJob recoveryJob{recover, this};
+  espusb::internal::UsbRuntimeJob recoveryJob{recover, this};
   explicit EspUsbMscState(EspUsbDeviceMsc &o) : owner(o) {}
   ~EspUsbMscState() {
-    espusb::internal::removeTinyUsbRuntimeJob(recoveryJob);
+    espusb::internal::removeUsbRuntimeJob(recoveryJob);
     if (owned) espusb::internal::freeUsbMemory(buffer);
   }
   void sense(uint8_t k, uint8_t a, uint8_t q = 0) { key = k; asc = a; ascq = q; status = 1; }
@@ -150,7 +150,7 @@ struct EspUsbMscState {
     auto *s = static_cast<EspUsbMscState *>(context);
     s->resetFence = false;
     if (s->fenceEpoch != s->resetEpoch) {
-      espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob); return;
+      espusb::internal::postUsbRuntimeJob(s->recoveryJob); return;
     }
     if (s->stopping.load() || s->stage != Stage::Recovery) return;
     if (s->interfaceReset) {
@@ -170,7 +170,7 @@ struct EspUsbMscState {
     if (!s->stopping.load() && s->stage == Stage::Recovery && !s->resetFence) {
       s->fenceEpoch = s->resetEpoch;
       s->resetFence = espusb_device_try_defer(finishRecovery, s);
-      if (!s->resetFence) espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob);
+      if (!s->resetFence) espusb::internal::postUsbRuntimeJob(s->recoveryJob);
     }
   }
   static void init() {}
@@ -226,7 +226,7 @@ struct EspUsbMscState {
       s->needsBotReset |= s->stage == Stage::NeedReset;
       if (s->stage != Stage::Recovery) s->clearIn = s->clearOut = true;
       ++s->resetEpoch; s->interfaceReset = true; s->stage = Stage::Recovery;
-      if (!espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob)) return espusb::internal::rejectUsbControl();
+      if (!espusb::internal::postUsbRuntimeJob(s->recoveryJob)) return espusb::internal::rejectUsbControl();
       return espusb_device_control_status(port, r);
     }
     if (r->bmRequestType == 0xa1 && r->bRequest == 254 && r->wLength == 1)
@@ -237,7 +237,7 @@ struct EspUsbMscState {
       ++s->resetEpoch;
       s->stage = Stage::Recovery; s->clearIn = s->clearOut = s->needsBotReset = false;
       s->key = s->asc = s->ascq = 0;
-      espusb::internal::postTinyUsbRuntimeJob(s->recoveryJob);
+      espusb::internal::postUsbRuntimeJob(s->recoveryJob);
       return espusb_device_control_status(port, r);
     }
     return false;
@@ -298,7 +298,7 @@ bool EspUsbDeviceMsc::begin(uint32_t count, uint16_t size) {
   return startError_ == ESP_OK;
 }
 bool EspUsbDeviceMsc::begin() {
-  if (state_ || !registered_ || espusb::internal::tinyUsbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  if (state_ || !registered_ || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   if (!blockCount_ || !blockSize_ || !readCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
   startError_ = configure(config_); if (startError_ != ESP_OK) return false;
   size_t mps = 64;
@@ -322,7 +322,7 @@ bool EspUsbDeviceMsc::begin() {
 void EspUsbDeviceMsc::prepareToStop() { if (state_) state_->stopping.store(true); }
 void EspUsbDeviceMsc::end() {
   // Device also calls end after its worker and DMA have stopped.
-  if (state_ && device_.tinyusbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.end(); return; }
   portENTER_CRITICAL(&mscLock);
   auto *s = state_; state_ = nullptr;
   auto **link = &EspUsbMscState::first;

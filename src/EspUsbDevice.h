@@ -32,6 +32,14 @@ typedef int esp_err_t;
 #define ESP_ERR_NOT_SUPPORTED 0x106
 #endif
 
+// begin() always validates descriptors and reserves selected Function resources.
+// DescriptorsOnly omits the PHY, interrupt and USB worker; ready() remains false.
+enum class EspUsbDeviceStartMode : uint8_t
+{
+  Usb,
+  DescriptorsOnly,
+};
+
 enum class EspUsbController : uint8_t
 {
   Auto,
@@ -183,24 +191,23 @@ struct EspUsbDeviceConfig
   // bump. Set it yourself only if you need the number to follow your own
   // release scheme; microsoftOs20VendorRevision() reports whichever applied.
   uint16_t msOs20VendorRevision = 0;
-  bool startTinyUsb = true;
+  EspUsbDeviceStartMode startMode = EspUsbDeviceStartMode::Usb;
   // Event slots owned by the selected USB configuration; must be nonzero.
   // One additional slot is reserved for hardware events, excluded from fences.
   uint16_t eventQueueDepth = 16;
+  // ESP-IDF task stack capacity in bytes, including application callbacks.
+  uint32_t taskStackBytes = 4096;
+  // -1 selects the existing default: configMAX_PRIORITIES - 1. Otherwise use
+  // an RTOS priority from 0 through configMAX_PRIORITIES - 1.
+  int8_t taskPriority = -1;
   EspUsbController controller = EspUsbController::Auto;
   // Use the board's hardware VBUS-valid signal instead of forcing B-session
   // valid. Requires actual VBUS sensing/routing on the board. Reconfigure after
   // end(), before begin(); false keeps the default for boards without sensing.
   bool vbusSensing = false;
   EspUsbBulkInBuffering bulkInBuffering = EspUsbBulkInBuffering::Auto;
-  // Core to run the USB device task on, or -1 to leave the scheduler to place
-  // it (the default, and what every release before this did).
-  //
-  // Worth setting on a dual-core part when the sketch produces data as fast as
-  // USB can carry it: begin() is normally called from the Arduino loop task on
-  // core 1, an unpinned usbd task tends to end up beside it, and the two then
-  // interrupt each other. Pinning USB to core 0 and leaving the producer on
-  // core 1 separates them. On a single-core target this does nothing.
+  // -1 leaves the worker unpinned; otherwise choose an available core index.
+  // A single-core build accepts only 0 or -1.
   int8_t taskCoreId = -1;
 };
 
@@ -483,7 +490,7 @@ struct EspUsbDeviceCdcLineState
 };
 
 // Stage of a control transfer, as the observation hook reports it. Same values
-// as TinyUSB's CONTROL_STAGE_*.
+// as the USB control-transfer stages.
 static constexpr uint8_t ESP_USB_DEVICE_CONTROL_STAGE_SETUP = 1;
 static constexpr uint8_t ESP_USB_DEVICE_CONTROL_STAGE_DATA = 2;
 static constexpr uint8_t ESP_USB_DEVICE_CONTROL_STAGE_ACK = 3;
@@ -596,7 +603,9 @@ public:
   // Success means the worker and DMA have stopped and borrowed buffers were
   // returned. A call from a USB callback is rejected with INVALID_STATE.
   esp_err_t end();
-  void task();
+  // Successful begin() owns the selected resources until end(), including
+  // DescriptorsOnly mode. ready() additionally requires Host configuration.
+  bool started() const;
   bool ready() const;
 
   const EspUsbDeviceConfig &config() const;
@@ -763,7 +772,7 @@ private:
   uint8_t classReportId(uint8_t classInstance) const;
   // Two different numbers meet here. classReportId() and classRuntimeInstance()
   // take the class's slot in classes_ (EspUsbDeviceClass::hidInstance_), which
-  // is registration order. hidClassForInstance() takes TinyUSB's HID instance
+  // is registration order. hidClassForInstance() takes the HID driver instance
   // number - always 0 in this build - and returns the class behind it. Treating
   // one as the other is what once broke a HID class registered after a non-HID
   // one.
@@ -782,9 +791,9 @@ private:
   bool allocateClassRegistry();
   void releaseClassRegistry();
   EspUsbDeviceClass *classAt(size_t index) const;
-  bool running_ = false;
+  std::atomic<bool> running_{false};
   bool ready_ = false;
-  bool tinyusbStarted_ = false;
+  bool usbStarted_ = false;
   esp_err_t lastError_ = ESP_OK;
   uint8_t deviceDescriptor_[18] = {};
   // Exact-sized, independently selected descriptor storage.
@@ -912,8 +921,8 @@ protected:
   explicit EspUsbDeviceClass(EspUsbDevice &device);
   EspUsbDevice &device_;
   // This class's slot in EspUsbDevice::classes_, i.e. its registration order.
-  // Not a TinyUSB instance number, despite the name: the device maps it through
-  // classReportId() and classRuntimeInstance() before anything reaches TinyUSB.
+  // Logical Function index, mapped through classReportId() and
+  // classRuntimeInstance() to the selected HID driver.
   uint8_t hidInstance_ = UINT8_MAX;
   EspUsbDeviceClass *nextRegistered_ = nullptr;
   bool registered_ = false, registrationRejected_ = false;
@@ -2515,7 +2524,7 @@ public:
   // and the state is cleared on bus reset / unplug so a previous session's LEDs
   // are never read back as current.
   //
-  // Returns by value, not by reference: the host writes this from the TinyUSB
+  // Returns by value, not by reference: the host writes this from the USB
   // device task while the sketch reads it from its own task, so a reference would
   // hand out an object another task mutates. The raw LED byte is stored
   // atomically and the returned report is built from that one read, which makes a
@@ -2572,7 +2581,7 @@ private:
   // heldState() may have to apply a pending bus change before returning it.
   mutable EspUsbDeviceNkroKeyboardReport nkroState_;
   // Raw LED byte as the host last set it. One atomic byte rather than the whole
-  // report struct, because the writer is the TinyUSB device task and the reader
+  // report struct, because the writer is the USB worker and the reader
   // is the sketch: a single store/load cannot be observed half-applied, so
   // ledState() can rebuild the flags from one read without a lock.
   std::atomic<uint8_t> ledsRaw_{0};

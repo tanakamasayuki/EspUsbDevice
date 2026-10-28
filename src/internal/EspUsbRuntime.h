@@ -12,10 +12,10 @@ enum class UsbController : uint8_t {
   HighSpeed,
 };
 
-struct TinyUsbRuntimeOptions {
+struct UsbRuntimeOptions {
   UsbController controller = UsbController::Auto;
-  uint32_t taskStackSize = 4096;
-  uint8_t taskPriority = 0;
+  uint32_t taskStackBytes = 4096;
+  int8_t taskPriority = -1;
   uint16_t eventQueueDepth = 16;
   // Bitmap of IN endpoint numbers whose DWC2 transmit FIFO should hold two
   // packets instead of one. Only bulk endpoints are affected; the controller
@@ -29,20 +29,20 @@ struct TinyUsbRuntimeOptions {
 
 // Caller-owned, one-shot worker jobs. Re-posting during a run schedules the
 // next worker iteration. Remove only after stopping the worker.
-struct TinyUsbRuntimeJob {
+struct UsbRuntimeJob {
   void (*run)(void *);
   void *context;
-  TinyUsbRuntimeJob *next = nullptr;
+  UsbRuntimeJob *next = nullptr;
   bool queued = false;
 };
-bool postTinyUsbRuntimeJob(TinyUsbRuntimeJob &job);
-void removeTinyUsbRuntimeJob(TinyUsbRuntimeJob &job);
+bool postUsbRuntimeJob(UsbRuntimeJob &job);
+void removeUsbRuntimeJob(UsbRuntimeJob &job);
 
-esp_err_t startTinyUsbRuntime(const TinyUsbRuntimeOptions &options);
-bool stopTinyUsbRuntime();
-bool tinyUsbRuntimeInTask();
-bool tinyUsbRuntimeStarted();
-uint8_t tinyUsbRuntimeRhport();
+esp_err_t startUsbRuntime(const UsbRuntimeOptions &options);
+bool stopUsbRuntime();
+bool usbRuntimeInTask();
+bool usbRuntimeStarted();
+uint8_t usbRuntimeRhport();
 
 } // namespace internal
 } // namespace espusb

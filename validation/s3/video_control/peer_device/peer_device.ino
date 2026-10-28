@@ -3,7 +3,7 @@
 #include <esp_heap_caps.h>
 #include <atomic>
 #include "../../../../src/internal/EspUsbDeviceEndpoint.h"
-#include "../../../../src/internal/EspUsbTinyUsbRuntime.h"
+#include "../../../../src/internal/EspUsbRuntime.h"
 EspUsbDevice device;
 EspUsbDeviceVideo camera(device,"MJPEG"), raw(device,"YUY2");
 EspUsbDeviceVideo *video[2]={&camera,&raw};
@@ -21,7 +21,7 @@ bool armed(unsigned i) {
     if(d[n+1]==4 && d[n]==9)interface=d[n+2];
     if(d[n+1]==5 && d[n]==7 && interface==1+2*i && (d[n+2]&128))endpoint=d[n+2];
   }
-  const uint8_t port=espusb::internal::tinyUsbRuntimeRhport();
+  const uint8_t port=espusb::internal::usbRuntimeRhport();
   const uint32_t until=millis()+2000;
   while(endpoint && !espusb_device_edpt_busy(port,endpoint) && int32_t(until-millis())>0)delay(1);
   return endpoint && video[i]->frameInFlight() && espusb_device_edpt_busy(port,endpoint) && !espusb_device_edpt_stalled(port,endpoint);

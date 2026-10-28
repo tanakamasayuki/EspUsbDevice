@@ -42,7 +42,7 @@ bool metadata() {
   bool ok = true;
   {
     EspUsbDevice automatic; EspUsbDeviceMidi function(automatic);
-    EspUsbDeviceConfig config; config.startTinyUsb = false;
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= !function.transferCapacity() && automatic.begin(config) && function.transferCapacity() == 16;
     ok &= automatic.end() == ESP_OK && !function.transferCapacity();
   }
@@ -50,7 +50,7 @@ bool metadata() {
   auto config = function.configuration(); config.rxPackets = config.txPackets = config.transferPackets = 1;
   config.name = "MIDI 計測";
   ok &= function.configure(config) == ESP_OK;
-  EspUsbDeviceConfig detached; detached.startTinyUsb = false;
+  EspUsbDeviceConfig detached; detached.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   ok &= local.begin(detached) && function.receiveCapacity() == 1 && function.sendCapacity() == 1;
   ok &= function.onPacket(nullptr) == ESP_ERR_INVALID_STATE && function.configure(config) == ESP_ERR_INVALID_STATE;
   ok &= local.end() == ESP_OK && !function.receiveCapacity() && !function.sendCapacity();

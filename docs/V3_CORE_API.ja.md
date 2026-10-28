@@ -60,7 +60,7 @@ resetが割込みで通知済みの場合は、workerがresetを処理するま�
 通常のクラス完了・reset/end通知はUSB worker上で扱う。
 現在の内部class/DWC2接続は暫定C ABIを用い、TinyUSB由来の型名・関数名を残している。
 これを最終公開APIとして追加したわけではなく、残るDWC2/helperの置換後に整理する。
-`startTinyUsb`等の旧backend名を含む公開設定も最終整理の対象である。
+開始modeとworker設定の現行APIは[v3移行ガイド](V3_MIGRATION.ja.md)を参照。旧startTinyUsbと空task()は撤去した。
 
 ## 検証と残り
 
@@ -654,3 +654,20 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/reset-start-all*`
 `reset-start-audit.txt`、`reset-start-{s3,s2,p4}-nm.txt`。
 verify_usb_backend、git diff --checkも成功。mainは取り込み済み、旧tests/examplesはmainとの差分なし。
 実機はS3–S3のみ。任意の全競合順序やOS/他SoC/HS実機までの完了とは扱わない。
+
+
+## v3開始modeとworker設定
+
+library metadata/headerを3.0.0へ変更した。release/tagは作らず、基本のbegin/Function操作は維持する。
+startTinyUsbを型付きstartModeへ置換し、DescriptorsOnlyとUsbを区別する。空のtask()入口は削除した。
+started()は資源所有、ready()はHost構成済みを表す。内部worker名もEspUsbRuntime/UsbRuntimeへ整理した。
+workerのtaskStackBytes/taskPriorityを公開し、taskCoreId/eventQueueDepthと同じbegin configで設定する。
+既定4096 byte・最高task priority・affinityなしは維持し、priority -1を既定指定とする。
+範囲外値はPHY取得前に拒否する。DescriptorsOnlyではworkerを使わず、その設定値も適用しない。
+[API移行ガイド](V3_MIGRATION.ja.md)に理由・影響・呼出し例を記載した。
+
+開始modeの変更後はcontrol_core/Vendorの2 passed（432.33秒）。worker設定とstartedの補強後は
+control_core 1 passed（89.59秒）。metadata-onlyでの資源有無、invalid enum/stack/priority/core、
+4096/8192 byte設定と実workerのpriority/core、通常EP0と実通信を確認した。
+初回worker fixtureのinitializer_list型不一致によるcompile errorも区別して記録する。
+このAPI整理後の全34件とS2/P4 compileは次に実行する。

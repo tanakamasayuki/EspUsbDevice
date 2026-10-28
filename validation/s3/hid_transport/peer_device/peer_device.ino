@@ -44,14 +44,14 @@ bool parserChecks() {
   const uint8_t lengths[] = {1,1,1,2,3,3,9,10};
   for (unsigned i = 0; i < sizeof(lengths); ++i) {
     EspUsbDevice local; EspUsbDeviceHidCustom function(local, bad[i], lengths[i], 1);
-    EspUsbDeviceConfig config; config.startTinyUsb = false;
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= !local.begin(config) && local.lastError() != ESP_OK;
     ok &= local.end() == ESP_OK && !function.inputReportCapacity();
   }
   {
     EspUsbDevice local; EspUsbDeviceHidCustom first(local, validDescriptor, sizeof(validDescriptor), 1);
     auto *failure = new FailingHid(local);
-    EspUsbDeviceConfig config; config.startTinyUsb = false;
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= !local.begin(config) && local.lastError() == ESP_FAIL && !first.inputReportCapacity();
     delete failure;
     ok &= local.begin(config) && first.inputReportCapacity() == 1 && !first.outputReportCapacity() && !first.featureReportCapacity();
@@ -59,7 +59,7 @@ bool parserChecks() {
   }
   for (uint8_t protocol : {1, 2}) {
     EspUsbDevice local; ShortBoot function(local, protocol);
-    EspUsbDeviceConfig config; config.startTinyUsb = false;
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= !local.begin(config) && local.lastError() == ESP_ERR_INVALID_SIZE;
     ok &= local.end() == ESP_OK;
   }
@@ -70,7 +70,7 @@ bool metadata() {
   const uint16_t sizes[] = {1,63,64,65,127,128,129,255,256,257,511,1023};
   for (auto size : sizes) {
     EspUsbDevice local; EspUsbDeviceHidVendor function(local, size);
-    EspUsbDeviceConfig config; config.startTinyUsb = false;
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= local.begin(config) && function.startError() == ESP_OK;
     ok &= function.inputReportCapacity() == size_t(size) + 1 && function.outputReportCapacity() == size_t(size) + 1 && function.featureReportCapacity() == size_t(size) + 1;
     ok &= local.end() == ESP_OK && !function.inputReportCapacity() && !function.outputReportCapacity() && !function.featureReportCapacity();
@@ -78,13 +78,13 @@ bool metadata() {
   {
     const uint8_t maximum[] = {0x06,0x00,0xff,0x09,0x01,0xa1,0x01,0x75,0x08,0x96,0xff,0xff,0x09,0x01,0x81,0x02,0xc0};
     EspUsbDevice local; EspUsbDeviceHidCustom function(local, maximum, sizeof(maximum), 64);
-    EspUsbDeviceConfig config; config.startTinyUsb = false;
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= local.begin(config) && function.inputReportCapacity() == 65535 && !function.outputReportCapacity() && !function.featureReportCapacity();
     ok &= local.end() == ESP_OK;
   }
   {
     EspUsbDevice local; EspUsbDeviceHidKeyboard function(local);
-    EspUsbDeviceConfig config; config.startTinyUsb = false;
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= function.enableNkro(true) == ESP_OK && function.onProtocol(nullptr) == ESP_OK && function.onOutputReport(nullptr) == ESP_OK;
     ok &= local.begin(config) && function.inputReportCapacity() == 29;
     ok &= function.enableNkro(false) == ESP_ERR_INVALID_STATE && function.nkroEnabled();
