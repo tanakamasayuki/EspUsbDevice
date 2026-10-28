@@ -810,4 +810,25 @@ Hostは独立v3 configuration_epochのraw SDK sketchを再利用し、conftest�
 修正前は実IRQ直後もmounted=1/jobs=1で失敗。修正後は深度4/16/31の3 resetを含む
 1 passed、0 skipped/unfinished、119.10秒。2 logs全てSTOPPED、panicなし。
 原本`/tmp/pytest-embedded/2026-10-28_07-43-39-489897/`、結果は`.pytest-results/reset-start-guard*`。
-この変更後の全34件は次に一括確認する。
+この変更後の全34件の結果は次節を参照。
+
+
+## reset開始guard後の全34件確認
+
+2026-10-28、製品`929f206`を固定。標準`pytest --combo all`は**34 passed、0 skipped、
+0 failed/error、0 unfinished、2274.81秒**。68 serial全てSTOPPED、STOP_FAILED/panicなし。
+reset開始の実IRQ probeはqueue深度4/16/31で成功し、native再登録/data DMA/EP0 DMAを拒否した。
+各resetで旧loan 2件が一度だけ返り、新しい転送2件が正しいid/payloadで完了した。
+
+既存の取消し/reset/end、configuration世代、EP0標準要求・overflow回復、Audio/HID/MIDI/MSC、
+CCID/Video/NCMのHALT回復も通過。774取得点の失敗/回復とheap 346712→346712 byte、
+3構成のDHCP/TCP 8193 byte交換も確認した。
+S2/P4はcompile-only成功。S3/S2/P4全29 sourceのcompiler依存に旧vendor/SDK TinyUSB fallbackなし。
+controller/DMA/PHYは内部DWC2、io-ready guardはEspUsbDeviceCore.cppへリンクしている。
+S3 Vendor単独とS2/P4 Vendor＋CCIDの構成で未使用NCM/Video/keymapが入らないことも確認した。
+
+原本`/tmp/pytest-embedded/2026-10-28_07-49-13-401967/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/reset-start-all*`、集計と各nmは
+`reset-start-audit.txt`、`reset-start-{s3,s2,p4}-nm.txt`。
+verify_usb_backend、git diff --checkも成功。mainは取り込み済み、旧tests/examplesはmainとの差分なし。
+実機はS3–S3のみ。任意の全競合順序やOS/他SoC/HS実機までの完了とは扱わない。
