@@ -167,6 +167,8 @@ XML/transcript/serial/集計を保存。high-progress原本は
 1. native Streamの全34件/18 buildsは確認済み。次はwide loanの低level変更後の全34件。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
 3. wide loanの関連確認は完了。全体検証後、残る既存API/資源管理の問題を実測で判断する。
+   CCIDのmessage>=MPS制約は仕様§5.1で確認済みのため維持する。
+   controllerごとの既定値/自動値を解決する時点と、class内に分散したSoC別MPS判定は次の整理候補。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。

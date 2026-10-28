@@ -1,7 +1,7 @@
 # v3 CCIDのruntime構成
 
 明示的なDevice/Function/config/beginを維持し、CCIDの容量とカード固定設定をFunctionごとに扱う。
-TinyUSBのCCID classは使わず、独自coreへ独自driverを登録する。DWC2と内部の暫定型/ABI依存はまだ残る。
+独自coreへ独自driverを登録し、Device専用DWC2も本体内で保守する。
 
 ```cpp
 EspUsbDevice device;
@@ -26,6 +26,9 @@ if (!device.begin()) {
 
 messageBytesは10 byte headerを含む全message容量。既定320、64～65535 byteで、
 選択controllerの最大packetより小さい構成はbeginで拒否する。
+この最小値は[CCID 1.1 §5.1のdwMaxCCIDMessageLength](https://www.usb.org/sites/default/files/DWG_Smart-Card_CCID_Rev110.pdf#page=20)による。
+現在のshort APDU構成ではBulk-OUTのwMaxPacketSize以上が必要であり、単にpacket組立て領域を
+分離しただけではこの条件を外せない。HSではmessageBytesを512以上にする。
 同じ値をdwMaxCCIDMessageLengthへ出し、callbackの出力容量はmessageBytes−10となる。
 大きい容量を設定してもextended APDU、chaining、PIN処理の対応は追加されない。
 T=1・short APDUを扱うemulated slotという既存の機能範囲を維持する。
