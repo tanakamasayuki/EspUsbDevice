@@ -282,3 +282,8 @@ EspUsbHost 2.10.1は列挙時にclaimしたalternateしか開始対象にしな�
 pluginの標準combo/allとnoconftestは維持する。Hostの既定FIFO限界と初期probeの誤りも別名で記録した。
 間欠OUTで最初のpacketだけ受信する問題も再現し、DWC2のincomplete OUT回復を4480513で修正した。
 Hostが送る全packetの連続性やOS/HS/任意の全切替競合を保証した結果とは扱わない。
+
+新規[AudioPlayback例](../examples/AudioPlayback/AudioPlayback.ino)は公開APIだけでPlaybackを選び、
+2 PCM形状×2 rate、192 byteのring、event容量0、currentFormatを示す。受信PCMを消費・表示する例で、DACは要求しない。
+Core3.3.12のS3/S2/P4で3ビルド成功、各ELF/FQBNと未使用クラスの除外を確認した。
+記録は`.pytest-results/audio-playback-example*`。sketch自体の実機試験やOS認定ではなくcompile確認である。

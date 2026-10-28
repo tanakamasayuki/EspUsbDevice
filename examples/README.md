@@ -14,6 +14,7 @@ validation probeとも分けています。容量はconfigure、USB開始はDevi
 | [VendorEcho](VendorEcho/VendorEcho.ino) | Vendor bulk stream, retaining partial writes / partial writeの残りを保持 |
 | [MidiEcho](MidiEcho/MidiEcho.ino) | MIDI 1.0 packet echo, one cable each way / MIDI packet単位のecho |
 | [CompositeCdcMidi](CompositeCdcMidi/CompositeCdcMidi.ino) | CDC + MIDI with independent resources / 個別の容量を持つ複合構成 |
+| [AudioPlayback](AudioPlayback/AudioPlayback.ino) | Runtime PCM formats/rates and currentFormat, consuming samples / PCM形状・rateと選択状態を照会して読み出す |
 | [ReconfigureVendor](ReconfigureVendor/ReconfigureVendor.ino) | `end → configure → begin` switches ring sizes in one binary / 再ビルドせず容量を切替 |
 
 ## Board and connections / 環境と結線
@@ -29,13 +30,13 @@ profileはCore 3.3.12に固定し、このcheckoutのlibraryを読み込みま�
 
 Connect the board's **native USB OTG** data port to the Host. A USB-UART bridge
 is a separate programming/debug connection; it does not carry these Functions.
-Keyboard and ReconfigureVendor also use `Serial` at 115200 on that separate
+Keyboard, ReconfigureVendor and AudioPlayback also use `Serial` at 115200 on that separate
 connection. Board pinout and VBUS circuitry must match the chosen controller.
 Use an editor on the Host for Keyboard; it sends keys only in response to debug
 serial input, rather than typing automatically at startup.
 
 データ用native OTGをHostへ結線します。USB-UART bridgeは書き込み・debug用で、
-ここで実装したFunctionの通信経路にはなりません。Keyboard/ReconfigureVendorは
+ここで実装したFunctionの通信経路にはなりません。Keyboard/ReconfigureVendor/AudioPlaybackは
 別のdebug接続でSerial 115200も使います。boardごとのpinout/VBUS回路を確認してください。
 KeyboardはHostで入力先のeditorを選び、debug portへ文字を送るとキーを送信します。
 
@@ -53,6 +54,13 @@ on S2/P4.
 ビルドhelperの生成物は`build/examples/<profile>/<sketch>/`へ保存します。
 CDCのStream化後、Core 3.3.12で6例×S3/S2/P4の全18ビルドを確認しました。
 S2/P4のUSB実機動作を確認した意味ではありません。
+
+AudioPlayback subsequently compiled for all three profiles after PCM alternate support.
+Its ELF architecture, FQBN and selected/unselected symbols were checked. These
+three builds are separate from the earlier 18-build baseline.
+
+AudioPlaybackはPCM alternate対応後にS3/S2/P4の3 profileでビルドし、ELF/FQBNと
+未使用クラスのリンク除外を確認しました。先の18ビルドとは別の実行です。
 
 ## Operation / 動作
 
@@ -84,6 +92,17 @@ or preserve an application session across restart.
 ReconfigureVendorはdebug portの`r`でRX/TX ringを128/2048 byteへ交互に切り替えます。
 end成功後に再設定し、実際の容量を表示します。Host側は切断・再列挙後に開き直し、
 旧stream dataを破棄します。application sessionの継続を実装する例ではありません。
+
+AudioPlayback exposes UAC2 playback with stereo 16-bit/2-byte and 24-bit/3-byte
+PCM, each at 24/16 kHz. It consumes received PCM and reports the selected format
+and bytes read on the debug port. It does not generate audible sound: route the
+read data to your application's codec/DAC for that. Its 32-frame ring reserves
+192 bytes for the largest declared frame, and event polling is disabled.
+
+AudioPlaybackはUAC2のPlaybackのみを選び、stereoの16 bit/2 byteと24 bit/3 byteを
+各24/16 kHzで公開します。PCMを読み捨て、選択formatと読み出し量をdebug portへ出す例です。
+音声を鳴らす場合はアプリ側で読み出したPCMをcodec/DACへ渡します。
+ringは最大6 byte/frame×32 frameの192 byteで、event queueは使いません。
 
 These are focused examples, not a catalog for every class or a replacement for
 protocol/ownership tests. Startup errors leave USB stopped. See the
