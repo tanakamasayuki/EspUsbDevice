@@ -671,3 +671,14 @@ control_core 1 passed（89.59秒）。metadata-onlyでの資源有無、invalid 
 4096/8192 byte設定と実workerのpriority/core、通常EP0と実通信を確認した。
 初回worker fixtureのinitializer_list型不一致によるcompile errorも区別して記録する。
 このAPI整理後の全34件とS2/P4 compileは次に実行する。
+
+
+## 開始mode・worker API整理後の一括確認
+
+製品`d876d50`を固定した全34件が4651.38秒で成功した。0 skipped/error/failure/unfinished。
+DescriptorsOnlyの無worker、不正enum/stack/priority/coreの拒否、実priority/core、
+startedとready、終了後の回収を同じ実行で確認した。
+68 serial全てSTOPPED、panicなし。774確保点の失敗/回復とheap前後同量。
+S2/P4 compileと全29 sourceの依存・symbol確認も成功。
+記録は[validationの最新全体結果](../validation/README.ja.md#開始modeworker-api整理後の全34件)。
+他SoC/HS実機・OS・任意の全EP0競合順序までの確認とはしない。

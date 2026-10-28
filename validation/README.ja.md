@@ -7,6 +7,23 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## 開始mode・worker API整理後の全34件
+
+2026-10-28、製品`d876d50`を固定。標準`pytest --combo all`は**34 passed、0 skipped、
+0 failed/error、0 unfinished、4651.38秒**。68 serial全てSTOPPED、STOP_FAILED/panicなし。
+開始modeと実worker設定の`START_MODES 1`/`WORKER_SETTINGS 1`も同じ実行で成功。
+774取得点の失敗/回復とheap 346704→346704 byte、reset開始の実IRQ3深度、
+CCID/Video/NCMのHALT回復、3構成のTCP8193 byte交換を確認した。
+
+S2/P4 compileも成功。S3 Vendor単独とS2/P4 Vendor＋CCIDの全29 sourceのcompiler依存に、
+旧vendor header/SDK同名headerへのfallbackなし。独自controller/PHY/coreへ解決し、
+旧TinyUsbRuntime名・空task() symbolと未使用NCM/Video/keymapはない。
+`verify_usb_backend.py`、`git diff --check`も成功。
+原本`/tmp/pytest-embedded/2026-10-28_08-59-19-825854/`、コピー/JUnit/transcriptは
+`.pytest-results/native-api-all*`、集計は`native-api-audit.txt`、各targetのnmも保存した。
+旧2.x資産は内容を保ってlegacy/v2へ移し、実行中の製品/probeソースは変更していない。
+S3–S3の結果であり、OS・他SoC/HS実機や任意の全競合順序までの完了とは扱わない。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

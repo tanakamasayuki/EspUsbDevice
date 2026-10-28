@@ -46,7 +46,12 @@ CH32RVは設計事例・API調整相手、OEPは利用者の一例。どちら�
 
 mode変更後のcontrol_core/Vendorは2 passed（432.33秒）。worker/started補強後のcontrol_coreは
 1 passed（89.59秒）。不正値、workerなし、実priority/core、停止・rollbackとheap回復を確認した。
-API変更後のS2/P4 compileは成功。全34件の一括実行は進行中で、結果確定後に記録する。
+API変更後のS2/P4 compileは成功。製品`d876d50`を固定した全34件は**34 passed、0 skipped/error/failure/unfinished、4651.38秒**。
+68 serial全てSTOPPED、STOP_FAILED/panicなし。774取得点で失敗/回復し、heapは346704→346704 byte。
+開始mode/workerの実priority/core、reset開始3深度、各classのHALT、TCP3構成も確認した。
+S3/S2/P4の全29 sourceの依存記録に旧vendor/SDK fallbackなし。旧Runtime名/空task symbolもない。
+原本`/tmp/pytest-embedded/2026-10-28_08-59-19-825854/`、結果は`.pytest-results/native-api-all*`と
+`native-api-audit.txt`、各targetのnm。API整理後の全体確認はこの結果を基準にする。
 
 ## 直前の全体確認
 
@@ -92,14 +97,14 @@ READMEをv3向けに書き直し、[CH32RV比較](V3_CH32RV_API_ALIGNMENT.ja.md)
 
 ## 次の単位と未完了
 
-1. API整理後の全34件を確定し、serial・依存記録・symbol・回収を監査して記録する。
+1. API整理後の全34件の確認は完了。次のPrint API変更は以下の修正前後の関連試験で確認する。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
 3. Print経由の空き容量の不整合を先に検証する。現在はbulkのwriteAvailableが正しくても、
    継承したPrint::availableForWriteが0を返す。これはStream継承とは別の問題。
    `/tmp/espusb-v3-print-availability/`にproduct.patchとbaseline-test.patchを準備した。
    製品patchを適用した別コピーのS3 compileは成功し、ELFにbulk overrideとMIDI byte guardを確認。
    記録は`.pytest-results/print-availability-*`。実機の確認はまだ行っていない。
-   現在の全34件が終わってからtest patchだけを適用してCDCの修正前失敗を確認し、
+   全34件は完了済み。test patchだけを適用してCDCの修正前失敗を確認し、
    product patch適用後にCDC/Vendor/MIDIの関連試験を行う。MIDIのPrint byte入力は0を維持する。
    その他のAPI/protocol/所有権も実測で判断し、Stream化そのものはまだ採用しない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
