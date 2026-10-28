@@ -1,6 +1,6 @@
 # Archived 2.x assets
 
-These files preserve the pre-v3 examples, tests and workflow configuration.
+These files preserve the pre-v3 examples, tests, the compatibility-matrix tool and workflow configuration.
 They are historical reference material, not runnable v3 examples or test gates.
 Relative paths and dependency assumptions still describe their original layout;
 use the corresponding 2.x git ref when running the old suite.

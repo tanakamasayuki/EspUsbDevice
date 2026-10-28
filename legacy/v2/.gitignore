@@ -1,0 +1,2 @@
+tests/unit/**/output/
+tests/manual/**/build_opt.h

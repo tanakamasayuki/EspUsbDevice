@@ -1,7 +1,8 @@
 # v3の独立したS3–S3試験
 
-このディレクトリだけをv3開発の試験入口とする。`tests/`と`examples/`はv2の参照資産で、
-読み込み・収集・helperのimport・sketchの流用をしない。両者との整合性を新APIの制約にしない。
+このディレクトリだけをv3開発の試験入口とする。旧testsは`legacy/v2/tests/`へ保管した。
+v2資産から読み込み・収集・helperのimport・sketchの流用をせず、その互換性を新APIの制約にしない。
+利用者向けexamplesと試験probeも分ける。
 前回作成した独自matrix/結果gateは撤去した。ここにはconftestも独自pytest pluginもない。
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。

@@ -1,18 +1,11 @@
 name: Build Check
 
-# Compiles every example for each profile it declares. This is the build layer of
-# the test plan: no device, no serial port, no judgement about behaviour, only
-# "does it still build". It used to run inside pytest as tests/examples_compile,
-# where it cost a quarter of an hour at the front of every full run and competed
-# for a machine that other projects share. The profiles are independent, so as CI
-# jobs they run at the same time instead of one after another.
-#
-# Examples that do not declare a given profile are skipped for that job, and
-# reported as skipped rather than as failures.
+# Compile current examples for their declared profiles, without boards.
+# This checks API/build compatibility; physical USB coverage lives in validation/.
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, v3]
     paths:
       - "src/**"
       - "examples/**"
@@ -38,9 +31,7 @@ jobs:
       # others, or a single failure hides the state of every other target.
       fail-fast: false
       matrix:
-        # esp32s3 is the primary target, esp32p4 the high-speed OTG target, and
-        # esp32s2 the RAM-constrained one that catches allocation regressions the
-        # other two have room to absorb.
+        # S3 is the development bench. S2/P4 jobs provide compile coverage only.
         profile: [esp32s3, esp32p4, esp32s2]
     steps:
       - name: Checkout
