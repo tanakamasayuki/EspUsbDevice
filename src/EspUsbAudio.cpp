@@ -84,10 +84,6 @@ bool EspUsbAudioFunction::addFormat(
     const EspUsbAudioFormat &format)
 {
   if (started_.load()) { device_.setLastError(ESP_ERR_INVALID_STATE); return false; }
-  if (format.sampleRate == 0 || format.channels == 0)
-  {
-    return false;
-  }
   const espusb::internal::AudioPcmFormat internalFormat{
       format.sampleRate, format.channels, format.bytesPerSample,
       format.bitsPerSample};
@@ -97,10 +93,15 @@ bool EspUsbAudioFunction::addFormat(
           : model_.capture();
   // Both protocol writers currently emit one topology at both speeds.
   // Reject a format that cannot be represented on a negotiated FS link.
-  return stream.addFormat(
+  const bool added = stream.addFormat(
       internalFormat, espusb::internal::UsbSpeed::Full,
       espusb::internal::defaultAudioBusLimits(
           espusb::internal::UsbSpeed::Full));
+  using Error = espusb::internal::AudioFormatError;
+  const auto error = stream.error();
+  device_.setLastError(added ? ESP_OK : error == Error::NoMemory ? ESP_ERR_NO_MEM :
+      (error == Error::PacketTooLarge || error == Error::BufferTooSmall || error == Error::FormatCapacity) ? ESP_ERR_INVALID_SIZE : ESP_ERR_INVALID_ARG);
+  return added;
 }
 
 bool EspUsbAudioFunction::buildGraph(uint8_t interfaceNumber,

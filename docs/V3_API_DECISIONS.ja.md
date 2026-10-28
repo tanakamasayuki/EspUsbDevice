@@ -781,3 +781,16 @@ ready() && !suspended()は転送成功の予約ではない。転送APIの戻り
 新しい独立S3 probeで、Hostのroot portを実際に休止・再開した。新規投稿と休止前の投稿、
 cancel、end、再開始をqueue深さ1/16/31で確認。結果と制限は
 [独立試験](../validation/README.ja.md#実際のsuspendresumeと状態照会)を参照。
+
+## Audioのformat/rate保存を使用量へ合わせる
+
+8 format×2方向と8 rateの常設配列を、必要個数のformat領域とmodel参照によるrate照会へ変更した。
+基本のaddFormat→configure→beginは維持する。Audio本体はS3で444→296 byteになったが、
+format追加時にheapを使うようになる。通常転送・control処理での新規確保はない。
+追加失敗では設定を保ち、Device.lastError=NoMemoryを返す。利用側はaddFormatのboolを確認する。
+同rateの別表現はclock一覧で重複させず、対応rate数の8個制限を持たない内部表現とする。
+
+利点は未選択方向・未使用formatの費用を減らすこと。不利益は設定時のallocation、copyと一時領域、
+rate照会での重複探索。設定はend後も残すため、試験も設定資源と実行資源の寿命を区別する。
+一方向一形式のdescriptor/transport制限は別に残り、複数format対応済みとは扱わない。
+実測・設定失敗14箇所・開始失敗774箇所・関連3件の結果は[Audio API](V3_AUDIO_API.ja.md#format保存領域とrate照会の容量整理)。

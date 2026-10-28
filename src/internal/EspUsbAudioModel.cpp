@@ -1,4 +1,6 @@
 #include "EspUsbAudioModel.h"
+#include "EspUsbMemory.h"
+#include <string.h>
 
 namespace espusb {
 namespace internal {
@@ -74,6 +76,11 @@ AudioStreamModel::AudioStreamModel(AudioDirection direction)
 {
 }
 
+AudioStreamModel::~AudioStreamModel()
+{
+  freeUsbMemory(formats_);
+}
+
 bool AudioStreamModel::addFormat(const AudioPcmFormat &format, UsbSpeed speed,
                                  const AudioBusLimits &limits)
 {
@@ -94,12 +101,18 @@ bool AudioStreamModel::addFormat(const AudioPcmFormat &format, UsbSpeed speed,
       return false;
     }
   }
-  if (formatCount_ == MAX_FORMATS)
+  if (formatCount_ >= SIZE_MAX / sizeof(AudioPcmFormat))
   {
     error_ = AudioFormatError::FormatCapacity;
     return false;
   }
-  formats_[formatCount_++] = format;
+  auto *replacement = static_cast<AudioPcmFormat *>(allocateUsbMemory((formatCount_ + 1) * sizeof(AudioPcmFormat)));
+  if (!replacement) { error_ = AudioFormatError::NoMemory; return false; }
+  if (formatCount_) memcpy(replacement, formats_, formatCount_ * sizeof(AudioPcmFormat));
+  replacement[formatCount_] = format;
+  freeUsbMemory(formats_);
+  formats_ = replacement;
+  ++formatCount_;
   return true;
 }
 

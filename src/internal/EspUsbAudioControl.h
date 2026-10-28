@@ -20,7 +20,6 @@ enum class AudioControlError : uint8_t {
   InvalidChannel,
   InvalidValue,
   ReadOnly,
-  RateCapacity,
 };
 
 enum class AudioControlEntityKind : uint8_t {
@@ -37,8 +36,6 @@ struct AudioControlRange {
 
 class AudioControlState {
 public:
-  static constexpr size_t MAX_SAMPLE_RATES = AudioStreamModel::MAX_FORMATS;
-
   bool configure(const AudioFunctionModel &function,
                  const AudioFunctionGraph &graph);
   void reset();
@@ -70,7 +67,6 @@ private:
   FeatureState *feature(uint8_t entityId);
   const FeatureState *feature(uint8_t entityId) const;
   bool sampleRateSupported(uint32_t rate) const;
-  bool addSampleRate(uint32_t rate);
   bool validateMasterChannel(uint8_t channel) const;
   bool validateFeatureChannel(const FeatureState &state,
                               uint8_t channel) const;
@@ -80,7 +76,8 @@ private:
   bool clockValid_ = true;
   uint8_t clockEntityId_ = 0;
   uint32_t currentSampleRate_ = 0;
-  uint32_t sampleRates_[MAX_SAMPLE_RATES] = {};
+  // Borrows immutable format settings owned by the enclosing Audio Function.
+  const AudioStreamModel *rateSource_ = nullptr;
   size_t sampleRateCount_ = 0;
   FeatureState features_[2] = {};
   size_t featureCount_ = 0;

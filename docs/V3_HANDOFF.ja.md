@@ -223,6 +223,42 @@ UAC2のfeedback受信とreject=0、captureのfill/無音も確認した。
 全35件の一括結果ではない。S3 FSのHost起点L2休止であり、OS/HS・remote wakeup・
 任意のpacket位置/clock drift・全停止競合を網羅したものではない。
 
+## format保存領域とrate照会の容量整理
+
+formatを両方向8個ずつ保持する固定配列を撤去し、addFormatで指定された個数分だけ保存する。
+未設定の方向には配列を確保しない。追加時だけ新しい領域を取得し、失敗時は旧領域と件数を保つ。
+有効なformatなら1個8 byteのpayloadを保持する（allocatorの管理費は別）。追加中は旧領域と
+新領域が一時的に共存し、既存要素をcopyする。通常転送中には確保・拡張しない。
+設定はend後も保持し、Function破棄時に解放する。PCM/DMA/event等の開始時資源はendで回収する。
+
+addFormatのbool返却は維持。失敗理由はDevice.lastErrorへNoMemory/InvalidArg/InvalidSizeを設定し、
+成功時はESP_OKに戻す。利用側はaddFormatの結果も確認する必要がある。
+同一のsample rateを別のPCM表現で指定しても、clockのrate一覧へ重複登録しない。
+rate用の8要素copyも撤去し、active中は不変なFunction内のmodelを参照する。
+重複除去の探索は設定・control照会時に行い、PCM経路へ新しい処理やtaskを加えない。
+
+S3の同じtarget compilerで測ったsizeof:
+
+| 型 | 変更前 | 変更後 |
+| --- | ---: | ---: |
+| EspUsbAudioFunction | 444 | 296 |
+| AudioStreamModel | 76 | 16 |
+| AudioControlState | 80 | 52 |
+
+これは本体の型サイズで、formatのheap領域とallocator管理費を含まない。
+測定は`.pytest-results/audio-storage-layout-{before,after}.json`。
+内部model/controlでは13 format・12 rate、設定追加14箇所の確保失敗とrollback・再試行を確認。
+公開APIでも、追加失敗後のsingle-format beginが成功することを確認した。
+複数formatのwire対応を完了した意味ではなく、descriptor/beginの一方向一形式制限は残る。
+formatの入替えAPI、alternate選択、range応答領域等は続けて整理する。
+
+設定・確保失敗・Audio event/control・PCMの関連3件は**3 passed、0 skipped/error/failure/unfinished、242.85秒**。
+774開始取得点の失敗/回復、heap346704→346704 byte、実ISO休止4構成も成功。
+6 serial全てSTOPPED、panic/watchdog resetなし。S2/P4 compile成功。
+全29 sourceの依存/nmに旧stack/SDK fallbackなし、S2/P4の未選択Audioもリンクされない。
+原本`/tmp/pytest-embedded/2026-10-28_21-22-05-002801/`、結果は`.pytest-results/audio-storage*`。
+これは関連3件の実行で、全35件を再実行した結果ではない。
+
 ## 次の単位と未完了
 
 1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
@@ -231,8 +267,9 @@ UAC2のfeedback受信とreject=0、captureのfill/無音も確認した。
    CCIDのmessage>=MPS制約は仕様§5.1で確認済みのため維持する。
    MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
    class内に分散したSoC別MPS判定は共通化済み。P4 HSではCCIDの既定320がMPS512を満たさない点は残る。
-   AudioにはMAX_FORMATS=8の固定配列と、複数formatをdescriptor/beginで拒否する暫定制限が残る。
-   次はsrc/internal/EspUsbAudioModel/Controlとsrc/EspUsbAudio.cppを照合し、未使用容量と実装範囲を整理する。
+   Audioのformat/rate固定配列は撤去済み。次はend後にformatを入れ替えるAPIを用意し、
+   複数formatをdescriptor/beginで拒否する暫定制限、alternate切替、control応答容量を整理する。
+   13 format/12 rateは内部metadata確認であり、wireは従来の一方向一形式のまま。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
 4. S3 FSのHost起点suspend/resumeは確認済み。Vendor HIDの周期InputとAudio ISOの4構成も確認済み。OS互換、remote wakeup、
    長時間、S2/P4の実機FS/HSを後段で確認する。

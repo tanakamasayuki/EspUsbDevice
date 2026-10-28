@@ -55,6 +55,58 @@ const uint8_t inputReport[] = {0x06,0x00,0xff,0x09,0x01,0xa1,0x01,0x75,0x08,0x95
 uint8_t echo[129];
 size_t wanted = 0, received = 0;
 
+bool audioFormatSettings() {
+  using namespace espusb::internal;
+  bool ok = !outstanding; unsigned failures = 0;
+  {
+    AudioFunctionModel model;
+    auto &stream = model.playback();
+    const auto limits = defaultAudioBusLimits(UsbSpeed::Full);
+    for (unsigned i = 0; i < 12 && ok; ++i) {
+      const AudioPcmFormat format{8000 + i * 1000, 2, 2, 16};
+      const unsigned before = outstanding;
+      failAt = calls + 1; failureReached = false;
+      ok &= !stream.addFormat(format, UsbSpeed::Full, limits) && failureReached
+        && stream.error() == AudioFormatError::NoMemory && stream.formatCount() == i && outstanding == before;
+      failAt = 0; ++failures;
+      for (unsigned j = 0; j < i; ++j) ok &= stream.format(j)->sampleRate == 8000 + j * 1000;
+      ok &= stream.addFormat(format, UsbSpeed::Full, limits) && stream.formatCount() == i + 1 && outstanding == 1;
+      const unsigned allocationCalls = calls;
+      ok &= !stream.addFormat(format, UsbSpeed::Full, limits) && stream.error() == AudioFormatError::DuplicateFormat && calls == allocationCalls;
+    }
+    // Same rate in another PCM representation must not duplicate the clock range.
+    ok &= stream.addFormat({8000,2,3,24}, UsbSpeed::Full, limits);
+    DescriptorLayout layout(EndpointLimits{15,15,15}); AudioFunctionGraph graph;
+    AudioControlState controls;
+    ok &= buildAudioFunctionGraph(model, layout, AudioFunctionGraphConfig{}, graph) && controls.configure(model, graph);
+    ok &= controls.sampleRateCount() == 12 && controls.currentSampleRate() == 8000 && !controls.sampleRate(12);
+    for (unsigned i = 0; i < 12; ++i) ok &= controls.sampleRate(i) == 8000 + i * 1000;
+    ok &= controls.setCurrent(graph.clockSourceId, AudioControlSelector::SampleRate, 0, 19000) && controls.currentSampleRate() == 19000;
+    ok &= !controls.setCurrent(graph.clockSourceId, AudioControlSelector::SampleRate, 0, 7777);
+    controls.reset(); ok &= !controls.sampleRateCount() && !controls.sampleRate(0);
+  }
+  ok &= !outstanding;
+  {
+    EspUsbDevice local; EspUsbAudioFunction function(local);
+    auto &stream = function.addPlaybackStream();
+    failAt = calls + 1; failureReached = false;
+    ok &= !stream.addFormat({48000,2,2,16}) && failureReached && local.lastError() == ESP_ERR_NO_MEM && !outstanding;
+    failAt = 0; ++failures;
+    ok &= stream.addFormat({48000,2,2,16}) && local.lastError() == ESP_OK;
+    const unsigned before = outstanding;
+    failAt = calls + 1; failureReached = false;
+    ok &= !stream.addFormat({44100,2,2,16}) && failureReached && local.lastError() == ESP_ERR_NO_MEM && outstanding == before;
+    failAt = 0; ++failures;
+    ok &= !stream.addFormat({0,2,2,16}) && local.lastError() == ESP_ERR_INVALID_ARG;
+    // Successful begin proves the failed append retained exactly one format.
+    EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
+    ok &= local.begin(config) && local.end() == ESP_OK && outstanding == before;
+  }
+  ok &= !outstanding && !badFree && !overflow;
+  Serial.printf("AUDIO_SETTINGS ok=%u formats=13 rates=12 failures=%u object=%u model=%u controls=%u\r\n", unsigned(ok), failures, unsigned(sizeof(EspUsbAudioFunction)), unsigned(sizeof(AudioStreamModel)), unsigned(sizeof(AudioControlState)));
+  return ok;
+}
+
 void setup() {
   Serial.begin(115200); Serial.setTimeout(100);
   vendor.onDirectRxComplete([](const EspUsbTransferResult &) {});
@@ -64,7 +116,7 @@ void loop() {
   if (Serial.available()) {
     String command = Serial.readStringUntil('\n'); command.trim();
     if (command == "faults") {
-      bool ok = true;
+      bool ok = audioFormatSettings();
       unsigned failures = 0, recoveries = 0;
       memset(externalRx, 0x5a, sizeof(externalRx)); memset(externalTx, 0x5a, sizeof(externalTx));
       // Warm descriptor/core/RTOS allocations before checking heap recovery.
@@ -182,11 +234,12 @@ void loop() {
         if (mode == 8) { identity.webusbEnabled = true; identity.webusbUrl = "https://example.test/日本語"; ++points; }
         if (mode == 9) { identity.manufacturer = identity.product = nullptr; --points; }
         ok &= vendor.configure(config) == ESP_OK;
+        const unsigned configuredOutstanding = outstanding; // Formats remain configured until Function destruction.
         for (unsigned point = 1; point <= points && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;
           const bool rejected = !device.begin(identity) && device.lastError() == ESP_ERR_NO_MEM;
           failAt = 0;
-          ok &= rejected && failureReached && device.end() == ESP_OK && outstanding == 0 &&
+          ok &= rejected && failureReached && device.end() == ESP_OK && outstanding == configuredOutstanding &&
               !vendor.readCapacity() && !vendor.writeCapacity() && (!video[0] || !video[0]->payloadBufferSize()) && (!video[1] || !video[1]->payloadBufferSize()) && !badFree && !overflow;
           if (!ok) { Serial.printf("FAULT_FAILED mode=%u point=%u calls=%u live=%u rejected=%u hit=%u\r\n", mode, point, calls, outstanding, unsigned(rejected), unsigned(failureReached)); break; }
           ++failures;
@@ -201,7 +254,7 @@ void loop() {
             ok &= calls == beforeFeature;
           }
           ok &= vendor.configuration().rxCapacity == config.rxCapacity && vendor.configuration().txCapacity == config.txCapacity;
-          ok &= device.end() == ESP_OK && outstanding == 0 && (!video[0] || !video[0]->payloadBufferSize()) && (!video[1] || !video[1]->payloadBufferSize());
+          ok &= device.end() == ESP_OK && outstanding == configuredOutstanding && (!video[0] || !video[0]->payloadBufferSize()) && (!video[1] || !video[1]->payloadBufferSize());
           delay(10);
           if (ok) ++recoveries;
         }

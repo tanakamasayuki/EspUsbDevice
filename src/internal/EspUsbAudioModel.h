@@ -27,6 +27,7 @@ enum class AudioFormatError : uint8_t {
   PacketTooLarge,
   BufferTooSmall,
   FormatCapacity,
+  NoMemory,
   DuplicateFormat,
 };
 
@@ -73,9 +74,10 @@ AudioFormatError validateAudioFormat(const AudioPcmFormat &format,
 
 class AudioStreamModel {
 public:
-  static constexpr size_t MAX_FORMATS = 8;
-
   explicit AudioStreamModel(AudioDirection direction);
+  ~AudioStreamModel();
+  AudioStreamModel(const AudioStreamModel &) = delete;
+  AudioStreamModel &operator=(const AudioStreamModel &) = delete;
 
   bool addFormat(const AudioPcmFormat &format, UsbSpeed speed,
                  const AudioBusLimits &limits);
@@ -86,7 +88,7 @@ public:
 
 private:
   AudioDirection direction_;
-  AudioPcmFormat formats_[MAX_FORMATS] = {};
+  AudioPcmFormat *formats_ = nullptr;
   size_t formatCount_ = 0;
   AudioFormatError error_ = AudioFormatError::None;
 };

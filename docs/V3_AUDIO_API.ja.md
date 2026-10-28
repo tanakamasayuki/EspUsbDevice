@@ -10,7 +10,7 @@ EspUsbAudioFunction audio(device, EspUsbAudioProtocol::Uac2);
 
 void setup() {
   auto &playback = audio.addPlaybackStream();
-  playback.addFormat({48000, 2, 2, 16});
+  if (!playback.addFormat({48000, 2, 2, 16})) return;
   EspUsbAudioConfig config;
   config.eventCapacity = 0; // No event polling in this application.
   config.playbackBufferFrames = 256; // 1024 bytes for stereo 16-bit PCM.
@@ -91,7 +91,7 @@ captureの明示的な部分書込み。不利益はbegin時の確保失敗と�
 Device + Function + addStream/addFormat + begin、read/write/pollEventという通常の流れは維持する。
 旧CFG_TUD_AUDIOの有効化と固定buffer flagは拒否する。形式はaddFormatで、queueはconfigureで指定する。
 
-未完の範囲は複数formatのalternate選択、format/control stateの固定配列、外部clock feedback、
+未完の範囲は複数formatのalternate選択、formatの入替え、外部clock feedback、
 callback/borrowed PCMの所有権API、OS音声アプリ、P4/S2/S31/HSである。
 現在は方向ごとに一形式だけ対応し、worker再armの連続性は実機で評価する。
 
@@ -129,3 +129,39 @@ UAC2のfeedback受信とreject=0、captureのfill/無音も確認した。
 最終原本`/tmp/pytest-embedded/2026-10-28_16-13-58-163956/`、結果は`.pytest-results/audio-suspend*`。
 全35件の一括結果ではない。S3 FSのHost起点L2休止であり、OS/HS・remote wakeup・
 任意のpacket位置/clock drift・全停止競合を網羅したものではない。
+
+## format保存領域とrate照会の容量整理
+
+formatを両方向8個ずつ保持する固定配列を撤去し、addFormatで指定された個数分だけ保存する。
+未設定の方向には配列を確保しない。追加時だけ新しい領域を取得し、失敗時は旧領域と件数を保つ。
+有効なformatなら1個8 byteのpayloadを保持する（allocatorの管理費は別）。追加中は旧領域と
+新領域が一時的に共存し、既存要素をcopyする。通常転送中には確保・拡張しない。
+設定はend後も保持し、Function破棄時に解放する。PCM/DMA/event等の開始時資源はendで回収する。
+
+addFormatのbool返却は維持。失敗理由はDevice.lastErrorへNoMemory/InvalidArg/InvalidSizeを設定し、
+成功時はESP_OKに戻す。利用側はaddFormatの結果も確認する必要がある。
+同一のsample rateを別のPCM表現で指定しても、clockのrate一覧へ重複登録しない。
+rate用の8要素copyも撤去し、active中は不変なFunction内のmodelを参照する。
+重複除去の探索は設定・control照会時に行い、PCM経路へ新しい処理やtaskを加えない。
+
+S3の同じtarget compilerで測ったsizeof:
+
+| 型 | 変更前 | 変更後 |
+| --- | ---: | ---: |
+| EspUsbAudioFunction | 444 | 296 |
+| AudioStreamModel | 76 | 16 |
+| AudioControlState | 80 | 52 |
+
+これは本体の型サイズで、formatのheap領域とallocator管理費を含まない。
+測定は`.pytest-results/audio-storage-layout-{before,after}.json`。
+内部model/controlでは13 format・12 rate、設定追加14箇所の確保失敗とrollback・再試行を確認。
+公開APIでも、追加失敗後のsingle-format beginが成功することを確認した。
+複数formatのwire対応を完了した意味ではなく、descriptor/beginの一方向一形式制限は残る。
+formatの入替えAPI、alternate選択、range応答領域等は続けて整理する。
+
+設定・確保失敗・Audio event/control・PCMの関連3件は**3 passed、0 skipped/error/failure/unfinished、242.85秒**。
+774開始取得点の失敗/回復、heap346704→346704 byte、実ISO休止4構成も成功。
+6 serial全てSTOPPED、panic/watchdog resetなし。S2/P4 compile成功。
+全29 sourceの依存/nmに旧stack/SDK fallbackなし、S2/P4の未選択Audioもリンクされない。
+原本`/tmp/pytest-embedded/2026-10-28_21-22-05-002801/`、結果は`.pytest-results/audio-storage*`。
+これは関連3件の実行で、全35件を再実行した結果ではない。
