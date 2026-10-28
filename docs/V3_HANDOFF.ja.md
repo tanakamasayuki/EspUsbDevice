@@ -122,7 +122,12 @@ Flash/RAM比較と移行は[CDCガイド](V3_CDC_API.ja.md#採用のための最
 Streamのempty/timeout/peek/readBytes、tiny ring、Printの24照会、MIDI、774確保点、登録を確認。
 heap346704→346704 byte。S2/P4と新CdcConsoleのcompile、依存/nmも成功。
 原本`/tmp/pytest-embedded/2026-10-28_12-23-52-104927/`、`.pytest-results/cdc-native-stream-related*`へ保存。
-全34件は次に実行する。実行中は製品/probeを固定する。
+製品`56a2c9a`を固定した全34件も**34 passed、0 skipped/error/failure/unfinished、2510.86秒**。
+68 logs全てSTOPPED、STOP_FAILED/panicなし。774取得点で失敗/回復、heap346704→346704 byte。
+native Streamの24照会/12構成、4 timeout、各classのHALT、reset開始3深度、TCP3構成も同じ実行で成功。
+原本`/tmp/pytest-embedded/2026-10-28_12-35-43-320235/`。
+結果は`.pytest-results/cdc-native-stream-all*`、集計は`cdc-native-stream-all-audit.txt`。
+S2/P4 compileと全29 sourceの依存・symbol確認も成功。実行中の製品/probeは変更していない。
 
 ## exampleのprofile別ビルド
 
@@ -137,11 +142,12 @@ helperの出力先を`build/examples/<profile>/<sketch>/`へ分離し、同じ�
 
 ## 次の単位と未完了
 
-1. native Streamのclass構造変更後の全34件を確認する。関連5件は完了。
+1. native Streamのclass構造変更後の全34件と18 example buildは確認済み。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
 3. borrowed bulkの65535 byte上限は現在も内部uint16_tの入口/計数に由来して残る。
-   次に、DMA分割を保ちながらこの16 bit制約を外せるか調べる。DWC2 recordのISO専用interval/retryと
-   非ISOのDMA進捗を共有できれば、recordを増やさず計数を広げる案もある。実装・採用は未検証。
+   次に、DMA分割を保ちながらこの16 bit制約を外せるか調べる。
+   interval/retryとDMA進捗は現在ISOでも同時に使うため、単純なunion化は不適切。
+   計数を広げる場合のrecord増分・実際の確保量と、65535を跨ぐ転送/取消し/resetを確認して判断する。
    既存API/資源管理の残る問題は実測で判断し、旧互換性だけのshimを増やさない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。

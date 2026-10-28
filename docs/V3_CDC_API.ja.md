@@ -216,3 +216,8 @@ S2/P4 compileと新CdcConsole例のS3 compileも成功。実機はS3–S3のみ�
 原本`/tmp/pytest-embedded/2026-10-28_12-23-52-104927/`、結果と集計は
 `validation/.pytest-results/cdc-native-stream-related*`。
 最小比較のsource/nm/layoutは同ディレクトリの`stream-layout-*`に保存した。
+
+
+続く製品`56a2c9a`固定の全34件も成功（2510.86秒、0 skipped/error/failure/unfinished）。
+68 serial全てSTOPPED、panicなし、774取得点の回復とheap前後同量を確認した。
+詳細は[一括結果](../validation/README.ja.md#native-stream変更後の全34件)。

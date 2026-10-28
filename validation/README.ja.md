@@ -64,6 +64,19 @@ native Stream変更後の6例をS3/S2/P4全profileでcompileし、**18 passed、
 記録は`.pytest-results/stream-examples-*-build.txt`と`stream-examples-build-audit.txt`。
 初回失敗/中止の記録は`stream-examples-*-initial-cache-collision.txt`へ分けている。
 
+## native Stream変更後の全34件
+
+2026-10-28、製品`56a2c9a`を固定した標準`pytest --combo all`は**34 passed、0 skipped、
+0 failed/error、0 unfinished、2510.86秒**。68 serial全てSTOPPED、STOP_FAILED/panicなし。
+Streamの4 empty/timeoutとtiny ring、peek/readBytes、Printの24照会/12構成、MIDIの型分離とpacket通信、
+774取得点の失敗/回復、heap346704→346704 byte、reset開始3深度と各class HALT、TCP3構成も成功。
+S2/P4 compileと各targetの全29 sourceの依存・nmも確認。旧vendor/SDK fallbackはない。
+
+原本`/tmp/pytest-embedded/2026-10-28_12-35-43-320235/`。
+XML/transcript/serialは`.pytest-results/cdc-native-stream-all*`、集計は`cdc-native-stream-all-audit.txt`。
+実行中の製品/probeを固定し、並行作業はexample build helperの保存先と文書の変更だけ。
+`verify_usb_backend.py`、`git diff --check`も成功。OS/他SoC/HS実機・全競合順序までは未確認。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。
