@@ -7,6 +7,27 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## PCM alternate対応後の全38件（最新）
+
+2026-10-29、製品/probeを`033f2d8`に固定。標準`pytest --combo all`は
+**38 passed、0 skipped/failed/error/unfinished、2544.60秒**。
+76 serial全てSTOPPED、STOP_FAILED/panicなし。816取得点の失敗から全て回復し、
+heapは346704→346704 byte。設定追加14箇所の失敗回復も確認した。
+
+Audioの4 PCM alternate×UAC1/UAC2による16 ISO交換、14回の旧ring poison、
+共有clock/rate一覧・長いRANGE、停止後のformat入替え、bulk/HID/Audioの実bus休止を含む。
+131072 byte loanの92返却、reset開始IRQの3深度、CCID/Video/NCM HALT回復、
+3構成のTCP8193 byte交換も同じ実行で成功した。
+
+S3 Vendor単独・S2/P4 Vendor＋CCIDについて、全29 sourceのcompiler依存とnm/addr2lineを監査。
+旧stack/SDK TinyUSB fallback、旧Runtime/空task、未選択NCM/Video/keymapの混入はない。
+S2/P4はcompile-only。OS・他SoC/HS実機や任意の全競合順序を保証する結果ではない。
+plugin 1.10.0の標準comboと`--noconftest`を使用し、独自hookは追加していない。
+
+serial原本は`/tmp/pytest-embedded/2026-10-28_22-37-36-110392/`。
+JUnit/transcript/serialコピー・監査集計と各targetのnmは`.pytest-results/audio-alternates-all*`。
+実行中のコミット`380bd8b`は新AudioPlayback例と文書のみで、製品/probeに変更はない。
+
 ## 開始mode・worker API整理後の全34件
 
 2026-10-28、製品`d876d50`を固定。標準`pytest --combo all`は**34 passed、0 skipped、

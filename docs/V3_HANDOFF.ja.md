@@ -40,7 +40,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 | 単位 | 結果・記録 |
 | --- | --- |
-| 製品033f2d8の全38件 | **実行中、完了結果は未記録**。`.pytest-results/audio-alternates-all.xml`、transcript `/tmp/espusb-v3-audio-alternates-all.txt` |
+| 製品033f2d8の全38件 | **38 passed、2544.60秒、skip/error/failure/unfinishedなし**。76 logs STOPPED/panicなし。`.pytest-results/audio-alternates-all*` |
 | 最新Audio/core関連7件 | 7 passed、358.65秒、14 logs STOPPED/panicなし。`.pytest-results/audio-alternates-related*` |
 | 直前の全体基準 f1c9f29 | 34 passed、1631.13秒、68 logs STOPPED/panicなし。`.pytest-results/wide-loan-all*` |
 | S2/P4 | 最新製品のcompile成功、全29 sourceの依存/nmに旧stack/SDK fallbackなし。USB実機は未確認 |
@@ -48,9 +48,9 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 最新関連7件は、4 PCM形状×2規格の16 ISO交換、14回の旧ring poison、frame境界/状態照会、
 32個の不正alternate要求、13 rate・158 byte RANGE、停止後の再構成、実bus休止、core要求を含む。
-開始816＋設定14取得点の失敗回復、heap346704→346704を確認した。各対象の範囲を全38件と混同しない。
-全体監査用のread-only scriptは`/tmp/espusb-v3-audio-alternates-all-audit.py`。
-XMLの最終成功後に実行し、実行中の部分結果で上書きしない。
+開始816＋設定14取得点の失敗回復、heap346704→346704を確認した。同じ条件を全38件でも確認した。
+全体監査済み。read-only scriptは`/tmp/espusb-v3-audio-alternates-all-audit.py`、
+集計は`.pytest-results/audio-alternates-all-audit.txt`、原本は`/tmp/pytest-embedded/2026-10-28_22-37-36-110392/`。
 
 ## 試験の運用
 
@@ -68,12 +68,12 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 実機pytestは一つずつ。対応するbuild/test中は製品とprobeを変更しない。
 別exampleのcompileは`build/examples/<profile>/<sketch>/`へ分離し、実機suiteの生成物と共有しない。
-全件実行中の追加作業はAudioPlayback例と文書だけで、製品/probeは033f2d8に固定している。
+全38件の実行中の追加作業はAudioPlayback例と文書だけで、製品/probeは033f2d8に固定した。
 
 ## 次の単位と未完了
 
-1. 全38件の終了・76 serial・回収/所有権・依存を監査し、最新基準を記録する。
-2. AudioPlayback例の3 profileビルドは完了。次は外部ringの最大frame境界や能力表拒否の不足を確認する。
+1. 全38件とAudioPlayback例の3 profileビルド、回収/所有権・依存の監査は完了。
+2. 次は外部ringの最大frame境界や能力表拒否の不足を確認する。
 3. CCIDのmessage>=MPSは仕様上必要。P4 HSでは既定320がMPS512を満たさないため512以上の設定が必要。
    Audioの方向内channel数変更、PCM形状ごとに異なるrate集合、borrowed PCM/外部codec clockは別の設計対象。
 4. OS互換、remote wakeup、長時間、S2/P4の実機FS/HSは後段。S31は現SDK非対応の新規port対象。

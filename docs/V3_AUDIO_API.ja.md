@@ -60,8 +60,9 @@ JUnit/transcript/serialコピーはvalidation/.pytest-results/audio-events-relat
 不利益は通知有効時の動的確保・管理情報と、queue操作の短いlockである。
 既存の通常のpollEvent呼出し方を維持するが、稼働中のformat追加やFunctionの先行手動beginに依存するコードは移行が必要。
 
-PCM bufferはsample frame数で指定する。1 frameは全channelの1 sampleで、byte数は
-channels × subslotBytes × bufferFrames。24 bit PCMでも容量がframe境界からずれない。
+PCM bufferはsample frame数で指定する。1 frameは全channelの1 sampleで、確保するbyte数は
+登録format中の最大値(channels × subslotBytes) × bufferFrames。単一formatならそのframe幅を使う。
+read/writeと利用可能容量は、選択中のPCMのframe境界へ切り下げる。
 選択した方向だけにringと最大packet分のDMA bufferを確保し、UAC2 Playbackだけに4 byte feedbackを加える。
 既定は各256 frame。playbackBuffer/captureBufferに外部byte配列を渡せる。必要長は上記byte数で、
 Device.endまで有効に保ちアプリが直接書き換えない。ringはCPU copy用なのでDMA alignmentは不要。
@@ -69,7 +70,7 @@ Device.endまで有効に保ちアプリが直接書き換えない。ringはCPU
 
 容量0ならringを確保しない。Playbackは受信を捨てoverrunへ記録する。
 CaptureはDMA packetを無音で埋めunderrunへ記録する。USB転送に必要なDMA buffer自体は残る。
-capacity()は確保したring byte数、packetCapacity()はselected formatのFS最大packet byte数を返す。
+capacity()は選択中のframe境界へ切り下げたring byte数、packetCapacity()は全登録formatのFS最大packetを入れる容量を返す。
 どちらもbegin前/終了後は0。HSで必要なpacketが小さくても、FS fallback用のDMA容量は確保する。
 
 read/writeはframe境界まで切り下げたbyte数を処理し、戻り値もbyte数。
@@ -287,3 +288,9 @@ Hostが送る全packetの連続性やOS/HS/任意の全切替競合を保証し�
 2 PCM形状×2 rate、192 byteのring、event容量0、currentFormatを示す。受信PCMを消費・表示する例で、DACは要求しない。
 Core3.3.12のS3/S2/P4で3ビルド成功、各ELF/FQBNと未使用クラスの除外を確認した。
 記録は`.pytest-results/audio-playback-example*`。sketch自体の実機試験やOS認定ではなくcompile確認である。
+
+
+製品/probe `033f2d8`を固定した全体試験も、**38 passed、0 skipped/error/failure/unfinished、2544.60秒**で成功。
+76 serial全てSTOPPED/panicなし、816開始取得点と14設定取得点の失敗回復、heap346704→346704を確認した。
+実機はS3–S3で、S2/P4はcompile/依存/nm確認まで。記録は`.pytest-results/audio-alternates-all*`、
+[全体の検証記録](../validation/README.ja.md)を参照。
