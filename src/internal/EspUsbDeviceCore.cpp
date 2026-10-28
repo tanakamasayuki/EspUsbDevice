@@ -453,6 +453,13 @@ bool espusb_device_edpt_open(uint8_t port,const EspUsbEndpointDescriptor *descri
   if(!espusb_controller_edpt_open(port,descriptor))return false;
   ep->opened=true;ep->type=uint8_t(type);ep->flags=0;return true;
 }
+bool espusb_device_edpt_iso_activate(uint8_t port,const EspUsbEndpointDescriptor *descriptor) {
+  if (!core || port!=core->port || !descriptor || descriptor->bLength<7 || descriptor->bDescriptorType!=5 || espusb_endpoint_type(descriptor)!=ESPUSB_XFER_ISOCHRONOUS) return false;
+  auto *ep=core->endpoint(descriptor->bEndpointAddress);
+  const unsigned packet=espusb_endpoint_packet_size(descriptor);
+  if (!ep || !ep->opened || ep->type!=ESPUSB_XFER_ISOCHRONOUS || (ep->flags.load()&(Busy|Claimed|Halted)) || !packet || packet>(core->speed==ESPUSB_SPEED_HIGH ? 1024u : 1023u)) return false;
+  return espusb_controller_edpt_iso_activate(port,descriptor);
+}
 bool espusb_device_edpt_claim(uint8_t port,uint8_t address) {
   if(!espusb_controller_io_ready(port))return false;
   auto *ep=core->endpoint(address);if(!ep || ((address&15) && !ep->opened))return false;

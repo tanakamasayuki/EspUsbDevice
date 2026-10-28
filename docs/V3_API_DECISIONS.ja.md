@@ -811,3 +811,13 @@ UAC1のdescriptor/endpoint制御、UAC2のclock一覧と、最大packet/DMA容�
 単一rateにRANGE用の追加取得点を作らず、転送/control中の取得点も増やさない。
 通常の一回のaddFormatはそのまま使える。異なるPCM形状のalternateは別の単位へ残す。
 契約・上限・結果は[Audio API](V3_AUDIO_API.ja.md#同じpcm形状での複数sample-rate)。
+
+## AudioのPCM形状とalternate
+
+subslot/有効bit数ごとにalternateを作り、rateは各形状の一覧へまとめる。
+共有clockでどの形状も選べるよう、各形状・両方向のrate集合をそろえる。不足した能力は広告しない。
+利点は16/24/32 bit等をオブジェクト再生成なしに選べ、最大領域一組の使い回しで済むこと。
+不利益は最大PCM分の開始時容量、形式追加に伴うdescriptor/設定metadata、共通clockの完全なrate集合が必要なこと。
+currentFormatはcopyのsnapshotで、read/writeとの形式の同期はアプリ側で行う。
+旧DMA停止と完了fence後に再activateし、形状が異なる旧ringは破棄する。
+API・外部ringの必要長・関連7件の結果は[Audioガイド](V3_AUDIO_API.ja.md#pcm形状のalternate選択)。

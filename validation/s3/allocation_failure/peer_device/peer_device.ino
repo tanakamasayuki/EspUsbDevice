@@ -78,6 +78,9 @@ bool audioFormatSettings() {
     ok &= stream.addFormat({8000,2,3,24}, UsbSpeed::Full, limits);
     DescriptorLayout layout(EndpointLimits{15,15,15}); AudioFunctionGraph graph;
     AudioControlState controls;
+    ok &= !buildAudioFunctionGraph(model, layout, AudioFunctionGraphConfig{}, graph) && graph.error == AudioGraphError::IncompatibleClockRates;
+    for (unsigned i = 1; i < 12; ++i) ok &= stream.addFormat({8000 + i*1000,2,3,24}, UsbSpeed::Full, limits);
+    ok &= stream.formatCount() == 24 && stream.alternateCount() == 2 && stream.alternateRateCount(1) == 12 && stream.alternateRateCount(2) == 12;
     ok &= buildAudioFunctionGraph(model, layout, AudioFunctionGraphConfig{}, graph) && controls.configure(model, graph);
     ok &= controls.sampleRateCount() == 12 && controls.currentSampleRate() == 8000 && !controls.sampleRate(12);
     for (unsigned i = 0; i < 12; ++i) ok &= controls.sampleRate(i) == 8000 + i * 1000;
@@ -113,7 +116,7 @@ bool audioFormatSettings() {
 
   }
   ok &= !outstanding && !badFree && !overflow;
-  Serial.printf("AUDIO_SETTINGS ok=%u formats=13 rates=12 failures=%u object=%u model=%u controls=%u\r\n", unsigned(ok), failures, unsigned(sizeof(EspUsbAudioFunction)), unsigned(sizeof(AudioStreamModel)), unsigned(sizeof(AudioControlState)));
+  Serial.printf("AUDIO_SETTINGS ok=%u formats=24 rates=12 failures=%u object=%u model=%u controls=%u\r\n", unsigned(ok), failures, unsigned(sizeof(EspUsbAudioFunction)), unsigned(sizeof(AudioStreamModel)), unsigned(sizeof(AudioControlState)));
   Serial.printf("AUDIO_CLEAR ok=%u\r\n", unsigned(ok));
   return ok;
 }
@@ -135,7 +138,7 @@ void loop() {
         ok = device.begin(); ok &= device.end() == ESP_OK; delay(10);
       }
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      for (unsigned mode = 0; mode < 45 && ok; ++mode) {
+      for (unsigned mode = 0; mode < 46 && ok; ++mode) {
         EspUsbVendorConfig config;
         unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
         if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
@@ -248,6 +251,17 @@ void loop() {
           EspUsbAudioConfig config; config.eventCapacity = 0;
           ok &= audio->configure(config) == ESP_OK;
           points += 7; // Includes the optional 158-byte clock RANGE reply.
+        }
+        if (mode == 45) {
+          audio = new EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2);
+          auto &playback = audio->addPlaybackStream(); auto &capture = audio->addCaptureStream();
+          for (unsigned rate : {24000u,16000u}) for (unsigned bytes : {2u,3u,4u}) {
+            ok &= playback.addFormat({rate,2,uint8_t(bytes),uint8_t(bytes*8)});
+            ok &= capture.addFormat({rate,2,uint8_t(bytes),uint8_t(bytes*8)});
+          }
+          EspUsbAudioConfig config; config.eventCapacity = 0; config.playbackBufferFrames = config.captureBufferFrames = 65;
+          ok &= audio->configure(config) == ESP_OK;
+          points += 9; // Duplex PCM state/rings/packets/feedback, clock RANGE and registry.
         }
         points += 6; // Function index + FS, strings, MS OS, BOS, and the selected core/event/DMA block.
         EspUsbDeviceConfig identity;

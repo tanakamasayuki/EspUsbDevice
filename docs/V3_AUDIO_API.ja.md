@@ -35,7 +35,7 @@ queueは短いcritical sectionで保護し、USB workerとアプリのevent追�
 稼働中のconfigure、addFormat、新しい方向のaddPlaybackStream/addCaptureStreamは拒否する。
 configureはInvalidState、addFormatはfalseを返す。streamを返す従来APIは既存参照を返して
 構成を保ち、Device.lastErrorにInvalidStateを設定する。raw descriptor writerも稼働中の再構築を拒否する。
-停止後のformat入替えはclearFormatsで行う。同じPCM形状の複数rateに対応するが、異なる形状のalternateは後続。
+停止後のformat入替えはclearFormatsで行う。PCM形状ごとのalternateと共有clockの複数rateに対応する。
 
 未登録Audioの手動beginはInvalidStateで拒否し、そのstreamから既存Audioのbufferへアクセスしない。
 稼働中のFunction破棄はDeviceを停止し、USB worker/DMAが止まってからevent領域を解放する。
@@ -91,9 +91,9 @@ captureの明示的な部分書込み。不利益はbegin時の確保失敗と�
 Device + Function + addStream/addFormat + begin、read/write/pollEventという通常の流れは維持する。
 旧CFG_TUD_AUDIOの有効化と固定buffer flagは拒否する。形式はaddFormatで、queueはconfigureで指定する。
 
-未完の範囲は複数formatのalternate選択、外部clock feedback、
+未完の範囲は方向内のchannel数変更、PCM形状ごとに異なるrate集合、外部clock feedback、
 callback/borrowed PCMの所有権API、OS音声アプリ、P4/S2/S31/HSである。
-現在は方向ごと同じPCM形状の複数rateに対応する。異なる形状のalternate選択は未対応。
+方向ごとにchannel数を固定し、subslot/有効bit数をalternateで切り替える。同じFunctionではclockを共有する。
 
 
 独自PCM driverの関連試験audio-pcm-related.xmlは**3 passed、0 skipped、0 unfinished、145.99秒**。
@@ -215,7 +215,7 @@ if (!device.begin()) return;
 UAC1はType I descriptorへ離散rate一覧を出し、endpointのSET_CUR/GET_CURも実clockへ合わせる。
 UAC2はClock SourceのCUR/RANGEへ一覧を出す。未登録rateは拒否し、現在のrateを変更しない。
 PCM形状が変わらないrate変更なので、streaming alternateは従来どおり0/1。
-異なるPCM形状のalternate切替は、まだbegin/descriptorで拒否する。
+この複数rate対応の時点では、異なるPCM形状のalternate切替を残していた。
 
 endpointのpacketサイズとDMA容量は、登録rateの最大packet要求に合わせて確保する。
 UAC2の複数rate時だけ、`2 + 12 × rate数` byteのRANGE応答領域を開始時に確保し、endで回収する。
@@ -238,3 +238,47 @@ S2/P4 compileと全29 sourceの依存/nmも成功し、未選択Audioの除外�
 原本`/tmp/pytest-embedded/2026-10-28_21-46-07-520296/`、`.pytest-results/audio-rates*`。
 rate一覧の直接参照へ整理する前の関連5件（268.82秒）も別名で保持する。
 収集は37件。この5件の結果を、全37件の一括試験や異なるPCM形状のalternate対応とは扱わない。
+
+## PCM形状のalternate選択
+
+同じstreamへsubslot byte数・有効bit数が異なるformatを登録できる。
+同じPCM形状は一つのalternateへまとまり、各形状を最初に宣言した順に1～255を割り当てる。
+同じ形状のrate追加はalternateを増やさない。0はstream停止。
+現在の共有clockでは、各PCM形状と両方向が同じrate集合を持つ必要がある。
+不足した組合せや方向内でchannel数が変わる設定はbegin前に拒否する。
+
+```cpp
+for (uint32_t rate : {24000u, 16000u}) {
+  if (!playback.addFormat({rate, 2, 2, 16})) return; // alternate 1
+  if (!playback.addFormat({rate, 2, 3, 24})) return; // alternate 2
+  if (!playback.addFormat({rate, 2, 4, 32})) return; // alternate 3
+}
+```
+
+両streamの`bool currentFormat(EspUsbAudioFormat &format) const`で、選択されたPCM形状と現在のrateをcopyできる。
+未選択・停止・切替のdrain中はfalseで、引数を変更しない。snapshotなので次のread/writeまで形式を固定する意味ではない。
+アプリはeventや照会結果に応じてPCMの処理形式を合わせる。codec/I2Sの自動設定は行わない。
+
+ringは`bufferFrames × 登録format中の最大frame byte数`を開始時に確保する。
+外部ringにもこの長さが必要。capacity/availableForWriteは現在のframe境界へ切り下げたbyte数で、
+65 frame×最大8 byteの520 byte領域なら、6 byte/frame時のcapacityは516となる。
+packetCapacityは全formatのFS最大packetを入れる領域の容量。実転送のMPSは選択alternateに合わせる。
+FIFOも物理endpointごとの最大packetで一度だけ予約し、alternateの数だけ積み増さない。
+
+切替時は旧DMAを停止し、完了eventをfenceで排出した後にendpointを再activateする。
+同じsubslotでも有効bit数が異なる形式は別として扱い、旧PCMのringを捨てる。
+最初に選んだ形式と同じ形式での事前充填は維持する。切替中のread/writeは0。
+alternateごとのpacket/ring配列、新しいtask/queue、切替時のheap取得は追加しない。
+
+S3の関連7件は**7 passed、0 skipped/error/failure/unfinished、358.65秒**。
+UAC1/UAC2それぞれで16-bit/2-byte、24-bit/3-byte、32-bit/4-byte、24-bit/4-byteを選び、計16回の実ISO往復を確認。
+14回、旧ringへ0xa5を事前配置し、新形式へ混入しないことを確認した。
+16回の状態/境界照会、32個の不正alternate要求、2 clock rateとfeedback、816開始取得点＋14設定取得点の
+失敗回復、heap346704→346704、既存のISO休止・再構成・control/coreも成功。14 logs STOPPED/panicなし。
+S2/P4 compileと依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_22-26-28-639054/`、
+`.pytest-results/audio-alternates-related*`。収集は38件で、この結果は関連7件のもの。
+
+EspUsbHost 2.10.1は列挙時にclaimしたalternateしか開始対象にしないため、新probeはSDKのclaim/releaseとISO転送を使う。
+pluginの標準combo/allとnoconftestは維持する。Hostの既定FIFO限界と初期probeの誤りも別名で記録した。
+間欠OUTで最初のpacketだけ受信する問題も再現し、DWC2のincomplete OUT回復を4480513で修正した。
+Hostが送る全packetの連続性やOS/HS/任意の全切替競合を保証した結果とは扱わない。

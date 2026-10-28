@@ -89,6 +89,13 @@ esp_err_t EspUsbAudioCaptureStream::clearFormats()
   return function_.clearFormats(espusb::internal::AudioDirection::Capture);
 }
 
+bool EspUsbAudioPlaybackStream::currentFormat(EspUsbAudioFormat &format) const {
+  return espusb::internal::AudioTransport::currentFormat(function_, true, format);
+}
+bool EspUsbAudioCaptureStream::currentFormat(EspUsbAudioFormat &format) const {
+  return espusb::internal::AudioTransport::currentFormat(function_, false, format);
+}
+
 esp_err_t EspUsbAudioFunction::clearFormats(espusb::internal::AudioDirection direction)
 {
   if (started_.load()) { device_.setLastError(ESP_ERR_INVALID_STATE); return ESP_ERR_INVALID_STATE; }
@@ -173,8 +180,8 @@ bool EspUsbAudioFunction::begin()
   if (!registered_ || started_.load() || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   startError_ = ESP_ERR_INVALID_ARG;
   if ((!playbackEnabled_ && !captureEnabled_) ||
-      (playbackEnabled_ && !model_.playback().hasUniformPcmFormat()) ||
-      (captureEnabled_ && !model_.capture().hasUniformPcmFormat()))
+      (playbackEnabled_ && (!model_.playback().formatCount() || !model_.playback().hasCompleteRateSets())) ||
+      (captureEnabled_ && (!model_.capture().formatCount() || !model_.capture().hasCompleteRateSets())))
   {
     return false;
   }

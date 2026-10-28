@@ -281,6 +281,20 @@ PCM形状変更のalternateはまだ拒否。上限・費用は[Audio API](V3_AU
 S2/P4 compile・全29 sourceの依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_21-46-07-520296/`、
 `.pytest-results/audio-rates*`。最適化前5件の記録も保持。全体収集37件、一括再実行の結果ではない。
 
+## AudioのPCM alternateとISO OUT回復
+
+4480513で、間欠ISO OUTの未完frameをDMA停止後に失敗返却し、再armできるようにした。
+最初の96 byteのみで停止し、bit21が未処理だった実測と失敗ログを保持している。
+PCM形状ごとのalternate、最大frame/ring/packetの予約、fence後の再activate、currentFormat照会も追加。
+共有clockなので各形状と両方向に同じrate集合を要求する。方向内のchannel数は引き続き固定。
+[契約と結果](V3_AUDIO_API.ja.md#pcm形状のalternate選択)、[OUT回復](V3_CORE_API.ja.md#iso-outの欠落frame回復)。
+
+関連7件は7 passed（358.65秒）、14 logs STOPPED/panicなし。両規格の4 PCM形状、16 ISO交換、
+14回の旧ring poison、境界/状態、不正alternate、816＋14取得点の回復、heap346704→346704を確認。
+S2/P4 compile・全29 sourceの依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_22-26-28-639054/`、
+`.pytest-results/audio-alternates-related*`。新Host probeはSDK直接で、conftestや独自pluginはない。
+現在の収集は38件。低レイヤ変更を含むため、この製品を固定した全件確認を次に行う。
+
 ## 次の単位と未完了
 
 1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
@@ -290,9 +304,9 @@ S2/P4 compile・全29 sourceの依存/nmも成功。原本`/tmp/pytest-embedded/
    MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
    class内に分散したSoC別MPS判定は共通化済み。P4 HSではCCIDの既定320がMPS512を満たさない点は残る。
    Audioのformat/rate固定配列は撤去済み。end後の入替えAPIも追加済み。
-   同じPCM形状の複数rateとRANGEの実容量も対応済み。次は異なるPCM形状のalternate選択、
-   選択formatに応じたframe/packet/ring境界と共有clockの能力表現を整理する。
-   旧13 format/12 rateの混在形状はmetadata確認。新しい13 rateの試験は同一PCM形状をwireで確認した。
+   PCM形状のalternate選択、frame/packet/ring境界、共有clockの完全なrate集合にも対応した。
+   次は最新38件の一括確認と、外部ring境界・不完全な能力表の拒否等の不足を確認する。
+   per-alternateで異なるrate集合、方向内channel数変更、borrowed PCMや外部codec clockは別の設計対象。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
 4. S3 FSのHost起点suspend/resumeは確認済み。Vendor HIDの周期InputとAudio ISOの4構成も確認済み。OS互換、remote wakeup、
    長時間、S2/P4の実機FS/HSを後段で確認する。

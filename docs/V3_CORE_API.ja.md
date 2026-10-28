@@ -687,3 +687,18 @@ startedとready、終了後の回収を同じ実行で確認した。
 S2/P4 compileと全29 sourceの依存・symbol確認も成功。
 記録は[validationの最新全体結果](../validation/README.ja.md#開始modeworker-api整理後の全34件)。
 他SoC/HS実機・OS・任意の全EP0競合順序までの確認とはしない。
+
+## ISO OUTの欠落frame回復
+
+S3の間欠ISO OUTでHostの送信は継続するのにDeviceは最初の96 byteだけ受信した。
+観測値はGINTSTS=00a08428（incomplete OUT bit21）、mask=801c3804（bit21無効）、
+OUTCTL=80048064、OUTSIZE=00080064、OUTINT=00002000。baselineは
+`.pytest-results/audio-alternates-out-gap-{baseline,registers}*`へ保持した。
+
+4480513でISO OUTを開いた場合だけincomplete OUT割込みを有効化した。
+対象frameを過ぎた有効なISO OUTのDMAを既存の停止手順で止め、失敗・0 byteの完了をqueueへ返す。
+Audioは失敗packetをringへ渡さず再armする。EP0/bulk/interrupt OUTを対象にしない。
+新しいtask/timer/queueや転送recordの追加はない。ISOを有効にしてHostがpacketを送らない間は、
+missを処理するIRQ/workerの費用がある。全HS/全intervalの実機確認ではなく、S3 FSのAudio間隔1で確認した。
+関連7件には通常の連続PCMとSDK Hostの間欠ISO、core標準要求、816取得点の回復を含む。
+手順の照合には[Linux DWC2のincomplete OUT処理](https://code.googlesource.com/linux/torvalds/linux/+/56bf6fc266ca14d2b9276c8a62e4ff6783bfe68b/drivers/usb/dwc2/gadget.c)も参照した。

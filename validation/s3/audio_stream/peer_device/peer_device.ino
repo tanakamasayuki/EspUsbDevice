@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EspUsbDevice.h>
 #include <algorithm>
+#include "../../../../src/internal/EspUsbDwc2Hardware.h"
 EspUsbDevice device;
 EspUsbAudioFunction *audio = nullptr;
 EspUsbAudioPlaybackStream *playback = nullptr;
@@ -49,13 +50,48 @@ void loop() {
         if (capture) ok &= capture->addFormat({r,2,2,16});
       }
     }
+    const bool alternates = command.endsWith(" alternates");
+    if (alternates) {
+      // Interleaved registration must retain PCM alternate order, not rate order.
+      for (unsigned r : {24000u,16000u}) for (unsigned bytes : {2u,3u,4u}) {
+        if (r == rate && bytes == 2) continue;
+        if (playback) ok &= playback->addFormat({r,2,uint8_t(bytes),uint8_t(bytes*8)});
+        if (capture) ok &= capture->addFormat({r,2,uint8_t(bytes),uint8_t(bytes*8)});
+      }
+    }
+    if (alternates) for (unsigned r : {24000u,16000u}) {
+      if (playback) ok &= playback->addFormat({r,2,4,24});
+      if (capture) ok &= capture->addFormat({r,2,4,24});
+    }
     EspUsbAudioConfig config; config.eventCapacity = 0; config.playbackBufferFrames = config.captureBufferFrames = frames;
     if (external) { config.playbackBuffer = rx + 1; config.captureBuffer = tx + 1; }
     ok &= audio->configure(config) == ESP_OK && device.begin();
-    ok &= (!playback || playback->capacity() == frames * 4) && (!capture || capture->capacity() == frames * 4);
+    ok &= (!playback || playback->capacity() == frames * (alternates ? 8 : 4)) && (!capture || capture->capacity() == frames * (alternates ? 8 : 4));
     if (capture) { ok &= capture->write(samples, 3) == 0; capture->clearBuffer(); }
     feeding = true; received = bad = 0;
     Serial.printf("STARTED %u\r\n", unsigned(ok));
+  } else if (command.startsWith("formats ")) {
+    unsigned bits,rate,bytes; sscanf(command.c_str(),"formats %u %u %u",&bits,&rate,&bytes);
+    EspUsbAudioFormat a{},b{}; bool ok = playback && capture && playback->currentFormat(a) && capture->currentFormat(b);
+    const unsigned frame = 2*bytes, capacity = 520/frame*frame;
+    ok &= a.sampleRate == rate && b.sampleRate == rate && a.channels == 2 && b.channels == 2 && a.bitsPerSample == bits && b.bitsPerSample == bits && a.bytesPerSample == bytes && b.bytesPerSample == bytes;
+    ok &= playback->capacity() == capacity && capture->capacity() == capacity && capture->availableForWrite() % frame == 0;
+    Serial.printf("PCM_FORMAT ok=%u bits=%u rate=%u capacity=%u\r\n",unsigned(ok),bits,rate,unsigned(playback->capacity()));
+  } else if (command == "formats_off") {
+    bool ok = false; const uint32_t until = millis()+3000;
+    do {
+      EspUsbAudioFormat a{123,1,2,16},b=a;
+      ok = !playback->currentFormat(a) && !capture->currentFormat(b) && a.sampleRate == 123 && b.sampleRate == 123;
+      if (!ok) delay(1);
+    } while (!ok && int32_t(until-millis())>0);
+    Serial.printf("FORMATS_OFF %u\r\n",unsigned(ok));
+  } else if (command == "poison") {
+    uint8_t data[512]; memset(data,0xa5,sizeof(data));
+    bool ok = capture && capture->clearBuffer() && capture->write(data,sizeof(data)) > 0;
+    Serial.printf("POISONED %u\r\n",unsigned(ok));
+  } else if (command == "iso_diag") {
+    const auto *r = espusb_dwc2_registers(0);
+    Serial.printf("ISO_DIAG sts=%08x mask=%08x outctl=%08x outsize=%08x outint=%08x\r\n",unsigned(r->gintsts),unsigned(r->gintmsk),unsigned(r->epout[1].ctl),unsigned(r->epout[1].tsiz),unsigned(r->epout[1].intr));
   } else if (command == "clock") {
     Serial.printf("CLOCK %u\r\n", unsigned(audio->currentSampleRate()));
   } else if (command == "resetstats") {

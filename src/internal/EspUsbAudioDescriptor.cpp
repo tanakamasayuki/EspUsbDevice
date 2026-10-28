@@ -135,31 +135,28 @@ bool writeEntity(DescriptorBuffer &buffer, const AudioEntity &entity)
   return false;
 }
 
-bool writeStreamingInterface(DescriptorBuildContext &context,
+bool writeStreamingInterfaceAlternate(DescriptorBuildContext &context,
                              const AudioStreamModel &model,
                              const AudioStreamLayout &layout,
-                             const AudioDescriptorConfig &config)
+                             const AudioDescriptorConfig &config, uint8_t alternate)
 {
-  const AudioPcmFormat *format = model.format(0);
+  const AudioPcmFormat *format = model.alternateFormat(alternate);
   AudioPacketRequirement packet;
   if (!format ||
-      !model.hasUniformPcmFormat())
+      !model.hasCompleteRateSets())
   {
     return false;
   }
 
-  for (size_t i = 0; i < model.formatCount(); ++i) {
+  for (size_t i = 0; i < model.alternateRateCount(alternate); ++i) {
     AudioPacketRequirement candidate;
-    if (validateAudioFormat(*model.format(i), context.speed(), defaultAudioBusLimits(context.speed()), &candidate) != AudioFormatError::None) return false;
+    if (validateAudioFormat(format[i], context.speed(), defaultAudioBusLimits(context.speed()), &candidate) != AudioFormatError::None) return false;
     if (candidate.maxPacketSize > packet.maxPacketSize) packet = candidate;
   }
 
   const uint8_t endpointCount =
       static_cast<uint8_t>(1U + (layout.feedbackEndpoint ? 1U : 0U));
-  if (!context.writeInterface(layout.interfaceNumber, 0, 0, USB_CLASS_AUDIO,
-                              AUDIO_SUBCLASS_STREAMING, AUDIO_PROTOCOL_UAC2,
-                              streamString(config, layout.direction)) ||
-      !context.writeInterface(layout.interfaceNumber, 1, endpointCount,
+  if (!context.writeInterface(layout.interfaceNumber, alternate, endpointCount,
                               USB_CLASS_AUDIO, AUDIO_SUBCLASS_STREAMING,
                               AUDIO_PROTOCOL_UAC2,
                               streamString(config, layout.direction)))
@@ -198,6 +195,16 @@ bool writeStreamingInterface(DescriptorBuildContext &context,
   {
     return false;
   }
+  return true;
+}
+
+bool writeStreamingInterface(DescriptorBuildContext &context, const AudioStreamModel &model,
+    const AudioStreamLayout &layout, const AudioDescriptorConfig &config) {
+  if (!model.alternateCount() || model.alternateCount() > UINT8_MAX || !model.hasCompleteRateSets()) return false;
+  if (!context.writeInterface(layout.interfaceNumber, 0, 0, USB_CLASS_AUDIO,
+      AUDIO_SUBCLASS_STREAMING, AUDIO_PROTOCOL_UAC2, streamString(config, layout.direction))) return false;
+  for (size_t alternate = 1; alternate <= model.alternateCount(); ++alternate)
+    if (!writeStreamingInterfaceAlternate(context, model, layout, config, uint8_t(alternate))) return false;
   return true;
 }
 
@@ -275,32 +282,29 @@ bool writeUac1Entity(DescriptorBuffer &buffer, const AudioEntity &entity)
   return false;
 }
 
-bool writeUac1StreamingInterface(DescriptorBuildContext &context,
+bool writeUac1StreamingInterfaceAlternate(DescriptorBuildContext &context,
                                  const AudioStreamModel &model,
                                  const AudioStreamLayout &layout,
-                                 const AudioDescriptorConfig &config)
+                                 const AudioDescriptorConfig &config, uint8_t alternate)
 {
-  if (model.formatCount() > (UINT8_MAX - 8u) / 3u) return false;
-  const AudioPcmFormat *format = model.format(0);
+  if (model.alternateRateCount(alternate) > (UINT8_MAX - 8u) / 3u) return false;
+  const AudioPcmFormat *format = model.alternateFormat(alternate);
   AudioPacketRequirement packet;
   if (!format ||
-      !model.hasUniformPcmFormat())
+      !model.hasCompleteRateSets())
   {
     return false;
   }
 
-  for (size_t i = 0; i < model.formatCount(); ++i) {
+  for (size_t i = 0; i < model.alternateRateCount(alternate); ++i) {
     AudioPacketRequirement candidate;
-    if (validateAudioFormat(*model.format(i), context.speed(), defaultAudioBusLimits(context.speed()), &candidate) != AudioFormatError::None) return false;
+    if (validateAudioFormat(format[i], context.speed(), defaultAudioBusLimits(context.speed()), &candidate) != AudioFormatError::None) return false;
     if (candidate.maxPacketSize > packet.maxPacketSize) packet = candidate;
   }
 
   const uint8_t endpointCount =
       static_cast<uint8_t>(1U + (layout.feedbackEndpoint ? 1U : 0U));
-  if (!context.writeInterface(layout.interfaceNumber, 0, 0, USB_CLASS_AUDIO,
-                              AUDIO_SUBCLASS_STREAMING, AUDIO_PROTOCOL_UAC1,
-                              streamString(config, layout.direction)) ||
-      !context.writeInterface(layout.interfaceNumber, 1, endpointCount,
+  if (!context.writeInterface(layout.interfaceNumber, alternate, endpointCount,
                               USB_CLASS_AUDIO, AUDIO_SUBCLASS_STREAMING,
                               AUDIO_PROTOCOL_UAC1,
                               streamString(config, layout.direction)))
@@ -312,16 +316,16 @@ bool writeUac1StreamingInterface(DescriptorBuildContext &context,
   if (!(buffer.writeU8(7) && buffer.writeU8(DESC_CS_INTERFACE) &&
         buffer.writeU8(AS_GENERAL) && buffer.writeU8(layout.terminalLink) &&
         buffer.writeU8(1) && buffer.writeU16(0x0001) &&
-        buffer.writeU8(uint8_t(8 + 3 * model.formatCount())) && buffer.writeU8(DESC_CS_INTERFACE) &&
+        buffer.writeU8(uint8_t(8 + 3 * model.alternateRateCount(alternate))) && buffer.writeU8(DESC_CS_INTERFACE) &&
         buffer.writeU8(AS_FORMAT_TYPE) && buffer.writeU8(0x01) &&
         buffer.writeU8(format->channels) &&
         buffer.writeU8(format->subslotBytes) &&
-        buffer.writeU8(format->validBits) && buffer.writeU8(uint8_t(model.formatCount()))))
+        buffer.writeU8(format->validBits) && buffer.writeU8(uint8_t(model.alternateRateCount(alternate)))))
   {
     return false;
   }
-  for (size_t i = 0; i < model.formatCount(); ++i) {
-    const uint32_t rate = model.format(i)->sampleRate;
+  for (size_t i = 0; i < model.alternateRateCount(alternate); ++i) {
+    const uint32_t rate = format[i].sampleRate;
     if (!(buffer.writeU8(uint8_t(rate)) && buffer.writeU8(uint8_t(rate >> 8)) && buffer.writeU8(uint8_t(rate >> 16)))) return false;
   }
 
@@ -349,6 +353,16 @@ bool writeUac1StreamingInterface(DescriptorBuildContext &context,
   {
     return false;
   }
+  return true;
+}
+
+bool writeUac1StreamingInterface(DescriptorBuildContext &context, const AudioStreamModel &model,
+    const AudioStreamLayout &layout, const AudioDescriptorConfig &config) {
+  if (!model.alternateCount() || model.alternateCount() > UINT8_MAX || !model.hasCompleteRateSets()) return false;
+  if (!context.writeInterface(layout.interfaceNumber, 0, 0, USB_CLASS_AUDIO,
+      AUDIO_SUBCLASS_STREAMING, AUDIO_PROTOCOL_UAC1, streamString(config, layout.direction))) return false;
+  for (size_t alternate = 1; alternate <= model.alternateCount(); ++alternate)
+    if (!writeUac1StreamingInterfaceAlternate(context, model, layout, config, uint8_t(alternate))) return false;
   return true;
 }
 
@@ -381,8 +395,8 @@ bool writeUac1Function(DescriptorBuildContext &context,
     setError(error, AudioDescriptorError::UnsupportedProtocol);
     return false;
   }
-  if ((graph.playback.present && !function.playback().hasUniformPcmFormat()) ||
-      (graph.capture.present && !function.capture().hasUniformPcmFormat()))
+  if ((graph.playback.present && (!function.playback().hasCompleteRateSets() || function.playback().alternateCount() > UINT8_MAX)) ||
+      (graph.capture.present && (!function.capture().hasCompleteRateSets() || function.capture().alternateCount() > UINT8_MAX)))
   {
     setError(error, AudioDescriptorError::UnsupportedFormatCount);
     return false;
@@ -481,8 +495,8 @@ bool writeUac2Function(DescriptorBuildContext &context,
     setError(error, AudioDescriptorError::UnsupportedProtocol);
     return false;
   }
-  if ((graph.playback.present && !function.playback().hasUniformPcmFormat()) ||
-      (graph.capture.present && !function.capture().hasUniformPcmFormat()))
+  if ((graph.playback.present && (!function.playback().hasCompleteRateSets() || function.playback().alternateCount() > UINT8_MAX)) ||
+      (graph.capture.present && (!function.capture().hasCompleteRateSets() || function.capture().alternateCount() > UINT8_MAX)))
   {
     setError(error, AudioDescriptorError::UnsupportedFormatCount);
     return false;

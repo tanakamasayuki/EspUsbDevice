@@ -41,12 +41,7 @@ bool AudioControlState::configure(const AudioFunctionModel &function,
   // A valid graph has identical rate sets in both directions. Borrow one
   // stream rather than storing another fixed-capacity copy of its rates.
   rateSource_ = function.playback().formatCount() ? &function.playback() : &function.capture();
-  for (size_t i = 0; i < rateSource_->formatCount(); ++i) {
-    bool duplicate = false;
-    for (size_t j = 0; j < i; ++j)
-      if (rateSource_->format(j)->sampleRate == rateSource_->format(i)->sampleRate) { duplicate = true; break; }
-    if (!duplicate) ++sampleRateCount_;
-  }
+  sampleRateCount_ = rateSource_->alternateRateCount(1);
   if (sampleRateCount_ == 0)
   {
     setError(AudioControlError::InvalidValue);
@@ -105,7 +100,7 @@ AudioControlState::feature(uint8_t entityId) const
 
 bool AudioControlState::sampleRateSupported(uint32_t rate) const
 {
-  for (size_t i = 0; rateSource_ && i < rateSource_->formatCount(); ++i)
+  for (size_t i = 0; rateSource_ && i < sampleRateCount_; ++i)
     if (rateSource_->format(i)->sampleRate == rate) return true;
   return false;
 }
@@ -324,17 +319,7 @@ bool AudioControlState::range(uint8_t entityId,
 uint32_t AudioControlState::sampleRate(size_t index) const
 {
   if (!rateSource_ || index >= sampleRateCount_) return 0;
-  // With no duplicate rates, indexing is direct. In particular, active uniform
-  // PCM models always satisfy this: duplicate addFormat entries are rejected.
-  if (sampleRateCount_ == rateSource_->formatCount()) return rateSource_->format(index)->sampleRate;
-  for (size_t i = 0; i < rateSource_->formatCount(); ++i) {
-    const uint32_t rate = rateSource_->format(i)->sampleRate;
-    bool duplicate = false;
-    for (size_t j = 0; j < i; ++j)
-      if (rateSource_->format(j)->sampleRate == rate) { duplicate = true; break; }
-    if (!duplicate && !index--) return rate;
-  }
-  return 0;
+  return rateSource_->format(index)->sampleRate;
 }
 
 AudioControlEntityKind

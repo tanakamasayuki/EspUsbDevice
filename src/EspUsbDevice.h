@@ -1627,6 +1627,8 @@ public:
   // Stopped only: release format settings; the stream remains selected.
   // Add at least one format before the next begin(). PCM is clearBuffer().
   esp_err_t clearFormats();
+  // Active PCM snapshot; false while idle/draining, leaving format unchanged.
+  bool currentFormat(EspUsbAudioFormat &format) const;
   int available() const;
   size_t capacity() const;
   size_t packetCapacity() const;
@@ -1659,6 +1661,8 @@ public:
   // Stopped only: release format settings; the stream remains selected.
   // Add at least one format before the next begin(). PCM is clearBuffer().
   esp_err_t clearFormats();
+  // Active PCM snapshot; false while idle/draining, leaving format unchanged.
+  bool currentFormat(EspUsbAudioFormat &format) const;
   size_t write(const void *data, size_t length);
   size_t availableForWrite() const;
   size_t capacity() const;

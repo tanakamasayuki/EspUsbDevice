@@ -40,7 +40,7 @@ struct AudioPacketStream {
   uint8_t *packet = nullptr;
   const uint8_t *descriptor = nullptr;
   uint16_t packetCapacity = 0, packetSize = 0, frameBytes = 0;
-  uint8_t endpoint = 0, desired = 0;
+  uint8_t endpoint = 0, desired = 0, current = 1;
   bool active = false, draining = false, discard = false;
   uint32_t phase = 0;
   ~AudioPacketStream() { espusb::internal::freeUsbMemory(packet); }
@@ -72,7 +72,7 @@ struct EspUsbAudioState {
     const auto *format = model.format(0); if (!format) return true;
     stream.frameBytes = format->channels * format->subslotBytes;
     espusb::internal::AudioPacketRequirement packet;
-    if (capacity % stream.frameBytes || espusb::internal::validateAudioFormat(*format,
+    if (espusb::internal::validateAudioFormat(*format,
         espusb::internal::UsbSpeed::Full, espusb::internal::defaultAudioBusLimits(espusb::internal::UsbSpeed::Full), &packet) != espusb::internal::AudioFormatError::None) return false;
     stream.packetCapacity = packet.maxPacketSize;
     for (size_t i = 1; i < model.formatCount(); ++i) {
@@ -89,8 +89,8 @@ struct EspUsbAudioState {
       rangeReply = static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(2 + owner.controls_.sampleRateCount() * 12));
       if (!rangeReply) return false;
     }
-    if (owner.playbackEnabled_ && !allocateStream(playback, owner.model_.playback(), owner.config_.playbackBufferFrames * (owner.model_.playback().format(0)->channels * owner.model_.playback().format(0)->subslotBytes), owner.config_.playbackBuffer)) return false;
-    if (owner.captureEnabled_ && !allocateStream(capture, owner.model_.capture(), owner.config_.captureBufferFrames * (owner.model_.capture().format(0)->channels * owner.model_.capture().format(0)->subslotBytes), owner.config_.captureBuffer)) return false;
+    if (owner.playbackEnabled_ && !allocateStream(playback, owner.model_.playback(), owner.config_.playbackBufferFrames * owner.model_.playback().maximumFrameBytes(), owner.config_.playbackBuffer)) return false;
+    if (owner.captureEnabled_ && !allocateStream(capture, owner.model_.capture(), owner.config_.captureBufferFrames * owner.model_.capture().maximumFrameBytes(), owner.config_.captureBuffer)) return false;
     if (owner.graph_.playback.feedbackEndpoint) {
       feedback = static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(4, 64, true));
       if (!feedback) return false;
@@ -123,7 +123,11 @@ struct EspUsbAudioState {
     espusb_device_edpt_xfer(port, feedbackEndpoint, feedback, 4, false);
   }
   bool change(AudioPacketStream &stream, uint8_t alternate, bool isPlayback) {
-    stream.discard |= stream.active || !alternate;
+    const auto &model = isPlayback ? owner.model_.playback() : owner.model_.capture();
+    const auto *format = model.alternateFormat(alternate);
+    if (alternate && !format) return false;
+    const auto *previous = model.alternateFormat(stream.current);
+    stream.discard |= stream.active || !alternate || (format && (!previous || !format->samePcm(*previous)));
     stream.active = false; stream.desired = alternate; stream.draining = true;
     if (!espusb_device_edpt_abort(port, stream.endpoint) || (isPlayback && feedbackEndpoint && !espusb_device_edpt_abort(port, feedbackEndpoint))) return false;
     ++epoch;
@@ -138,7 +142,22 @@ struct EspUsbAudioState {
       if (!stream->draining) continue;
       if (stream->discard) stream->ring.clear();
       stream->discard = stream->draining = false; stream->phase = 0;
-      stream->active = stream->desired == 1;
+      stream->active = stream->desired != 0;
+      if (stream->active) {
+        const auto &model = stream == &s->playback ? s->owner.model_.playback() : s->owner.model_.capture();
+        const auto *format = model.alternateFormat(stream->desired);
+        espusb::internal::AudioPacketRequirement packet;
+        stream->packetSize = 0;
+        for (size_t i = 0; i < model.alternateRateCount(stream->desired); ++i) {
+          if (espusb::internal::validateAudioFormat(format[i], s->intervals == 8000 ? espusb::internal::UsbSpeed::High : espusb::internal::UsbSpeed::Full,
+              espusb::internal::defaultAudioBusLimits(s->intervals == 8000 ? espusb::internal::UsbSpeed::High : espusb::internal::UsbSpeed::Full), &packet) != espusb::internal::AudioFormatError::None) { stream->active = false; break; }
+          stream->packetSize = std::max(stream->packetSize, packet.maxPacketSize);
+        }
+        stream->frameBytes = format->channels * format->subslotBytes;
+        stream->current = stream->desired;
+        EspUsbEndpointDescriptor endpoint; memcpy(&endpoint, stream->descriptor, 7); endpoint.bLength = 7; endpoint.wMaxPacketSize = stream->packetSize;
+        if (!stream->active || !espusb_device_edpt_iso_activate(s->port, &endpoint)) stream->active = false;
+      }
       if (stream == &s->playback) { s->armPlayback(); s->armFeedback(); }
       else s->armCapture();
     }
@@ -158,6 +177,9 @@ struct EspUsbAudioState {
       for (AudioPacketStream *stream : {&s->playback, &s->capture}) {
         stream->active = stream->draining = stream->discard = false;
         stream->desired = 0; stream->ring.clear(); stream->phase = 0;
+        stream->current = 1;
+        const auto *format = (stream == &s->playback ? s->owner.model_.playback() : s->owner.model_.capture()).format(0);
+        if (format) stream->frameBytes = format->channels * format->subslotBytes;
       }
       s->owner.playbackAlternate_ = s->owner.captureAlternate_ = 0;
       s->owner.events_.clear();
@@ -169,6 +191,9 @@ struct EspUsbAudioState {
     auto *s = first;
     while (s && (s->owner.graph_.controlInterface != itf->bInterfaceNumber || s->owner.device_.config().startMode != EspUsbDeviceStartMode::Usb)) s = s->next;
     if (!s) return 0;
+    s->playback.endpoint = s->capture.endpoint = s->feedbackEndpoint = 0;
+    s->playback.packetSize = s->capture.packetSize = 0;
+    s->playback.descriptor = s->capture.descriptor = nullptr;
     const auto *data = reinterpret_cast<const uint8_t *>(itf);
     size_t offset = 0; uint8_t current = itf->bInterfaceNumber;
     while (offset + 2 <= available) {
@@ -186,15 +211,23 @@ struct EspUsbAudioState {
         AudioPacketStream *stream = d[2] == s->owner.graph_.playback.dataEndpoint ? &s->playback : d[2] == s->owner.graph_.capture.dataEndpoint ? &s->capture : nullptr;
         if (stream) {
           if (!stream->packet || !size || size > stream->packetCapacity || current != (stream == &s->playback ? s->owner.graph_.playback.interfaceNumber : s->owner.graph_.capture.interfaceNumber)) return 0;
-          stream->descriptor = d; stream->endpoint = d[2]; stream->packetSize = size;
-        } else if (d[2] == s->owner.graph_.playback.feedbackEndpoint && s->feedback && size == 4) s->feedbackEndpoint = d[2];
-        else return 0;
-        EspUsbEndpointDescriptor endpoint; memcpy(&endpoint, d, 7); endpoint.bLength = 7;
-        if (!espusb_device_edpt_open(port, &endpoint)) return 0;
+          stream->endpoint = d[2];
+          if (size > stream->packetSize) { stream->descriptor = d; stream->packetSize = size; }
+        } else if (d[2] == s->owner.graph_.playback.feedbackEndpoint && s->feedback && size == 4) {
+          if (!s->feedbackEndpoint) {
+            EspUsbEndpointDescriptor endpoint; memcpy(&endpoint, d, 7); endpoint.bLength = 7;
+            if (!espusb_device_edpt_open(port, &endpoint)) return 0;
+            s->feedbackEndpoint = d[2];
+          }
+        } else return 0;
       }
       offset += d[0];
     }
     if ((s->owner.playbackEnabled_ && !s->playback.endpoint) || (s->owner.captureEnabled_ && !s->capture.endpoint)) return 0;
+    for (auto *stream : {&s->playback, &s->capture}) if (stream->endpoint) {
+      EspUsbEndpointDescriptor endpoint; memcpy(&endpoint, stream->descriptor, 7); endpoint.bLength = 7;
+      if (!espusb_device_edpt_open(port, &endpoint)) return 0;
+    }
     s->port = port; s->controlInterface = itf->bInterfaceNumber;
     s->intervals = espusb_device_speed() == ESPUSB_SPEED_HIGH ? 8000 : 1000;
     return uint16_t(offset);
@@ -209,7 +242,7 @@ struct EspUsbAudioState {
   }
   static bool controlRequest(uint8_t port, uint8_t phase, const EspUsbControlRequest *r) {
     auto *s = forRequest(r); if (!s || s->stopping) return false;
-    if (r->bmRequestType == 1 && r->bRequest == 11 && r->wValue <= 1 && !r->wLength && !(r->wIndex >> 8)) {
+    if (r->bmRequestType == 1 && r->bRequest == 11 && r->wValue <= UINT8_MAX && !r->wLength && !(r->wIndex >> 8)) {
       if (phase != ESPUSB_CONTROL_STAGE_SETUP) return true;
       AudioGuard guard;
       AudioPacketStream *stream = s->owner.playbackEnabled_ && r->wIndex == s->owner.graph_.playback.interfaceNumber ? &s->playback : s->owner.captureEnabled_ && r->wIndex == s->owner.graph_.capture.interfaceNumber ? &s->capture : nullptr;
@@ -247,7 +280,8 @@ struct EspUsbAudioState {
       auto &stream = s->playback;
       if (result == ESPUSB_TRANSFER_SUCCESS && bytes <= stream.packetSize) {
         const size_t framed = bytes - bytes % stream.frameBytes;
-        const size_t copied = stream.ring.push(stream.packet, framed);
+        const size_t space = (stream.ring.capacity - stream.ring.used) / stream.frameBytes * stream.frameBytes;
+        const size_t copied = stream.ring.push(stream.packet, std::min(framed, space));
         if (copied < bytes) {
           s->owner.playback_.overrunCount_.fetch_add(1, std::memory_order_relaxed);
           s->owner.playback_.overrunBytes_.fetch_add(bytes - copied, std::memory_order_relaxed);
@@ -282,7 +316,7 @@ esp_err_t AudioTransport::begin(EspUsbAudioFunction &owner) {
   for (unsigned i = 0; i < 2; ++i) {
     if (!streams[i]->formatCount()) continue;
     const auto *format = streams[i]->format(0);
-    const size_t frame = format->channels * format->subslotBytes;
+    const size_t frame = streams[i]->maximumFrameBytes();
     if (counts[i] > SIZE_MAX / frame) return ESP_ERR_INVALID_SIZE;
     sizes[i] = counts[i] * frame;
   }
@@ -315,12 +349,12 @@ size_t AudioTransport::available(const EspUsbAudioFunction &owner, bool playback
   if (!s || s->stopping) return 0;
   auto &stream = playback ? s->playback : s->capture;
   if (stream.draining) return 0;
-  return playback ? stream.ring.used : stream.ring.capacity - stream.ring.used;
+  return playback ? stream.ring.used : (stream.ring.capacity - stream.ring.used) / stream.frameBytes * stream.frameBytes;
 }
 size_t AudioTransport::capacity(const EspUsbAudioFunction &owner, bool playback, bool packet) {
   AudioGuard guard; if (!owner.state_) return 0;
   const auto &stream = playback ? owner.state_->playback : owner.state_->capture;
-  return packet ? stream.packetCapacity : stream.ring.capacity;
+  return packet ? stream.packetCapacity : stream.ring.capacity / stream.frameBytes * stream.frameBytes;
 }
 size_t AudioTransport::read(EspUsbAudioFunction &owner, void *data, size_t length) {
   AudioGuard guard; auto *s = owner.state_;
@@ -332,12 +366,23 @@ size_t AudioTransport::write(EspUsbAudioFunction &owner, const void *data, size_
   AudioGuard guard; auto *s = owner.state_;
   if (!data || !s || s->stopping || s->capture.draining || !s->capture.frameBytes) return 0;
   length -= length % s->capture.frameBytes;
-  const size_t copied = s->capture.ring.push(static_cast<const uint8_t *>(data), length);
+  const size_t space = (s->capture.ring.capacity - s->capture.ring.used) / s->capture.frameBytes * s->capture.frameBytes;
+  const size_t copied = s->capture.ring.push(static_cast<const uint8_t *>(data), std::min(length, space));
   if (copied < length) {
     owner.capture_.overrunCount_.fetch_add(1, std::memory_order_relaxed);
     owner.capture_.overrunBytes_.fetch_add(length - copied, std::memory_order_relaxed);
   }
   return copied;
+}
+bool AudioTransport::currentFormat(const EspUsbAudioFunction &owner, bool playback, EspUsbAudioFormat &format) {
+  AudioGuard guard; auto *s = owner.state_;
+  if (!s || s->stopping) return false;
+  const auto &stream = playback ? s->playback : s->capture;
+  if (!stream.active || stream.draining) return false;
+  const auto *selected = (playback ? owner.model_.playback() : owner.model_.capture()).alternateFormat(stream.current);
+  if (!selected) return false;
+  format = EspUsbAudioFormat{owner.controls_.currentSampleRate(), selected->channels, selected->subslotBytes, selected->validBits};
+  return true;
 }
 bool AudioTransport::clear(EspUsbAudioFunction &owner, bool playback) {
   AudioGuard guard; if (!owner.state_ || owner.state_->stopping) return false;

@@ -216,6 +216,16 @@ clock未変更での未知rate拒否、158 byte RANGEの10要求長でのpayload
 最適化前の5件も別名保存。現在の収集は37件、一括実行とは異なる。
 範囲・費用・残るalternate制限は[Audio API](../docs/V3_AUDIO_API.ja.md#同じpcm形状での複数sample-rate)。
 
+## AudioのPCM alternateと間欠ISO OUT
+
+`audio_alternates`はSDK Hostでalternateをclaim/releaseし、4 PCM形状を各2 rateで選択する。
+既存Host libraryのclaim制限を回避するためのprobe内の通常のSDK操作で、conftest/独自pluginはない。
+関連7件は**7 passed、358.65秒**、14 logs STOPPED/panicなし。16 ISO交換、14旧ring poison、
+状態・frame境界、不正alternate、通常PCM、休止・再構成・core、816＋14取得点の回復を確認した。
+S2/P4 compile・依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_22-26-28-639054/`、
+`.pytest-results/audio-alternates-related*`。Host probeの初期誤りと、DWC2 OUT停止のbaselineも別名保存。
+契約と限界は[Audio API](../docs/V3_AUDIO_API.ja.md#pcm形状のalternate選択)。収集は38件、一括結果は別に記録する。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

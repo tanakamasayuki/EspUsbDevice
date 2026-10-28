@@ -2053,7 +2053,9 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
 
   // EP0 IN is allocated before any class endpoint, and its packet size sets the
   // receive FIFO's floor.
-  uint32_t inWords = packetWords(ESPUSB_CONTROL_PACKET_BYTES);
+  uint32_t inWords = 0;
+  uint16_t inPacketWords[16] = {};
+  inPacketWords[0] = packetWords(ESPUSB_CONTROL_PACKET_BYTES);
   uint16_t largestOutPacket = ESPUSB_CONTROL_PACKET_BYTES;
   uint16_t candidateMask = 0;
   uint32_t candidateWords = 0;
@@ -2071,13 +2073,13 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
       if (address & 0x80)
       {
         const uint16_t words = packetWords(packet);
-        inWords += words;
+        const uint8_t number = address & 0x0f;
+        inPacketWords[number] = std::max(inPacketWords[number], words);
         if (transferType == USB_ENDPOINT_ATTR_BULK)
         {
           // Only bulk IN endpoints are double buffered; the port ignores the
           // bit for anything else.
           candidateMask = static_cast<uint16_t>(candidateMask | (1u << (address & 0x0f)));
-          candidateWords += words;
         }
       }
       else if (packet > largestOutPacket)
@@ -2088,6 +2090,11 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
     offset = static_cast<uint16_t>(offset + length);
   }
 
+  // Alternate descriptors reuse physical FIFOs. Budget each endpoint once.
+  for (unsigned number = 0; number < 16; ++number) {
+    inWords += inPacketWords[number];
+    if (candidateMask & (1u << number)) candidateWords += inPacketWords[number];
+  }
   if (candidateMask == 0)
   {
     return 0;
