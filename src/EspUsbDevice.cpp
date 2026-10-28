@@ -2458,6 +2458,11 @@ uint16_t EspUsbDeviceClass::configurationDescriptorForSpeed(uint8_t *dst, size_t
   return required;
 }
 
+uint16_t EspUsbDeviceClass::maximumBulkPacketSize() const
+{
+  return device_.needsHighSpeedDescriptors() ? 512 : 64;
+}
+
 EspUsbDeviceClass::EspUsbDeviceClass(EspUsbDevice &device) : device_(device)
 {
   device_.addClass(this);

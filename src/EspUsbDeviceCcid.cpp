@@ -257,10 +257,7 @@ bool EspUsbDeviceCcid::begin() {
   if(state_ || !registered_){startError_=ESP_ERR_INVALID_STATE;return false;}
   startError_=configure(config_);if(startError_!=ESP_OK)return false;
   if(!config_.removable && !cardPresent_){startError_=ESP_ERR_INVALID_STATE;return false;}
-  uint16_t mps=64;
-#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
-  if(device_.config().controller!=EspUsbController::FullSpeed)mps=512;
-#endif
+  const uint16_t mps=maximumBulkPacketSize();
   if(config_.messageBytes<mps){startError_=ESP_ERR_INVALID_SIZE;return false;}
   auto *s=espusb::internal::newUsbObject<EspUsbCcidState>(*this);
   if(s) {

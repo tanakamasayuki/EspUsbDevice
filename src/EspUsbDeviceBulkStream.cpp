@@ -382,10 +382,7 @@ bool EspUsbDeviceBulkStream::begin() {
   if (!unit || (unit > 1 && (config_.rxCapacity % unit || config_.txCapacity % unit || config_.transferBytes % unit))) {
     startError_ = ESP_ERR_INVALID_ARG; return false;
   }
-  uint16_t maxPacket = 64;
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-  if (device_.config().controller != EspUsbController::FullSpeed) maxPacket = 512;
-#endif
+  const uint16_t maxPacket = maximumBulkPacketSize();
   if (config_.rxMode == EspUsbBulkRxMode::Callback && !rxDataCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
   if (config_.rxMode == EspUsbBulkRxMode::Borrowed && !directRxCompleteCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
   auto *s = espusb::internal::newUsbObject<EspUsbBulkState>(*this);

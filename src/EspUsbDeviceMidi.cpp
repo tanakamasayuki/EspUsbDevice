@@ -23,10 +23,7 @@ esp_err_t EspUsbDeviceMidi::configure(const EspUsbMidiConfig &c) {
   if (c.transferPackets > UINT16_MAX / 4) return ESP_ERR_INVALID_SIZE;
   EspUsbBulkStreamConfig bulk;
   bulk.rxCapacity = c.rxPackets * 4; bulk.txCapacity = c.txPackets * 4;
-  uint16_t automatic = 64;
-#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
-  if (device_.config().controller != EspUsbController::FullSpeed) automatic = 512;
-#endif
+  const uint16_t automatic = maximumBulkPacketSize();
   bulk.transferBytes = c.txPackets ? uint16_t(c.transferPackets ? c.transferPackets * 4 : automatic) : 0;
   bulk.rxBuffer = reinterpret_cast<uint8_t *>(c.rxBuffer); bulk.txBuffer = reinterpret_cast<uint8_t *>(c.txBuffer);
   bulk.rxMode = c.rxMode == EspUsbMidiRxMode::Queue ? EspUsbBulkRxMode::Stream : c.rxMode == EspUsbMidiRxMode::Callback ? EspUsbBulkRxMode::Callback : EspUsbBulkRxMode::Disabled;

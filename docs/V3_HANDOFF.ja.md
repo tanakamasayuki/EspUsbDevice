@@ -1,6 +1,6 @@
 # v3開発の引き渡し
 
-更新: 2026-10-28。作業場所は`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
+更新: 2026-10-29。作業場所は`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
 mainの文書commit `3fed50d`を取り込み済み。ローカルでまとまりごとにcommitし、pushはしていない。
 
 ## 方針と入口
@@ -167,6 +167,22 @@ S2/P4 compileと全29 sourceの依存/nm/addr2lineも成功。旧tud/usbd/dcd/tu
 原本`/tmp/pytest-embedded/2026-10-28_15-15-08-529975/`、結果は`.pytest-results/wide-loan-all*`、
 集計は`wide-loan-all-audit.txt`。実行中の製品/probeを変更していない。mainの取り込みも維持している。
 
+## bulk packet方針の共通化
+
+BulkStream/MIDI/CCID/NCMに分散したSoC別MPS判定を、Deviceの既存FS/HS descriptor方針へそろえた。
+内部の非virtual helperだけを追加し、object field/buffer/task/queueは増やしていない。
+MIDIは従来どおりbeginでconfigureを再評価する。CCIDのmessage>=MPSと既定容量は維持。
+S31の条件分岐は共通方針に含まれるが、現SDKでのcontroller port対応を意味しない。
+
+S3のCDC/MIDI/CCID/NCMは**4 passed、0 skipped/error/failure/unfinished、410.65秒**。
+8 serial全てSTOPPED、STOP_FAILED/panicなし。CDCの24値/12確認・4 timeout、
+CCIDの54 HALT回復、NCMの3構成で8193 byte TCP交換を確認した。
+S2/P4 compile成功。S3/S2/P4の29 source依存とnmにも旧stack/SDK fallbackはない。
+既存compile probeの静的RAMは変更なし。今回の関連4件と、直前のwide loan全34件は別の実行。
+原本`/tmp/pytest-embedded/2026-10-28_15-50-26-412109/`、結果は
+`.pytest-results/bulk-packet-policy*`。構造検査とgit diff --checkも成功。
+pluginのlocal最新`698bb29`/1.10.0のcombo guideを再確認。標準combo/allとnoconftestを維持する。
+
 ## 次の単位と未完了
 
 1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
@@ -174,7 +190,7 @@ S2/P4 compileと全29 sourceの依存/nm/addr2lineも成功。旧tud/usbd/dcd/tu
 3. wide loanの全体確認は完了。残る既存API/資源管理の問題は実測で判断する。
    CCIDのmessage>=MPS制約は仕様§5.1で確認済みのため維持する。
    MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
-   class内に分散したSoC別MPS判定と、P4 HSではCCIDの既定320がMPS512を満たさない点は整理候補。
+   class内に分散したSoC別MPS判定は共通化済み。P4 HSではCCIDの既定320がMPS512を満たさない点は残る。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。

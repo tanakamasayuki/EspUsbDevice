@@ -366,11 +366,7 @@ esp_err_t EspUsbDeviceNet::configure(const EspUsbNetConfig &c) {
 bool EspUsbDeviceNet::begin() {
   if (state_ || !registered_ || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   startError_ = configure(netConfig_); if (startError_ != ESP_OK) return false;
-  bool high = device_.config().controller == EspUsbController::HighSpeed;
-#if CONFIG_IDF_TARGET_ESP32P4
-  high |= device_.config().controller == EspUsbController::Auto;
-#endif
-  const size_t packet = high ? 512 : 64;
+  const size_t packet = maximumBulkPacketSize();
   const size_t txStride = aligned(netConfig_.ntbInBytes,64), rxStride = aligned(netConfig_.ntbOutBytes,packet);
   if (rxStride > 65535 || netConfig_.txBuffers > SIZE_MAX/txStride || netConfig_.rxBuffers > SIZE_MAX/rxStride) { startError_ = ESP_ERR_INVALID_SIZE; return false; }
   const auto valid = [](uint8_t *p, size_t supplied, size_t needed) {

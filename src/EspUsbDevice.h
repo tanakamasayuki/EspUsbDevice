@@ -920,6 +920,8 @@ public:
 protected:
   friend class EspUsbDevice;
   explicit EspUsbDeviceClass(EspUsbDevice &device);
+  // Worst negotiated bulk packet for the selected controller, before startup.
+  uint16_t maximumBulkPacketSize() const;
   EspUsbDevice &device_;
   // This class's slot in EspUsbDevice::classes_, i.e. its registration order.
   // Logical Function index, mapped through classReportId() and
