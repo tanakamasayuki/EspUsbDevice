@@ -1,0 +1,40 @@
+name: v3 Source and Test Collection
+
+# These checks require no boards. Physical USB transfers run separately from
+# validation/ with configured ports and the bench's registered combos.
+on:
+  push:
+    branches: [main, master, v3]
+    paths:
+      - "src/**"
+      - "validation/**"
+      - "third_party/tinyusb/**"
+      - "tools/verify_usb_backend.py"
+      - ".github/workflows/v3-checks.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "validation/**"
+      - "third_party/tinyusb/**"
+      - "tools/verify_usb_backend.py"
+      - ".github/workflows/v3-checks.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: v3-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-and-collection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: validation/uv.lock
+      - name: Verify native backend structure
+        run: python3 tools/verify_usb_backend.py
+      - name: Collect the independent v3 suite
+        working-directory: validation
+        run: uv run --locked pytest --combo all --collect-only -q
