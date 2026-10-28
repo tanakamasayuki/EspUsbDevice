@@ -77,6 +77,24 @@ XML/transcript/serialは`.pytest-results/cdc-native-stream-all*`、集計は`cdc
 実行中の製品/probeを固定し、並行作業はexample build helperの保存先と文書の変更だけ。
 `verify_usb_backend.py`、`git diff --check`も成功。OS/他SoC/HS実機・全競合順序までは未確認。
 
+## 16 bitを跨ぐborrowed bulk
+
+総長/進捗とprivate投稿口を32 bitへ広げ、所有する131072 byte bufferを一つのloanとして扱う。
+修正前は確保済みでも65536 byte投稿を拒否（1 failed、56.84秒）。修正後はbulk/Vendor/Audio/Video
+関連5件が5 passed（275.46秒）、large reset/end・core・確保失敗の3件も3 passed（147.55秒）。
+774取得点の失敗/回復とheap346704→346704 byte、各scopeの全STOPPED/panicなしを確認した。
+
+その後、prefixを131008 byteへ強化したtransfer_limitsが1 passed（48.66秒）。
+完了済みDMA進捗が65535を超えた状態でcancel/reset/endを行い、その後の転送も確認する。
+最大131072、short/ZLPと継続、92回の一度だけの返却、pointer/id、全byte/canaryを確認。
+patternはoffsetの高位bitも含み、64 KiBのpointer折り返しを見逃さない。
+S2/P4 compile成功。recordは16→20 byteで、controller確保量はEP0/Vendor/sparseが不変、
+CDC＋HIDは192→256 byte。Control/ISOの投稿上限は維持する。
+
+結果は`.pytest-results/wide-loan-{baseline,related,lifecycle,high-progress}*`。
+high-progress原本`/tmp/pytest-embedded/2026-10-28_15-02-00-787930/`、資源比較は
+`wide-loan-controller-layout.json`。これは関連scopeの結果で、変更後の全34件の確認は次に行う。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

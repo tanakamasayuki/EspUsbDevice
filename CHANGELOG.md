@@ -15,6 +15,9 @@
 - Make CDC an Arduino Stream directly, with non-consuming peek and standard timed-read helpers. Separate Print from the shared bulk transport: Vendor remains Print; MIDI exposes packet APIs without Print/Stream inheritance.
 - CDCをStreamへ直接渡せる形に整理。S3のobjectはCDC +8 byte、Vendor増加なし、MIDI -8 byte。通常の非blocking read/writeと明示的なDevice開始は維持。
 
+- Remove the internal 16-bit total-length ceiling for borrowed bulk transfers. Preserve packet-aligned DMA segmentation and one typed completion, with logical capacity queries separate from application memory budgets.
+- 借用bulkの65535 byte制約を撤去。最大131072 byteのS3送受信、short/ZLP、広いDMA進捗でのcancel/reset/endを確認。controller recordは16→20 byteとなり、一部構成の確保量は増加。
+
 ## 2.6.1
 - (EN) Honor HID `timeoutMs`: wait for a busy IN endpoint, with zero retaining
   polling behavior and a busy timeout reporting `ESP_ERR_TIMEOUT`. Consecutive

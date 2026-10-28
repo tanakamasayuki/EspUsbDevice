@@ -65,7 +65,7 @@ def test_vendor_roundtrip(dut, peers):
         dut.write("start")
         dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
         device.write("direct_invalid")
-        device.expect_exact("DIRECT_INVALID 1 max=65535\r\n", timeout=5)
+        assert int(device.expect(r"DIRECT_INVALID 1 max=(\d+)\r\n", timeout=5).group(1)) >= 131072
         device.write("callback_mutation")
         device.expect_exact("CALLBACK_MUTATION_REJECTED 1\r\n", timeout=5)
         for length in (1, 63, 64, 65, 127, 128, 129):
@@ -139,7 +139,7 @@ def test_vendor_roundtrip(dut, peers):
         device.write("capacities")
         device.expect_exact("CAPACITIES 0 0\r\n", timeout=5)
         device.write("rx_invalid")
-        device.expect_exact("RX_INVALID 1 max=65472\r\n", timeout=5)
+        assert int(device.expect(r"RX_INVALID 1 max=(\d+)\r\n", timeout=5).group(1)) >= 131072
         count = 0
         for capacity, length, zlp in ((64, 0, 1), (64, 1, 0), (64, 63, 0), (64, 64, 0),
                                       (128, 65, 0), (128, 127, 0), (128, 128, 0),

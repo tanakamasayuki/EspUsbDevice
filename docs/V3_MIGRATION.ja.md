@@ -100,3 +100,13 @@ MIDIではpacket APIへ移す。Streamの読出し待ちとUSB workerの設定�
 古いfieldや空の互換関数を残すaliasは作らない。設定の名前から実装依存を除き、意味を一つにする。
 詳しい容量・copy/borrowed・callback・中断時返却は各V3_*_APIガイドを参照する。
 内部のRuntime header/functionは保守実装の一部で、利用者APIではない。
+
+
+## borrowed転送の上限と確保量
+
+writeDirect/readDirectは65535 byteの内部制約を外し、より大きな所有領域も投稿できる。
+上限queryはlogicalな表現上限で、空きheapや確保可能量ではない。
+上限値をそのままmallocする旧コードは、applicationのbuffer予算を別に決める形へ変更する。
+buffer容量以下・query上限以下で投稿し、拒否ならcallerが所有を保持、受理ならcallbackまで保持する。
+分割単位に合わせた利用側の手動分割や、途中の完了通知への対応は不要。
+[Vendorの詳細と費用](V3_VENDOR_API.ja.md#65535-byteを跨ぐ借用転送)を参照。

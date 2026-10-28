@@ -749,3 +749,17 @@ objectはCDC +8、Vendor ±0、MIDI -8 byte。optional adapter案は未使用0�
 MIDIはpacket操作へ、Printを受け取る利用先は具体的なCDC/Vendor objectを渡す。
 通常のCDC/Vendor read/write/Print、非blocking copy write、明示的なDevice開始は維持する。
 実験条件と数値は[CDCガイド](V3_CDC_API.ja.md#採用のための最小比較)。
+
+
+## 採用記録: borrowed bulkの16 bit総長制約を撤去
+
+本体に残ったuint16_tの投稿口とDMA進捗が、131072 byteの所有bufferでも65536 byte投稿を拒否した。
+総長/進捗とprivate投稿口を32 bitへ広げる。hardware armは小さく区切り、完了は全体に一度とする。
+ISO retryとDMA進捗は同時に使うため、同じrecord領域へ重ねる案を採らない。
+recordは4 byte増え、代表構成の実確保量はVendor192のまま、CDC＋HIDは192→256 byte。
+
+利点はcaller所有の大きなbufferを一つのloanとして扱えること。不利益は一部構成のmetadata増と、
+上限queryが大きくなるため上限分確保をしていた利用コードが変更を要すること。
+公開メソッド名・引数・返却型を増やさず、callback/pointer/id・reset/endの所有権契約を維持する。
+S3の131072 byte wire転送と、131008 byte後のcancel/reset/endを確認した。
+実験結果・移行は[Vendorガイド](V3_VENDOR_API.ja.md#65535-byteを跨ぐ借用転送)。

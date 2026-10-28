@@ -12,6 +12,9 @@ EspUsbTransferResult returned;
 EspUsbTransferStatus expectedStatus = EspUsbTransferStatus::Success;
 std::atomic<unsigned> completions{0};
 unsigned target = 0;
+uint8_t patternByte(size_t offset, size_t seed) {
+  return uint8_t(offset * 37 + (offset >> 8) * 17 + (offset >> 16) * 53 + seed);
+}
 
 void setup() {
   Serial.begin(115200);
@@ -35,11 +38,12 @@ void loop() {
     config.product = "v3 transfer limits";
     Serial.println(device.begin(config) ? "DEVICE_STARTED" : "DEVICE_START_FAILED");
   } else if (command == "limits") {
-    limit = vendor.maxDirectTransfer();
+    const size_t txLimit = vendor.maxDirectTransfer();
+    limit = 131072;
     const size_t rxLimit = vendor.maxDirectReceive();
     allocation = ((limit + 63) & ~size_t(63)) + 128;
     storage = static_cast<uint8_t *>(heap_caps_aligned_alloc(64, allocation, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
-    Serial.printf("LIMITS tx=%u rx=%u allocated=%u\r\n", unsigned(limit), unsigned(rxLimit), unsigned(storage != nullptr));
+    Serial.printf("LIMITS tx=%u rx=%u capacity=%u allocated=%u\r\n", unsigned(txLimit), unsigned(rxLimit), unsigned(limit), unsigned(storage != nullptr));
   } else if (command.startsWith("tx ") || command.startsWith("rx ")) {
     unsigned length = 0, amount = 0;
     const bool tx = command.startsWith("tx ");
@@ -48,7 +52,7 @@ void loop() {
     requested = length; expected = tx ? length : amount;
     expectedStatus = EspUsbTransferStatus::Success;
     memset(storage, 0xa5, allocation);
-    if (tx) for (size_t i = 0; i < length; ++i) storage[64 + i] = uint8_t(i * 37 + length);
+    if (tx) for (size_t i = 0; i < length; ++i) storage[64 + i] = patternByte(i, length);
     target = completions.load(std::memory_order_acquire) + 1;
     const auto result = tx ? vendor.writeDirect(storage + 64, length,
         amount ? EspUsbTransferTermination::EndWithShortPacket : EspUsbTransferTermination::Continue)
@@ -59,6 +63,13 @@ void loop() {
     expectedStatus = EspUsbTransferStatus::Cancelled;
     const auto result = command == "cancel tx" ? vendor.cancelDirectTx(submittedId) : vendor.cancelDirectRx(submittedId);
     Serial.printf("CANCELLED_REQUEST %d\r\n", int(result));
+  } else if (command == "expect_reset") {
+    expectedStatus = EspUsbTransferStatus::BusReset;
+    Serial.println("RESET_EXPECTED");
+  } else if (command == "end") {
+    expectedStatus = EspUsbTransferStatus::Stopped;
+    const auto error = device.end();
+    Serial.printf("ENDED %u\r\n", unsigned(error == ESP_OK && !device.started()));
   } else if (command == "result") {
     const uint32_t deadline = millis() + 5000;
     while (completions.load(std::memory_order_acquire) < target && int32_t(deadline - millis()) > 0) delay(1);
@@ -66,7 +77,7 @@ void loop() {
     for (size_t i = 0; i < 64; ++i) guards &= storage[i] == 0xa5;
     for (size_t i = 64 + requested; i < allocation; ++i) guards &= storage[i] == 0xa5;
     if (expectedStatus == EspUsbTransferStatus::Success)
-      for (size_t i = 0; i < expected; ++i) payload &= storage[64 + i] == uint8_t(i * 37 + expected);
+      for (size_t i = 0; i < expected; ++i) payload &= storage[64 + i] == patternByte(i, expected);
     const bool result = completions.load(std::memory_order_acquire) == target &&
         returned.status == expectedStatus &&
         returned.actualBytesKnown == (expectedStatus == EspUsbTransferStatus::Success) &&

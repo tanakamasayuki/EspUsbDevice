@@ -23,12 +23,13 @@
 //--------------------------------------------------------------------+
 typedef struct {
   uint8_t* buffer;
-  uint16_t total_len;
-  uint16_t max_size;
-  uint16_t dma_done, dma_chunk; // Non-EP0 DMA segmentation; one final event.
+  uint32_t total_len;
+  uint32_t dma_done;
+  uint16_t max_size, dma_chunk; // One bounded hardware arm; one final event.
   uint16_t interval;
   uint16_t iso_retry; // ISO retry counter
 } EspUsbDwc2Transfer;
+_Static_assert(sizeof(void*) != 4 || sizeof(EspUsbDwc2Transfer) == 20, "32-bit transfer record");
 
 typedef struct {
   // EP0 transfers are limited to 1 packet - larger sizes has to be split
@@ -360,11 +361,11 @@ static void edpt_schedule_packets(uint8_t rhport, const uint8_t epnum, const uin
       const EspUsbDwc2Ghwcfg3 caps = {.value = dwc2->ghwcfg3};
       const uint32_t byte_limit = (1u << espusb_min_u8(19, 11 + caps.xfer_size_width)) - 1;
       const uint32_t packet_limit = (1u << espusb_min_u8(10, 4 + caps.packet_size_width)) - 1;
-      const uint32_t limit = espusb_min_u32(byte_limit, packet_limit * xfer->max_size);
-      const uint16_t remaining = xfer->total_len - xfer->dma_done;
+      const uint32_t limit = espusb_min_u32(UINT16_MAX, espusb_min_u32(byte_limit, packet_limit * xfer->max_size));
+      const uint32_t remaining = xfer->total_len - xfer->dma_done;
       // Intermediate chunks must end on a packet boundary, without inserting
       // a short packet into the application's transfer.
-      total_bytes = remaining > limit ? (uint16_t)(limit / xfer->max_size * xfer->max_size) : remaining;
+      total_bytes = remaining > limit ? (uint16_t)(limit / xfer->max_size * xfer->max_size) : (uint16_t)remaining;
       xfer->dma_chunk = total_bytes;
     }
     num_packets = (uint16_t)espusb_div_ceil(total_bytes, xfer->max_size);
@@ -620,7 +621,7 @@ bool espusb_controller_edpt_iso_activate(uint8_t rhport,  EspUsbEndpointDescript
   return valid;
 }
 
-bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint16_t total_bytes, bool is_isr) {
+bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint32_t total_bytes, bool is_isr) {
   (void) is_isr;
   uint8_t const epnum = espusb_endpoint_number(ep_addr);
   uint8_t const dir = espusb_endpoint_direction(ep_addr);
@@ -631,6 +632,10 @@ bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffe
 
   if (!espusb_controller_io_ready(rhport) || !xfer || xfer->max_size == 0) {
     ret = false;  // Endpoint is closed
+  } else if (total_bytes > UINT16_MAX &&
+             (epnum == 0 || !dma_device_enabled(espusb_dwc2_registers(rhport)) ||
+              (EspUsbDwc2Depctl){.value = espusb_dwc2_registers(rhport)->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum].ctl}.type == ESPUSB_XFER_ISOCHRONOUS)) {
+    ret = false; // Control and isochronous single-frame submissions stay bounded.
   } else {
     xfer->buffer = buffer;
     xfer->total_len = total_bytes;
@@ -639,7 +644,7 @@ bool espusb_controller_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffe
 
     // EP0 can only handle one packet
     if (epnum == 0) {
-      runtime->controller.ep0_pending[dir] = total_bytes;
+      runtime->controller.ep0_pending[dir] = (uint16_t)total_bytes;
     }
 
     // Schedule packets to be sent within interrupt

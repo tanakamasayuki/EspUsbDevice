@@ -462,7 +462,7 @@ bool espusb_device_edpt_release(uint8_t port,uint8_t address) {
   if(!core || port!=core->port)return false;auto *ep=core->endpoint(address);if(!ep)return false;
   portENTER_CRITICAL(&endpointLock);bool ok=(ep->flags&Claimed) && !(ep->flags&Busy);if(ok)ep->flags &= uint8_t(~Claimed);portEXIT_CRITICAL(&endpointLock);return ok;
 }
-bool espusb_device_edpt_xfer(uint8_t port,uint8_t address,uint8_t *buffer,uint16_t bytes,bool inIsr) {
+bool espusb_device_edpt_xfer(uint8_t port,uint8_t address,uint8_t *buffer,uint32_t bytes,bool inIsr) {
   if(!espusb_controller_io_ready(port) || (bytes && !buffer))return false;
   if((address&15) && (core->workerBus.load()!=core->bus.load() || !core->configuration.load()))return false;
   auto *ep=core->endpoint(address);if(!ep || ((address&15) && !ep->opened))return false;

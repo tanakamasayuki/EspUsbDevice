@@ -5,6 +5,9 @@
 EspUsbHost host;
 std::atomic<uint8_t> address{0};
 bool started = false;
+uint8_t patternByte(size_t offset, size_t seed) {
+  return uint8_t(offset * 37 + (offset >> 8) * 17 + (offset >> 16) * 53 + seed);
+}
 void setup() {
   Serial.begin(115200); Serial.setTimeout(100);
   host.onDeviceConnected([](const EspUsbHostDeviceInfo &info) {
@@ -26,24 +29,25 @@ void loop() {
     unsigned length = 0, terminate = 0, pattern = 0;
     sscanf(command.c_str() + (send ? 5 : 8), "%u %u %u", &length, &terminate, &pattern);
     if (!pattern) pattern = length;
-    uint8_t data[4096];
+    constexpr size_t payloadChunk = 4096;
+    uint8_t data[payloadChunk + 64];
     size_t total = 0;
-    bool ok = length && length <= 65535;
+    bool ok = length && length <= 131072;
     while (ok && total < length) {
       const size_t remaining = length - total;
-      const size_t chunk = remaining < sizeof(data) ? remaining : sizeof(data);
+      const size_t chunk = remaining < payloadChunk ? remaining : payloadChunk;
       if (send) {
-        for (size_t i = 0; i < chunk; ++i) data[i] = uint8_t((total + i) * 37 + pattern);
+        for (size_t i = 0; i < chunk; ++i) data[i] = patternByte(total + i, pattern);
         ok = host.vendorWrite(data, chunk, address.load());
         if (ok) total += chunk;
       } else {
         size_t actual = 0;
         // On the final read, leave room for an explicit ZLP/short terminator.
         const size_t request = chunk + (terminate && chunk == remaining && chunk % 64 == 0 ? 64 : 0);
-        // Largest final chunk here is 4095 bytes, including the max-length case.
+        // A final full chunk may be followed by an explicit ZLP.
         if (request > sizeof(data)) { ok = false; break; }
         ok = host.vendorReadSync(data, request, &actual, 5000, address.load()) && actual == chunk;
-        for (size_t i = 0; ok && i < actual; ++i) ok = data[i] == uint8_t((total + i) * 37 + pattern);
+        for (size_t i = 0; ok && i < actual; ++i) ok = data[i] == patternByte(total + i, pattern);
         if (ok) total += actual;
       }
     }

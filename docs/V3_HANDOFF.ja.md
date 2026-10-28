@@ -140,15 +140,34 @@ helperの出力先を`build/examples/<profile>/<sketch>/`へ分離し、同じ�
 記録は`.pytest-results/stream-examples-*-build.txt`、`stream-examples-build-audit.txt`。
 初回の衝突記録は`stream-examples-*-initial-cache-collision.txt`へ分けて保存。
 
+## borrowed bulkの総長を32 bitへ
+
+private core/controllerの投稿長とDWC2のtotal_len/dma_doneをuint32_tへ広げ、65535 byte制約を撤去。
+公開メソッド/返却型は維持。logical上限はmin(UINT32_MAX,PTRDIFF_MAX)、RXはMPS/64へ切り下げる。
+上限queryをそのままmallocする旧利用は、明示的なapplication予算へ変更が必要。
+各DMA armはcounter/uint16範囲、途中はMPS倍数、user callbackは全体に一度。
+Control/ISOの16 bit投稿上限は維持。interval/retryとDMA進捗は同時に使うためunion化しない。
+
+record16→20 byte。S3のcontroller確保量はEP0:128→128、Vendor:192→192、CDC＋HID:192→256、
+sparse:256→256。追加のbuffer/task/queueや投稿時のheap確保はない。
+修正前は131072 byteを確保しても65536投稿を拒否し、1 failed（56.84秒）。
+修正後のbulk/Audio/Video関連5件は5 passed（275.46秒）。広いloanのreset/end・core・確保失敗の
+3件も3 passed（147.55秒）。774取得点の失敗/回復、heap346704→346704 byte、6 logs STOPPED/panicなし。
+さらに131008 byteの位置でcancel/reset/endを行う版が1 passed（48.66秒）、92結果を確認した。
+この位置なら最大のuint16 DMA armでも完了済み進捗が65535を超え、最後のFS packetは未完となる。
+
+S2/P4 compile成功。原本は`.pytest-results/wide-loan-{baseline,related,lifecycle,high-progress}*`に
+XML/transcript/serial/集計を保存。high-progress原本は
+`/tmp/pytest-embedded/2026-10-28_15-02-00-787930/`。
+資源比較は`wide-loan-controller-layout.json`。移行は[Vendor API](V3_VENDOR_API.ja.md#65535-byteを跨ぐ借用転送)。
+次にこの低level ABI/record変更後の全34件を固定して確認する。
+
 ## 次の単位と未完了
 
-1. native Streamのclass構造変更後の全34件と18 example buildは確認済み。
+1. native Streamの全34件/18 buildsは確認済み。次はwide loanの低level変更後の全34件。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
-3. borrowed bulkの65535 byte上限は現在も内部uint16_tの入口/計数に由来して残る。
-   次に、DMA分割を保ちながらこの16 bit制約を外せるか調べる。
-   interval/retryとDMA進捗は現在ISOでも同時に使うため、単純なunion化は不適切。
-   計数を広げる場合のrecord増分・実際の確保量と、65535を跨ぐ転送/取消し/resetを確認して判断する。
-   既存API/資源管理の残る問題は実測で判断し、旧互換性だけのshimを増やさない。
+3. wide loanの関連確認は完了。全体検証後、残る既存API/資源管理の問題を実測で判断する。
+   旧互換性だけのshimや、根拠のない追加機能は増やさない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
 

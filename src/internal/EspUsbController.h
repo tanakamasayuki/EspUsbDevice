@@ -77,7 +77,7 @@ void espusb_controller_sof_enable(uint8_t port, bool enabled);
 bool espusb_controller_edpt_open(uint8_t port, const EspUsbEndpointDescriptor *);
 // Return only after non-control DMA and endpoint IRQ state are quiescent.
 void espusb_controller_edpt_close_all(uint8_t port);
-bool espusb_controller_edpt_xfer(uint8_t port, uint8_t address, uint8_t *, uint16_t bytes, bool inIsr);
+bool espusb_controller_edpt_xfer(uint8_t port, uint8_t address, uint8_t *, uint32_t bytes, bool inIsr);
 bool espusb_controller_edpt_abort_supported(void);
 bool espusb_controller_edpt_abort(uint8_t port, uint8_t address);
 void espusb_controller_edpt_stall(uint8_t port, uint8_t address);

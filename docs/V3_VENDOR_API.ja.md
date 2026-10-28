@@ -81,10 +81,23 @@ auto submission = vendor.writeDirect(buffer, length,
 ```
 
 一instanceにつき未完borrowed TXは一つ。copy TXが残る場合もBusyとなる。
-上限は`maxDirectTransfer()`で実効接続から照会する。内部転送の呼出し長は16 bitで、現在のTX上限は65535 byte。
+上限は`maxDirectTransfer()`で実効接続から照会する。内部の総長と進捗は32 bitで扱い、呼出し長の16 bit制約を撤去した。
 controllerの実装カウンタ幅は能力レジスタから読み、内部でDMA armを分割する。
 S3実機はpacket数7 bitで、一armの上限はMPS64で8128 byteである。利用者がこの単位に分割する必要はない。
-全体に対して一度だけ返却し、途中にshort/ZLPを挿入しない。現在も16 bitの入口/計数が残るための上限であり、今後の内部計数の整理で見直す。
+全体に対して一度だけ返却し、途中にshort/ZLPを挿入しない。転送全体の上限はuint32_tとPTRDIFF_MAXの小さい方。32 bit ESPでは2147483647 byteだが、これは確保可能量ではない。
+
+上限をそのまま確保量に使わず、applicationの予算と実際のbuffer容量で投稿量を決める。
+例えば128 KiBを使うならその領域を確保し、上限との比較後に投稿する。大きなbufferの確保成功を
+maxDirectTransfer()/maxDirectReceive()が保証するわけではない。RX上限はMPS/64 byteの倍数へ切り下げる。
+従来の65535/65472を前提に上限分のbufferを確保していたコードは、明示的な容量へ変更する。
+
+```cpp
+const size_t capacity = 128 * 1024; // Application budget, not the API ceiling.
+if (capacity <= vendor.maxDirectTransfer()) {
+  auto submission = vendor.writeDirect(dmaBuffer, capacity);
+  // dmaBuffer must cover capacity bytes and remain owned until completion.
+}
+```
 
 `Continue`はZLPを追加しない。`EndWithShortPacket`はMPS倍数長なら末尾ZLPまで含めて返却する。
 data転送とZLPの間に次の送信が割り込まない。普通のwriteの戻り値とwire完了は区別する。
@@ -234,3 +247,23 @@ ACKは成功後の通知であり、その戻り値で完了済みの要求を�
 アプリのためだけに追加した内部headerのincludeを外せる。
 callback引数へのfield追加のため通常の登録方法は維持するが、構造体の位置指定aggregate初期化は見直す。
 rawRequestは返信用の暫定内部参照で、保存して後から返信するための寿命保証は追加していない。
+
+
+## 65535 byteを跨ぐ借用転送
+
+総長とDMA進捗を32 bitに広げ、Private core/controllerもuint32_tの投稿長を扱う。
+各hardware armは実装されたcounter幅とuint16_t内に収め、途中のarmはMPS倍数にする。
+中間のshort/ZLPを作らず、元pointer・requestedBytes・idに対して一度だけ返す。
+Control/ISOの従来の16 bit投稿上限は維持する。bulkの大きいloanのためにqueue/task/bufferを増やさない。
+
+DWC2 recordは16→20 byte。ISOのinterval/retryとDMA進捗は同時に使うため重ねない。
+S3でのcontroller領域はEP0のみ128→128、Vendor単体192→192、CDC＋HID192→256、
+sparse構成256→256 byte。cache lineへの丸めで増分が出る構成がある。
+
+修正前は131072 byteの領域を確保できても65536 byte投稿をBadArgumentで拒否（1 failed、56.84秒）。
+修正後のtransfer_limits/Vendor/Audio/Video関連5件は5 passed（275.46秒）。
+大きなloanのreset/endとcore/確保失敗の3件も3 passed（147.55秒）、774取得点の回復とheap前後同量。
+さらに最後のFS packetを残す131008 byteの位置でcancel/reset/endを行う試験が1 passed（48.66秒）。
+最大131072 byte、92件の返却、2種類の終端、short/ZLP、返却pointer/id、canaryと全byteを確認。
+patternはoffsetの高位bitも混ぜ、64 KiBでpointerが折り返しても一致させない。
+S2/P4はcompile成功、実機の確認はS3–S3のみ。結果はvalidation/.pytest-results/wide-loan-*。

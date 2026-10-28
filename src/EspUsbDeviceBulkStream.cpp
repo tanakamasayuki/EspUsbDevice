@@ -16,6 +16,7 @@
 
 namespace {
 portMUX_TYPE bulkLock = portMUX_INITIALIZER_UNLOCKED;
+constexpr size_t directTransferLimit = std::min(size_t(UINT32_MAX), size_t(PTRDIFF_MAX));
 struct Ring {
   uint8_t *data = nullptr;
   bool owned = false;
@@ -521,7 +522,7 @@ bool EspUsbDeviceBulkStream::directWriteSupported() { return true; }
 size_t EspUsbDeviceBulkStream::maxDirectTransfer() const {
   portENTER_CRITICAL(&bulkLock);
   const size_t value = state_ && !state_->stopping && state_->epIn
-      ? size_t(UINT16_MAX) : 0;
+      ? directTransferLimit : 0;
   portEXIT_CRITICAL(&bulkLock);
   return value;
 }
@@ -533,7 +534,7 @@ esp_err_t EspUsbDeviceBulkStream::onDirectTxComplete(DirectCompleteCallback call
 EspUsbTransferSubmission EspUsbDeviceBulkStream::writeDirect(const void *buffer, size_t n, EspUsbTransferTermination termination) {
   auto error = EspUsbTransferError::None;
   uint64_t id = 0;
-  if (!buffer || !n || n > UINT16_MAX || !directTxCompleteCallback_ ||
+  if (!buffer || !n || n > directTransferLimit || !directTxCompleteCallback_ ||
       (termination != EspUsbTransferTermination::Continue && termination != EspUsbTransferTermination::EndWithShortPacket))
     error = EspUsbTransferError::BadArgument;
   else if (reinterpret_cast<uintptr_t>(buffer) & 63) error = EspUsbTransferError::NotAligned;
@@ -552,7 +553,7 @@ EspUsbTransferSubmission EspUsbDeviceBulkStream::writeDirect(const void *buffer,
       state_->txId = id = nextTransferId_;
       state_->needZlp = termination == EspUsbTransferTermination::EndWithShortPacket && n % state_->packetSize == 0;
       state_->txBusy = true;
-      if (!espusb_device_edpt_xfer(state_->rhport, state_->epIn, static_cast<uint8_t *>(const_cast<void *>(buffer)), uint16_t(n), false)) {
+      if (!espusb_device_edpt_xfer(state_->rhport, state_->epIn, static_cast<uint8_t *>(const_cast<void *>(buffer)), uint32_t(n), false)) {
         state_->takeDirect(EspUsbTransferStatus::TransferError, 0, false);
         state_->txBusy = false;
         espusb_device_edpt_release(state_->rhport, state_->epIn);
@@ -567,7 +568,7 @@ size_t EspUsbDeviceBulkStream::maxDirectReceive() const {
   portENTER_CRITICAL(&bulkLock);
   size_t value = 0;
   if (state_ && !state_->stopping && state_->epOut && config_.rxMode == EspUsbBulkRxMode::Borrowed) {
-    value = size_t(UINT16_MAX);
+    value = directTransferLimit;
     value -= value % std::max(size_t(state_->packetSize), size_t(64));
   }
   portEXIT_CRITICAL(&bulkLock);
@@ -581,7 +582,7 @@ esp_err_t EspUsbDeviceBulkStream::onDirectRxComplete(DirectCompleteCallback call
 EspUsbTransferSubmission EspUsbDeviceBulkStream::readDirect(void *buffer, size_t capacity) {
   auto error = EspUsbTransferError::None;
   uint64_t id = 0;
-  if (!buffer || !capacity || capacity > UINT16_MAX || capacity % 64 ||
+  if (!buffer || !capacity || capacity > directTransferLimit || capacity % 64 ||
       reinterpret_cast<uintptr_t>(buffer) > UINTPTR_MAX - (capacity - 1)) error = EspUsbTransferError::BadArgument;
   else if (reinterpret_cast<uintptr_t>(buffer) & 63) error = EspUsbTransferError::NotAligned;
   else if (!esp_ptr_dma_capable(buffer) || !esp_ptr_dma_capable(reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(buffer) + capacity - 1)))
@@ -599,7 +600,7 @@ EspUsbTransferSubmission EspUsbDeviceBulkStream::readDirect(void *buffer, size_t
       state_->directRxBuffer = buffer; state_->directRxCapacity = capacity; state_->rxBusy = true;
       if (++nextTransferId_ == 0) ++nextTransferId_;
       state_->rxId = id = nextTransferId_;
-      if (!espusb_device_edpt_xfer(state_->rhport, state_->epOut, static_cast<uint8_t *>(buffer), uint16_t(capacity), false)) {
+      if (!espusb_device_edpt_xfer(state_->rhport, state_->epOut, static_cast<uint8_t *>(buffer), uint32_t(capacity), false)) {
         state_->takeReceive(EspUsbTransferStatus::TransferError, 0, false);
         state_->rxBusy = false; espusb_device_edpt_release(state_->rhport, state_->epOut);
         error = EspUsbTransferError::TransferFailed;

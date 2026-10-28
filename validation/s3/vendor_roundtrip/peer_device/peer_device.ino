@@ -398,7 +398,7 @@ void loop() {
       const bool nullRejected = !vendor.writeDirect(nullptr, 1);
       const auto alignment = vendor.writeDirect(directBuffer + 1, 1);
       const bool alignmentRejected = !alignment && alignment.error == EspUsbTransferError::NotAligned;
-      const bool lengthRejected = !vendor.writeDirect(directBuffer, 65536);
+      const bool lengthRejected = !vendor.writeDirect(directBuffer, SIZE_MAX);
       const auto packets = vendor.writeDirect(directBuffer, vendor.maxDirectTransfer() + 1);
       const bool packetsRejected = !packets && packets.error == EspUsbTransferError::BadArgument;
       Serial.printf("DIRECT_INVALID %u max=%u\r\n", unsigned(nullRejected && alignmentRejected && lengthRejected && packetsRejected && completions.load() == before), unsigned(vendor.maxDirectTransfer()));
