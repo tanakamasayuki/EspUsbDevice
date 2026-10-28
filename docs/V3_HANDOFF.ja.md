@@ -1,17 +1,22 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はNCMの方向別HALT/CLEAR回復。対象のIN/OUT/通知だけを退役し、反対方向の
-未読TX/部分RXとPID、別NCMの通信を維持する。通知の回復でbulkを初期化しない。
-修正前の通信停止もS3–S3で再現した。[NCM APIと実測](V3_NCM_API.ja.md)を参照。
-関連5件は**5 passed（201.81秒）、0 skipped/failed/error/unfinished**。
-36 SET/CLEAR、8回の実STALL、OUT/通知のDATA1維持、3構成のDHCP/TCP、
-774取得点の失敗/回復とheap一致を確認。10 serial全てSTOPPED、panicなし。
-S2/P4はcompile-only成功。未使用NCMのstate/関数がVendor単独ELFへ入らないことも確認した。
-結果は`validation/.pytest-results/ncm-halt-final*`と`ncm-halt-audit.txt`。
-全体収集は33件。直前`afb87a1`はVideo、`f6bc5dd`はCCIDのHALT回復。
-全体の一括成功は`cd6dc24`後の31件であり、今回の製品変更後に全33件を実行したわけではない。
-次は全体33件の再確認、reset開始とEP0/endpoint世代境界の検証、最終API/version/sample整理を進める。
-実機確認はS3–S3のみ。OS/他SoC/HS実機は未検証で、DWC2派生コードの保守方針は
+最新の全体確認は製品`8064804`を固定した**33 passed（2588.65秒）**。
+0 skipped/failed/error/unfinished、66 serial全てSTOPPED、STOP_FAILED/panicなし。
+CCID/Video/NCMのHALT回復、774取得点の失敗/回復とheap一致、3構成のDHCP/TCPも一括で成功した。
+S3/S2/P4の全29 source依存とcontroller/DMA/PHYのリンク先を再確認し、旧vendor/SDK TinyUSB fallbackなし。
+S3はVendor単独、S2/P4のcompile probeはVendorとCCID。未使用NCM/Video/keymapは含まれない。
+直前のNCM記録でS2/P4をVendor単独とした表記は訂正した。
+結果は`validation/.pytest-results/class-halt-all*`、`class-halt-audit.txt`と各nm。
+この一括確認中の製品/sketch変更はない。実機はS3–S3のみ、S2/P4はcompile-only。
+
+次はreset開始とcore世代の境界を実IRQで観測する。USBRSTでhardware recordが初期化され、
+coreのbus更新がENUMDNEまで遅れる点を調査中。既存のclosed endpoint guardもあり、まだバグとは断定しない。
+prototypeは`/tmp/espusb-reset-start-work/`に準備済み。実行/validationへの追加は未実施。
+Hostは独立v3 configuration_epochのraw SDK sketchを再利用し、Deviceはprivate IRQ allocatorで
+USBRST前後のmounted/job-readyを観測する。worker park中に本物のHost再開始でresetし、
+旧loanの一度の返却と新しい往復まで確認する設計。IRQ内では待機/ログ出力/driver callbackを追加しない。
+その後は最終API/version/sample整理を進める。startTinyUsb等の旧実装名と空task APIは整理候補。
+OS/他SoC/HS実機は未検証で、DWC2派生コードの保守方針は
 [由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や

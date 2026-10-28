@@ -583,3 +583,36 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/native-dwc2-all*`
 `python3 tools/verify_usb_backend.py`と`git diff --check`も成功した。
 mainは全て取り込み済み、旧tests/examplesはmainとの差分なし。
 DWC2由来コードの本体保守への移行と、全protocol/全SoC実機確認の完了は区別する。
+
+
+## class HALT整理後の全33件確認
+
+2026-10-28、製品コード`8064804`。標準`pytest --combo all`は**33 passed、0 skipped、
+0 failed/error、0 unfinished、2588.65秒**。66 serial全てSTOPPED、STOP_FAILED/panicなし。
+774取得点の失敗/回復とheap 346712→346712 byte、3構成のDHCP/TCP 8193 byte交換も確認した。
+CCIDの260 SET/CLEAR、NCMの36 SET/CLEARと8 wire STALL、Videoの16 SET/CLEARを含む。
+未読返信、部分RX、別Function、反対方向/通知のDATA1を維持する条件も一括実行で通過した。
+
+現在の全29 C/C++ sourceについて、S3/S2/P4のcompiler依存に旧vendor path、TinyUSB設定header、
+SDK内TinyUSBへのfallbackがないことを確認。nm/addr2lineでcontroller/DMAとPHYが
+`EspUsbDwc2Device.c`/`EspUsbDwc2Phy.c`へ解決し、旧dwc2_core_initがないことを確認した。
+S3はVendor単独、S2/P4のbuild probeはVendorとCCIDの構成である。
+S2/P4の構成をVendor単独と書いた直前のNCM記録は訂正した。未使用NCM/Video/keymapの除去は成立する。
+実機はS3–S3、S2/P4はcompile-only。今回は製品コードを固定した一括確認で、追加の製品変更はない。
+
+serial原本は`/tmp/pytest-embedded/2026-10-28_06-45-32-126204/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/class-halt-all*`、集計と各nmは
+`class-halt-audit.txt`、`class-halt-{s3,s2,p4}-nm.txt`。
+`python3 tools/verify_usb_backend.py`、git diff --checkも成功し、mainは取り込み済み。
+旧tests/examplesはmainとの差分なし。
+
+
+## 次の調査: reset開始とcoreの世代境界
+
+USBRSTではDWC2転送recordを初期化する一方、coreのbus世代更新とdriver resetは
+ENUMDNEからのBUS_RESET eventで行う。closed endpointのmax_size=0 guardは既にあり、
+この時間差だけで転送が壊れると断定はしない。
+reset開始中に旧worker処理や旧SET_CONFIGURATIONが進められるか、実IRQで観測する。
+workerを一時停止し、通常のHost再開始によるUSBRST直後のmounted/job-readyを記録し、
+ENUMDNE後のborrowed buffer返却と新しい送受信まで確認する試験を準備した。まだ実行していない。
+未確認の疑いに基づく製品修正は加えていない。

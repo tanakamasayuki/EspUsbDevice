@@ -159,7 +159,7 @@ OUTの回復で未読INを維持し、INの回復で部分OUTとDATA1を維持�
 
 既存NCM streamの3 runtime構成でDHCP/TCP 8193 byte交換が成功。
 回復後の2 IP interfaceの開始/回収、774取得点の失敗/回復、heap 346712→346712 byte、
-10 serial全てSTOPPED、panicなし。S2/P4はcompile-only成功で、Vendor単独ELFに未使用NCMの
+10 serial全てSTOPPED、panicなし。S2/P4はcompile-only成功で、VendorとCCIDを使うprobeのELFに未使用NCMの
 state/関数が入らないことをnmで確認した。
 
 原本は`/tmp/pytest-embedded/2026-10-28_06-40-07-341424/`。

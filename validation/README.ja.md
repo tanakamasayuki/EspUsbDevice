@@ -767,7 +767,7 @@ OUTの回復で未読INを維持し、INの回復で部分OUTとDATA1を維持�
 
 既存NCM streamの3 runtime構成でDHCP/TCP 8193 byte交換が成功。
 回復後の2 IP interfaceの開始/回収、774取得点の失敗/回復、heap 346712→346712 byte、
-10 serial全てSTOPPED、panicなし。S2/P4はcompile-only成功で、Vendor単独ELFに未使用NCMの
+10 serial全てSTOPPED、panicなし。S2/P4はcompile-only成功で、VendorとCCIDを使うprobeのELFに未使用NCMの
 state/関数が入らないことをnmで確認した。
 
 原本は`/tmp/pytest-embedded/2026-10-28_06-40-07-341424/`。
@@ -775,3 +775,25 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/ncm-halt-final*`�
 HostのSTALL用コマンド受付を追加し忘れた試験側失敗も記録した。
 全体収集は33件。今回の製品変更後に全33件を実行したわけではない。
 任意のEP0/reset/end競合、TCP進行中のHALT/OS実機、他SoC/HS実通信は未検証として残す。
+
+
+## class HALT整理後の全33件確認
+
+2026-10-28、製品コード`8064804`。標準`pytest --combo all`は**33 passed、0 skipped、
+0 failed/error、0 unfinished、2588.65秒**。66 serial全てSTOPPED、STOP_FAILED/panicなし。
+774取得点の失敗/回復とheap 346712→346712 byte、3構成のDHCP/TCP 8193 byte交換も確認した。
+CCIDの260 SET/CLEAR、NCMの36 SET/CLEARと8 wire STALL、Videoの16 SET/CLEARを含む。
+未読返信、部分RX、別Function、反対方向/通知のDATA1を維持する条件も一括実行で通過した。
+
+現在の全29 C/C++ sourceについて、S3/S2/P4のcompiler依存に旧vendor path、TinyUSB設定header、
+SDK内TinyUSBへのfallbackがないことを確認。nm/addr2lineでcontroller/DMAとPHYが
+`EspUsbDwc2Device.c`/`EspUsbDwc2Phy.c`へ解決し、旧dwc2_core_initがないことを確認した。
+S3はVendor単独、S2/P4のbuild probeはVendorとCCIDの構成である。
+S2/P4の構成をVendor単独と書いた直前のNCM記録は訂正した。未使用NCM/Video/keymapの除去は成立する。
+実機はS3–S3、S2/P4はcompile-only。今回は製品コードを固定した一括確認で、追加の製品変更はない。
+
+serial原本は`/tmp/pytest-embedded/2026-10-28_06-45-32-126204/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/class-halt-all*`、集計と各nmは
+`class-halt-audit.txt`、`class-halt-{s3,s2,p4}-nm.txt`。
+`python3 tools/verify_usb_backend.py`、git diff --checkも成功し、mainは取り込み済み。
+旧tests/examplesはmainとの差分なし。
