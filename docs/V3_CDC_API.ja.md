@@ -50,6 +50,24 @@ availableにはこの保留分も含む。DMA packetの容量とringの容量は
 `EspUsbVendorConfig` / `EspUsbVendorRxMode`は共通型のaliasとして残す。
 通常のVendor/CDC利用で共通baseを直接扱う必要はない。
 
+## Arduino Printからの空き容量照会
+
+CDC/Vendorは`Print&`として渡せる。`availableForWrite()`は現在copy writeが受理できる
+byte数を返す。Arduinoの戻り値型がintなのでINT_MAXで飽和し、size_tの`writeAvailable() const`は
+同じ空きをsize_tで返す。借用TX中、停止中、TX ringなし、対象INのHALT中は0となる。
+照会後の予約やwire完了を保証するものではなく、writeの受理数も確認する。
+
+```cpp
+Print &output = console;
+if (output.availableForWrite() > 0) output.write(uint8_t('!'));
+```
+
+修正前は継承したPrintの既定実装が常に0を返し、実際の空きが64/128 byteある場合も
+標準APIだけを使う利用側が送信を始められなかった。共通bulk側で既存のvirtual関数をoverrideし、
+追加のbuffer・task・状態を持たずに実効空きを返す。独自名への書換えを利用側へ要求しない。
+MIDIはpacket APIを使うため、Print経由ではbyte入力の余地を広告せず0を維持する。
+CDCはPrint派生であり、Arduino Stream参照やreadBytes等まで追加した変更ではない。
+
 ## コピー送信の終端
 
 `streamTermination`は`EspUsbStreamTermination`で指定する。
@@ -133,3 +151,12 @@ Host側の検査は[ESP-IDFのUSBH実装](https://github.com/espressif/esp-idf/b
 実機の追加試験では、要求長0～6 byteと、baud=0、stopBits=3、parity=5、dataBits=4/9を拒否し、
 各要求の後にGET_LINE_CODINGで直前の設定が維持されることを確認する。
 正常なSET_LINE_CODING一回だけがcallbackを発生させることも確認する。
+
+
+## Print照会の実機確認
+
+修正前はCDCの空き64/128に対してPrint照会0で失敗を再現（1 failed、51.79秒）。
+修正後のCDC/Vendor/MIDIは3 passed、337.64秒。20回/10構成で標準Printと実効空きが一致し、
+同じPrint経由の送信もHostでpayloadを確認した。6 serial全てSTOPPED、panicなし。
+S2/P4 compile、各targetの依存・symbol確認も成功。
+詳細は[validation記録](../validation/README.ja.md#printの空き容量の修正前後)。

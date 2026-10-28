@@ -109,3 +109,10 @@ IN16/OUT1の非対称構成でcable15への送信も確認し、全helper、clam
 P4/S2/S31の実機、HS、各OSの音楽アプリとの相互接続は今回の結果には含まない。
 
 規格参照: [USB-MIDI 1.0](https://www.usb.org/sites/default/files/midi10.pdf)。
+
+
+## Print経由の空き容量
+
+byte単位の入力を利用側へ広告しないため、PrintへupcastしてもavailableForWrite()は0を返す。
+MIDIの送信余地はavailableForWritePackets()でevent単位に照会する。
+CDC/Vendorに標準Printの実効空き照会を追加しても、MIDIをbyte streamとしては公開しない。

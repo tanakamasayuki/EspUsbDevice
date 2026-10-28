@@ -24,6 +24,22 @@ S2/P4 compileも成功。S3 Vendor単独とS2/P4 Vendor＋CCIDの全29 sourceの
 旧2.x資産は内容を保ってlegacy/v2へ移し、実行中の製品/probeソースは変更していない。
 S3–S3の結果であり、OS・他SoC/HS実機や任意の全競合順序までの完了とは扱わない。
 
+## Printの空き容量の修正前後
+
+標準Print::availableForWriteが実効空きに関係なく0となる問題をCDCで再現した。
+修正前はexpected=64/128に対しactual=0で**1 failed、51.79秒**。両boardはSTOPPED、panicなし。
+修正後はCDC/Vendor/MIDIの**3 passed、0 skipped/error/failure/unfinished、337.64秒**。
+CDCとVendorの20回の照会/10構成でPrintの値が実効空きと一致し、Print経由のcopy送信もwireで比較した。
+停止後・copy ringなしも含む。MIDIはpacket転送を維持し、Printのbyte write/空きは0を確認。
+6 serial全てSTOPPED、STOP_FAILED/panicなし。
+S2/P4 compileも成功し、各targetの全29 sourceの依存・nmに旧vendor/SDK fallbackなし。
+S3 Vendor単独では未使用NCM/Video/CCID/keymapもない。
+
+修正前原本`/tmp/pytest-embedded/2026-10-28_11-52-34-461341/`、
+修正後原本`/tmp/pytest-embedded/2026-10-28_11-54-10-285361/`。
+`.pytest-results/print-availability-{baseline,related}*`へXML/transcript/serial/集計を保存した。
+全34件はPrint変更前、変更後は関連3件の結果であり、全件の再実行とは表記しない。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

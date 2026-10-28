@@ -92,7 +92,7 @@ void loop() {
         const auto result = channel.writeDirect(sourceStorage[index] + 64, length, EspUsbTransferTermination::EndWithShortPacket);
         sourceIds[index] = result.id;
         Serial.printf("SOURCE_POSTED %u\r\n", unsigned(bool(result)));
-      } else Serial.printf("SOURCE_COPIED %u\r\n", unsigned(channel.write(sourceStorage[index] + 64, length)));
+      } else Serial.printf("SOURCE_COPIED %u\r\n", unsigned(static_cast<Print &>(channel).write(sourceStorage[index] + 64, length)));
     } else if (command.startsWith("source_result ")) {
       const unsigned index = command.substring(14).toInt() / 2;
       const uint32_t deadline = millis() + 3000;
@@ -115,6 +115,17 @@ void loop() {
     } else if (command == "capacities") {
       Serial.printf("CAPACITIES %u %u %u %u\r\n", unsigned(serial0.readCapacity()), unsigned(serial0.writeCapacity()),
           unsigned(serial1 ? serial1->readCapacity() : 0), unsigned(serial1 ? serial1->writeCapacity() : 0));
+    } else if (command == "print_capacity") {
+      bool ok = true;
+      for (auto *channel : channels) {
+        if (!channel) continue;
+        Print &output = *channel;
+        const size_t expected = channel->writeAvailable();
+        const int actual = output.availableForWrite();
+        ok &= actual >= 0 && size_t(actual) == expected;
+        Serial.printf("PRINT_CAPACITY expected=%u actual=%d\r\n", unsigned(expected), actual);
+      }
+      Serial.printf("PRINT_CAPACITY_OK %u\r\n", unsigned(ok));
     } else if (command == "mutate") {
       const bool rejected = serial0.onLineCoding(nullptr) == ESP_ERR_INVALID_STATE &&
           serial0.onLineState(nullptr) == ESP_ERR_INVALID_STATE && serial0.onBreak(nullptr) == ESP_ERR_INVALID_STATE &&

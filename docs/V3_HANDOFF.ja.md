@@ -95,18 +95,26 @@ READMEをv3向けに書き直し、[CH32RV比較](V3_CH32RV_API_ALIGNMENT.ja.md)
 公開前にvalidation/legacyの配布範囲をtoolkit側と調整する必要がある。release/tag/pushはしていない。
 古い非V3文書は履歴資料として残っており、全リンクをv3向けに修復した意味ではない。
 
+## Printの空き容量修正
+
+CDC/VendorのPrint::availableForWriteを実効copy空きへ合わせた。size_tのwriteAvailableは維持し、
+標準int照会ではINT_MAXに飽和する。MIDIのPrint byte入力は0を維持する。追加状態/buffer/taskはない。
+修正前はCDCに64/128 byteの空きがあっても0で、追加試験は1 failed（51.79秒）。両boardは停止した。
+修正後のCDC/Vendor/MIDIは**3 passed、0 skipped/error/failure/unfinished、337.64秒**。
+Print経由の空きは20回/10構成の照会全てで一致し、同じ型でのwire送信も通過。
+MIDIのbyte write/空き制限とpacket転送も成功。6 serial全てSTOPPED、panicなし。
+S2/P4 compile成功。各targetの29 sourceの依存・nmに旧vendor/SDK fallbackや未使用class stateなし。
+
+原本`/tmp/pytest-embedded/2026-10-28_11-54-10-285361/`。
+`.pytest-results/print-availability-{baseline,related}*`へXML/transcript/serial/集計を保存。
+全34件の結果はこの小変更前の`d876d50`であり、Print変更後は関連3件を実行した。
+
 ## 次の単位と未完了
 
 1. API整理後の全34件の確認は完了。次のPrint API変更は以下の修正前後の関連試験で確認する。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
-3. Print経由の空き容量の不整合を先に検証する。現在はbulkのwriteAvailableが正しくても、
-   継承したPrint::availableForWriteが0を返す。これはStream継承とは別の問題。
-   `/tmp/espusb-v3-print-availability/`にproduct.patchとbaseline-test.patchを準備した。
-   製品patchを適用した別コピーのS3 compileは成功し、ELFにbulk overrideとMIDI byte guardを確認。
-   記録は`.pytest-results/print-availability-*`。実機の確認はまだ行っていない。
-   全34件は完了済み。test patchだけを適用してCDCの修正前失敗を確認し、
-   product patch適用後にCDC/Vendor/MIDIの関連試験を行う。MIDIのPrint byte入力は0を維持する。
-   その他のAPI/protocol/所有権も実測で判断し、Stream化そのものはまだ採用しない。
+3. Printの空き容量修正は下記の修正前後の実機確認を完了した。
+   その他のAPI/protocol/所有権も実測で判断する。Stream化そのものはまだ採用しない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
 

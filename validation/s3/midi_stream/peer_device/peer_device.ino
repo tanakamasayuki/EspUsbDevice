@@ -115,6 +115,7 @@ void loop() {
       bool ok = midi.mounted() && !midi.writePacket(bad);
       bad.header = 0; ok &= !midi.writePacket(bad);
       ok &= static_cast<Print &>(midi).write(uint8_t(0xff)) == 0;
+      ok &= static_cast<Print &>(midi).availableForWrite() == 0;
       Serial.printf("TX_REJECTED %u\r\n", unsigned(ok));
     } else if (command == "batch") {
       EspUsbDeviceMidiPacket first, next;

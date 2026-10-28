@@ -722,3 +722,15 @@ startMode不正は設定保存前、USB workerの不正設定はPHY取得前に�
 利点は実装名を意識しない構成確認、明示的な状態、必要時だけのworker調整。不利益は旧field/task呼出しのsource互換性を失うことと、
 小さいstackや低い優先度を選ぶ利用側が自分のcallback負荷を考慮する必要があること。
 移行例は[V3_MIGRATION](V3_MIGRATION.ja.md)を参照。旧sample/testを互換gateへ戻さない。
+
+
+## 採用記録: 標準Printの送信空き容量
+
+CDC/VendorがPrintを継承しながらavailableForWriteをoverrideしていなかったため、
+独自writeAvailableが64/128 byteでもPrint経由では0だった。S3–S3の修正前試験で再現した。
+利用側に独自名へ書き換えさせず、既存virtual slotで実効空きを返す。
+intへの飽和を定め、size_t/constの共通bulk照会は維持する。buffer/task/状態の追加はない。
+MIDIのPrint byte入力は0を維持し、packet APIへ誘導する。
+利点はArduino Printを受け取る汎用コードが自然に動くこと。不利益は旧0を前提に
+独自fallbackを選んでいた利用側の経路が変わる可能性で、writeのpartial契約は変えない。
+Stream化とは分けて扱う。実測はCDC/Vendorの型消去後の照会・wire転送と、MIDIのpacket試験で確認する。

@@ -1045,6 +1045,8 @@ public:
   size_t write(uint8_t data) override;
   // Copies accepted bytes. Automatic dispatch by default, never a completion wait.
   size_t write(const uint8_t *buffer, size_t size) override;
+  // Arduino Print reports immediately writable bytes, saturated to int.
+  int availableForWrite() override;
   size_t writeAvailable() const;
   // Effective allocated capacities; zero before begin and after end.
   size_t writeCapacity() const;
@@ -1492,6 +1494,8 @@ public:
 private:
   // The public MIDI API deals in complete events. The shared byte transport
   // remains an implementation detail; even a Print upcast cannot split events.
+  // A Print byte writer cannot send an individual MIDI event byte.
+  int availableForWrite() override { return 0; }
   size_t write(uint8_t) override { return 0; }
   size_t write(const uint8_t *, size_t) override;
   using EspUsbDeviceBulkStream::read;

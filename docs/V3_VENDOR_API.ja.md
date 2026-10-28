@@ -51,6 +51,10 @@ writeは受け入れたbyteをコピーし、そのbyte数を返す。partialを
 `autoFlush=true`なら一byteでも送出が進む。`autoFlush=false`では明示flushまでringに保持する。
 flushは待ち処理ではなく、溜まったdataの送出開始である。空のflushは以降のwriteへ影響しない。
 
+Arduinoの`Print&`へ渡した場合の`availableForWrite()`も実際のcopy送信の空きを返す。
+intへ収まらない値はINT_MAXに飽和する。size_tでの照会は`writeAvailable() const`を使える。
+停止・借用TX・HALT等の扱いは[共通Print契約](V3_CDC_API.ja.md#arduino-printからの空き容量照会)を参照。
+
 `waitWritable(n, timeout)`は容量を超えるnをclampせず拒否する。現在は1 tick単位の待ちで、
 待機用同期資源を常時確保しない。後段で遅延・CPU消費を測り、通知待ちを採るか判断する。
 

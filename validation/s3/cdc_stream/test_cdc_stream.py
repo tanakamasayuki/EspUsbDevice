@@ -13,6 +13,8 @@ def test_cdc_stream(dut, peers):
             dut.expect_exact("HOST_READY 1 ports=2\r\n", timeout=30)
             device.write("capacities")
             device.expect_exact("CAPACITIES " + " ".join(map(str, capacities)) + "\r\n", timeout=5)
+            device.write("print_capacity")
+            device.expect_exact("PRINT_CAPACITY_OK 1\r\n", timeout=5)
             device.write("mutate")
             device.expect_exact("MUTATION_REJECTED 1\r\n", timeout=5)
             device.write("configure 512 512 512 512")
@@ -36,6 +38,8 @@ def test_cdc_stream(dut, peers):
                 board.expect_exact("STOPPED\r\n", timeout=30)
             device.write("capacities")
             device.expect_exact("CAPACITIES 0 0 0 0\r\n", timeout=5)
+            device.write("print_capacity")
+            device.expect_exact("PRINT_CAPACITY_OK 1\r\n", timeout=5)
         device.write("borrowed")
         device.expect_exact("BORROWED 0\r\n", timeout=5)
         device.write("start")
@@ -44,6 +48,8 @@ def test_cdc_stream(dut, peers):
         dut.expect_exact("HOST_READY 1 ports=2\r\n", timeout=30)
         device.write("capacities")
         device.expect_exact("CAPACITIES 0 0 149 197\r\n", timeout=5)
+        device.write("print_capacity")
+        device.expect_exact("PRINT_CAPACITY_OK 1\r\n", timeout=5)
         for length in (1, 63, 64, 65, 127, 128, 129):
             device.write(f"expect 0 {length}")
             device.expect_exact(f"ARMED 0 {length}\r\n", timeout=5)
@@ -61,6 +67,8 @@ def test_cdc_stream(dut, peers):
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
         dut.write("start 1")
         dut.expect_exact("HOST_READY 1 ports=1\r\n", timeout=30)
+        device.write("print_capacity")
+        device.expect_exact("PRINT_CAPACITY_OK 1\r\n", timeout=5)
         for port in (0, 2):
             for length in (1, 64, 129):
                 device.write(f"expect {port} {length}")
@@ -82,6 +90,8 @@ def test_cdc_stream(dut, peers):
             device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
             dut.write("start 1")
             dut.expect_exact("HOST_READY 1 ports=1\r\n", timeout=30)
+            device.write("print_capacity")
+            device.expect_exact("PRINT_CAPACITY_OK 1\r\n", timeout=5)
             device.write("rx_disabled")
             device.expect_exact("RX_DISABLED 1\r\n", timeout=5)
             for port in (0, 2):

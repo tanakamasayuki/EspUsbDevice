@@ -9,6 +9,9 @@
 - Add six fresh v3 examples for basic, composite and runtime reconfiguration usage. Archive 2.x examples/tests and retire the old unit/matrix workflows.
 - 新しいREADMEとCH32RV比較メモを追加。v3の試験入口は独立validationと標準comboを維持する。
 
+- Fix CDC/Vendor Print::availableForWrite() reporting zero despite available TX space. The override uses existing transport state; MIDI keeps byte input unavailable and exposes packet capacity separately.
+- CDC/Vendorの標準Print経由の空き容量を実効値に修正。修正前の実機再現とCDC/Vendor/MIDIの関連3件で確認。
+
 ## 2.6.1
 - (EN) Honor HID `timeoutMs`: wait for a busy IN endpoint, with zero retaining
   polling behavior and a busy timeout reporting `ESP_ERR_TIMEOUT`. Consecutive

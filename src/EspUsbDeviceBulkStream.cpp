@@ -464,6 +464,9 @@ size_t EspUsbDeviceBulkStream::write(const uint8_t *buffer, size_t n) {
   portEXIT_CRITICAL(&bulkLock);
   return n;
 }
+int EspUsbDeviceBulkStream::availableForWrite() {
+  return int(std::min(writeAvailable(), size_t(INT_MAX)));
+}
 size_t EspUsbDeviceBulkStream::writeAvailable() const {
   portENTER_CRITICAL(&bulkLock);
   const size_t n = state_ && !state_->stopping && !state_->cancelTx && state_->epIn && !state_->directBuffer && !espusb_device_edpt_stalled(state_->rhport, state_->epIn) ? state_->tx.capacity - state_->tx.used : 0;
