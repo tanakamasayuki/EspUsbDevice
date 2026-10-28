@@ -64,6 +64,11 @@ resetが割込みで通知済みの場合は、workerがresetを処理するま�
 
 ## 検証と残り
 
+以下は段階ごとの実測記録で、暫定C ABI/vendor依存や未対応classの記述は当時の状態を示す。
+現在のbackendは本体内で保守し、privateの投稿口は32 bitの総長を扱う。
+借用転送の実効契約と費用は[Vendorガイド](V3_VENDOR_API.ja.md#65535-byteを跨ぐ借用転送)、
+現在の作業状態は[引き渡し](V3_HANDOFF.ja.md)を参照する。
+
 初回の独自coreではVendor、descriptor、複数Videoの関連3件が成功した
 （`core-initial.xml`、253.37秒、serial 6本STOPPED、panicなし）。
 

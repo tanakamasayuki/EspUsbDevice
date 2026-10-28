@@ -142,13 +142,16 @@ CDC固有にはline coding用の専有DMA/cache領域64 byteをbegin時に確保
   稼働中の変更はエラーになるため開始前へ移す。
 - lineCoding/lineStateの戻り値は参照から値へ変更。取得済み値が後から変わることを前提にせず、再取得する。
 - `Device::maxCdcPorts()`は廃止。個数だけの固定上限では他Functionとのendpoint競合を表せない。
-  構成全体をbeginで検証し、失敗理由を確認する。現在の固定Function registry上限は別途撤去予定。
+  構成全体をbeginで検証し、失敗理由を確認する。registryは必要数で確保し、descriptor/endpointの制約を検証する。
 - SEND_BREAKはonBreakで期間を通知する。0/0xffff等の意味はUSB CDCの要求値のまま渡す。
 
 利点はruntime設定、未使用資源の削減、同じ所有権・エラー契約、callback登録時期の統一。
 不利益はbegin時の確保失敗、停止してからの再設定、借用buffer寿命管理、snapshot取得への移行である。
 
 ## 実験と残り
+
+以下は段階ごとの実測記録。記載時点の未完了事項を現在のAPI制約と混同しない。
+現行契約は上記と[移行ガイド](V3_MIGRATION.ja.md)、直近の検証は[validation](../validation/README.ja.md)を参照。
 
 S3–S3の新規`validation/s3/cdc_stream`で、2 CDCの容量を小/大/非power-of-twoへ同一binaryで変更し、
 両portの1/63/64/65/127/128/129 byte、line codingの独立性、借用RX/TXを確認した。
