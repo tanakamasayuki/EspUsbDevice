@@ -394,6 +394,9 @@ enum {
 #define GINTSTS_OEPINT_Pos               (19U)
 #define GINTSTS_OEPINT_Msk               (0x1UL << GINTSTS_OEPINT_Pos)            // 0x00080000
 #define GINTSTS_OEPINT                   GINTSTS_OEPINT_Msk                       // OUT endpoint interrupt
+// Device-mode incomplete isochronous OUT; host mode uses this bit for PXFR.
+#define GINTSTS_IISOOXFR (1UL << 21)
+#define GINTMSK_IISOOXFRM (1UL << 21)
 #define GINTSTS_IISOIXFR_Pos             (20U)
 #define GINTSTS_IISOIXFR_Msk             (0x1UL << GINTSTS_IISOIXFR_Pos)          // 0x00100000
 #define GINTSTS_IISOIXFR                 GINTSTS_IISOIXFR_Msk                     // Incomplete isochronous IN transfer

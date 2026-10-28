@@ -558,7 +558,11 @@ bool espusb_controller_edpt_open(uint8_t rhport, EspUsbEndpointDescriptor const*
   const bool opened = espusb_controller_io_ready(rhport) && espusb_dwc2_decode_interval(desc_edpt, status.enum_speed == DCFG_SPEED_HIGH, &interval) &&
       dfifo_alloc(rhport, desc_edpt->bEndpointAddress, espusb_endpoint_packet_size(desc_edpt),
                   espusb_endpoint_type(desc_edpt) == ESPUSB_XFER_BULK);
-  if (opened) edpt_activate(rhport, desc_edpt, interval);
+  if (opened) {
+    edpt_activate(rhport, desc_edpt, interval);
+    if (espusb_endpoint_direction(desc_edpt->bEndpointAddress) == ESPUSB_DIR_OUT && espusb_endpoint_type(desc_edpt) == ESPUSB_XFER_ISOCHRONOUS)
+      espusb_dwc2_registers(rhport)->gintmsk |= GINTMSK_IISOOXFRM;
+  }
   espusb_controller_unlock(false);
   return opened;
 }
@@ -989,6 +993,22 @@ static void handle_incomplete_iso_in(uint8_t rhport) {
   }
 }
 
+// An ISO OUT arm whose target frame passed may never receive XFRC. Stop its
+// DMA before reporting failure; the class can then safely reuse and rearm the
+// packet for a later frame. Bulk/interrupt OUT and EP0 are not involved.
+static void handle_incomplete_iso_out(uint8_t rhport) {
+  EspUsbDwc2Registers *dwc2 = espusb_dwc2_registers(rhport);
+  const EspUsbDwc2Dsts status = {.value = dwc2->dsts};
+  for (uint8_t epnum = 1; epnum < dwc2_ep_count(dwc2); ++epnum) {
+    EspUsbDwc2EndpointRegisters *dep = &dwc2->epout[epnum];
+    const EspUsbDwc2Depctl control = {.value = dep->ctl};
+    if (!control.enable || control.type != DEPCTL_EPTYPE_ISOCHRONOUS || control.dpid_iso_odd != (status.frame_number & 1u) || !selected_transfer(epnum, ESPUSB_DIR_OUT)) continue;
+    edpt_disable(rhport, epnum, false);
+    dep->ctl |= EPCTL_USBAEP;
+    espusb_controller_event_xfer_complete(rhport, epnum, 0, ESPUSB_TRANSFER_FAILED, true);
+  }
+}
+
 /* Interrupt Hierarchy
                  DIEPINT  DIEPINT
                     \       /
@@ -1080,6 +1100,13 @@ void espusb_controller_int_handler(uint8_t rhport) {
     // OEPINT is read-only, clear using DOEPINTn
     espusb_controller_lock(true);
     handle_ep_irq(rhport, ESPUSB_DIR_OUT);
+    espusb_controller_unlock(true);
+  }
+
+  if (gintsts & GINTSTS_IISOOXFR) {
+    dwc2->gintsts = GINTSTS_IISOOXFR;
+    espusb_controller_lock(true);
+    handle_incomplete_iso_out(rhport);
     espusb_controller_unlock(true);
   }
 
