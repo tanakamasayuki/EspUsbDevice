@@ -3,7 +3,8 @@
 2026-10-26。CDC-ACMのクラス処理を独自実装へ移し、TinyUSB CDCを無効化した。
 VendorとCDCは`EspUsbDeviceBulkStream`のring、DMA、借用・返却、取消しを共有する。
 MIDIも同じcopy転送を使うが、公開APIは4 byte event単位とし、byte streamや借用転送を直接使わせない。
-共通EP0/coreとDWC2も本体内部で保守する。開始modeとworker設定は[移行ガイド](V3_MIGRATION.ja.md)を参照。
+共通EP0/coreとDWC2も本体内部で保守する。
+現在はCDCをArduino Stream、VendorをPrintとして公開し、MIDIはどちらからも派生させない。開始modeとworker設定は[移行ガイド](V3_MIGRATION.ja.md)を参照。
 
 ## 普通の利用
 
@@ -50,6 +51,49 @@ availableにはこの保留分も含む。DMA packetの容量とringの容量は
 `EspUsbVendorConfig` / `EspUsbVendorRxMode`は共通型のaliasとして残す。
 通常のVendor/CDC利用で共通baseを直接扱う必要はない。
 
+## Arduino Streamとして使う
+
+CDCをそのままStream&へ渡せる。adapterや別のserial objectは不要で、Device/config/beginと
+従来のread/write/Print操作は維持する。共通bulk転送層自体からPrintを外し、CDCがStream、
+VendorがPrintを実装する。packet APIを使うMIDIへbyte parserやtimeout stateを持ち込まない。
+
+```cpp
+void consume(Stream &input) {
+  input.setTimeout(25);
+  uint8_t bytes[16];
+  const size_t count = input.readBytes(bytes, sizeof(bytes));
+  // count is the number received; readBytes may wait for the rest.
+}
+// After device.begin()/Host configuration, on an application task:
+consume(console);
+```
+
+- read(buffer, size)は現在ある分を返す非blocking操作のまま。
+- readBytes/find/parseInt等はArduino Streamのtimeoutに従って待つ。USB worker callbackでは呼ばない。
+  setTimeoutはapplication側の読出し待ちで、USBの転送timeoutやbegin configではない。
+- peekは先頭の0..255、または空/非Stream RX modeなら-1を返す。消費せず、追加のcache領域を持たない。
+  reset/end後も別のpeek cacheに古いbyteを残さない。
+- copy writeはpartial/nonblockingのまま。flushは送出開始で、wire完了待ちには変えない。
+- readString等を選べばArduino Stringの費用を払う。通常のread/readBytesにStringを介在させない。
+
+Streamの既定timeoutは1000 ms。setTimeoutの値はFunction objectの状態として保持し、
+end→beginで別の値へ自動変更しない。VendorはStreamではないが、非消費のpeekは同じbyte転送層で使える。
+
+### 採用のための最小比較
+
+Core3.3.12/S3、同じ小さなCDC echoのprobeで比較した。v2との性能比較ではない。
+
+| 案 | Flash増分 | 静的RAM増分 | 判断 |
+| --- | --- | --- | --- |
+| headerだけ含む未使用adapter | 0 | 0 | 未使用時はリンクされない |
+| 使用時だけStream adapterを追加 | 524 byte | 24 byte | objectは20 byte。利用側に別objectが必要 |
+| 共通bulk baseをStream化 | 412 byte | 8 byte | Vendor/MIDIまでStream扱いになるため不採用 |
+| 共通転送層からPrintを分離しCDCだけStream化 | 636 byte | 8 byte | 採用。CDCを直接Streamへ渡せる |
+
+同toolchainでのsizeofはCDC 224→232、Vendor 168→168、MIDI 208→200、共通bulk 152→144 byte。
+CDCのStream stateが8 byte増える一方、MIDIから不要なPrint stateを除く。
+数値はこのprobeの記録で、全アプリ/他SoCのFlash増分を保証しない。
+
 ## Arduino Printからの空き容量照会
 
 CDC/Vendorは`Print&`として渡せる。`availableForWrite()`は現在copy writeが受理できる
@@ -63,10 +107,9 @@ if (output.availableForWrite() > 0) output.write(uint8_t('!'));
 ```
 
 修正前は継承したPrintの既定実装が常に0を返し、実際の空きが64/128 byteある場合も
-標準APIだけを使う利用側が送信を始められなかった。共通bulk側で既存のvirtual関数をoverrideし、
+標準APIだけを使う利用側が送信を始められなかった。CDC/VendorのPrint側で既存のvirtual関数をoverrideし、
 追加のbuffer・task・状態を持たずに実効空きを返す。独自名への書換えを利用側へ要求しない。
-MIDIはpacket APIを使うため、Print経由ではbyte入力の余地を広告せず0を維持する。
-CDCはPrint派生であり、Arduino Stream参照やreadBytes等まで追加した変更ではない。
+MIDIはpacket APIを使う。後続のStream整理ではPrint継承自体を撤去したため、Printへupcastできない。
 
 ## コピー送信の終端
 
@@ -160,3 +203,16 @@ Host側の検査は[ESP-IDFのUSBH実装](https://github.com/espressif/esp-idf/b
 同じPrint経由の送信もHostでpayloadを確認した。6 serial全てSTOPPED、panicなし。
 S2/P4 compile、各targetの依存・symbol確認も成功。
 詳細は[validation記録](../validation/README.ja.md#printの空き容量の修正前後)。
+
+
+## native Streamの関連検証
+
+CDC/Vendor/MIDI、確保失敗、Function登録の**5 passed、0 skipped/error/failure/unfinished、465.84秒**。
+4容量構成（1 byte ringを含む）でStream経由の空/timeout、繰返しpeek、readBytes、wire echoを確認。
+Vendorの非消費peekも1 byte ringで確認した。Print経由の24照会/12構成も一致。
+774取得点で失敗/回復し、heapは346704→346704 byte。10 serial全てSTOPPED、panicなし。
+MIDIはPrint/Streamでないことをcompileで検証し、既存のpacket転送も通過した。
+S2/P4 compileと新CdcConsole例のS3 compileも成功。実機はS3–S3のみ。
+原本`/tmp/pytest-embedded/2026-10-28_12-23-52-104927/`、結果と集計は
+`validation/.pytest-results/cdc-native-stream-related*`。
+最小比較のsource/nm/layoutは同ディレクトリの`stream-layout-*`に保存した。

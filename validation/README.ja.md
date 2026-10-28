@@ -40,6 +40,21 @@ S3 Vendor単独では未使用NCM/Video/CCID/keymapもない。
 `.pytest-results/print-availability-{baseline,related}*`へXML/transcript/serial/集計を保存した。
 全34件はPrint変更前、変更後は関連3件の結果であり、全件の再実行とは表記しない。
 
+## CDC native StreamとMIDIの型分離
+
+CDCを直接Stream&へ渡せるようにし、共通bulk転送層からPrintを分離した。
+VendorはPrint、MIDIはpacket APIとし、MIDIをPrint/Streamとして扱う型変換をcompileで拒否する。
+新しいpeekは消費せず、別のcache領域を持たない。
+
+CDC/Vendor/MIDI、allocation_failure、function_registryの**5 passed、0 skipped/error/failure/unfinished、465.84秒**。
+1/64/97/1024 byte等のring構成、4回の空・timeout検査、繰返しpeekとStream::readBytes、
+Vendorの1 byte ring、Print経由の空き24照会/12構成、実wire payloadを確認した。
+774取得点の失敗/回復とheap 346704→346704 byteも成功。10 serial全てSTOPPED、panicなし。
+S2/P4 compileと更新したCdcConsoleのS3 compileも成功。全29 sourceの依存・nmに旧vendor/SDK fallbackなし。
+原本`/tmp/pytest-embedded/2026-10-28_12-23-52-104927/`、
+XML/transcript/serial/集計は`.pytest-results/cdc-native-stream-related*`へ保存した。
+変更後の全34件の結果ではなく、関連5件の結果である。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

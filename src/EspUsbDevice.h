@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <Print.h>
+#include <Stream.h>
 #include <atomic>
 #include <functional>
 #include "espusbdevice_version.h"
@@ -1021,7 +1022,7 @@ struct EspUsbTransferResult
   bool actualBytesKnown = true;
   uint64_t id = 0;
 };
-class EspUsbDeviceBulkStream : public EspUsbDeviceClass, public Print
+class EspUsbDeviceBulkStream : public EspUsbDeviceClass
 {
 public:
   using RxCallback = std::function<void(size_t)>;
@@ -1040,13 +1041,13 @@ public:
   bool mounted() const;
   int available();
   int read();
+  int peek();
   size_t read(uint8_t *buffer, size_t size);
-  using Print::write;
-  size_t write(uint8_t data) override;
+  virtual size_t write(uint8_t data);
   // Copies accepted bytes. Automatic dispatch by default, never a completion wait.
-  size_t write(const uint8_t *buffer, size_t size) override;
-  // Arduino Print reports immediately writable bytes, saturated to int.
-  int availableForWrite() override;
+  virtual size_t write(const uint8_t *buffer, size_t size);
+  // Shared implementation for the CDC/Vendor Arduino Print facades.
+  int availableForWrite();
   size_t writeAvailable() const;
   // Effective allocated capacities; zero before begin and after end.
   size_t writeCapacity() const;
@@ -1116,9 +1117,14 @@ protected:
   uint64_t nextTransferId_ = 0;
 };
 
-class EspUsbDeviceVendor : public EspUsbDeviceBulkStream
+class EspUsbDeviceVendor : public EspUsbDeviceBulkStream, public Print
 {
 public:
+  using Print::write;
+  size_t write(uint8_t value) override { return EspUsbDeviceBulkStream::write(value); }
+  size_t write(const uint8_t *buffer, size_t size) override { return EspUsbDeviceBulkStream::write(buffer, size); }
+  int availableForWrite() override { return EspUsbDeviceBulkStream::availableForWrite(); }
+  void flush() override { EspUsbDeviceBulkStream::flush(); }
   using ControlRequestCallback = std::function<bool(const EspUsbDeviceVendorControlRequest &)>;
   explicit EspUsbDeviceVendor(EspUsbDevice &device, uint16_t endpointSize = 64);
   ~EspUsbDeviceVendor() override;
@@ -1136,9 +1142,18 @@ private:
   ControlRequestCallback controlRequestCallback_;
 };
 
-class EspUsbDeviceCdcSerial : public EspUsbDeviceBulkStream
+class EspUsbDeviceCdcSerial : public EspUsbDeviceBulkStream, public Stream
 {
 public:
+  using Print::write;
+  size_t write(uint8_t value) override { return EspUsbDeviceBulkStream::write(value); }
+  size_t write(const uint8_t *buffer, size_t size) override { return EspUsbDeviceBulkStream::write(buffer, size); }
+  int availableForWrite() override { return EspUsbDeviceBulkStream::availableForWrite(); }
+  void flush() override { EspUsbDeviceBulkStream::flush(); }
+  using EspUsbDeviceBulkStream::read;
+  int available() override { return EspUsbDeviceBulkStream::available(); }
+  int read() override { return EspUsbDeviceBulkStream::read(); }
+  int peek() override { return EspUsbDeviceBulkStream::peek(); }
   using BreakCallback = std::function<void(uint16_t)>;
   using LineCodingCallback = std::function<void(const EspUsbDeviceCdcLineCoding &)>;
   using LineStateCallback = std::function<void(const EspUsbDeviceCdcLineState &)>;
@@ -1493,12 +1508,12 @@ public:
 
 private:
   // The public MIDI API deals in complete events. The shared byte transport
-  // remains an implementation detail; even a Print upcast cannot split events.
-  // A Print byte writer cannot send an individual MIDI event byte.
-  int availableForWrite() override { return 0; }
+  // remains an implementation detail. MIDI is neither Print nor Stream.
   size_t write(uint8_t) override { return 0; }
   size_t write(const uint8_t *, size_t) override;
   using EspUsbDeviceBulkStream::read;
+  using EspUsbDeviceBulkStream::peek;
+  using EspUsbDeviceBulkStream::availableForWrite;
   using EspUsbDeviceBulkStream::available;
   using EspUsbDeviceBulkStream::writeAvailable;
   using EspUsbDeviceBulkStream::readCapacity;
@@ -1513,9 +1528,6 @@ private:
   using EspUsbDeviceBulkStream::onDirectRxComplete;
   using EspUsbDeviceBulkStream::cancelDirectTx;
   using EspUsbDeviceBulkStream::cancelDirectRx;
-  using Print::print;
-  using Print::println;
-  using Print::printf;
   size_t bulkPacketUnit() const override { return 4; }
   size_t filterBulkRx(uint8_t *, size_t) override;
   bool validateBulkTx(const uint8_t *, size_t) const override;

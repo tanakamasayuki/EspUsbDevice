@@ -1,5 +1,10 @@
 #include <Arduino.h>
 #include <EspUsbDevice.h>
+#include <type_traits>
+#include <algorithm>
+static_assert(std::is_base_of<Stream, EspUsbDeviceCdcSerial>::value);
+static_assert(!std::is_base_of<Stream, EspUsbDeviceVendor>::value);
+static_assert(!std::is_base_of<Print, EspUsbDeviceMidi>::value);
 #include <atomic>
 
 EspUsbDevice device;
@@ -48,6 +53,10 @@ void loop() {
     } else if (command == "combined") {
       delete serial1; serial1 = nullptr;
       vendor = new EspUsbDeviceVendor(device);
+      EspUsbBulkStreamConfig tiny;
+      tiny.rxCapacity = tiny.txCapacity = 1;
+      tiny.transferBytes = 64;
+      if (vendor->configure(tiny) != ESP_OK) { Serial.println("COMBINED_FAILED"); return; }
       keyboard = new EspUsbDeviceHidKeyboard(device);
       channels[1] = nullptr; channels[2] = vendor;
       Serial.println("COMBINED");
@@ -92,7 +101,7 @@ void loop() {
         const auto result = channel.writeDirect(sourceStorage[index] + 64, length, EspUsbTransferTermination::EndWithShortPacket);
         sourceIds[index] = result.id;
         Serial.printf("SOURCE_POSTED %u\r\n", unsigned(bool(result)));
-      } else Serial.printf("SOURCE_COPIED %u\r\n", unsigned(static_cast<Print &>(channel).write(sourceStorage[index] + 64, length)));
+      } else Serial.printf("SOURCE_COPIED %u\r\n", unsigned((port == 0 ? static_cast<Print &>(serial0) : static_cast<Print &>(*vendor)).write(sourceStorage[index] + 64, length)));
     } else if (command.startsWith("source_result ")) {
       const unsigned index = command.substring(14).toInt() / 2;
       const uint32_t deadline = millis() + 3000;
@@ -117,15 +126,26 @@ void loop() {
           unsigned(serial1 ? serial1->readCapacity() : 0), unsigned(serial1 ? serial1->writeCapacity() : 0));
     } else if (command == "print_capacity") {
       bool ok = true;
-      for (auto *channel : channels) {
-        if (!channel) continue;
-        Print &output = *channel;
+      Print *outputs[] = {&serial0, serial1, vendor};
+      for (unsigned i = 0; i < 3; ++i) {
+        auto *channel = channels[i];
+        if (!channel || !outputs[i]) continue;
+        Print &output = *outputs[i];
         const size_t expected = channel->writeAvailable();
         const int actual = output.availableForWrite();
         ok &= actual >= 0 && size_t(actual) == expected;
         Serial.printf("PRINT_CAPACITY expected=%u actual=%d\r\n", unsigned(expected), actual);
       }
       Serial.printf("PRINT_CAPACITY_OK %u\r\n", unsigned(ok));
+    } else if (command == "stream_empty") {
+      Stream &input = serial0;
+      input.setTimeout(25);
+      uint8_t byte = 0xa5;
+      const uint32_t started = millis();
+      const bool ok = !input.available() && input.peek() == -1 && input.read() == -1 &&
+          input.readBytes(&byte, 1) == 0 && byte == 0xa5 &&
+          millis() - started >= 25 && input.getTimeout() == 25;
+      Serial.printf("STREAM_EMPTY %u\r\n", unsigned(ok));
     } else if (command == "mutate") {
       const bool rejected = serial0.onLineCoding(nullptr) == ESP_ERR_INVALID_STATE &&
           serial0.onLineState(nullptr) == ESP_ERR_INVALID_STATE && serial0.onBreak(nullptr) == ESP_ERR_INVALID_STATE &&
@@ -183,7 +203,19 @@ void loop() {
       continue;
     }
     auto &channel = *channels[port];
-    received[port] += channel.read(buffers[port] + received[port], wanted[port] - received[port]);
+    Stream *input = port == 0 ? &serial0 : port == 1 ? serial1 : nullptr;
+    const size_t remaining = wanted[port] - received[port];
+    if (remaining && channel.available()) {
+      const int first = input ? input->peek() : channel.peek();
+      const int again = input ? input->peek() : channel.peek();
+      const size_t count = std::min(size_t(channel.available()), remaining);
+      auto *destination = buffers[port] + received[port];
+      const size_t actual = input ? input->readBytes(destination, count) : channel.read(destination, count);
+      if (first < 0 || first != again || !actual || destination[0] != uint8_t(first)) {
+        Serial.println("STREAM_PEEK_FAILED"); wanted[port] = 0; continue;
+      }
+      received[port] += actual;
+    }
     if (received[port] == wanted[port]) {
       sent[port] += channel.write(buffers[port] + sent[port], wanted[port] - sent[port]);
       if (sent[port] == wanted[port]) { Serial.printf("ECHOED %u %u\r\n", port, unsigned(wanted[port])); wanted[port] = 0; }

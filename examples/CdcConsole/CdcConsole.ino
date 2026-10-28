@@ -9,11 +9,14 @@ void setup() {
   if (console.configure(config) != ESP_OK) return;
   device.begin();
 }
-void loop() {
-  // Backpressure: consume a received byte only when it can be queued for TX.
-  while (console.available() && console.writeAvailable()) {
-    const int value = console.read();
-    if (value >= 0) console.write(uint8_t(value));
+// A consumer can use Arduino Stream directly; no wrapper object is needed.
+void echo(Stream &io) {
+  while (io.available() && io.availableForWrite()) {
+    const int value = io.read();
+    if (value >= 0) io.write(uint8_t(value));
   }
+}
+void loop() {
+  echo(console);
   delay(1);
 }

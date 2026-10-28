@@ -4,13 +4,15 @@
 def test_cdc_stream(dut, peers):
     device = peers["device"]
     try:
-        for capacities in ((64, 64, 128, 128), (1024, 2048, 512, 1024), (97, 131, 149, 197)):
+        for capacities in ((1, 1, 1, 1), (64, 64, 128, 128), (1024, 2048, 512, 1024), (97, 131, 149, 197)):
             device.write("configure " + " ".join(map(str, capacities)))
             device.expect_exact("CONFIGURED first=0 second=0\r\n", timeout=5)
             device.write("start")
             device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
             dut.write("start")
             dut.expect_exact("HOST_READY 1 ports=2\r\n", timeout=30)
+            device.write("stream_empty")
+            device.expect_exact("STREAM_EMPTY 1\r\n", timeout=5)
             device.write("capacities")
             device.expect_exact("CAPACITIES " + " ".join(map(str, capacities)) + "\r\n", timeout=5)
             device.write("print_capacity")

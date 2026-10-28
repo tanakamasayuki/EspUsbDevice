@@ -111,8 +111,9 @@ P4/S2/S31の実機、HS、各OSの音楽アプリとの相互接続は今回の�
 規格参照: [USB-MIDI 1.0](https://www.usb.org/sites/default/files/midi10.pdf)。
 
 
-## Print経由の空き容量
+## byte I/Oとの型の分離
 
-byte単位の入力を利用側へ広告しないため、PrintへupcastしてもavailableForWrite()は0を返す。
-MIDIの送信余地はavailableForWritePackets()でevent単位に照会する。
-CDC/Vendorに標準Printの実効空き照会を追加しても、MIDIをbyte streamとしては公開しない。
+MIDIはPrintでもStreamでもない。従来のPrint upcastでの拒否をruntimeで返す形から、
+不適切な型変換をcompile時点で拒否する形へ変更した。共通転送層からPrintのstateも外す。
+送信余地はavailableForWritePackets()でevent単位に照会し、writePacket/noteOn等を使う。
+共有bulkを実装に使うことは、MIDIの公開操作をbyte streamにする意味ではない。

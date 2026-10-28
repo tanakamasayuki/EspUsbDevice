@@ -10,7 +10,7 @@ validation probeとも分けています。容量はconfigure、USB開始はDevi
 | Example | What it demonstrates / 内容 |
 | --- | --- |
 | [Keyboard](Keyboard/Keyboard.ino) | Debug serial input → HID key taps / debug portから入力した文字をキー送信 |
-| [CdcConsole](CdcConsole/CdcConsole.ino) | CDC byte echo with backpressure / TX空きを確認してCDC echo |
+| [CdcConsole](CdcConsole/CdcConsole.ino) | CDC passed directly to a Stream consumer / Stream参照へ渡し、TX空きを確認してecho |
 | [VendorEcho](VendorEcho/VendorEcho.ino) | Vendor bulk stream, retaining partial writes / partial writeの残りを保持 |
 | [MidiEcho](MidiEcho/MidiEcho.ino) | MIDI 1.0 packet echo, one cable each way / MIDI packet単位のecho |
 | [CompositeCdcMidi](CompositeCdcMidi/CompositeCdcMidi.ino) | CDC + MIDI with independent resources / 個別の容量を持つ複合構成 |

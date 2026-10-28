@@ -12,6 +12,9 @@
 - Fix CDC/Vendor Print::availableForWrite() reporting zero despite available TX space. The override uses existing transport state; MIDI keeps byte input unavailable and exposes packet capacity separately.
 - CDC/Vendorの標準Print経由の空き容量を実効値に修正。修正前の実機再現とCDC/Vendor/MIDIの関連3件で確認。
 
+- Make CDC an Arduino Stream directly, with non-consuming peek and standard timed-read helpers. Separate Print from the shared bulk transport: Vendor remains Print; MIDI exposes packet APIs without Print/Stream inheritance.
+- CDCをStreamへ直接渡せる形に整理。S3のobjectはCDC +8 byte、Vendor増加なし、MIDI -8 byte。通常の非blocking read/writeと明示的なDevice開始は維持。
+
 ## 2.6.1
 - (EN) Honor HID `timeoutMs`: wait for a busy IN endpoint, with zero retaining
   polling behavior and a busy timeout reporting `ESP_ERR_TIMEOUT`. Consecutive

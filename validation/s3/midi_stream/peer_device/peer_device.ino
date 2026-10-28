@@ -1,5 +1,8 @@
 #include <Arduino.h>
 #include <EspUsbDevice.h>
+#include <type_traits>
+static_assert(!std::is_base_of<Print, EspUsbDeviceMidi>::value);
+static_assert(!std::is_base_of<Stream, EspUsbDeviceMidi>::value);
 #include <atomic>
 #include "esp_heap_caps.h"
 #include "../packets.h"
@@ -114,8 +117,6 @@ void loop() {
       EspUsbDeviceMidiPacket bad{0xf9, 0x90, 1, 2};
       bool ok = midi.mounted() && !midi.writePacket(bad);
       bad.header = 0; ok &= !midi.writePacket(bad);
-      ok &= static_cast<Print &>(midi).write(uint8_t(0xff)) == 0;
-      ok &= static_cast<Print &>(midi).availableForWrite() == 0;
       Serial.printf("TX_REJECTED %u\r\n", unsigned(ok));
     } else if (command == "batch") {
       EspUsbDeviceMidiPacket first, next;

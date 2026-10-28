@@ -94,6 +94,9 @@ USB modeの検証はPHY/controller取得前に行う。実際の確保失敗はN
 | class全体のstatic容量照会 | Functionごとの要求設定と開始中の実効容量を区別する |
 
 通常のDevice/Function/beginとKeyboard/Mouse、CDC Streamの基本操作は維持する。
+CDCはArduino Streamを直接実装し、peek/readBytes/setTimeout等を使える。
+共通bulk転送層とMIDIはPrintではない。Print&へ渡す場合は具体的なCDC/Vendor objectを渡し、
+MIDIではpacket APIへ移す。Streamの読出し待ちとUSB workerの設定は別のものとして扱う。
 古いfieldや空の互換関数を残すaliasは作らない。設定の名前から実装依存を除き、意味を一つにする。
 詳しい容量・copy/borrowed・callback・中断時返却は各V3_*_APIガイドを参照する。
 内部のRuntime header/functionは保守実装の一部で、利用者APIではない。

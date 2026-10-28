@@ -13,7 +13,7 @@ ESP側のv3を実測で固め、共通にできる操作・契約をCH32RV側へ
 | started/ready | CH32RVにもstarted/readyがあり、readyはmountedの別名 | ESPもstartedは資源所有、readyはHost構成済みとした。reset時にready=falseでもstartedはtrue |
 | 容量設定 | CH32RV CDCはsetBuffers、Vendor容量はstatic。ESPは共通bulk configureとinstance実効容量 | 共有候補は要求容量・任意外部領域・実効容量の区別。既定容量やDMA alignmentまで同じ数値にしない |
 | copy write | CH32RV CDCはHostが開いていれば満杯待ち、閉じていればdrop。ESPは受理数を返すpartial/nonblocking | ESPのpartialを維持。移行側が残りを保持し、速度差で無言の欠落やUSB workerのblockを作らない |
-| CDCの型 | CH32RVはArduino Stream派生、ESPは共通bulkのPrint派生でread/availableを提供 | 基本のread/writeは近いが、Stream参照・peek・readBytes等まで互換とはしない。Stream化は追加stateと待ちの意味を確認する次のAPI検討候補 |
+| CDCの型 | 両方ともArduino Stream派生。ESPは共通転送層からPrintを分離してCDCだけStream化 | Stream参照・peek・readBytesを直接使える。ESPのcopy writeはpartial、flushは送出開始のままで、待ちの違いは残る |
 | 空き容量と待ち | CH32RV CDCはavailableForWrite、VendorはwriteAvailable。waitWritableは容量超過をclamp | ESPもPrint::availableForWriteを実効空きへ合わせる。旧動作の0は実機で再現した。size_tのwriteAvailableは共通bulkの照会として残す。waitWritableの要求超過は拒否する。名前の統一だけで待ち・clamp・dropの差を隠さない |
 | 通知context | CH32RVは主にdeliverEvents、ESPの転送完了はUSB worker | 共通名でも同じ実行contextではない。block/end禁止と次投稿可否を契約へ明記する。cooperative task APIをESPへno-opで残さない |
 | borrowed TX | CH32RVはbool＋lastDirectError、onTxCompleteへ完了を通知。ESPは投稿結果/idと型付き返却 | ESPの所有権返却を維持。reset/stop/cancel/errorでも一度返す契約を共有候補にする。alignment違いのために隠れcopyを入れない |

@@ -734,3 +734,18 @@ MIDIのPrint byte入力は0を維持し、packet APIへ誘導する。
 利点はArduino Printを受け取る汎用コードが自然に動くこと。不利益は旧0を前提に
 独自fallbackを選んでいた利用側の経路が変わる可能性で、writeのpartial契約は変えない。
 Stream化とは分けて扱う。実測はCDC/Vendorの型消去後の照会・wire転送と、MIDIのpacket試験で確認する。
+
+
+## 採用記録: CDCを直接Streamへ渡す
+
+CDCのStream化とMIDIのbyte I/O分離を同時に行う。共通bulkはprotocol-neutralな転送層とし、
+CDCはStream、VendorはPrint、MIDIはpacket APIとする。byte peekは非消費で既存RX領域を見る。
+常駐のadapter/cacheを追加せず、停止/resetを跨ぐ隠れたprefetch byteも作らない。
+
+小さなS3 probeで4案を比較し、CDCだけのStream化を採用した。
+objectはCDC +8、Vendor ±0、MIDI -8 byte。optional adapter案は未使用0だが使用時に別object20 byteが必要。
+利点はArduino Streamを受け取る利用先へCDCを直接渡せることと、MIDIから不要なPrint stateを外せること。
+不利益はCDC objectが8 byte増えることと、共通bulk/MIDIをPrintとしていた低level利用がsource互換を失うこと。
+MIDIはpacket操作へ、Printを受け取る利用先は具体的なCDC/Vendor objectを渡す。
+通常のCDC/Vendor read/write/Print、非blocking copy write、明示的なDevice開始は維持する。
+実験条件と数値は[CDCガイド](V3_CDC_API.ja.md#採用のための最小比較)。

@@ -109,12 +109,26 @@ S2/P4 compile成功。各targetの29 sourceの依存・nmに旧vendor/SDK fallba
 `.pytest-results/print-availability-{baseline,related}*`へXML/transcript/serial/集計を保存。
 全34件の結果はこの小変更前の`d876d50`であり、Print変更後は関連3件を実行した。
 
+## native Streamとprotocol-neutral bulk
+
+CDCを直接Arduino Streamとして使えるようにした。VendorはPrintのまま、MIDIはどちらでもない。
+共通bulkからPrintを外し、CDC/Vendorが各Arduino interfaceを実装する。旧MIDIのPrint upcastはcompile error。
+通常のread/write/Print、begin/config/endは維持。新peekは既存RX領域を非消費で見て、追加cacheを持たない。
+
+4案の最小比較後、CDCだけのStream化を採用。S3のsizeofはCDC224→232、Vendor168→168、
+MIDI208→200 byte。未使用adapterの費用は0だが、使用時の別objectが必要になるため採用していない。
+Flash/RAM比較と移行は[CDCガイド](V3_CDC_API.ja.md#採用のための最小比較)。
+関連5件は**5 passed、465.84秒**。0 skipped/error/failure/unfinished、10 serial STOPPED/panicなし。
+Streamのempty/timeout/peek/readBytes、tiny ring、Printの24照会、MIDI、774確保点、登録を確認。
+heap346704→346704 byte。S2/P4と新CdcConsoleのcompile、依存/nmも成功。
+原本`/tmp/pytest-embedded/2026-10-28_12-23-52-104927/`、`.pytest-results/cdc-native-stream-related*`へ保存。
+全34件は次に実行する。実行中は製品/probeを固定する。
+
 ## 次の単位と未完了
 
-1. API整理後の全34件の確認は完了。次のPrint API変更は以下の修正前後の関連試験で確認する。
+1. native Streamのclass構造変更後の全34件を確認する。関連5件は完了。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
-3. Printの空き容量修正は下記の修正前後の実機確認を完了した。
-   その他のAPI/protocol/所有権も実測で判断する。Stream化そのものはまだ採用しない。
+3. 既存API/資源管理の残る問題は実測で判断する。旧互換性だけのshimを増やさない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
 

@@ -430,6 +430,16 @@ int EspUsbDeviceBulkStream::available() {
   portEXIT_CRITICAL(&bulkLock);
   return int(std::min(value, size_t(INT_MAX)));
 }
+int EspUsbDeviceBulkStream::peek() {
+  portENTER_CRITICAL(&bulkLock);
+  int value = -1;
+  if (state_ && !state_->stopping && config_.rxMode == EspUsbBulkRxMode::Stream && state_->packetUnit == 1) {
+    if (state_->rx.used) value = state_->rx.data[state_->rx.head];
+    else if (state_->rxPendingLength) value = state_->rxPacket[state_->rxPendingOffset];
+  }
+  portEXIT_CRITICAL(&bulkLock);
+  return value;
+}
 int EspUsbDeviceBulkStream::read() { uint8_t b; return read(&b, 1) ? b : -1; }
 size_t EspUsbDeviceBulkStream::read(uint8_t *buffer, size_t n) {
   if (!buffer) return 0;
