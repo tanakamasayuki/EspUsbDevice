@@ -196,6 +196,16 @@ formatの入替えAPI、alternate選択、range応答領域等は続けて整理
 原本`/tmp/pytest-embedded/2026-10-28_21-22-05-002801/`、結果は`.pytest-results/audio-storage*`。
 これは関連3件の実行で、全35件を再実行した結果ではない。
 
+## Audio formatの停止後再構成
+
+両streamのclearFormatsについて、反復解放・空設定拒否・稼働中拒否を故障注入probeで検証。
+同じFunction/参照でUAC2/UAC1それぞれ48→44.1→48 kHzの実PCMを確認した。
+allocation_failure/audio_events/audio_streamの関連4件は**4 passed、200.04秒**。
+8 logs STOPPED/panicなし、設定追加14箇所・開始774箇所の失敗回復、heap346704→346704。
+S2/P4 compileと依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_21-30-54-318752/`、
+`.pytest-results/audio-reconfigure*`。初回の期待値誤りも別名保存。収集は36件、一括実行とは異なる。
+契約と制限は[Audio API](../docs/V3_AUDIO_API.ja.md#停止後のformat入替え)。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

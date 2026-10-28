@@ -35,7 +35,7 @@ queueは短いcritical sectionで保護し、USB workerとアプリのevent追�
 稼働中のconfigure、addFormat、新しい方向のaddPlaybackStream/addCaptureStreamは拒否する。
 configureはInvalidState、addFormatはfalseを返す。streamを返す従来APIは既存参照を返して
 構成を保ち、Device.lastErrorにInvalidStateを設定する。raw descriptor writerも稼働中の再構築を拒否する。
-追加したstream自体や一形式の制約を再整理した段階ではなく、formatを入れ替えるAPIは後続課題。
+停止後のformat入替えはclearFormatsで行う。一方向一形式の制限は引き続き残る。
 
 未登録Audioの手動beginはInvalidStateで拒否し、そのstreamから既存Audioのbufferへアクセスしない。
 稼働中のFunction破棄はDeviceを停止し、USB worker/DMAが止まってからevent領域を解放する。
@@ -91,7 +91,7 @@ captureの明示的な部分書込み。不利益はbegin時の確保失敗と�
 Device + Function + addStream/addFormat + begin、read/write/pollEventという通常の流れは維持する。
 旧CFG_TUD_AUDIOの有効化と固定buffer flagは拒否する。形式はaddFormatで、queueはconfigureで指定する。
 
-未完の範囲は複数formatのalternate選択、formatの入替え、外部clock feedback、
+未完の範囲は複数formatのalternate選択、外部clock feedback、
 callback/borrowed PCMの所有権API、OS音声アプリ、P4/S2/S31/HSである。
 現在は方向ごとに一形式だけ対応し、worker再armの連続性は実機で評価する。
 
@@ -165,3 +165,36 @@ formatの入替えAPI、alternate選択、range応答領域等は続けて整理
 全29 sourceの依存/nmに旧stack/SDK fallbackなし、S2/P4の未選択Audioもリンクされない。
 原本`/tmp/pytest-embedded/2026-10-28_21-22-05-002801/`、結果は`.pytest-results/audio-storage*`。
 これは関連3件の実行で、全35件を再実行した結果ではない。
+
+## 停止後のformat入替え
+
+Playback/Captureの両streamに`esp_err_t clearFormats()`を追加した。
+停止中にformat設定領域を解放し、同じFunctionとstream参照でformatを登録し直せる。
+空でもESP_OKで、追加の確保を行わない。稼働中（DescriptorsOnlyを含む）はInvalidStateで、
+設定・control・領域を変更しない。Device.lastErrorも戻り値へ合わせる。
+
+```cpp
+device.end();
+if (playback.clearFormats() != ESP_OK) return;
+if (!playback.addFormat({44100, 2, 2, 16})) return;
+if (!device.begin()) return;
+```
+
+`clearBuffer()`はPCMデータ、`clearFormats()`はformat設定を消す別の操作。
+clearFormatsは方向の選択を解除しない。選択済みの各streamへformatを登録してからbeginする。
+空設定のbeginは拒否される（現descriptor検証ではInvalidSize）。clear後は旧control metadataも無効化する。
+もう一方のstreamのformatとAudioConfig、Function登録自体は保持する。
+通常のaddFormat→configure→beginの利用と、end後に設定を保持する既定動作は変えない。
+利点はオブジェクトを再生成せず設定を入れ替え、不要な設定領域を解放できること。
+不利益はclearと再追加の間に空の設定となり、再追加の確保失敗を処理する必要があること。
+複数formatのalternate対応を追加した変更ではない。
+
+clearの反復解放、空設定beginの拒否、metadata modeの変更拒否、再追加後の開始を検証した。
+UAC2/UAC1で同じFunction/stream参照の48 kHz→44.1 kHz→48 kHzを各1系列、計6回wireで確認。
+各構成のPCMとrateを照合し、10構成で稼働中のclear拒否を確認した。
+既存のISO休止4構成、event/control、設定追加14箇所と開始774箇所の確保失敗回復も成功。
+関連4件は**4 passed、0 skipped/error/failure/unfinished、200.04秒**。8 serial全てSTOPPED、panicなし。
+heap346704→346704 byte、S2/P4 compile成功、全29 sourceの依存/nmに旧stack/SDK fallbackなし。
+原本`/tmp/pytest-embedded/2026-10-28_21-30-54-318752/`、結果は`.pytest-results/audio-reconfigure*`。
+初回のprobe期待値誤りは`audio-reconfigure-initial-expectation-error*`へ記録した。
+標準combo/allの収集は36件。この結果は関連4件の実行で、全36件の一括実行ではない。

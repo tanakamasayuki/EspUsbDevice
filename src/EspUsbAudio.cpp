@@ -79,6 +79,28 @@ bool EspUsbAudioCaptureStream::addFormat(const EspUsbAudioFormat &format)
                              format);
 }
 
+esp_err_t EspUsbAudioPlaybackStream::clearFormats()
+{
+  return function_.clearFormats(espusb::internal::AudioDirection::Playback);
+}
+
+esp_err_t EspUsbAudioCaptureStream::clearFormats()
+{
+  return function_.clearFormats(espusb::internal::AudioDirection::Capture);
+}
+
+esp_err_t EspUsbAudioFunction::clearFormats(espusb::internal::AudioDirection direction)
+{
+  if (started_.load()) { device_.setLastError(ESP_ERR_INVALID_STATE); return ESP_ERR_INVALID_STATE; }
+  auto &stream = direction == espusb::internal::AudioDirection::Playback ? model_.playback() : model_.capture();
+  stream.clearFormats();
+  // Invalidate control metadata that borrowed the old format settings.
+  controls_.reset();
+  graph_ = espusb::internal::AudioFunctionGraph{};
+  device_.setLastError(ESP_OK);
+  return ESP_OK;
+}
+
 bool EspUsbAudioFunction::addFormat(
     espusb::internal::AudioDirection direction,
     const EspUsbAudioFormat &format)

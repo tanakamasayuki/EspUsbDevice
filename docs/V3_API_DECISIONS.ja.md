@@ -794,3 +794,10 @@ format追加時にheapを使うようになる。通常転送・control処理で
 rate照会での重複探索。設定はend後も残すため、試験も設定資源と実行資源の寿命を区別する。
 一方向一形式のdescriptor/transport制限は別に残り、複数format対応済みとは扱わない。
 実測・設定失敗14箇所・開始失敗774箇所・関連3件の結果は[Audio API](V3_AUDIO_API.ja.md#format保存領域とrate照会の容量整理)。
+
+## Audio formatの明示的な解放・再設定
+
+両方向のstreamにclearFormatsを追加。停止後に同じFunction/参照を維持して設定を入れ替えられる。
+clearBuffer（PCM）と分け、方向の登録は解除しない。稼働中はInvalidStateで変更しない。
+既存APIの移行は不要で、通常はend後もformatを保持する。再追加での確保失敗はアプリが処理する。
+操作と利点・不利益は[Audio API](V3_AUDIO_API.ja.md#停止後のformat入替え)を参照。

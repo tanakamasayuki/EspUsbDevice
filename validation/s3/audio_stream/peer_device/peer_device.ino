@@ -25,9 +25,20 @@ void loop() {
   if (command.startsWith("start ")) {
     unsigned protocol, directions, rate, frames, external;
     sscanf(command.c_str(), "start %u %u %u %u %u", &protocol, &directions, &rate, &frames, &external);
+    const auto selected = protocol == 1 ? EspUsbAudioProtocol::Uac1 : EspUsbAudioProtocol::Uac2;
+    const bool reused = audio && audio->protocol() == selected && activeDirections == directions;
+    const unsigned oldRate = activeRate;
+    bool ok = true;
+    if (reused) {
+      ok &= !playback || playback->clearFormats() == ESP_OK;
+      ok &= !capture || capture->clearFormats() == ESP_OK;
+      ok &= !audio->currentSampleRate();
+      Serial.printf("RECONFIGURED %u from=%u to=%u\r\n", unsigned(ok), oldRate, rate);
+    } else {
+      delete audio; audio = new EspUsbAudioFunction(device, selected);
+      playback = nullptr; capture = nullptr;
+    }
     activeDirections = directions; activeRate = rate;
-    delete audio; audio = new EspUsbAudioFunction(device, protocol == 1 ? EspUsbAudioProtocol::Uac1 : EspUsbAudioProtocol::Uac2);
-    playback = nullptr; capture = nullptr; bool ok = true;
     if (directions & 1) { playback = &audio->addPlaybackStream(); ok &= playback->addFormat({rate,2,2,16}); }
     if (directions & 2) { capture = &audio->addCaptureStream(); ok &= capture->addFormat({rate,2,2,16}); }
     EspUsbAudioConfig config; config.eventCapacity = 0; config.playbackBufferFrames = config.captureBufferFrames = frames;
@@ -37,6 +48,11 @@ void loop() {
     if (capture) { ok &= capture->write(samples, 3) == 0; capture->clearBuffer(); }
     feeding = true; received = bad = 0;
     Serial.printf("STARTED %u\r\n", unsigned(ok));
+  } else if (command == "locked") {
+    bool ok = !playback || playback->clearFormats() == ESP_ERR_INVALID_STATE;
+    ok &= !capture || capture->clearFormats() == ESP_ERR_INVALID_STATE;
+    ok &= device.ready() && audio->currentSampleRate() == activeRate;
+    Serial.printf("FORMATS_LOCKED %u\r\n", unsigned(ok));
   } else if (command == "silence") { feeding = false; if (capture) capture->clearBuffer(); Serial.println("SILENCE");
   } else if (command == "stats") {
     auto a = playback ? playback->stats() : EspUsbAudioStreamStats{};

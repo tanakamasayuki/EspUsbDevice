@@ -78,7 +78,15 @@ AudioStreamModel::AudioStreamModel(AudioDirection direction)
 
 AudioStreamModel::~AudioStreamModel()
 {
+  clearFormats();
+}
+
+void AudioStreamModel::clearFormats()
+{
   freeUsbMemory(formats_);
+  formats_ = nullptr;
+  formatCount_ = 0;
+  error_ = AudioFormatError::None;
 }
 
 bool AudioStreamModel::addFormat(const AudioPcmFormat &format, UsbSpeed speed,

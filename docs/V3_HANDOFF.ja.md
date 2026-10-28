@@ -259,6 +259,16 @@ formatの入替えAPI、alternate選択、range応答領域等は続けて整理
 原本`/tmp/pytest-embedded/2026-10-28_21-22-05-002801/`、結果は`.pytest-results/audio-storage*`。
 これは関連3件の実行で、全35件を再実行した結果ではない。
 
+## Audio formatの停止後再構成
+
+両streamにclearFormatsを追加。停止中に設定領域を解放しcontrol metadataを無効化する。
+方向の選択は残し、稼働中はInvalidStateで無変更。空設定のままbeginは拒否する。
+[APIと検証](V3_AUDIO_API.ja.md#停止後のformat入替え)に契約と不利益を記録した。
+関連4件は4 passed（200.04秒）、8 logs STOPPED/panicなし。UAC1/UAC2とも同じFunction/参照で
+48→44.1→48 kHzの実PCM成功。14＋774箇所の失敗回復、heap346704→346704、S2/P4 compile・依存/nm成功。
+原本`/tmp/pytest-embedded/2026-10-28_21-30-54-318752/`、`.pytest-results/audio-reconfigure*`。
+初回は空設定beginのエラー期待値を誤ったprobe失敗で、記録を保存済み。現在の全体収集は36件。
+
 ## 次の単位と未完了
 
 1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
@@ -267,8 +277,8 @@ formatの入替えAPI、alternate選択、range応答領域等は続けて整理
    CCIDのmessage>=MPS制約は仕様§5.1で確認済みのため維持する。
    MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
    class内に分散したSoC別MPS判定は共通化済み。P4 HSではCCIDの既定320がMPS512を満たさない点は残る。
-   Audioのformat/rate固定配列は撤去済み。次はend後にformatを入れ替えるAPIを用意し、
-   複数formatをdescriptor/beginで拒否する暫定制限、alternate切替、control応答容量を整理する。
+   Audioのformat/rate固定配列は撤去済み。end後の入替えAPIも追加済み。
+   次は複数formatをdescriptor/beginで拒否する暫定制限、alternate切替、control応答容量を整理する。
    13 format/12 rateは内部metadata確認であり、wireは従来の一方向一形式のまま。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
 4. S3 FSのHost起点suspend/resumeは確認済み。Vendor HIDの周期InputとAudio ISOの4構成も確認済み。OS互換、remote wakeup、

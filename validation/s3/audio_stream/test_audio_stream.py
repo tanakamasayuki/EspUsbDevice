@@ -14,6 +14,8 @@ def test_audio_stream(dut, peers):
             device.expect_exact("STARTED 1\r\n", timeout=30)
             dut.write("start")
             dut.expect_exact("HOST_READY 1\r\n", timeout=30)
+            device.write("locked")
+            device.expect_exact("FORMATS_LOCKED 1\r\n", timeout=5)
             for attempt in range(2):
                 dut.write(f"run {directions} {rate}")
                 r = dut.expect(r"PCM ok=1 bytes=(\d+) bad=0 filled=(\d+) feedback=(\d+) rejects=0\r\n", timeout=20)
@@ -60,6 +62,45 @@ def test_audio_stream(dut, peers):
             for board in (dut, device):
                 board.write("stop")
                 board.expect_exact("STOPPED\r\n", timeout=30)
+    finally:
+        errors = []
+        for name, board in (("host", dut), ("device", device)):
+            try:
+                board.write("stop")
+                board.expect_exact("STOPPED\r\n", timeout=30)
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+        assert not errors, "USB stop failed: " + "; ".join(errors)
+
+
+def test_audio_reconfigure(dut, peers):
+    """The same Function and stream references change rate after end()."""
+    device = peers["device"]
+    try:
+        for protocol in (2, 1):
+            old_rate = 0
+            for rate in (48000, 44100, 48000):
+                device.write(f"start {protocol} 3 {rate} 64 0")
+                if old_rate:
+                    device.expect_exact(f"RECONFIGURED 1 from={old_rate} to={rate}\r\n", timeout=10)
+                device.expect_exact("STARTED 1\r\n", timeout=30)
+                dut.write("start")
+                dut.expect_exact("HOST_READY 1\r\n", timeout=30)
+                device.write("locked")
+                device.expect_exact("FORMATS_LOCKED 1\r\n", timeout=5)
+                dut.write(f"run 3 {rate}")
+                r = dut.expect(r"PCM ok=1 bytes=(\d+) bad=0 filled=(\d+) feedback=(\d+) rejects=0\r\n", timeout=20)
+                assert int(r.group(1)) > rate * 4 * 1.3
+                assert int(r.group(2)) > 0
+                if protocol == 2:
+                    assert int(r.group(3)) > 0
+                device.write("stats")
+                r = device.expect(r"STATS received=(\d+) bad=0 rx=(\d+) tx=(\d+) underrun=\d+\r\n", timeout=5)
+                assert int(r.group(1)) > 0 and int(r.group(2)) > rate * 4 * 1.3 and int(r.group(3)) > rate * 4 * 1.3
+                for board in (dut, device):
+                    board.write("stop")
+                    board.expect_exact("STOPPED\r\n", timeout=30)
+                old_rate = rate
     finally:
         errors = []
         for name, board in (("host", dut), ("device", device)):

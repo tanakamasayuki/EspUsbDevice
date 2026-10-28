@@ -1624,6 +1624,9 @@ public:
     return EspUsbAudioDirection::Playback;
   }
   bool addFormat(const EspUsbAudioFormat &format);
+  // Stopped only: release format settings; the stream remains selected.
+  // Add at least one format before the next begin(). PCM is clearBuffer().
+  esp_err_t clearFormats();
   int available() const;
   size_t capacity() const;
   size_t packetCapacity() const;
@@ -1653,6 +1656,9 @@ public:
     return EspUsbAudioDirection::Capture;
   }
   bool addFormat(const EspUsbAudioFormat &format);
+  // Stopped only: release format settings; the stream remains selected.
+  // Add at least one format before the next begin(). PCM is clearBuffer().
+  esp_err_t clearFormats();
   size_t write(const void *data, size_t length);
   size_t availableForWrite() const;
   size_t capacity() const;
@@ -1761,6 +1767,7 @@ private:
   friend class EspUsbAudioPlaybackStream;
   friend class EspUsbAudioCaptureStream;
 
+  esp_err_t clearFormats(espusb::internal::AudioDirection direction);
   bool addFormat(espusb::internal::AudioDirection direction,
                  const EspUsbAudioFormat &format);
   bool buildGraph(uint8_t interfaceNumber, uint8_t endpointNumber);
