@@ -1,4 +1,5 @@
 #include "internal/EspUsbDeviceEndpoint.h"
+#include "internal/EspUsbDeviceCore.h"
 #include "EspUsbDevice.h"
 #include "internal/EspUsbDeviceAppDriver.h"
 #include "internal/EspUsbMemory.h"
@@ -37,8 +38,8 @@ struct EspUsbNetState {
   NetSlot *slots = nullptr, *head = nullptr, *tail = nullptr, *tx = nullptr, *rx = nullptr;
   uint8_t *txStorage = nullptr, *rxStorage = nullptr, *notification = nullptr;
   size_t txStride = 0, rxStride = 0;
-  bool ownTx = false, ownRx = false, active = false, draining = false, fenceQueued = false, zlp = false, notifyBusy = false, zlpPending = false;
-  bool resetDataPid = false, resetNotifyPid = false;
+  bool ownTx = false, ownRx = false, active = false, fenceQueued = false, zlp = false, notifyBusy = false, zlpPending = false;
+  uint8_t draining = 0, resetPid = 0; // IN, OUT, notification retirement/PID masks
   std::atomic<bool> stopping{false};
   uint8_t port = 0, controlInterface = 255, in = 0, out = 0, notify = 0, desired = 0, notificationStage = 2;
   uint16_t packet = 64, rxArm = 0, maxIn = 0, datagrams = 0, sequence = 0;
@@ -79,18 +80,20 @@ struct EspUsbNetState {
     const size_t fit = (size_t(bytes) - owner.netConfig_.maxFrameBytes - 24) / 4;
     datagrams = uint16_t(std::min({owner.netConfig_.maxDatagrams, fit, requested ? size_t(requested) : SIZE_MAX}));
   }
-  void clear() {
+  void clear(uint8_t mask=3) {
     const auto &c = owner.netConfig_;
-    for (size_t i = 0; i < c.txBuffers + c.rxBuffers; ++i) slots[i].phase = NetSlot::Free;
-    head = tail = tx = rx = nullptr; zlp = zlpPending = false;
+    for (size_t i = 0; i < c.txBuffers + c.rxBuffers; ++i)
+      if(mask&(i<c.txBuffers ? 1:2))slots[i].phase = NetSlot::Free;
+    if(mask&1){head = tail = tx = nullptr; zlp = zlpPending = false;}
+    if(mask&2)rx = nullptr;
   }
   void reset() {
-    ++epoch; active = draining = false; desired = 0; notificationStage = 2;
+    ++epoch; active = false; draining = 0; desired = 0; notificationStage = 2;
     clear(); limits(uint16_t(owner.netConfig_.ntbInBytes), 0);
-    sequence = 0; notifyBusy = resetDataPid = resetNotifyPid = false;
+    sequence = 0; notifyBusy = false; resetPid = 0;
   }
   void armRx() {
-    if (stopping.load() || !active || draining || rx) return;
+    if (stopping.load() || !active || (draining&2) || rx || espusb_device_edpt_stalled(port,out)) return;
     const auto &c = owner.netConfig_;
     for (size_t i = 0; i < c.rxBuffers; ++i) {
       auto *s = &slots[c.txBuffers + i];
@@ -101,7 +104,7 @@ struct EspUsbNetState {
     }
   }
   void armTx() {
-    if (stopping.load() || !active || draining || tx || !head) return;
+    if (stopping.load() || !active || (draining&1) || tx || !head || espusb_device_edpt_stalled(port,in)) return;
     tx = head; head = head->next; if (!head) tail = nullptr;
     tx->phase = NetSlot::Hardware; put16(tx->data + 6,sequence++);
     if (!espusb_device_edpt_xfer(port,in,tx->data,tx->used,false)) {
@@ -111,7 +114,7 @@ struct EspUsbNetState {
     }
   }
   void armNotification() {
-    if (stopping.load() || draining || notifyBusy || notificationStage >= 2) return;
+    if (stopping.load() || (draining&4) || notifyBusy || notificationStage >= 2 || espusb_device_edpt_stalled(port,notify)) return;
     memset(notification,0,16); notification[0] = 0xa1;
     put16(notification+4,controlInterface);
     const uint16_t bytes = notificationStage == 0 ? 16 : 8;
@@ -123,23 +126,31 @@ struct EspUsbNetState {
     notifyBusy = espusb_device_edpt_xfer(port,notify,notification,bytes,false);
     if (!notifyBusy) espusb::internal::postTinyUsbRuntimeJob(job);
   }
-  bool change(uint8_t alternate, bool resetData = false, bool resetNotify = false) {
-    resetDataPid |= resetData; resetNotifyPid |= resetNotify;
-    active = false; desired = alternate; draining = true; ++epoch;
-    if (!espusb_device_edpt_abort(port,in) || !espusb_device_edpt_abort(port,out) || !espusb_device_edpt_abort(port,notify)) return false;
+  bool retire(uint8_t mask,uint8_t pid) {
+    draining|=mask;resetPid|=pid;++epoch;
+    const uint8_t endpoints[]={in,out,notify};
+    for(unsigned i=0;i<3;++i)if((mask&(1u<<i)) && !espusb_device_edpt_abort(port,endpoints[i]))return false;
     return espusb::internal::postTinyUsbRuntimeJob(job);
+  }
+  bool change(uint8_t alternate, bool resetData = false, bool resetNotify = false) {
+    active = false; desired = alternate;
+    return retire(7,uint8_t((resetData ? 3:0)|(resetNotify ? 4:0)));
   }
   static void fence(void *context) {
     auto *s = static_cast<EspUsbNetState *>(context); NetGuard guard;
     s->fenceQueued = false;
-    if (s->stopping.load()) return;
+    if (s->stopping.load() || !s->draining) return;
     if (s->epoch != s->fenceEpoch) { espusb::internal::postTinyUsbRuntimeJob(s->job); return; }
-    s->clear(); s->notifyBusy = false;
-    if (s->resetDataPid) { espusb_device_edpt_clear_stall(s->port,s->in); espusb_device_edpt_clear_stall(s->port,s->out); }
-    if (s->resetNotifyPid) espusb_device_edpt_clear_stall(s->port,s->notify);
-    s->resetDataPid = s->resetNotifyPid = false; s->draining = false; s->active = s->desired == 1;
-    s->notificationStage = s->active ? 0 : 1;
+    const uint8_t retired=s->draining;
+    s->clear(retired);
+    if(retired&4)s->notifyBusy=false;
+    const uint8_t endpoints[]={s->in,s->out,s->notify};
+    for(unsigned i=0;i<3;++i)if(s->resetPid&(1u<<i))espusb_device_edpt_clear_stall(s->port,endpoints[i]);
+    s->resetPid=s->draining=0;s->active=s->desired==1;
+    if(retired&4)s->notificationStage=s->active ? 0:1;
     s->armNotification(); s->armRx(); s->armTx();
+    // A direction that was not retired may still have a queued ZLP retry.
+    espusb::internal::postTinyUsbRuntimeJob(s->job);
   }
   static void pump(void *context) {
     auto *s = static_cast<EspUsbNetState *>(context); NetGuard guard;
@@ -158,7 +169,7 @@ struct EspUsbNetState {
     s->armTx(); s->armRx(); s->armNotification();
   }
   bool enqueue(const uint8_t *data, size_t bytes) {
-    if (!data || bytes < 14 || bytes > owner.netConfig_.maxFrameBytes || stopping.load() || !active || draining) return false;
+    if (!data || bytes < 14 || bytes > owner.netConfig_.maxFrameBytes || stopping.load() || !active || (draining&1) || espusb_device_edpt_stalled(port,in)) return false;
     NetSlot *s = tail;
     if (!s || s->count == datagrams || aligned(s->used,4) + bytes > maxIn) {
       s = nullptr;
@@ -233,9 +244,17 @@ struct EspUsbNetState {
     return uint16_t(offset);
   }
   static bool controlRequest(uint8_t port, uint8_t stage, const EspUsbControlRequest *r) {
+    const bool feature=r->bmRequestType==2 && (r->bRequest==1 || r->bRequest==3) && !r->wValue && !r->wLength;
     auto *s = first;
-    while (s && r->wIndex != s->controlInterface && r->wIndex != s->controlInterface+1) s = s->next;
+    while (s && (feature ? (r->wIndex!=s->in && r->wIndex!=s->out && r->wIndex!=s->notify) :
+        (r->wIndex!=s->controlInterface && r->wIndex!=s->controlInterface+1))) s=s->next;
     if (!s || s->stopping.load()) return false;
+    if(feature) {
+      if(stage!=ESPUSB_CONTROL_STAGE_SETUP)return true;
+      NetGuard guard;const uint8_t endpoint=r->wIndex==s->in ? 1:r->wIndex==s->out ? 2:4;
+      if(r->bRequest==3)s->resetPid &= uint8_t(~endpoint);
+      return s->retire(endpoint,r->bRequest==1 ? endpoint:0) || espusb::internal::rejectUsbControl();
+    }
     if (r->bmRequestType == 0x81 && r->bRequest == 10 && !r->wValue && r->wLength == 1) {
       if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       s->control[0] = r->wIndex == s->controlInterface ? 0 : s->desired;
@@ -287,7 +306,7 @@ struct EspUsbNetState {
       NetGuard guard; s = first;
       while (s && ep != s->in && ep != s->out && ep != s->notify) s = s->next;
       if (!s) return false;
-      if (s->stopping.load() || s->draining) return true;
+      if (s->stopping.load() || (s->draining&(ep==s->in ? 1:ep==s->out ? 2:4))) return true;
       if (ep == s->notify) { s->notifyBusy = false; if (s->notificationStage < 2) { ++s->notificationStage; s->armNotification(); } return true; }
       if (!s->active) return true;
       if (ep == s->in) {

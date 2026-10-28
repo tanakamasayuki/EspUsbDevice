@@ -20,7 +20,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 plugin 1.10.0の標準`--combo`を採用した。`pyproject.toml`の`arduino_combos`に
 `s3: primary=s3_host,device=s3_device`を登録し、`--combo all`で結線済みの全組を実行する。
-現在はこの一組だけなので32 tests（core/control、VideoのHALT回復と6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
+現在はこの一組だけなので33 tests（core/control、NCM/VideoのHALT回復と6 runtime構成を含む）。S3だけを選ぶ場合は`--combo s3`を使う。
 profileはHostとDeviceに一つずつ。組の列挙にconftestや適用条件マーカーは不要。
 実機pytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
 
@@ -750,3 +750,28 @@ S2/P4はcompile-only成功。全体の収集は32件で、今回の製品変更�
 原本は`/tmp/pytest-embedded/2026-10-27_20-05-52-165319/`。
 JUnit/transcript/serialコピーは`validation/.pytest-results/video-halt-final*`、集計は`video-halt-audit.txt`。
 全EP0順序、SET/CLEARの全競合とbus reset/end、OSや他SoC/HS実通信は別の未検証範囲として残す。
+
+
+## NCM方向別HALT回復の実測
+
+2026-10-28。修正前はHALT解除の制御要求が成功しても次のframe交換が戻らなかった
+（`ncm-halt-baseline.xml`、43.33秒）。方向別退役後の単独は38.43秒、実STALLを含む補強は44.69秒で成功。
+最後に反対方向のOUTと通知をDATA1へ置く条件を加え、NCM raw 2件、NCM stream、
+allocation_failure、control_coreの**5 passed、0 skipped/failed/error/unfinished、201.81秒**を確認した。
+
+HALT試験は2 NCM、NTB IN 3200 / OUT 16384 byte、TX/RX各2 buffer。
+36 SET/CLEAR、8回の実STALL、24 frame交換、部分NTBの送信10回、未読TXの準備8回が成功。
+OUTの回復で未読INを維持し、INの回復で部分OUTとDATA1を維持する。
+通知のDATA1もbulk HALT中に維持し、通知回復では既存のbulk返信を維持する。
+同時HALTで片方だけを解除し、もう片方がwire上でSTALLを続けることも確認した。
+
+既存NCM streamの3 runtime構成でDHCP/TCP 8193 byte交換が成功。
+回復後の2 IP interfaceの開始/回収、774取得点の失敗/回復、heap 346712→346712 byte、
+10 serial全てSTOPPED、panicなし。S2/P4はcompile-only成功で、Vendor単独ELFに未使用NCMの
+state/関数が入らないことをnmで確認した。
+
+原本は`/tmp/pytest-embedded/2026-10-28_06-40-07-341424/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/ncm-halt-final*`、集計は`ncm-halt-audit.txt`。
+HostのSTALL用コマンド受付を追加し忘れた試験側失敗も記録した。
+全体収集は33件。今回の製品変更後に全33件を実行したわけではない。
+任意のEP0/reset/end競合、TCP進行中のHALT/OS実機、他SoC/HS実通信は未検証として残す。

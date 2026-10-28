@@ -1,16 +1,17 @@
 # v3 独立試験とAPI整理の引き渡し
 
-最新実装はVideo bulkのHALT/CLEAR回復。HALT時に借用frameをTransferErrorで一度返し、
-HALT中の投稿を拒否する。CLEAR後はCommitを維持して再開し、別Videoのloan/PIDへ影響しない。
-修正前の返却漏れもS3–S3で確認した。[Video APIと実測](V3_VIDEO_API.ja.md)を参照。
-関連10件は**10 passed（154.16秒）、0 skipped/failed/error/unfinished**。
-20 serial全てSTOPPED、panicなし。16 SET/CLEAR、部分payload 2回、正常frame 10回、
-各Videoで8 loanの一度だけの返却、774取得点の失敗/回復とheap一致を確認。
-S2/P4はcompile-only成功。結果は`validation/.pytest-results/video-halt-final*`と`video-halt-audit.txt`。
-新testを含む全体収集は32件。直前`f6bc5dd`はCCID回復、`cd6dc24`後の全31件は成功済みだが、
-今回の製品変更後に全32件を実行したわけではない。
-実機確認はS3–S3のみ。次はNCMのHALT回復、全EP0順序とreset/end競合、最終API/sample、
-OS/他SoC/HS実機検証を続ける。DWC2派生コードの保守方針は
+最新実装はNCMの方向別HALT/CLEAR回復。対象のIN/OUT/通知だけを退役し、反対方向の
+未読TX/部分RXとPID、別NCMの通信を維持する。通知の回復でbulkを初期化しない。
+修正前の通信停止もS3–S3で再現した。[NCM APIと実測](V3_NCM_API.ja.md)を参照。
+関連5件は**5 passed（201.81秒）、0 skipped/failed/error/unfinished**。
+36 SET/CLEAR、8回の実STALL、OUT/通知のDATA1維持、3構成のDHCP/TCP、
+774取得点の失敗/回復とheap一致を確認。10 serial全てSTOPPED、panicなし。
+S2/P4はcompile-only成功。未使用NCMのstate/関数がVendor単独ELFへ入らないことも確認した。
+結果は`validation/.pytest-results/ncm-halt-final*`と`ncm-halt-audit.txt`。
+全体収集は33件。直前`afb87a1`はVideo、`f6bc5dd`はCCIDのHALT回復。
+全体の一括成功は`cd6dc24`後の31件であり、今回の製品変更後に全33件を実行したわけではない。
+次は全体33件の再確認、reset開始とEP0/endpoint世代境界の検証、最終API/version/sample整理を進める。
+実機確認はS3–S3のみ。OS/他SoC/HS実機は未検証で、DWC2派生コードの保守方針は
 [由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)を参照。
 2026-10-26。開発の入口を既存test/sampleから切り離し、S3–S3だけの独立環境に変更した。
 最初にTinyUSB制約で不自然になっている利用手順を改善する。汎用registryの先行完成や

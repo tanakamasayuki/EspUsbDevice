@@ -6,7 +6,7 @@ usb_device_handle_t handle = nullptr;
 usb_transfer_t *control = nullptr, *input = nullptr, *output = nullptr;
 std::atomic<bool> running{false}, exited{true}, allFree{false}, controlDone{true}, bulkDone{true};
 bool claimed[4] = {};
-uint8_t in[] = {0x82,0x84}, out[] = {2,4};
+uint8_t in[2]={},out[2]={},notify[2]={};
 unsigned selected = 0;
 uint32_t actual = 0;
 usb_transfer_status_t result = USB_TRANSFER_STATUS_ERROR;
@@ -38,9 +38,9 @@ bool request(uint8_t type,uint8_t code,uint16_t value,uint16_t bytes,uint16_t in
   while (!controlDone.load() && int32_t(until-millis())>0) events(1);
   return controlDone.load() && control->status==USB_TRANSFER_STATUS_COMPLETED && control->actual_num_bytes==8+bytes;
 }
-bool bulk(bool read,unsigned bytes) {
+bool bulk(bool read,unsigned bytes,uint8_t endpoint=0) {
   auto *t=read ? input : output;
-  t->device_handle=handle; t->bEndpointAddress=read ? in[selected] : out[selected]; t->num_bytes=bytes;
+  t->device_handle=handle; t->bEndpointAddress=endpoint ? endpoint : read ? in[selected] : out[selected]; t->num_bytes=bytes;
   t->callback=[](usb_transfer_t *) { bulkDone=true; }; bulkDone=false;
   if (usb_host_transfer_submit(t)!=ESP_OK) { bulkDone=true; return false; }
   const uint32_t until=millis()+3000;
@@ -81,8 +81,9 @@ bool response(unsigned count,const unsigned *sizes,const unsigned *tags) {
   }
   return got==count;
 }
-bool marker() {
-  unsigned bytes=ntb(false); const unsigned sizes[]={64},tags[]={0x40};
+bool marker(unsigned tag=0x40) {
+  unsigned bytes=ntb(false); const unsigned sizes[]={64},tags[]={tag};
+  for(unsigned j=0;j<64;++j)output->data_buffer[32+j]=uint8_t((tag+j)%251);
   return bulk(false,bytes) && response(1,sizes,tags);
 }
 bool matrix() {
@@ -129,6 +130,53 @@ bool toggle() {
   }
   return ok;
 }
+uint8_t endpointAddress(unsigned which){return which==0 ? out[selected]:which==1 ? in[selected]:notify[selected];}
+bool endpointStatus(unsigned which,bool halted) {
+  return request(0x82,0,0,2,endpointAddress(which)) && control->data_buffer[8]==unsigned(halted) && !control->data_buffer[9];
+}
+bool feature(unsigned which,bool setting) {
+  const uint8_t ep=endpointAddress(which);if(!ep)return false;
+  if(!setting) {
+    const esp_err_t halted=usb_host_endpoint_halt(handle,ep);
+    if((halted!=ESP_OK && halted!=ESP_ERR_INVALID_STATE) || usb_host_endpoint_flush(handle,ep)!=ESP_OK || usb_host_endpoint_clear(handle,ep)!=ESP_OK)return false;
+  }
+  return request(2,setting ? 3:1,0,0,ep) && endpointStatus(which,setting);
+}
+bool stalled(unsigned which) {
+  result=USB_TRANSFER_STATUS_ERROR;
+  const bool completed=bulk(which!=0,64,endpointAddress(which));
+  return !completed && bulkDone.load() && result==USB_TRANSFER_STATUS_STALL;
+}
+bool prepare() {
+  // IDF endpoint_clear preserves the previous host PID. Recreate the pipes
+  // only before the scenario, alongside the corresponding SET_INTERFACE.
+  for(unsigned itf:{2*selected+1,2*selected}) {
+    if(!request(1,11,itf&1,0,itf) || usb_host_interface_release(client,handle,itf)!=ESP_OK)return false;
+    claimed[itf]=false;claimed[itf]=usb_host_interface_claim(client,handle,itf,itf&1)==ESP_OK;
+    if(!claimed[itf])return false;
+  }
+  return true;
+}
+bool fragment(bool finishing,bool onePacket=false) {
+  if(!finishing){ntb(false);put16(output->data_buffer+8,256);for(unsigned j=0;j<64;++j)output->data_buffer[32+j]=uint8_t((0x55+j)%251);}
+  else {
+    memset(output->data_buffer,0,193);
+    if(onePacket)for(unsigned j=0;j<32;++j)output->data_buffer[j]=uint8_t((0x55+32+j)%251);
+  }
+  return bulk(false,finishing ? (onePacket ? 193:129):(onePacket ? 64:128));
+}
+bool receive(unsigned tag) {const unsigned sizes[]={64},tags[]={tag};return response(1,sizes,tags);}
+bool speedNotification() {
+  if(!bulk(true,16,notify[selected]) || actual!=16)return false;
+  const auto *p=input->data_buffer;
+  return p[0]==0xa1 && p[1]==0x2a && le16(p+4)==2*selected && le16(p+6)==8 && le32(p+8) && le32(p+12);
+}
+bool connectionNotification() {
+  const auto *p=input->data_buffer;
+  return bulk(true,16,notify[selected]) && actual==8 && p[0]==0xa1 && p[1]==0 &&
+      le16(p+2)==1 && le16(p+4)==2*selected && !le16(p+6);
+}
+bool notifications(){return speedNotification() && connectionNotification();}
 bool stop() {
   if (!bulkDone.load() || !controlDone.load()) return false;
   bool ok=true;
@@ -145,6 +193,7 @@ void loop() {
   if (!Serial.available()) { delay(1); return; }
   String command=Serial.readStringUntil('\n'); command.trim();
   if (command=="start") {
+    selected=0;
     usb_host_config_t cfg={}; cfg.intr_flags=ESP_INTR_FLAG_LEVEL1;
 #if CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK
     cfg.enum_filter_cb=[](const usb_device_desc_t *d,uint8_t *) { return d->idVendor==0x303a && d->idProduct==0x4000; };
@@ -159,14 +208,20 @@ void loop() {
     ok &= handle!=nullptr;
     if (ok) {
       const usb_config_desc_t *config=nullptr; ok &= usb_host_get_active_config_descriptor(handle,&config)==ESP_OK;
-      unsigned found=0;
+      unsigned found=0,currentInterface=255;
       if (ok) { const auto *d=reinterpret_cast<const uint8_t *>(config);
         for (size_t i=0;i+2<=config->wTotalLength && d[i]>=2;i+=d[i]) {
           if (i+d[i]>config->wTotalLength) { ok=false; break; }
+          if(d[i]==9 && d[i+1]==4)currentInterface=d[i+2];
+          if(d[i]==7 && d[i+1]==5 && currentInterface<4) {
+            const unsigned instance=currentInterface/2;
+            if((d[i+3]&3)==3)notify[instance]=d[i+2];
+            else if((d[i+3]&3)==2)(d[i+2]&128 ? in[instance]:out[instance])=d[i+2];
+          }
           if (d[i]==13 && d[i+1]==0x24 && d[i+2]==0x0f) { ok &= d[i+3]==7+found; ++found; }
         }
       }
-      ok &= found==2;
+      ok &= found==2 && in[0] && in[1] && out[0] && out[1] && notify[0] && notify[1];
       uint8_t mac[26];
       ok &= request(0x80,6,0x0307,26,0x409); memcpy(mac,control->data_buffer+8,26);
       ok &= request(0x80,6,0x0308,26,0x409) && memcmp(mac,control->data_buffer+8,26)!=0;
@@ -176,7 +231,22 @@ void loop() {
       ok &= usb_host_interface_claim(client,handle,i,i&1)==ESP_OK; claimed[i]=ok;
     }
     Serial.printf("HOST_READY %u\r\n",unsigned(ok));
-  } else if (command=="matrix") { Serial.printf("MATRIX %u\r\n",unsigned(matrix()));
+  } else if(command.startsWith("select ")) {selected=command.substring(7).toInt();Serial.printf("SELECTED %u\r\n",unsigned(selected<2));
+  } else if(command=="queued") {unsigned n=ntb(false);Serial.printf("QUEUED %u\r\n",unsigned(bulk(false,n)));
+  } else if(command=="partial" || command=="finish" || command=="partial_one" || command=="finish_one")
+    Serial.printf("FRAGMENT %u\r\n",unsigned(fragment(command.startsWith("finish"),command.endsWith("_one"))));
+  else if(command=="speed")Serial.printf("SPEED %u\r\n",unsigned(speedNotification()));
+  else if(command=="connection")Serial.printf("CONNECTION %u\r\n",unsigned(connectionNotification()));
+  else if(command.startsWith("receive "))Serial.printf("RECEIVED %u\r\n",unsigned(receive(command.substring(8).toInt())));
+  else if(command=="notifications")Serial.printf("NOTIFICATIONS %u\r\n",unsigned(notifications()));
+  else if(command.startsWith("stalled "))Serial.printf("STALLED %u\r\n",unsigned(stalled(command.substring(8).toInt())));
+  else if(command.startsWith("status ")) {
+    unsigned which,state;sscanf(command.c_str(),"status %u %u",&which,&state);Serial.printf("ENDPOINT_STATUS %u\r\n",unsigned(endpointStatus(which,state)));
+  } else if(command=="prepare")Serial.printf("PREPARED %u\r\n",unsigned(prepare()));
+  else if(command.startsWith("set ") || command.startsWith("clear ")) {
+    const bool setting=command.startsWith("set ");Serial.printf("FEATURE %u\r\n",unsigned(feature(command.substring(setting ? 4:6).toInt(),setting)));
+  } else if(command.startsWith("marker "))Serial.printf("MARKER %u\r\n",unsigned(marker(command.substring(7).toInt())));
+  else if (command=="matrix") { Serial.printf("MATRIX %u\r\n",unsigned(matrix()));
   } else if (command=="multi") { selected=1; bool ok=marker(); selected=0; Serial.printf("MULTI %u\r\n",unsigned(ok));
   } else if (command=="toggle") { Serial.printf("TOGGLE %u\r\n",unsigned(toggle()));
   } else if (command=="stop") { Serial.println(!client || stop() ? "STOPPED" : "STOP_FAILED"); }

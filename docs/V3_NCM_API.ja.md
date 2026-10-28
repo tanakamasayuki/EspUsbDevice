@@ -1,7 +1,7 @@
 # v3 NCM: Function単位のNTBと任意のIP層
 
 2026-10-27。NCM class、固定NTB pool、MACと送信queueのglobalを独自driverへ移す。
-Device + Net + onFrame/sendFrame + beginの利用手順は維持する。共通EP0/core/DCDは暫定TinyUSB。
+Device + Net + onFrame/sendFrame + beginの利用手順は維持する。共通EP0/coreとDevice専用DWC2も本体内部で保守する。
 
 ```cpp
 EspUsbDevice device;
@@ -119,3 +119,51 @@ serial原本は`/tmp/pytest-embedded/2026-10-27_01-02-46-482679/`、コピーと
 NCMのみ/Deviceのみの最小build/nmも成功し、旧TinyUSB NCMと未使用NCM/IP glueの不在を確認した。
 TinyUSB treeは51 file / 15 compiled sourcesで一致。旧tests/examplesはmainと同一で、mainはv3の祖先。
 残るlegacy classはVideo。共通EP0/core/DCDと他SoC/HSの置換・実機検証は未完。
+
+
+## endpointごとのHALT回復
+
+IN、OUT、通知の各endpointは独立に退役する。HALT/CLEARの対象のDMAを停止し、
+旧完了eventのfence後に、その方向だけのpool/queueを再初期化する。
+CLEARでは対象だけDATA0へ戻し、反対方向や別NCMのPID/HALTを維持する。
+SET_INTERFACEやNTB上限変更では従来どおりFunction全体の交換状態を退役する。
+
+IN HALTでは未完/未送信のcopy済みNTBを破棄し、新しいsendFrameはfalseを返す。
+OUTは受信を継続できる。OUT HALTでは途中のNTBを破棄し、送信中/送信待ちのINは維持する。
+通知HALTではbulkを変更せず、CLEAR後に最新の速度・接続状態を再通知する。
+通知の再送のためにbulkのPIDやqueueを初期化しない。
+
+MAC、NTB上限、alternateの要求値、callbackは維持する。回復の短い退役期間が終わると
+linkUpは元のalternateに対応する状態へ戻る。HALTを理由にIP層を作り直す処理は加えない。
+公開APIと通常の使い方は変えない。利点は対象pipeの回復だけで通信を再開できることと、
+無関係な送受信や通知が途切れないこと。不利益は対象方向の送信待ち/部分NTBを再利用できず、
+必要な再送を上位層が担うこと。copy成功は将来のUSB送信成功を保証するものではない。
+
+既存のjob、fenceと選択済みNCM state内のbit maskを使い、queue/bufferの追加確保は行わない。
+試験のHost PID準備にはSET_INTERFACEとpipeの再取得を使うが、回復中はそれらへ頼らない。
+privateなbusy照会は転送中を狙う試験だけに使い、利用者向けAPIにはしない。
+
+
+## NCM方向別HALT回復の実測
+
+2026-10-28。修正前はHALT解除の制御要求が成功しても次のframe交換が戻らなかった
+（`ncm-halt-baseline.xml`、43.33秒）。方向別退役後の単独は38.43秒、実STALLを含む補強は44.69秒で成功。
+最後に反対方向のOUTと通知をDATA1へ置く条件を加え、NCM raw 2件、NCM stream、
+allocation_failure、control_coreの**5 passed、0 skipped/failed/error/unfinished、201.81秒**を確認した。
+
+HALT試験は2 NCM、NTB IN 3200 / OUT 16384 byte、TX/RX各2 buffer。
+36 SET/CLEAR、8回の実STALL、24 frame交換、部分NTBの送信10回、未読TXの準備8回が成功。
+OUTの回復で未読INを維持し、INの回復で部分OUTとDATA1を維持する。
+通知のDATA1もbulk HALT中に維持し、通知回復では既存のbulk返信を維持する。
+同時HALTで片方だけを解除し、もう片方がwire上でSTALLを続けることも確認した。
+
+既存NCM streamの3 runtime構成でDHCP/TCP 8193 byte交換が成功。
+回復後の2 IP interfaceの開始/回収、774取得点の失敗/回復、heap 346712→346712 byte、
+10 serial全てSTOPPED、panicなし。S2/P4はcompile-only成功で、Vendor単独ELFに未使用NCMの
+state/関数が入らないことをnmで確認した。
+
+原本は`/tmp/pytest-embedded/2026-10-28_06-40-07-341424/`。
+JUnit/transcript/serialコピーは`validation/.pytest-results/ncm-halt-final*`、集計は`ncm-halt-audit.txt`。
+HostのSTALL用コマンド受付を追加し忘れた試験側失敗も記録した。
+全体収集は33件。今回の製品変更後に全33件を実行したわけではない。
+任意のEP0/reset/end競合、TCP進行中のHALT/OS実機、他SoC/HS実通信は未検証として残す。

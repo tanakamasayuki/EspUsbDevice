@@ -690,3 +690,13 @@ SETはTransferError、HALTなしのCLEARはCancelledで旧frameを退役し、HA
 後続のCLEARで既に生じたTransferErrorを消さず、後続のSETで古いPID解除がHALTを消さないようにする。
 別VideoのloanとCommit設定は維持し、追加の常駐資源は持たせない。
 利点、不利益、再投稿の扱いは[Video API](V3_VIDEO_API.ja.md#bulk-endpointのhaltとclear)を参照。
+
+
+## 採用記録: NCMの方向別HALT/CLEAR
+
+修正前は標準HALT解除後に次のフレーム交換が戻らないことをS3–S3で再現した。
+送受信が独立なNCMではIN、OUT、通知の対象だけを退役し、反対方向の未読TX/部分RXを維持する。
+通知の回復でbulkを初期化せず、片方のHALT解除で他方のHALT/PIDを変更しない。
+IN HALT中のcopy投稿は拒否し、OUT HALT中のcopy投稿は許可する。
+通常のsendFrame/onFrame/config/beginを維持し、追加のqueue/bufferや未選択Functionの常駐処理を持たせない。
+対象方向の未完NTBは破棄するため上位の再送を必要とする。詳しくは[NCM API](V3_NCM_API.ja.md#endpointごとのhalt回復)を参照。
