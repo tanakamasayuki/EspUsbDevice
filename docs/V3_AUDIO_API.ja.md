@@ -294,3 +294,30 @@ Core3.3.12のS3/S2/P4で3ビルド成功、各ELF/FQBNと未使用クラスの�
 76 serial全てSTOPPED/panicなし、816開始取得点と14設定取得点の失敗回復、heap346704→346704を確認した。
 実機はS3–S3で、S2/P4はcompile/依存/nm確認まで。記録は`.pytest-results/audio-alternates-all*`、
 [全体の検証記録](../validation/README.ja.md)を参照。
+
+
+## 外部ringと不完全なformat設定の確認
+
+2026-10-29、製品は`033f2d8`のまま、独立probeの確認範囲を拡大した。
+UAC1/UAC2で内蔵・外部ringそれぞれ4 PCM alternateを切り替え、計32回のISO交換を確認。
+外部ringは非整列pointerから520 byteを使い、各切替後とend後に前後のguardを検査した。
+6 byte/frame時のcapacity=516、8 byte/frame時のcapacity=520と実payloadを照合し、
+外部18回・内蔵18回の照会は全て成功。関連2件は2 passed、124.49秒、4 logs STOPPED/panicなし。
+`.pytest-results/audio-external-ring*`、原本`/tmp/pytest-embedded/2026-10-28_23-22-08-817368/`。
+
+共有clockを満たさない設定は、保存時ではなくDevice.beginのdescriptor検証で拒否する。
+PCM alternateのrate不足、件数は同じだがrateが異なる集合、Playback/Capture間の不一致、
+方向内channel数変更はESP_ERR_INVALID_SIZE。修正後は同じFunctionを開始・終了できる。
+rate集合が同じなら登録順序が異なっても受け付け、Playbackの最初のrateで開始する。
+これらと、最大frame幅での外部ring重複拒否・隣接領域での成功・書込上限とguardを、
+UAC1/UAC2計12条件×2回で確認した。1 passed、31.33秒、2 logs STOPPED/panicなし、
+heap357280→357280。`.pytest-results/audio-capability-settings*`、
+原本`/tmp/pytest-embedded/2026-10-28_23-24-48-191778/`。
+
+今回の拡張は試験のみ。外部配列の実際の確保長をライブラリが検出するAPIを追加した結果ではない。
+呼出側には引き続き最大frame幅×bufferFrames以上の有効な領域を渡す責任がある。
+
+共有probeを使う既存のstream/sample-rate/reconfigure 3件も3 passed、88.15秒。
+4構成の実bus休止、13 rateと158 byte RANGE、停止後のrate入替えを維持し、6 logs STOPPED/panicなし。
+`.pytest-results/audio-external-shared-probe*`、原本`/tmp/pytest-embedded/2026-10-28_23-25-39-968972/`。
+この追加試験後に全38件を再実行した結果とは扱わず、全38件の基準は前節の033f2d8を参照する。

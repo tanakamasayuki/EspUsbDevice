@@ -6,7 +6,15 @@ EspUsbDevice device;
 EspUsbAudioFunction *audio = nullptr;
 EspUsbAudioPlaybackStream *playback = nullptr;
 EspUsbAudioCaptureStream *capture = nullptr;
-uint8_t rx[1025], tx[1025], samples[512];
+uint8_t rx[1026], tx[1026], samples[512];
+size_t externalRingBytes = 0;
+bool ringGuards() {
+  if (!externalRingBytes) return true;
+  if (rx[0] != 0xc3 || tx[0] != 0xc3) return false;
+  for (size_t i = externalRingBytes + 1; i < sizeof(rx); ++i)
+    if (rx[i] != 0xc3 || tx[i] != 0xc3) return false;
+  return true;
+}
 uint32_t received = 0, bad = 0;
 bool feeding = true;
 unsigned activeDirections = 0, activeRate = 0;
@@ -64,6 +72,9 @@ void loop() {
       if (capture) ok &= capture->addFormat({r,2,4,24});
     }
     EspUsbAudioConfig config; config.eventCapacity = 0; config.playbackBufferFrames = config.captureBufferFrames = frames;
+    externalRingBytes = external ? frames * (alternates ? 8 : 4) : 0;
+    if (externalRingBytes > sizeof(rx) - 2) { Serial.println("STARTED 0"); return; }
+    memset(rx, 0xc3, sizeof(rx)); memset(tx, 0xc3, sizeof(tx));
     if (external) { config.playbackBuffer = rx + 1; config.captureBuffer = tx + 1; }
     ok &= audio->configure(config) == ESP_OK && device.begin();
     ok &= (!playback || playback->capacity() == frames * (alternates ? 8 : 4)) && (!capture || capture->capacity() == frames * (alternates ? 8 : 4));
@@ -77,6 +88,8 @@ void loop() {
     ok &= a.sampleRate == rate && b.sampleRate == rate && a.channels == 2 && b.channels == 2 && a.bitsPerSample == bits && b.bitsPerSample == bits && a.bytesPerSample == bytes && b.bytesPerSample == bytes;
     ok &= playback->capacity() == capacity && capture->capacity() == capacity && capture->availableForWrite() % frame == 0;
     Serial.printf("PCM_FORMAT ok=%u bits=%u rate=%u capacity=%u\r\n",unsigned(ok),bits,rate,unsigned(playback->capacity()));
+  } else if (command == "guards") {
+    Serial.printf("RING_GUARDS ok=%u external=%u bytes=%u\r\n", unsigned(ringGuards()), unsigned(externalRingBytes != 0), unsigned(externalRingBytes));
   } else if (command == "formats_off") {
     bool ok = false; const uint32_t until = millis()+3000;
     do {

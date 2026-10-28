@@ -4,6 +4,9 @@
 def test_audio_events(dut, peers):
     device = peers["device"]
     try:
+        device.write("capabilities")
+        result = device.expect(r"CAPABILITIES ok=1 before=(\d+) after=(\d+)\r\n", timeout=30)
+        assert result.group(1) == result.group(2), "Audio capability rejection/recovery leaked heap"
         device.write("metadata")
         result = device.expect(r"METADATA ok=1 before=(\d+) after=(\d+)\r\n", timeout=30)
         assert result.group(1) == result.group(2), "Audio event storage leaked heap"

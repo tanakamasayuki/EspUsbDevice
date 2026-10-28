@@ -41,6 +41,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 | 単位 | 結果・記録 |
 | --- | --- |
 | 製品033f2d8の全38件 | **38 passed、2544.60秒、skip/error/failure/unfinishedなし**。76 logs STOPPED/panicなし。`.pytest-results/audio-alternates-all*` |
+| 外部ring/能力表の追加試験 | 2件124.49秒＋1件31.33秒＋共有probe 3件88.15秒。全て成功、計12 logs STOPPED/panicなし。製品変更なし |
 | 最新Audio/core関連7件 | 7 passed、358.65秒、14 logs STOPPED/panicなし。`.pytest-results/audio-alternates-related*` |
 | 直前の全体基準 f1c9f29 | 34 passed、1631.13秒、68 logs STOPPED/panicなし。`.pytest-results/wide-loan-all*` |
 | S2/P4 | 最新製品のcompile成功、全29 sourceの依存/nmに旧stack/SDK fallbackなし。USB実機は未確認 |
@@ -73,7 +74,8 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 ## 次の単位と未完了
 
 1. 全38件とAudioPlayback例の3 profileビルド、回収/所有権・依存の監査は完了。
-2. 次は外部ringの最大frame境界や能力表拒否の不足を確認する。
+2. 外部ringの最大frame境界・guardと能力表拒否/修正後の再開始は確認済み。
+   次はAudioの外部buffer容量指定と、各クラスのconfigure失敗通知の一貫性を比較して改善要否を判断する。
 3. CCIDのmessage>=MPSは仕様上必要。P4 HSでは既定320がMPS512を満たさないため512以上の設定が必要。
    Audioの方向内channel数変更、PCM形状ごとに異なるrate集合、borrowed PCM/外部codec clockは別の設計対象。
 4. OS互換、remote wakeup、長時間、S2/P4の実機FS/HSは後段。S31は現SDK非対応の新規port対象。

@@ -9,8 +9,8 @@ def test_audio_alternates(dut, peers):
         board.expect_exact(reply + "\r\n", timeout=timeout)
 
     try:
-        for protocol in (2, 1):
-            command(device, f"start {protocol} 3 24000 65 0 alternates", "STARTED 1", 30)
+        for external, protocol in ((0, 2), (0, 1), (1, 2), (1, 1)):
+            command(device, f"start {protocol} 3 24000 65 {external} alternates", "STARTED 1", 30)
             command(dut, "start", "HOST_READY 1", 30)
             previous = None
             for alternate, bits, bytes_, rate in (
@@ -36,9 +36,11 @@ def test_audio_alternates(dut, peers):
                 r = device.expect(r"STATS received=(\d+) bad=0 rx=(\d+) tx=(\d+) underrun=\d+\r\n", timeout=5)
                 assert int(r.group(1)) > 0 and int(r.group(2)) >= 50 * frame and int(r.group(3)) >= 50 * frame
                 command(dut, "pause", "PAUSED 1")
+                command(device, "guards", f"RING_GUARDS ok=1 external={external} bytes={520 if external else 0}")
                 previous = alternate
             for board in (dut, device):
                 command(board, "stop", "STOPPED", 30)
+            command(device, "guards", f"RING_GUARDS ok=1 external={external} bytes={520 if external else 0}")
     finally:
         errors = []
         for name, board in (("host", dut), ("device", device)):

@@ -7,6 +7,20 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## 外部Audio ringと能力表拒否の追加確認
+
+2026-10-29、製品は`033f2d8`から変更せずprobeを拡張した。
+内蔵/外部ringで32 ISO交換・36 guard照会を確認した2件は124.49秒で成功。
+rate組合せ不足・同件数の異なる集合・方向間の不一致・channel不一致の拒否と修正後の再開始、
+登録順序の異なる同一集合の許可、最大frame幅での外部領域重複拒否と隣接領域の成功を確認。
+計12条件×2回の1件は31.33秒、heap357280→357280で成功した。
+共有probeの既存3件も88.15秒で成功。全実行でskip/error/failure/unfinishedなし、計12 logs STOPPED/panicなし。
+詳細は[Audio APIの検証記録](../docs/V3_AUDIO_API.ja.md)を参照。
+
+記録は`.pytest-results/audio-external-ring*`、`audio-capability-settings*`、`audio-external-shared-probe*`。
+対象ディレクトリ名を誤った収集エラー（0件、実行なし）も`audio-external-shared-probe-selection-error.txt`へ保存した。
+今回の範囲で製品修正は不要だった。以下の全38件は追加probe以前の基準結果である。
+
 ## PCM alternate対応後の全38件（最新）
 
 2026-10-29、製品/probeを`033f2d8`に固定。標準`pytest --combo all`は

@@ -70,11 +70,84 @@ bool metadata() {
   }
   return ok && parallelQueue();
 }
+// Reject incomplete capabilities, then repair the same stopped Function.
+bool capabilities() {
+  bool all = true;
+  for (auto protocol : {EspUsbAudioProtocol::Uac1, EspUsbAudioProtocol::Uac2}) {
+    for (unsigned scenario = 0; scenario < 5; ++scenario) {
+      EspUsbDevice local; EspUsbAudioFunction function(local, protocol);
+      auto &input = function.addPlaybackStream();
+      EspUsbAudioCaptureStream *output = nullptr;
+      bool ok = input.addFormat({24000,2,2,16}) && input.addFormat({16000,2,2,16});
+      if (scenario == 0 || scenario == 1) {
+        ok &= input.addFormat({24000,2,3,24});
+        if (scenario == 1) ok &= input.addFormat({12000,2,3,24});
+      } else if (scenario == 2) {
+        output = &function.addCaptureStream();
+        ok &= output->addFormat({24000,2,2,16}) && output->addFormat({12000,2,2,16});
+      } else if (scenario == 3) {
+        ok &= input.addFormat({24000,1,4,32});
+      } else {
+        // Identical rate sets in different insertion orders are valid.
+        ok &= input.addFormat({16000,2,3,24}) && input.addFormat({24000,2,3,24});
+        output = &function.addCaptureStream();
+        ok &= output->addFormat({16000,2,2,16}) && output->addFormat({24000,2,2,16});
+      }
+      EspUsbAudioConfig config; config.eventCapacity = 0;
+      config.playbackBufferFrames = config.captureBufferFrames = 0;
+      EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
+      ok &= function.configure(config) == ESP_OK;
+      if (scenario != 4) {
+        ok &= !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_SIZE;
+        ok &= !local.started() && !local.ready() && !input.capacity() && !function.eventCapacity();
+        if (scenario == 0) ok &= input.addFormat({16000,2,3,24});
+        else if (scenario == 2) {
+          ok &= output->clearFormats() == ESP_OK;
+          ok &= output->addFormat({16000,2,2,16}) && output->addFormat({24000,2,2,16});
+        } else {
+          ok &= input.clearFormats() == ESP_OK && input.addFormat({24000,2,2,16});
+        }
+      }
+      ok &= local.begin(identity) && local.started() && !local.ready() && function.currentSampleRate() == 24000;
+      ok &= local.end() == ESP_OK && !local.started() && !input.capacity();
+      Serial.printf("CAPABILITY protocol=%u scenario=%u ok=%u\r\n", unsigned(protocol), scenario, unsigned(ok));
+      all &= ok;
+    }
+    {
+      EspUsbDevice local; EspUsbAudioFunction function(local, protocol);
+      auto &input = function.addPlaybackStream(); auto &output = function.addCaptureStream();
+      bool ok = input.addFormat({24000,2,2,16}) && input.addFormat({24000,2,4,32});
+      ok &= output.addFormat({24000,2,2,16}) && output.addFormat({24000,2,4,32});
+      uint8_t buffers[130], data[80]; memset(buffers,0xc3,sizeof(buffers)); memset(data,0x5a,sizeof(data));
+      EspUsbAudioConfig config; config.eventCapacity = 0;
+      config.playbackBufferFrames = config.captureBufferFrames = 8;
+      config.playbackBuffer = buffers + 1; config.captureBuffer = buffers + 33;
+      EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
+      // First-format 32-byte sizing would incorrectly accept this overlap.
+      ok &= function.configure(config) == ESP_OK && !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_ARG;
+      ok &= !local.started() && !input.capacity() && !output.capacity();
+      config.captureBuffer = buffers + 65;
+      ok &= function.configure(config) == ESP_OK && local.begin(identity);
+      ok &= input.capacity() == 64 && output.capacity() == 64 && output.write(data,sizeof(data)) == 64;
+      ok &= output.availableForWrite() == 0 && output.write(data,sizeof(data)) == 0;
+      ok &= local.end() == ESP_OK && buffers[0] == 0xc3 && buffers[129] == 0xc3;
+      for (unsigned i = 1; i < 65; ++i) ok &= buffers[i] == 0xc3;
+      for (unsigned i = 65; i < 129; ++i) ok &= buffers[i] == 0x5a;
+      Serial.printf("CAPABILITY protocol=%u scenario=5 ok=%u\r\n", unsigned(protocol), unsigned(ok));
+      all &= ok;
+    }
+  }
+  return all;
+}
 void setup() { Serial.begin(115200); Serial.setTimeout(100); }
 void loop() {
   if (!Serial.available()) { delay(1); return; }
   String command = Serial.readStringUntil('\n'); command.trim();
-  if (command == "metadata") {
+  if (command == "capabilities") {
+    bool ok = capabilities(); const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    ok &= capabilities(); const size_t after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    Serial.printf("CAPABILITIES ok=%u before=%u after=%u\r\n", unsigned(ok), unsigned(before), unsigned(after));
+  } else if (command == "metadata") {
     bool ok = metadata(); const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     for (unsigned i = 0; i < 5 && ok; ++i) ok &= metadata();
     const size_t after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
