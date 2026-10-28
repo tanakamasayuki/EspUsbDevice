@@ -138,7 +138,8 @@ idle設定は自動再送を制御し、アプリからの送信を暗黙に捨�
 期限直前の周期変更は次のreport後に反映する。既に投稿したINは、idleを0にしても完了まで保持する。
 
 再送jobはHostが有効にした間だけworkerへ再投稿し、タイマー/メッセージ用のheapを追加しない。
-reset/endで停止する。suspend中はUSBへ送らず、resume後に再開する設計だが、実機suspendは未検証。
+reset/endで停止する。suspend中は新規Inputを拒否し、idle再送はresume後に再開する。
+S3 FSのVendor HID 2 IDで実bus休止・再開を確認した。試験範囲は後述。
 
 KeyboardのonOutputReport/onProtocol/enableNkroとHidVendorのonOutputReport/onFeatureReportは、
 CDCと同じesp_err_t返却・停止中設定に揃えた。開始中はInvalidStateとして既存設定を保つ。
@@ -176,7 +177,8 @@ relative maskとMouseのboot/report形式を加えた`hid-state-relative.xml`は
 最大長のdescriptor-only確認は、追加保存領域を考慮しINのみの65535 byte構成で行う。
 
 GET_REPORTの状態保存と独立した応答用copyに、定義したreportの長さ分とcontrol staging分のRAMが追加で必要になる。
-全OS、P4/S2/S31、suspend/resume、期限近傍の詳細精度、未完INを伴うprotocol変更の競合は追加検証が必要。
+全OS、P4/S2/S31、休止中のprotocol変更・切断等の全組合せ、期限近傍の詳細精度、
+未完INを伴うprotocol変更の競合は追加検証が必要。
 
 最終の標準`--combo all`実行`hid-report-idle-all.xml`は**10 passed、0 skipped、0 unfinished、520.13秒**。
 200取得点の失敗/回復とFeature setterの追加確保なし、短いboot定義の拒否、設定の停止中契約も含む。
@@ -235,3 +237,19 @@ plugin repoは1.10.0、commit `698bb29`で、combo/profileの最新ローカル�
 新試験もconftestや独自hookなし。標準combo allで29件を収集したが、現在の全29件一括実行は未完了。
 SET_INTERFACEとidleの同時条件、人工的な旧完了/queue満杯/reset/endの全競合順序、他SoC/OSは未検証。
 残るDWC2/ABI/header依存と他クラスの回復検証も継続する。
+
+
+## 実bus休止中のidleと再開
+
+`hid_report_state`を拡張し、HostのLLから実際のroot portを3回休止・再開した。
+Inputのwire長8/130 byteの2 IDをそれぞれidle値5/25（20/100 ms）に設定し、
+休止中のHost受信数が150 ms間変わらないことと、Deviceの明示Input拒否を確認した。
+各resume後は350 msに短いreport18件・大きいreport4件を受信し、GET_IDLEとGET_REPORTの値も維持。
+再送停止後の静止、200回のFeature読出し整合性、最後のbus resetでの状態も通過した。
+
+製品`512edb6`のまま**1 passed、0 skipped/error/failure/unfinished、80.33秒**。
+2 serial全てSTOPPED、STOP_FAILED/panicなし。原本
+`/tmp/pytest-embedded/2026-10-28_16-07-53-418156/`、結果は`.pytest-results/hid-suspend*`。
+S3 FSのHost起点休止の結果で、Host側の未完periodic Inputがある構成を含む。
+未完reportの全packet位置やboot mouse/keyboardの全状態、remote wakeup、OS省電力の検証ではない。
+製品コードの追加変更や新しいtask/bufferはない。

@@ -131,6 +131,18 @@ SDK TinyUSB fallback・旧stack symbolなし。標準combo/allのcollect-onlyは
 全35件の一括実行とは異なる。実機確認はS3 FSのみ、Host起点のL2休止が対象。
 remote wakeup・LPM・低消費電力値・休止中のISO/周期HID・OS suspendの確認は含まない。
 
+## HID idleの実bus休止
+
+`hid_report_state`にもHost LLの休止・再開を追加した。8/130 byteのInput reportを
+20/100 msで再送する2 IDを、Hostのperiodic Inputが動く状態で3回休止する。
+休止中の受信数固定・Deviceの明示送信拒否、resume後のidle値と保存reportの維持、
+再送停止後の静止を確認。3回とも再開後350 msに18/4 reportが正しいpayloadで届いた。
+既存の200回Feature読出し、最後のreset後のreport状態確認も維持している。
+**1 passed、0 skipped/error/failure/unfinished、80.33秒**。2 serial全てSTOPPED、panicなし。
+原本`/tmp/pytest-embedded/2026-10-28_16-07-53-418156/`、`.pytest-results/hid-suspend*`へ保存。
+製品コードは`512edb6`から変更していない。全35件の一括実行とは異なる。
+OS省電力・remote wakeup・ISO休止や全HID状態の網羅は含めない。
+
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。

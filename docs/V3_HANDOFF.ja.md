@@ -196,6 +196,16 @@ S2/P4 compileと3 targetの全29 source依存/nmも成功。全体収集は35件
 原本`/tmp/pytest-embedded/2026-10-28_16-04-36-084373/`、`.pytest-results/suspend-resume*`へ保存。
 Host起点のS3 FS L2休止の結果。remote wakeup、消費電力、周期HID/ISO、OS起点の試験は別に残る。
 
+## HID idleの実bus休止
+
+hid_report_stateを拡張し、未完periodic InputのあるHostから3回休止・再開した。
+wire長8/130 byte、idle20/100 msの2 IDで、休止中の受信数固定と明示送信拒否、
+resume後のGET_IDLE/GET_REPORT保持と再送（350 msで18/4件ずつ）、停止後の静止を確認。
+既存の200回Feature整合性とreset後の状態確認も維持。
+**1 passed、0 skipped/error/failure/unfinished、80.33秒**。2 serial STOPPED/panicなし。
+製品は512edb6から変更なし。原本`/tmp/pytest-embedded/2026-10-28_16-07-53-418156/`、
+`.pytest-results/hid-suspend*`。boot系や全packet位置/全状態の休止を網羅した意味ではない。
+
 ## 次の単位と未完了
 
 1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
@@ -205,7 +215,7 @@ Host起点のS3 FS L2休止の結果。remote wakeup、消費電力、周期HID/
    MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
    class内に分散したSoC別MPS判定は共通化済み。P4 HSではCCIDの既定320がMPS512を満たさない点は残る。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
-4. S3 FSのHost起点suspend/resumeは確認済み。OS互換、remote wakeup、周期HID/ISOの休止、
+4. S3 FSのHost起点suspend/resumeは確認済み。Vendor HIDの周期Inputも確認済み。OS互換、remote wakeup、ISOの休止、
    長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
 

@@ -56,6 +56,17 @@ void loop() {
     Serial.printf("STRESS %u\r\n", unsigned(ok && featureWrites.load()));
   } else if (command == "stress_stop") {
     stopTask(); Serial.println("STRESS_STOPPED");
+  } else if (command == "suspended") {
+    const uint32_t until = millis() + 3000;
+    while (!device.suspended() && int32_t(until - millis()) > 0) delay(1);
+    memset(smallPayload, 0x46, sizeof(smallPayload)); memset(largePayload, 0x41, sizeof(largePayload));
+    const bool ok = device.started() && device.ready() && device.suspended()
+      && !small.sendInput(smallPayload, sizeof(smallPayload)) && !large.sendInput(largePayload, sizeof(largePayload));
+    Serial.printf("SUSPEND_REJECTED %u\r\n", unsigned(ok));
+  } else if (command == "resumed") {
+    const uint32_t until = millis() + 3000;
+    while (device.suspended() && int32_t(until - millis()) > 0) delay(1);
+    Serial.printf("RESUMED %u\r\n", unsigned(device.started() && device.ready() && !device.suspended()));
   } else if (command == "stop") {
     stopTask();
     const bool ok = device.end() == ESP_OK && small.setFeatureReport(smallPayload, sizeof(smallPayload)) == ESP_ERR_INVALID_STATE;

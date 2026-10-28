@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EspUsbHost.h>
 #include <atomic>
+#include <hal/usb_dwc_ll.h>
 EspUsbHost host;
 std::atomic<uint8_t> address{0};
 struct Statistics {
@@ -25,6 +26,24 @@ bool rate(uint8_t id, uint8_t value) {
   size_t actual = 0; uint8_t read = 255;
   if (!host.vendorControlTransfer(0x21, 10, uint16_t(value << 8) | id, 0, nullptr, 0, &actual, address.load(), 1000)) return false;
   return !id || (host.vendorControlTransfer(0xa1, 2, id, 0, &read, 1, &actual, address.load(), 1000) && actual == 1 && read == value);
+}
+// Probe-only root-port operation; Device events come from the real bus.
+bool resumePort() {
+  if (!started) return true;
+  if (usb_dwc_ll_hprt_get_port_suspend(USB_DWC_LL_GET_HW(0))) {
+    usb_dwc_ll_hprt_set_port_resume(USB_DWC_LL_GET_HW(0)); delay(30);
+    usb_dwc_ll_hprt_clr_port_resume(USB_DWC_LL_GET_HW(0)); delay(20);
+  }
+  return !usb_dwc_ll_hprt_get_port_suspend(USB_DWC_LL_GET_HW(0));
+}
+bool idleRatesUnchanged() {
+  bool ok = true; size_t actual = 0;
+  for (uint8_t id : {6, 1}) {
+    uint8_t value = 0;
+    ok &= host.vendorControlTransfer(0xa1, 2, id, 0, &value, 1, &actual, address.load(), 1000)
+      && actual == 1 && value == (id == 6 ? 5 : 25);
+  }
+  return ok;
 }
 void startHost() {
   address.store(0); used = wanted = 0; bad.store(0); clearStats();
@@ -111,10 +130,26 @@ void loop() {
     ok &= rate(0, 0); delay(10);
     const unsigned before = stats[0].count.load() + stats[1].count.load(); delay(140);
     Serial.printf("QUIET %u\r\n", unsigned(ok && stats[0].count.load() + stats[1].count.load() == before));
+  } else if (command == "suspend_idle") {
+    clearStats(); bool ok = rate(6, 5) && rate(1, 25); delay(350);
+    ok &= stats[0].count.load() >= 10 && stats[1].count.load() >= 3 && !bad.load();
+    usb_dwc_ll_hprt_set_port_suspend(USB_DWC_LL_GET_HW(0)); delay(50);
+    const unsigned small = stats[0].count.load(), large = stats[1].count.load(); delay(150);
+    ok &= usb_dwc_ll_hprt_get_port_suspend(USB_DWC_LL_GET_HW(0)) && stats[0].count.load() == small && stats[1].count.load() == large;
+    Serial.printf("IDLE_SUSPENDED %u\r\n", unsigned(ok));
+  } else if (command == "resume_idle") {
+    const unsigned small = stats[0].count.load(), large = stats[1].count.load();
+    bool ok = resumePort(); delay(350);
+    const unsigned a = stats[0].count.load() - small, b = stats[1].count.load() - large;
+    ok &= a >= 10 && b >= 3 && !bad.load() && idleRatesUnchanged() && get(1, 6, 0x46) && get(1, 1, 0x41);
+    Serial.printf("IDLE_RESUMED ok=%u small=%u large=%u\r\n", unsigned(ok), a, b);
+    ok &= rate(0, 0); delay(10);
+    const unsigned before = stats[0].count.load() + stats[1].count.load(); delay(140);
+    Serial.printf("RESUME_QUIET %u\r\n", unsigned(ok && stats[0].count.load() + stats[1].count.load() == before));
   } else if (command == "reconnect") {
     if (started) host.end(); started = false; startHost();
   } else if (command == "stop") {
-    if (started) host.end(); started = false; address.store(0);
+    resumePort(); if (started) host.end(); started = false; address.store(0);
     Serial.println("STOPPED");
   }
 }
