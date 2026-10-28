@@ -1,10 +1,20 @@
 #include <Arduino.h>
 #include <EspUsbHost.h>
 #include <atomic>
+#include <hal/usb_dwc_ll.h>
 EspUsbHost host;
 unsigned activeDirections = 0;
 std::atomic<uint8_t> address{0};
 std::atomic<uint32_t> received{0}, bad{0}, filled{0};
+// Probe-only real bus control; keep active ISO pipes and alternate settings.
+bool resumePort() {
+  if (!host.ready()) return true; // The peripheral clock is off after end().
+  if (usb_dwc_ll_hprt_get_port_suspend(USB_DWC_LL_GET_HW(0))) {
+    usb_dwc_ll_hprt_set_port_resume(USB_DWC_LL_GET_HW(0)); delay(30);
+    usb_dwc_ll_hprt_clr_port_resume(USB_DWC_LL_GET_HW(0)); delay(20);
+  }
+  return !usb_dwc_ll_hprt_get_port_suspend(USB_DWC_LL_GET_HW(0));
+}
 void setup() {
   Serial.begin(115200); Serial.setTimeout(100);
   host.onDeviceConnected([](const EspUsbHostDeviceInfo &d) { if (d.vid == 0x303a && d.pid == 0x4000) address.store(d.address); });
@@ -31,9 +41,20 @@ void loop() {
     if (directions & 2) ok &= host.audioInputStart(2, 16, rate, address.load());
     delay(1500);
     Serial.printf("PCM ok=%u bytes=%u bad=%u filled=%u feedback=%u rejects=%u\r\n", unsigned(ok), unsigned(received.load()), unsigned(bad.load()), unsigned(filled.load()), unsigned(directions & 1 ? host.audioOutputFeedbackUpdates(address.load()) : 0), unsigned(directions & 1 ? host.audioOutputFeedbackRejects(address.load()) : 0));
+  } else if (command == "suspend") {
+    usb_dwc_ll_hprt_set_port_suspend(USB_DWC_LL_GET_HW(0)); delay(50);
+    const uint32_t before = received.load(); delay(150);
+    bool ok = usb_dwc_ll_hprt_get_port_suspend(USB_DWC_LL_GET_HW(0)) && received.load() == before;
+    ok &= !(activeDirections & 2) || host.audioInputRunning(address.load());
+    ok &= !(activeDirections & 1) || host.audioOutputRunning(address.load());
+    Serial.printf("ISO_SUSPENDED %u\r\n", unsigned(ok));
+  } else if (command == "resume") {
+    received = bad = filled = 0;
+    bool ok = resumePort(); delay(1500);
+    Serial.printf("PCM_RESUMED ok=%u bytes=%u bad=%u filled=%u feedback=%u rejects=%u\r\n", unsigned(ok), unsigned(received.load()), unsigned(bad.load()), unsigned(filled.load()), unsigned(activeDirections & 1 ? host.audioOutputFeedbackUpdates(address.load()) : 0), unsigned(activeDirections & 1 ? host.audioOutputFeedbackRejects(address.load()) : 0));
   } else if (command == "pause") {
     bool ok = !(activeDirections & 2) || host.audioInputStop(address.load());
     if (activeDirections & 1) host.audioOutputStop(address.load());
     Serial.printf("PAUSED %u\r\n", unsigned(ok && (!(activeDirections & 2) || !host.audioInputRunning(address.load())) && (!(activeDirections & 1) || !host.audioOutputRunning(address.load()))));
-  } else if (command == "stop") { host.end(); Serial.println(!host.ready() ? "STOPPED" : "STOP_FAILED"); }
+  } else if (command == "stop") { resumePort(); host.end(); Serial.println(!host.ready() ? "STOPPED" : "STOP_FAILED"); }
 }

@@ -8,6 +8,8 @@ EspUsbAudioCaptureStream *capture = nullptr;
 uint8_t rx[1025], tx[1025], samples[512];
 uint32_t received = 0, bad = 0;
 bool feeding = true;
+unsigned activeDirections = 0, activeRate = 0;
+uint32_t suspendedRx = 0, suspendedTx = 0;
 void setup() { Serial.begin(115200); Serial.setTimeout(100); memset(samples, 0x5a, sizeof(samples)); }
 void pump() {
   if (playback) {
@@ -23,6 +25,7 @@ void loop() {
   if (command.startsWith("start ")) {
     unsigned protocol, directions, rate, frames, external;
     sscanf(command.c_str(), "start %u %u %u %u %u", &protocol, &directions, &rate, &frames, &external);
+    activeDirections = directions; activeRate = rate;
     delete audio; audio = new EspUsbAudioFunction(device, protocol == 1 ? EspUsbAudioProtocol::Uac1 : EspUsbAudioProtocol::Uac2);
     playback = nullptr; capture = nullptr; bool ok = true;
     if (directions & 1) { playback = &audio->addPlaybackStream(); ok &= playback->addFormat({rate,2,2,16}); }
@@ -39,5 +42,21 @@ void loop() {
     auto a = playback ? playback->stats() : EspUsbAudioStreamStats{};
     auto b = capture ? capture->stats() : EspUsbAudioStreamStats{};
     Serial.printf("STATS received=%u bad=%u rx=%u tx=%u underrun=%u\r\n", received, bad, a.transferredBytes, b.transferredBytes, b.underrunBytes);
+  } else if (command == "suspended") {
+    const uint32_t until = millis() + 3000;
+    while (!device.suspended() && int32_t(until - millis()) > 0) delay(1);
+    suspendedRx = playback ? playback->stats().transferredBytes : 0;
+    suspendedTx = capture ? capture->stats().transferredBytes : 0; delay(100);
+    bool ok = device.started() && device.ready() && device.suspended() && audio->currentSampleRate() == activeRate;
+    ok &= !playback || playback->stats().transferredBytes == suspendedRx;
+    ok &= !capture || capture->stats().transferredBytes == suspendedTx;
+    Serial.printf("ISO_STATE_SUSPENDED %u\r\n", unsigned(ok));
+  } else if (command == "resumed") {
+    const uint32_t rxBytes = playback ? playback->stats().transferredBytes - suspendedRx : 0;
+    const uint32_t txBytes = capture ? capture->stats().transferredBytes - suspendedTx : 0;
+    bool ok = device.started() && device.ready() && !device.suspended() && audio->currentSampleRate() == activeRate && !bad;
+    ok &= !(activeDirections & 1) || rxBytes > activeRate * 4 * 13 / 10;
+    ok &= !(activeDirections & 2) || txBytes > activeRate * 4 * 13 / 10;
+    Serial.printf("ISO_STATE_RESUMED ok=%u rx=%u tx=%u bad=%u\r\n", unsigned(ok), unsigned(rxBytes), unsigned(txBytes), unsigned(bad));
   } else if (command == "stop") { Serial.println(device.end() == ESP_OK ? "STOPPED" : "STOP_FAILED"); }
 }

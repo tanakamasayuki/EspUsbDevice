@@ -111,3 +111,21 @@ UAC1/UAC2 PCMとevent、CDC/Vendor/HID/MIDI/MSC、descriptor/registryと取消�
 serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-audio-all*`。
 Audioのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致し、
 旧tests/examplesはmainと同一、mainはv3の祖先。残るclass/core/DCDと他SoC/HSの置換・検証は未完である。
+
+
+## Audio ISOの実bus休止
+
+`audio_stream`でalternate settingとHostのISO pipeを維持したまま、root portを実際に休止・再開した。
+UAC2双方向48 kHz、UAC1双方向44.1 kHz、UAC2 playback-onlyの1-frame外部ring、
+UAC2 capture-onlyのringなしの4構成を確認。休止中はDeviceの転送counterが変わらず、
+構成・sample rateを維持する。resume後は有効な各方向の転送量が増え、HostでPCMを照合し、
+UAC2のfeedback受信とreject=0、captureのfill/無音も確認した。
+新たなSET_INTERFACEやstream再開始は行わない。既存10回のrun/pauseとunderrun確認も維持。
+
+最終版は**1 passed、0 skipped/error/failure/unfinished、69.35秒**。2 serial全てSTOPPED、panic/watchdog resetなし。
+製品コードは512edb6から変更していない。初回は4構成の通信を通過した後、二度目のHost停止で失敗。
+追加したprobeが停止済みcontrollerのLL registerへ触れていたため、Host.ready()でguardした。
+初回失敗も隠さず`.pytest-results/audio-suspend-initial-stop-error*`へ保持している。
+最終原本`/tmp/pytest-embedded/2026-10-28_16-13-58-163956/`、結果は`.pytest-results/audio-suspend*`。
+全35件の一括結果ではない。S3 FSのHost起点L2休止であり、OS/HS・remote wakeup・
+任意のpacket位置/clock drift・全停止競合を網羅したものではない。

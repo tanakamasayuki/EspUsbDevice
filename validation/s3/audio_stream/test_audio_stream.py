@@ -31,6 +31,20 @@ def test_audio_stream(dut, peers):
                     assert int(r.group(3)) > 10000
                     if not frames:
                         assert int(r.group(4)) > 10000
+                if attempt == 0:
+                    dut.write("suspend")
+                    dut.expect_exact("ISO_SUSPENDED 1\r\n", timeout=10)
+                    device.write("suspended")
+                    device.expect_exact("ISO_STATE_SUSPENDED 1\r\n", timeout=5)
+                    dut.write("resume")
+                    r = dut.expect(r"PCM_RESUMED ok=1 bytes=(\d+) bad=0 filled=(\d+) feedback=(\d+) rejects=0\r\n", timeout=20)
+                    if directions & 2:
+                        assert int(r.group(1)) > rate * 4 * 1.3
+                        assert bool(int(r.group(2))) == bool(frames)
+                    if protocol == 2 and directions & 1:
+                        assert int(r.group(3)) > 0
+                    device.write("resumed")
+                    device.expect(r"ISO_STATE_RESUMED ok=1 rx=\d+ tx=\d+ bad=0\r\n", timeout=5)
                 dut.write("pause")
                 dut.expect_exact("PAUSED 1\r\n", timeout=10)
             if directions & 2 and frames:

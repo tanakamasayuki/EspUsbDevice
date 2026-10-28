@@ -206,6 +206,23 @@ resume後のGET_IDLE/GET_REPORT保持と再送（350 msで18/4件ずつ）、停
 製品は512edb6から変更なし。原本`/tmp/pytest-embedded/2026-10-28_16-07-53-418156/`、
 `.pytest-results/hid-suspend*`。boot系や全packet位置/全状態の休止を網羅した意味ではない。
 
+## Audio ISOの実bus休止
+
+`audio_stream`でalternate settingとHostのISO pipeを維持したまま、root portを実際に休止・再開した。
+UAC2双方向48 kHz、UAC1双方向44.1 kHz、UAC2 playback-onlyの1-frame外部ring、
+UAC2 capture-onlyのringなしの4構成を確認。休止中はDeviceの転送counterが変わらず、
+構成・sample rateを維持する。resume後は有効な各方向の転送量が増え、HostでPCMを照合し、
+UAC2のfeedback受信とreject=0、captureのfill/無音も確認した。
+新たなSET_INTERFACEやstream再開始は行わない。既存10回のrun/pauseとunderrun確認も維持。
+
+最終版は**1 passed、0 skipped/error/failure/unfinished、69.35秒**。2 serial全てSTOPPED、panic/watchdog resetなし。
+製品コードは512edb6から変更していない。初回は4構成の通信を通過した後、二度目のHost停止で失敗。
+追加したprobeが停止済みcontrollerのLL registerへ触れていたため、Host.ready()でguardした。
+初回失敗も隠さず`.pytest-results/audio-suspend-initial-stop-error*`へ保持している。
+最終原本`/tmp/pytest-embedded/2026-10-28_16-13-58-163956/`、結果は`.pytest-results/audio-suspend*`。
+全35件の一括結果ではない。S3 FSのHost起点L2休止であり、OS/HS・remote wakeup・
+任意のpacket位置/clock drift・全停止競合を網羅したものではない。
+
 ## 次の単位と未完了
 
 1. native Streamとwide loanの全34件、18 example buildsの確認は完了。
@@ -214,8 +231,10 @@ resume後のGET_IDLE/GET_REPORT保持と再送（350 msで18/4件ずつ）、停
    CCIDのmessage>=MPS制約は仕様§5.1で確認済みのため維持する。
    MIDIはbeginでconfigureを再評価しており、controller選択前の自動値を固定する問題はないと確認した。
    class内に分散したSoC別MPS判定は共通化済み。P4 HSではCCIDの既定320がMPS512を満たさない点は残る。
+   AudioにはMAX_FORMATS=8の固定配列と、複数formatをdescriptor/beginで拒否する暫定制限が残る。
+   次はsrc/internal/EspUsbAudioModel/Controlとsrc/EspUsbAudio.cppを照合し、未使用容量と実装範囲を整理する。
    旧互換性だけのshimや、根拠のない追加機能は増やさない。
-4. S3 FSのHost起点suspend/resumeは確認済み。Vendor HIDの周期Inputも確認済み。OS互換、remote wakeup、ISOの休止、
+4. S3 FSのHost起点suspend/resumeは確認済み。Vendor HIDの周期InputとAudio ISOの4構成も確認済み。OS互換、remote wakeup、
    長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
 
