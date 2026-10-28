@@ -94,7 +94,14 @@ READMEをv3向けに書き直し、[CH32RV比較](V3_CH32RV_API_ALIGNMENT.ja.md)
 
 1. API整理後の全34件を確定し、serial・依存記録・symbol・回収を監査して記録する。
 2. 新examplesの機能範囲を必要に応じて広げる。全クラスcatalogはまだ揃えていない。
-3. 新APIの残る不自然さとprotocol/所有権の不足を実測で検討し、必要な変更だけ行う。
+3. Print経由の空き容量の不整合を先に検証する。現在はbulkのwriteAvailableが正しくても、
+   継承したPrint::availableForWriteが0を返す。これはStream継承とは別の問題。
+   `/tmp/espusb-v3-print-availability/`にproduct.patchとbaseline-test.patchを準備した。
+   製品patchを適用した別コピーのS3 compileは成功し、ELFにbulk overrideとMIDI byte guardを確認。
+   記録は`.pytest-results/print-availability-*`。実機の確認はまだ行っていない。
+   現在の全34件が終わってからtest patchだけを適用してCDCの修正前失敗を確認し、
+   product patch適用後にCDC/Vendor/MIDIの関連試験を行う。MIDIのPrint byte入力は0を維持する。
+   その他のAPI/protocol/所有権も実測で判断し、Stream化そのものはまだ採用しない。
 4. OS互換、suspend/resume・remote wakeup、長時間、S2/P4の実機FS/HSを後段で確認する。
    S31はCore/SDKのcontroller対応を含む新規port対象で、現SDKの対応を約束しない。
 
