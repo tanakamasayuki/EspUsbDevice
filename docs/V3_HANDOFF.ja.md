@@ -8,6 +8,11 @@
 試験をDevice申告とHost実取得長の照合へ直し、製品を変えずに全47件を再実行して成功した。
 初回の40 logs全停止/panicなしの記録は`remote-all-initial*`へ保存した。
 
+P4追加: probe f5c69dd、6件67.84秒成功。両controllerのFS loopback、18開始/24停止、
+Vendor/CDC/HIDと65537 byteまでのDMAを確認。[P4記録](../validation/p4/README.ja.md)。
+公開Host同期INのcache欠落を再現し、Host隔離branch 7f25896で比較成功。
+通常P4試験は公開Host2.10.1のqueue経路で成功し、未公開版には依存しない。
+
 ## 方針と入口
 
 Device/Function/config/beginの明示的な構成を維持し、使用する機能だけに費用を持たせる。
@@ -43,7 +48,8 @@ CDCはArduino Stream、VendorはPrint、MIDIはpacket API。worker設定も開�
 | 失敗注入の更新 | 47構成で実測した817取得点全て失敗/回復、14設定失敗、heap346768一致。固定取得数の期待を撤去。`hid-globals-faults*` |
 | RAM/FAT helper | raw/FAT各4実往復、8開始/guard、RAMのみ。`msc-helpers*` |
 | Remote wakeup 80e8676 | 新規1件45.25秒成功、2 logs全停止/panicなし。3実wake/7無信号/10往復、queued reset/重複拒否。停止中17回＋停止後32回の要求拒否/許可false。`remote-wakeup-stop-after*` |
-| S2/P4 80e8676 | remote probeのcompile/ELF機械種別/archive/29依存/native pulse・IO・delay出所と未選択class除外成功。`remote-final-cross-audit.json` |
+| P4実機 | FS/HS controllerを各FS linkで確認。Vendor132 copy往復/1536 direct完了、48 RX＋48 TX返却、CDC24往復/HID18 press/release。6 logs正常停止。`p4-final-audit.json` |
+| S2/P4 compile 80e8676 | remote probeのcompile/ELF機械種別/archive/29依存/native pulse・IO・delay出所と未選択class除外成功。`remote-final-cross-audit.json` |
 | 最小構成80e8676 | includeのみ259465 Flash/21584 globals、追加0/0。Device宣言のみ261957/21840、object196 byte。wake/worker/PHY開始symbolなし。`remote-final-unused-audit.json` |
 
 成果物は`validation/.pytest-results/`（git対象外）。最小Device構成は旧archive基準より
@@ -106,7 +112,7 @@ S3–S3を初期環境として、確認不要で進められる実装と検証�
 ## 未完了と次の判断
 
 固定sourceの全47件と関連監査は完了。新しい変更や未解決の懸念がなければ同じ試験を繰り返さない。
-S2/P4実機（HS/cache含む）、S31 port、PC OS結線、SD/OTA実媒体、長期連続、
+P4の全class・480 Mbps HS link/PSRAM、S2実機、S31 port、PC OS結線、SD/OTA実媒体、長期連続、
 shared toolkitの配布範囲・release判断は残る。S3 peer成功をこれらの代替にしない。
 remote wakeupは実装済みだが、SoC sleep/PC電源管理/電気適合性を保証した結果ではない。
 

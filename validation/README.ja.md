@@ -9,6 +9,16 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 
 ## P4実機の追加確認
 
+最新probe f5c69ddは**6 passed、67.84秒**。18開始/24停止、6 logs全停止/panicなし。
+Vendor copy132往復、borrowed TX反復1536完了、65537 byteを含む48 RX＋48 TX返却、
+CDC24往復・Keyboard18 press/18 releaseを両controllerで確認した。
+公開Host2.10.1の受信queueを使用し、未公開Host/SDK patchには依存しない。
+同期Host INのcache欠落も別途再現し、隔離Hostの修正7f25896で比較成功した。
+[結線・範囲・再現と成果物](p4/README.ja.md)を参照。
+全体収集はS3 47＋P4 6＝53件。S3全件とP4全件は別実行。
+
+### 初回と追加の記録
+
 P4 1台のnative HS/FS connectorを物理loopbackし、反対側をEspUsbHost2.10.1で動かす。
 標準combo `p4: primary=p4_loopback`、Core3.3.12、独自conftestなし。
 Device HS＋Host FS、Device FS＋Host HSの両方で、実linkはFS（12 Mbps、MPS64）。

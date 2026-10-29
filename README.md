@@ -74,7 +74,7 @@ library versions, not qualification of v3.
 | --- | --- |
 | ESP32-S3 | Two-board FS peer suite: enumeration, class transfers, ownership, reset/recovery and failure injection |
 | ESP32-S2 | Controller/resource compile probe; hardware validation pending |
-| ESP32-P4 | Controller/resource compile probe including HS; FS/HS hardware validation pending |
+| ESP32-P4 | Both Device controllers on a one-board FS loopback: Vendor, CDC, HID and borrowed DMA; 480 Mbps HS hardware validation pending |
 | ESP32-S31 | Future SDK/controller port; not currently supported |
 
 Use two separate programming/log connections and connect the native OTG ports

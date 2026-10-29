@@ -1,7 +1,8 @@
 # v3の開始・停止と2.xからの移行
 
 このbranchのlibrary versionは3.0.0。開発中であり、公開release/tagを作成したという意味ではない。
-検証環境はArduino-ESP32 3.3.12とS3–S3。S2/P4はcompile確認、S31は今後のSDK/port対応対象。
+検証環境はArduino-ESP32 3.3.12とS3–S3。P4は両controllerのFS loopbackでVendor/CDC/HIDとborrowed DMAを確認。
+S2はcompile確認、P4の480 Mbps HS linkとS31の新SDK/portは今後の対象。
 旧examples/testsへの互換性を合否基準にせず、`validation/`を独立した試験入口とする。
 
 ## 普通の使い方
