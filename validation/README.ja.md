@@ -14,7 +14,11 @@ IPAddress globals/初期化をmapから特定した。library.propertiesの標�
 include_onlyはno_libraryと同じFlash259465/global21584 byte（差分0）になった。
 Device宣言のみも未選択state/IP globals/USB startup symbolを含まない。
 [実験台帳](../docs/V3_EXPERIMENTS.ja.md#archiveリンクの小規模実測)を参照。
-記録`.pytest-results/unused-before-archive*`と`unused-after-archive*`。全class回帰は別途確認する。
+記録`.pytest-results/unused-before-archive*`と`unused-after-archive*`。
+製品052bcbbの全8 examples×S3/S2/P4、計24ビルドは全て成功した。
+各ELFのFQBN/機械種別、archive生成、29 sourceの依存とnative controllerのsymbol/出所を監査した。
+未選択Net/Video/CCIDと旧stackの混入はない。記録は`.pytest-results/archive-examples-*`。
+S2/P4はcompile-onlyであり、全classの実機回帰44件は別途実行中。
 
 ## Vendorの反復転送と再列挙
 

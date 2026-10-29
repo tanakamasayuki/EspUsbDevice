@@ -1,7 +1,7 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品はdot_a_linkageのarchive化を追加し、最小include差分0を確認。全class回帰44件と全8例×3 profileを実行中。
+最新製品はdot_a_linkageのarchive化を追加し、最小include差分0を確認。全class回帰44件を実行中。全8例×3 profileの24ビルド/ELF監査は成功。
 Audio予約幅はcface78、能力表共有とS3番号6のIN/OUT実測は324231a。
 疎なINのFIFO修正はf5d1571、Audio外部ring長指定e329ef6。metadataは3.0.0、未release。
 mainの文書commit `3fed50d`を取り込み済み。まとまりごとのローカルcommit、pushなし。
@@ -43,7 +43,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 | 単位 | 結果・記録 |
 | --- | --- |
-| archiveリンクの最小probe | include_onlyはno_libraryとFlash259465/global21584で一致（追加0）。device_onlyもIP globals/未使用Fn/startup symbolなし。全44件は未実行 |
+| archiveリンクの最小probe | include_onlyはno_libraryとFlash259465/global21584で一致（追加0）。device_onlyもIP globals/未使用Fn/startup symbolなし。全44件は実行中 |
 | Vendor反復/再列挙 | 新規1件59.76秒成功。1000フレーム/713000 byte×2、39再接続、80 reset hook、heap一致。全体収集44件 |
 | Audio予約幅の最小化 | 4 UAC1 duplexの構成/順次転送1件67.36秒＋関連6件441.14秒成功。14 logs STOPPED/panicなし、S2/P4 compile/依存/nm成功。全体収集43件 |
 | 能力表統一/番号6 | 新規2件81.91秒＋関連4件199.67秒成功。12 logs STOPPED/panicなし、S2/P4 compile/依存/nm成功。全体収集42件 |
@@ -57,7 +57,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 | PCM alternate導入時の関連7件 | 7 passed、358.65秒、14 logs STOPPED/panicなし。`.pytest-results/audio-alternates-related*` |
 | 直前の全体基準 f1c9f29 | 34 passed、1631.13秒、68 logs STOPPED/panicなし。`.pytest-results/wide-loan-all*` |
 | S2/P4 | 外部ring長指定後のAudioPlayback compile成功、各29 sourceの依存/nmに旧stack/SDK fallbackなし。Vendor＋CCIDの基準は033f2d8。USB実機未確認 |
-| examples | 初期6例の18ビルド、AudioPlaybackの3ビルドに加え、MscCdcBlocksのS3/S2/P4 compile/ELF/FQBN/依存/nm確認成功。各検証時点は別 |
+| examples | archive設定後052bcbbで全8例×S3/S2/P4の24 compile成功。ELF/FQBN/機械種別/archive/29依存/native出所/nmも監査済み。`.pytest-results/archive-examples-*` |
 
 最新関連7件は、4 PCM形状×2規格の16 ISO交換、14回の旧ring poison、frame境界/状態照会、
 32個の不正alternate要求、13 rate・158 byte RANGE、停止後の再構成、実bus休止、core要求を含む。
@@ -128,3 +128,7 @@ Audio予約幅修正後のFIFO対応を使用する。S2/P4は今回のVendorEch
 終了待ちで同じjobを再起動しない。新規hid_typedは実行中44件の収集には含まれない。
 新規hid_typedはS3 Host/Device compile・1件収集まで成功、実機結果は未確認。
 公開typed APIの単体/複合×2開始、44照合/52 inputを次に確認する。
+
+全24 examplesは全profile `passed=8 failed=0`で終了。
+`/tmp/espusb-v3-archive-examples-audit.py`も成功し、JSON/transcriptを保存済み。
+MSCのRAM/FAT helperの独立probeを準備中。44件とは別で、実機結果はまだない。

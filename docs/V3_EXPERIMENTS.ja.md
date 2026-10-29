@@ -244,4 +244,8 @@ Device宣言のみはFlash261913/global21824 byteで、IPAddress globals/netif_l
 
 ELF/map/nm/build.optionsは`.pytest-results/unused-after-archive/`、
 集計は`unused-after-archive-audit.json`へ保存した。設定は利用者のbuild_optへ移さずlibrary側へ置く。
-全classのリンク・override hook・実通信を含む全44件と、現行8 examplesの3 profilesを次に確認する。
+現行8 examplesの3 profilesは全24ビルド成功。各ELFのFQBN/機械種別、archive、
+29 source依存、native controller symbolとaddr2line、未選択Net/Video/CCIDの除外を確認した。
+集計`.pytest-results/archive-examples-audit.json`、各transcriptも同prefixへ保存。
+製品は052bcbbで固定し、実行中の追加作業は別probeと文書のみ。
+全classのリンク・override hook・実通信を含む全44件は実行中。

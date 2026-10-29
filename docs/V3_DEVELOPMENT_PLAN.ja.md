@@ -14,8 +14,8 @@ Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在
 | 要件 | 現状と証拠 | 残る確認 |
 | --- | --- | --- |
 | 明示構成・実行時設定・移行 | srcの各configure、V3_MIGRATION/API_DECISIONSと独立probe。build_opt/TinyUSB設定不要 | 全体としての出荷判断は継続 |
-| 未使用コスト | Vendor/Audio等のnmで他class state不在、開始816＋設定14失敗回復、100 begin/endの既存試験 | 新規比較のFlash1168/global64 byteを未使用Netif.cppのIPAddress参照と特定。archive化で最小include差分0を確認し、全44件/全examplesを回帰確認する |
-| class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Gamepad/Consumer/Systemのtyped送信はdescriptor writer確認まで。RAM/FAT/SD/Firmware helperの実通信は別途不足 |
+| 未使用コスト | Vendor/Audio等のnmで他class state不在、開始816＋設定14失敗回復、100 begin/endの既存試験 | 新規比較のFlash1168/global64 byteを未使用Netif.cppのIPAddress参照と特定。archive化で最小include差分0を確認し、全24 examplesのcompile/ELF監査は成功。全44件の実機回帰は実行中 |
+| class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Gamepad/Consumer/Systemのtyped送信probeはcompile済み、実機待ち。RAM/FAT helper probe準備中。SD/Firmware helperの実通信も別途不足 |
 | core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 cache/HSは実機未確認 |
 | 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupはadvertise/API入口がなく、正の経路は未実装。段階5の完了とはしない |
 | 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
