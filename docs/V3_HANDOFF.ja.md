@@ -15,7 +15,8 @@ Vendor/CDC/HIDと65537 byteまでのDMAを確認。[P4記録](../validation/p4/R
 
 P4次段: 0bf46ddでMSC/MIDI追加4件31.85秒成功、4 logs正常停止/panicなし。
 両実機はv1.3。P4Xはpostv3 compile/ELF/29依存まで確認し、HW検証は未実施。
-[機種差・必要環境と次の試験](V3_P4_VARIANTS_AND_BENCH.ja.md)。次は既存boardのPSRAMとAudio/残classを進める。
+[機種差・必要環境と次の試験](V3_P4_VARIANTS_AND_BENCH.ja.md)。PSRAMは53bcfebで2件成功、32 MiBと外部保存先/ringの実通信を確認。
+次はAudio/残classを進める。Audioの初回PCMは正しいが、UAC1にも明示feedbackを期待した試験条件を直し、再実行中。
 
 ## 方針と入口
 

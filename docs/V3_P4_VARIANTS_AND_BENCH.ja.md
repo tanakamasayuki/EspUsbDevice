@@ -74,12 +74,12 @@ S3 47件、P4初回6件、今回4件は別実行。57件一括成功という記
 | --- | --- | --- |
 | MSC/MIDI、Vendor/CDC/HID | 両controllerのFS linkまで実測済み | なし |
 | Audio ISO、Video、DFU、CCID、NCM | 現loopbackでRAM payload/模擬backendの試験を追加可能 | codec/SD/card readerはUSB層の試験には不要。順次probeを追加 |
-| PSRAM経由のcopy/ring | Core profileをPSRAM enabledにして実容量を確認するところから可能 | 現profileはdisabled。未初期化をPSRAM非搭載と誤認しない。まず既存boardで試す |
+| PSRAM経由のcopy/ring | **既存boardで32 MiB確認、MSC保存先・Vendor RX/TX ringの実通信成功** | 専用p4_psram profileで有効化。追加RAM board不要。直接PSRAM DMAの検証ではない |
 | 480 MbpsのHS Device | 既存P4 2台のHS–HS、またはPCのUSB2 HS Hostへ接続 | native data cableの結線変更。独立log port。descriptor/bus speedがHIGH/MPS512になったことを確認 |
 | P4X固有の動作 | postv3 compileは完了 | v3.1以降（新規導入ならv3.2確認品）の実機1台、適合するboard/SDK profile |
 | PC OSのclass binding | PCをHS Hostにすれば同時に確認可能 | USB data deviceを実際にそのOSへ接続。serial portのforwardだけでは代替不可 |
 
-今後の優先順はPSRAMの実容量/CPU copy経路、Audio ISOと未確認class、HS実結線、P4X実機。
+PSRAMの実容量/CPU copy経路は確認済み。次はAudio ISOと未確認class、HS実結線、P4X実機。
 NCMを同じMCUのlwIP IP間通信だけで合格にしない。raw frame/USB転送量でwire経由を確認する。
 DFUはまずRAM backendを使い、実OTA/SDへの書込みは別の試験範囲とする。
 
@@ -90,3 +90,16 @@ board型番とnative connectorの配線を確認し、Host側だけがVBUSを供
 
 常駐台数を増やす前に、既存2台でHSを確認する。P4Xを追加する場合は5台benchのP4役をP4Xへ置換し、
 旧P4は互換性試験時だけ接続する案でよい。P4Xと旧P4の両方を常時必要とはしない。
+
+## PSRAMの追加結果
+
+probe53bcfeb、専用PSRAM enabled profileの2件82.35秒成功。両controllerで各2開始、
+2 logs正常停止/panicなし。実測revision103（v1.3）、CPU360 MHz、PSRAM/外部heapとも33554432 byte。
+MSCの保存先とVendor RX/TX ringをMALLOC_CAP_SPIRAMで確保し、外部RAM pointerであることも検査した。
+MSCは各方向84 block/43008 byte、Vendorは160往復/各方向153664 byte。ring容量8192 byteを跨いで
+折り返す総量を流し、各領域の容量外guardとheap整合性を確認した。USB DMA stagingは内部RAMのまま。
+
+postv3＋PSRAM enabledのcompile/ELF/SDK package/29依存も成功。P4X実機の代替とはしない。
+記録はvalidation/.pytest-results/p4-psram-{initial,native-audit}*、p4x-psram-build.txt。
+標準allのこの時点の収集はS3 47＋P4通常10＋PSRAM2＝59件（実行結果は各単位で別記録）。
+PSRAM comboは通常P4と同じ物理boardなので、実機pytestを並列起動しない。

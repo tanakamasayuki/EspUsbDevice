@@ -18,6 +18,17 @@ MSC＋2 cable MIDIの新規4件が31.85秒で成功。8開始、24 write/24 read
 標準allの収集はS3 47＋P4 10＝57件。P4X用postv3 compileも成功したが、接続中2台はともにv1.3。
 [差異・SDK設定・追加機材と試験計画](../../docs/V3_P4_VARIANTS_AND_BENCH.ja.md)を参照。
 
+## PSRAMの追加確認
+
+probe53bcfeb、PSRAM enabled profileで2件82.35秒成功。既存P4に32 MiBあり、実測CPU360 MHz。
+MSC保存先とVendorの両ringを外部RAMへ置き、160往復、84 block read/write、guard/heapを確認した。
+USB DMA stagingは内部RAM。PSRAMへの直接DMAという結果ではない。postv3＋PSRAM enabled compileも成功。
+専用comboは`p4_psram: primary=p4_psram`。通常P4と同じportへ設定して逐次実行する。
+
+```sh
+uv run --locked --env-file .env pytest p4/psram --combo p4_psram -q -rs
+```
+
 ## 結果
 
 標準pluginのcombo `p4: primary=p4_loopback`、独自conftestなし。
