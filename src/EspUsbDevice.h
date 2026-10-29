@@ -316,9 +316,10 @@ static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_MUTE = 0x00e2;
 static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_UP = 0x00e9;
 static constexpr uint16_t ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_DOWN = 0x00ea;
 
-static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF = 0x01;
-static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY = 0x02;
-static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_WAKE_HOST = 0x03;
+// Generic Desktop usage IDs; the HID array encodes these as selectors 1..3.
+static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF = 0x81;
+static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY = 0x82;
+static constexpr uint8_t ESP_USB_DEVICE_SYSTEM_CONTROL_WAKE_HOST = 0x83;
 
 static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF = 0x08;
 static constexpr uint8_t ESP_USB_DEVICE_MIDI_CIN_NOTE_ON = 0x09;
@@ -2791,6 +2792,7 @@ public:
   ~EspUsbDeviceHidSystemControl() override { end(); }
 
   bool begin() override;
+  // Standard usage IDs 0x81/0x82/0x83, or 0 to release; other values are refused.
   bool press(uint8_t usage, uint32_t timeoutMs = 100);
   bool release(uint32_t timeoutMs = 100);
   bool click(uint8_t usage, uint32_t holdMs = 10);

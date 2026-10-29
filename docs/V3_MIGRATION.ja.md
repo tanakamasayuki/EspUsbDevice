@@ -123,3 +123,11 @@ playbackBufferと同時にplaybackBufferBytes、captureBufferと同時にcapture
 形式追加で必要量が増えても不足を検出できるよう、byte長省略を旧動作へ読み替える互換処理は入れない。
 容量不足のbeginはESP_ERR_INVALID_SIZE、pointerとbyte長の組の誤りはconfigureがESP_ERR_INVALID_ARG。
 configureは戻り値、beginはboolとDevice.lastErrorを確認する。
+
+## System Controlの数値
+
+System ControlはConsumer Controlと同じく標準usage IDを引数にする。
+名前付きPOWER_OFF/STANDBY/WAKE_HOSTの呼出しは維持し、値は0x81/0x82/0x83へ揃える。
+整数1/2/3の直書きやusage()との比較は変更が必要。0による解放は維持する。
+wire selectorとusageを正しくdescriptorで対応させ、未対応値は送信せず拒否する。
+[詳細と利点・影響](V3_HID_API.ja.md#system-controlのusage指定)を参照。

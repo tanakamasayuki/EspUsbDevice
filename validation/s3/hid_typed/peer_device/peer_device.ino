@@ -33,12 +33,19 @@ void loop() {
       else if (phase == 2) ok = consumer->release() && !consumer->usage();
       else if (phase == 3) ok = consumer->click(0xea, 10) && !consumer->usage();
     } else if (kind == 2 && systemControl) {
-      if (phase == 0) ok = systemControl->press(0x81) && systemControl->usage() == 0x81;
-      else if (phase == 1) ok = systemControl->sendUsage(0x82) && systemControl->usage() == 0x82;
+      if (phase == 0) ok = systemControl->press(ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF) && systemControl->usage() == ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF;
+      else if (phase == 1) ok = systemControl->sendUsage(ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY) && systemControl->usage() == ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY;
       else if (phase == 2) ok = systemControl->release() && !systemControl->usage();
-      else if (phase == 3) ok = systemControl->click(0x83, 10) && !systemControl->usage();
+      else if (phase == 3) ok = systemControl->click(ESP_USB_DEVICE_SYSTEM_CONTROL_WAKE_HOST, 10) && !systemControl->usage();
     }
     Serial.printf("SENT kind=%u phase=%u ok=%u\r\n", kind, phase, unsigned(ok));
+  } else if (command == "invalid_system") {
+    const uint8_t before = systemControl->usage();
+    bool ok = true;
+    for (uint8_t value : {1, 4, 0x80, 0x84, 0xff}) ok &= !systemControl->sendUsage(value, 0) && systemControl->usage() == before;
+    ok &= !systemControl->press(1, 0) && systemControl->usage() == before;
+    ok &= !systemControl->click(4, 0) && systemControl->usage() == before;
+    Serial.printf("INVALID_SYSTEM ok=%u rejected=7 usage=%u\r\n", unsigned(ok), unsigned(systemControl->usage()));
   } else if (command == "stop") {
     bool ok = device.end() == ESP_OK;
     delete gamepad; gamepad = nullptr; delete consumer; consumer = nullptr;

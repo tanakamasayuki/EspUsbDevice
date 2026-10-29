@@ -36,6 +36,26 @@ HidVendorのsendInputは長すぎるpayloadを切り詰めずfalseを返すよ�
 sendの成功はコピーを保持して転送を開始したことを示す。Hostでの受信完了を待つAPIではない。
 busy時のtimeoutとcallback内でtimeout=0を使う方針も維持する。workerからの待ち付き送信は拒否する。
 
+## System Controlのusage指定
+
+System Controlのpress/sendUsage/clickはGeneric Desktopの標準usage IDを受け取る。
+POWER_OFF=0x81、STANDBY=0x82、WAKE_HOST=0x83、0は解放。usage()もこの値を返す。
+名前付き定数を使う既存の呼出しはそのままで、整数1/2/3の直書きは標準usageか定数へ移行する。
+それ以外の値はfalseで拒否し、保持値と転送中/GET_REPORTの内容を変更しない。
+
+```cpp
+systemControl.press(ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY);
+systemControl.release();
+```
+
+wireのarray selectorは1/2/3のまま、descriptorはそれをusage0x81/0x82/0x83へ対応させる。
+selector 0は範囲外のNullとして解放を示す。以前のusage0..3の広告は電源操作の意味になっていなかった。
+Consumer Controlと同じくAPIではusageを指定できる利点があり、数値直書きとusage()の数値比較は変更が必要になる。
+メソッドの型、report容量、descriptor長、Functionのmember/heap取得点は増やさない。
+WAKE_HOSTは通常のHID入力であり、busが休止している時の[remote wakeup](V3_REMOTE_WAKEUP.ja.md)を暗黙に実行しない。
+
+根拠は[HID Usage Tables 1.7](https://usb.org/sites/default/files/hut1_7.pdf)のGeneric Desktop表と§4.5.1。
+
 ## 独自HIDと容量
 
 独自HIDは`EspUsbHidFunction`を基底にする。これは`EspUsbDeviceClass`を継承し、

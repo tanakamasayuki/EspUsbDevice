@@ -26,3 +26,11 @@ ESP固有のworker/core/cache、CH32RV固有のclock/USBSS/cooperative実行は�
 基本例の宣言、configure、begin、read/writeという操作感を優先する。
 CH32RV側の更新案を作る際は、容量切替・partial write・reset中の借用返却の例を両方で比較し、
 利点と既存利用への影響を確認する。CH32RV実装やOEPへの追従をESP側の合否基準にはしない。
+
+## System Controlのusage値
+
+EspUsbDevice v3ではSystem Controlの指定を標準usage0x81/0x82/0x83へ揃える。
+名前付き定数とpress/release/click/sendUsageの形は保ち、wire selector1/2/3へ変換する。
+CH32RVの現行定数1/2/3と数値の意味は異なるので、共有アプリは各ライブラリの名前付き定数を使う。
+CH32RV側の変更はこの作業で行わない。両者を合わせる場合の調整点として残す。
+[HIDの判断と移行影響](V3_HID_API.ja.md#system-controlのusage指定)を参照。

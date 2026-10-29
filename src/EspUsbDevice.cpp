@@ -429,13 +429,13 @@ static constexpr uint8_t SYSTEM_CONTROL_REPORT_DESCRIPTOR[] = {
     0x09, 0x80,       // Usage (System Control)
     0xa1, 0x01,       // Collection (Application)
     0x85, 0x05,       //   Report ID (5)
-    0x15, 0x00,       //   Logical Minimum (0)
+    0x15, 0x01,       //   Logical Minimum (1)
     0x25, 0x03,       //   Logical Maximum (3)
-    0x19, 0x00,       //   Usage Minimum (Unassigned)
-    0x29, 0x03,       //   Usage Maximum (3)
+    0x19, 0x81,       //   Usage Minimum (System Power Down)
+    0x29, 0x83,       //   Usage Maximum (System Wake Up)
     0x75, 0x08,       //   Report Size (8)
     0x95, 0x01,       //   Report Count (1)
-    0x81, 0x00,       //   Input (Data,Array,Abs)
+    0x81, 0x40,       //   Input (Data,Array,Abs,Null): selector 0 releases
     0xc0,             // End Collection
 };
 
@@ -5354,8 +5354,12 @@ bool EspUsbDeviceHidSystemControl::begin()
 
 bool EspUsbDeviceHidSystemControl::sendUsage(uint8_t usage, uint32_t timeoutMs)
 {
+  if (usage && (usage < ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF || usage > ESP_USB_DEVICE_SYSTEM_CONTROL_WAKE_HOST)) return false;
   usage_ = usage;
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), &usage_, sizeof(usage_), timeoutMs);
+  // Public values are standard usages, while the descriptor's array selects
+  // its three entries with 1..3. Zero is the out-of-range null/release value.
+  const uint8_t selector = usage ? uint8_t(usage - ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF + 1) : 0;
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), &selector, sizeof(selector), timeoutMs);
 }
 
 bool EspUsbDeviceHidSystemControl::press(uint8_t usage, uint32_t timeoutMs)

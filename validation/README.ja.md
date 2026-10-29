@@ -19,7 +19,7 @@ Vendor 1000 frame/713000 byte×2・39再接続・80 reset、heap356392→356392�
 
 続けた新規MSC helperは**1 passed、39.64秒**、2 logs STOPPED/panicなし。
 8回開始し、511 byte sectorの7-block往復×4、FAT12上の1537 byte fileの読出し/書換え×4を
-公開helper側のreadBlock/readFileでも照合した。guard、別fileとRAM未使用末尾も保持した。
+公開helper側のdata/readFileでも照合した。guard、別fileとRAM未使用末尾も保持した。
 原本`/tmp/pytest-embedded/2026-10-29_05-58-02-529930/`、記録`.pytest-results/msc-helpers*`。
 
 新規typed HIDの初回は1 passed、44.47秒、44 input/GET_REPORT照合・52 input・2 logs STOPPED。
