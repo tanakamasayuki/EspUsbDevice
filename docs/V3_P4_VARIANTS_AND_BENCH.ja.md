@@ -74,13 +74,13 @@ S3 47件、P4初回6件、今回4件は別実行。57件一括成功という記
 | --- | --- | --- |
 | MSC/MIDI、Vendor/CDC/HID | 両controllerのFS linkまで実測済み | なし |
 | Audio ISO | UAC1/UAC2、両controllerで同時duplexとfeedbackを確認済み | codec/I2S不要。FS link・mono16 kHz/16 bitの範囲 |
-| Video、DFU、CCID、NCM | 現loopbackでRAM payload/模擬backendの試験を追加可能 | SD/card readerはUSB層の試験には不要。順次probeを追加 |
+| Video、DFU、CCID、NCM | **両controllerで基本通信/再開始を確認済み** | SD/card reader不要。Videoはsynthetic payload、DFUはRAM backend、NCMはraw frame |
 | PSRAM経由のcopy/ring | **既存boardで32 MiB確認、MSC保存先・Vendor RX/TX ringの実通信成功** | 専用p4_psram profileで有効化。追加RAM board不要。直接PSRAM DMAの検証ではない |
 | 480 MbpsのHS Device | 既存P4 2台のHS–HS、またはPCのUSB2 HS Hostへ接続 | native data cableの結線変更。独立log port。descriptor/bus speedがHIGH/MPS512になったことを確認 |
 | P4X固有の動作 | postv3 compileは完了 | v3.1以降（新規導入ならv3.2確認品）の実機1台、適合するboard/SDK profile |
 | PC OSのclass binding | PCをHS Hostにすれば同時に確認可能 | USB data deviceを実際にそのOSへ接続。serial portのforwardだけでは代替不可 |
 
-PSRAMとAudio ISOは確認済み。次はDFU/CCID/Video/NCMの未確認class、HS実結線、P4X実機。
+既存FS loopbackで全10 classの基本通信とPSRAM利用を確認した。次の機材依存gateはHS実結線とP4X実機。
 NCMを同じMCUのlwIP IP間通信だけで合格にしない。raw frame/USB転送量でwire経由を確認する。
 DFUはまずRAM backendを使い、実OTA/SDへの書込みは別の試験範囲とする。
 
@@ -119,5 +119,14 @@ protocolごとの契約へ試験を直して片方向4件成功後、duplex4件�
 postv3のAudio compile/ELF/29依存も監査済み。新たな機材・SDK patchは不要だった。
 記録p4-audio-{initial,after,duplex}*、p4x-audio-compile-audit.json。
 
-標準allの最新収集はS3 47＋P4通常14＋PSRAM2＝63項目。各単位の成功記録であり全63一括成功ではない。
-未確認classの追加を継続する。HSの具体的な結線は2台のboard型番とnative connector接続先の確認待ち。
+Audio追加時点の収集はS3 47＋P4通常14＋PSRAM2＝63項目だった。
+
+## 現在の到達点（2026-10-30）
+
+CCID4、Video4、DFU2、NCM4の14 caseも追加し、P4は通常28＋PSRAM2の計30 caseを各単位で成功した。
+全10 classの基本通信・両controllerのFS link・再開始を確認。最新all収集はS3 47＋P4 30＝77件で、
+全77一括実行の結果ではない。[詳細と制約](../validation/p4/README.ja.md)。製品sourceは80e8676のまま。
+
+480 Mbpsは既存2台のHS–HSまたはPC接続の変更が必要。2台のboard型番とnative connector接続先は確認待ち。
+P4Xはcompileまでで実機未確認。常駐bench追加台数は増やさず、P4枠をP4Xへ置換する案を維持する。
+未選択classの除去とnative controller出所も追加4 classのELFで確認した。

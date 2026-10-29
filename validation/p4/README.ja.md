@@ -1,6 +1,6 @@
 # P4実機loopback
 
-Device製品source `80e8676`、probe `f5c69dd`。
+Device製品source `80e8676`。現在の結果は次表、初期probeの詳細は後段を参照。
 既存P4（port alias `esp32-p4-e8f60ae0aa24`）のnative HS/FS connector間の結線を使う。
 書き込み・log portはdata cableと独立。Core3.3.12、公開EspUsbHost2.10.1、local EspUsbDevice v3。
 
@@ -10,6 +10,45 @@ Device製品source `80e8676`、probe `f5c69dd`。
 | FS controller | HS controller / UTMI | FS、12 Mbps、bulk MPS64 |
 
 両controllerのDevice動作を確認したが、**480 MbpsのHS link試験ではない**。
+
+## 現在の結果（2026-10-30）
+
+全10 classの基本的なwire通信を、両Device controller・FS linkで確認した。
+製品sourceとユーザーAPIに今回の変更はない。新規probeを標準comboで実行し、conftestは追加していない。
+
+| probe | 成功case数 | 確認内容 | 実行時間 |
+| --- | --- | --- | --- |
+| loopback | 6 | Vendor copy/borrowed DMA、CDC、Keyboard複合 | 67.84秒 |
+| classes | 4 | MSC RAM media、2 cable MIDI | 31.85秒 |
+| psram | 2 | 32 MiB実測、MSC保存先とVendor両ringを外部RAMへ | 82.35秒 |
+| audio | 4 | UAC1/UAC2 ISO、同時playback/capture、feedback | 33.95秒 |
+| ccid | 4 | ATR、APDU、Escape、removable/fixed-card | 32.72秒 |
+| video | 4 | Bulk/ISO、frame内容とloan完了 | 28.43秒 |
+| dfu | 2 | EP0 download/manifest/abort、runtime detach | 97.62秒（初回build含む） |
+| ncm | 4 | NTB容量2048/4096、raw Ethernet往復、再開始 | 27.93秒 |
+
+**30 caseを各probeの別実行で成功**。全30件一括実行の結果ではない。
+標準all収集はS3 47＋P4通常28＋PSRAM2＝77件。対象の合わないcomboは収集しない。
+各probeで開始・正常終了を反復し、30 serial logsにpanic/heap破損はなかった。
+P4X、480 Mbps HS link、PC OS binding、実OTA/SD/codecの認定結果ではない。
+
+### 後半4 classの詳細
+
+- CCID（ee12cc1）: 8開始で72 APDU＋24 Escape。ATR取得・power状態と、removable/fixed-cardを照合。初回はHost APIの最小4-byte条件に合わない1-byte APDUを指定しており、probeを修正した。
+- Video（2a7c4b0）: Bulk/ISO×両controller、8開始。各1/63/64/65/511/513/4097 byte、計56 frame/42512 byte。受信内容、完了status・実長・同一bufferの返却、guardを照合。synthetic MJPEG payloadであり、画像codecの妥当性は試験しない。
+- DFU（2eb53b0）: RAM backendのみ。4開始で36 download block/6660 byte、manifest4回、abort・runtime detach各4回。GETSTATE/GETSTATUSとpoll時間を照合。保存先の内容/guardを確認し、実Flashを書き換えるbackendは使わない。raw SDK Host transferには呼出側のcache準備を加えた。
+- NCM（9059f36）: 8開始で72 frame/各方向28504 byte、受信/送信stats一致・invalid NTB 0。IP/netifを使わないため同じMCU内のIP routingでは代替されない。送信元guard/heapも保持。Host開始/終了のerrorは全て0。
+
+NCM初回は`networkClose()`→Device終了→Host終了という順序で最初の9往復は成功したが、
+2回目のHost開始が失敗した。明示closeを省いて通常のDevice切断→Host終了へ直すと4件が成功した。
+このclose併用経路は公開Host2.10.1の再開始に関する別の未解決事項として記録する。
+Deviceの修正やSDK/インストール済みHostの書換えはしていない。
+
+追加4 classのRISC-V ELF、FQBN、29 source依存、native controller/PHY出所、
+未選択class stateの除去も監査した。EP0だけを使うDFUでは不要なdata endpoint openも除去される。
+結果原本は`validation/.pytest-results/p4-{ccid-after,video-initial,dfu-initial,ncm-restart}*`、
+依存監査は`p4-new-classes-native-audit.json`、収集一覧は`p4-final-collect.txt`。
+NCM失敗原本は`p4-ncm-ready*`へ残した。
 
 ## 追加したMSC/MIDIとP4X調査
 
@@ -41,7 +80,7 @@ postv3 Audio compileも成功。P4X実機の確認ではない。
 uv run --locked --env-file .env pytest p4/audio --combo p4 -q -rs
 ```
 
-現在はP4通常14＋PSRAM2の16項目、S3と合わせ63項目を標準allで収集する。
+Audio追加時点ではP4通常14＋PSRAM2の16項目、S3と合わせ63項目を標準allで収集した。
 各単位の実行結果と区別し、全63一括成功とは扱わない。
 
 ## 初回6件の結果
@@ -58,7 +97,7 @@ uv run --locked --env-file .env pytest p4/audio --combo p4 -q -rs
 | Vendor＋CDC＋Keyboard | 3 Function同時構成。上記Vendor転送に加え、CDC 24往復/4242 byte、line coding 230400、HID 18 press/18 release |
 
 3 Functionは同一構成で各通信を確認している。3種類のtrafficを同時に流した性能試験ではない。
-DMA loanは64-byte alignedのinternal RAM。PSRAM、任意の全競合、全class、HS帯域は未検証。
+DMA loanは64-byte alignedのinternal RAM。この初回6件ではPSRAM、任意の全競合、全class、HS帯域は未検証。
 RXは投稿容量全体をDMAへ貸すため、guardは実受信長ではなく投稿容量の外側へ置く。
 
 ```sh

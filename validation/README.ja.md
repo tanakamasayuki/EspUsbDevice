@@ -11,8 +11,10 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 
 追加のPSRAM2件82.35秒、Audio duplex4件33.95秒も成功した。
 既存boardで32 MiB、MSC保存先/Vendor両ringのPSRAM利用、両controllerのUAC1/UAC2 ISOを確認。
-現在の標準all収集はS3 47＋P4通常14＋PSRAM2＝63件。[現行P4記録](p4/README.ja.md)。
-全63件一括成功の記録ではなく、下記の各実行結果を参照。
+CCID4、Video4、DFU2、NCM4も追加してP4は計30 caseを各probeの別実行で成功。
+全10 classの基本通信を両controllerのFS linkで確認した。製品source変更なし。
+現在の標準all収集はS3 47＋P4通常28＋PSRAM2＝77件。[現行P4記録](p4/README.ja.md)。
+全77件一括成功の記録ではなく、下記の各実行結果を参照。
 
 ### 初期P4の確認
 

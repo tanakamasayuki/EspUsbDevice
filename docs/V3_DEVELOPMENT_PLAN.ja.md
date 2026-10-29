@@ -22,7 +22,7 @@ registry試験0144bfbで旧descriptor長の固定期待を実取得照合へ直�
 | 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
 | 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 80e8676の全47件・24 examplesとS2/P4 remote probeを監査。各29依存/archive/native出所を確認済み |
 | 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | 拡大benchは未結線。typed HID/MSC helper/remoteを含め全47件一括成功、skip/error/failure/unfinished 0 |
-| 機種・OS・配布 | S3–S3実機、P4両controller FS loopback実機、S2 compile、8つの新examplesと移行ガイド | S2実機、P4の480 Mbps HS link/全class、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
+| 機種・OS・配布 | S3–S3実機、P4両controller FSの全10 class基本通信/PSRAM実機30 case、S2 compile、8つの新examplesと移行ガイド | S2実機、P4の480 Mbps HS link/全機能、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
 
 archive化・typed HID・RAM/FAT helper・remote wakeupの個別確認は済んだ。
 80e8676の全47件を固定ソースで実行し、停止・回収とwire指標の監査まで完了した。

@@ -1,6 +1,6 @@
 # v3開発の引き渡し
 
-更新: 2026-10-29。worktree `/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
+更新: 2026-10-30。worktree `/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
 最新製品は`80e8676`、registry試験修正は`0144bfb`。
 **標準combo allの全47件が1917.29秒で成功**。skip/error/failure/unfinishedは0、
 94 serial全STOPPED/panicなし。実測817開始＋14設定失敗回復、heap一致も監査した。
@@ -17,8 +17,12 @@ P4次段: 0bf46ddでMSC/MIDI追加4件31.85秒成功、4 logs正常停止/panic�
 両実機はv1.3。P4Xはpostv3 compile/ELF/29依存まで確認し、HW検証は未実施。
 [機種差・必要環境と次の試験](V3_P4_VARIANTS_AND_BENCH.ja.md)。PSRAMは53bcfebで2件成功、32 MiBと外部保存先/ringの実通信を確認。
 Audio e577698のUAC1/UAC2 duplex4件も33.95秒成功。8開始、PCM両方向/feedback/formatを確認。
-PSRAM/Audioのpostv3 compile・29依存/native出所も監査済み。最新収集63件。
-次はDFU/CCID/Video/NCM。HS結線用のboard型番/2台目native接続先は質問済み、未回答。
+PSRAM/Audioのpostv3 compile・29依存/native出所も監査済み。
+CCID ee12cc1の4件、Video 2a7c4b0の4件、DFU 2eb53b0の2件、NCM 9059f36の4件も成功。
+P4は各単位で計30件成功、全10 classの基本wire通信/両controller FSを確認。製品変更なし。
+追加4 classのnative ELF/29依存/未選択class除去も監査。最新all収集77件（S3 47＋P4 30）。
+全77一括成功という記録ではない。HS結線用のboard型番/2台目native接続先は質問済み、未回答。
+次は480 Mbps HS link、P4X実機、PC OS binding。NCM明示close併用時のHost再開始は別の未解決経路。
 
 ## 方針と入口
 
