@@ -4,6 +4,9 @@
 最新製品は`80e8676`。remote wakeupの停止guardまで実装し、S3の新規境界試験と
 S2/P4の修正後compile、最小構成の再測定が完了。**標準comboの全47件は実行中**。
 全47件の成功をまだ確定していない。製品と対応probeを変更せず結果を待つ。
+初回は19成功後にregistryの旧descriptor長161の固定期待で停止（実長175）。
+試験0144bfbでDevice申告とHost実取得長の照合へ修正し、全47件を再実行中。
+初回20実行・40 logs全停止/panicなしの記録は`remote-all-initial*`へ保存した。
 
 ## 方針と入口
 

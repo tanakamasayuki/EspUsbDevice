@@ -7,6 +7,15 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## 現在の全体試験
+
+製品80e8676、試験0144bfbで全47件を実行中。初回は19成功・1失敗、27件未実行。
+Function registryが旧descriptor長161を待ち、実際の175と合わなかった。
+FunctionごとのHID Push/Popで7×2 byte増えるためで、製品コードは変更せず、
+試験をDeviceの申告長とHostがEP0取得した実長の照合へ変更した。
+初回の40 serialは全STOPPED/panicなし。記録`.pytest-results/remote-all-initial*`。
+再実行の結果が出るまで全47件成功とは扱わない。
+
 ## Remote wakeup
 
 能力広告・Host許可・非同期要求を明示的に分けた。[APIと費用](../docs/V3_REMOTE_WAKEUP.ja.md)を参照。
