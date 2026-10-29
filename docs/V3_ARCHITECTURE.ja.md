@@ -234,7 +234,7 @@ USB endpoint番号に空きがあってもFIFOは0から詰め、EP0はFIFO 0へ
 割当て・endpoint activate・個別flushは同じ対応を使う。maskは開始時に決まり、転送中に組み替えない。
 追加のmap配列・transfer record field・heap取得はない。
 Audio＋CDCでIN endpoint 1/2/4/5を使う構成を実測し、従来のendpoint番号=FIFO番号ではCDC INが進まない問題を修正した。
-詳細・検証範囲は[Audio＋CDC](V3_AUDIO_API.ja.md#audio＋cdcの同時通信とtx-fifo割当て)を参照。
+詳細・検証範囲は[Audio＋CDC](V3_AUDIO_API.ja.md#audiocdcの同時通信とtx-fifo割当て)を参照。
 
 
 ## IN endpoint上限の開始時拒否

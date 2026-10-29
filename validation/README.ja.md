@@ -160,7 +160,7 @@ OS/他SoC/HS実機や任意の全競合順序までを検証済みとは扱わ�
 修正前にCDC INが進まないことを再現し、DWC2の専用TX FIFOを選択IN endpointの順位へ割り当てるよう修正した。
 修正後は1 passed、36.60秒、2 logs STOPPED/panicなし。CDC/PCMの実進行・payload、line coding、
 endpoint 5→FIFO 4を含むregisterを確認した。S2/P4 Vendor＋CCID compileも成功。
-[詳細と原本](../docs/V3_AUDIO_API.ja.md#audio＋cdcの同時通信とtx-fifo割当て)を参照。記録`.pytest-results/audio-cdc*`。
+[詳細と原本](../docs/V3_AUDIO_API.ja.md#audiocdcの同時通信とtx-fifo割当て)を参照。記録`.pytest-results/audio-cdc*`。
 全体収集40件。共通DWC2変更後の全40件の結果は、まだこのfocused結果に含まない。
 
 ## CDC＋MSCの同時通信
