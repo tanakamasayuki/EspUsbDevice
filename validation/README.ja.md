@@ -7,6 +7,15 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## Audio＋CDCと疎なIN endpointのTX FIFO
+
+`audio_cdc`は周期転送とbulkを同時に使い、UAC1/UAC2・24/48 kHz・Function登録順の4構成を確認する。
+修正前にCDC INが進まないことを再現し、DWC2の専用TX FIFOを選択IN endpointの順位へ割り当てるよう修正した。
+修正後は1 passed、36.60秒、2 logs STOPPED/panicなし。CDC/PCMの実進行・payload、line coding、
+endpoint 5→FIFO 4を含むregisterを確認した。S2/P4 Vendor＋CCID compileも成功。
+[詳細と原本](../docs/V3_AUDIO_API.ja.md#audio＋cdcの同時通信とtx-fifo割当て)を参照。記録`.pytest-results/audio-cdc*`。
+全体収集40件。共通DWC2変更後の全40件の結果は、まだこのfocused結果に含まない。
+
 ## CDC＋MSCの同時通信
 
 2026-10-29、製品`e329ef6`を変更せず、新case `test_msc_cdc_concurrent`を追加した。

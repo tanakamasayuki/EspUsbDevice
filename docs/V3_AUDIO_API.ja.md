@@ -357,3 +357,24 @@ heap346704→346704。Function本体は296→304 byte（提供長2項目）、mo
 heap取得点は増えていない。S2/P4 AudioPlayback compileと、S3/S2/P4各29 sourceの依存/nmも成功した。
 この6件は全38件の再実行ではなく、外部長追加に対応する関連試験である。
 記録は`.pytest-results/audio-buffer-extents*`、原本`/tmp/pytest-embedded/2026-10-28_23-29-42-188475/`。
+
+
+## Audio＋CDCの同時通信とTX FIFO割当て
+
+新しい`validation/s3/audio_cdc`は、UAC1/UAC2、24/48 kHz、Audio先/CDC先の4構成で
+再生・録音・feedbackとCDCを同時に動かす。CDC RX97/TX131 byte、Audio各65 frameを使い、
+CDCの1/63/64/65/129 byteを比較しながらline codingも230400 baudへ変更する。
+PCMが進んだCDC往復を数え、単なる列挙や逐次の転送成功とは区別する。
+
+修正前のAudio先UAC2では、DeviceはCDCを1 byte受信・送信したと報告するがHostは受信せず、
+Audioだけが進行した。DWC2がendpoint 5へFIFO 5を割り当てていたため、選択IN endpointの順位から
+FIFOを詰めて割り当てるよう修正した。USBのendpointアドレスは変えず、割当て・activate・flushを合わせた。
+管理配列やheap取得点は増やさない。専用TX FIFOとUSB endpoint番号を同じものとして扱わない。
+
+修正後は**1 passed、36.60秒**、2 logs STOPPED/panicなし。
+4構成それぞれで752/752/938/924回のCDC往復と187回のPCM進行の重なりを確認し、
+全payload・CDC byte総数・line coding・UAC2 feedbackが一致した。
+実registerでもendpoint 5→FIFO 4を含む14割当てを確認した。回数は進行確認の実測値で、性能指標ではない。
+S2/P4 Vendor＋CCID compileも成功。全体40件の回帰確認は別途実行する。
+原本`/tmp/pytest-embedded/2026-10-29_02-44-45-563887/`、記録`.pytest-results/audio-cdc*`。
+初回probeのbuild誤りと、修正前のwire失敗・診断結果も別名で保存した。

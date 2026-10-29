@@ -1,7 +1,7 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品はAudio外部ringのbyte長指定まで実装。PCM alternate基準`033f2d8`、ISO OUT回復`4480513`。metadataは3.0.0、未release。
+最新製品は疎なIN endpointに対するDWC2 TX FIFO割当てを修正。Audio外部ring長指定はe329ef6。metadataは3.0.0、未release。
 mainの文書commit `3fed50d`を取り込み済み。まとまりごとのローカルcommit、pushなし。
 
 ## 方針と入口
@@ -41,6 +41,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 | 単位 | 結果・記録 |
 | --- | --- |
+| Audio＋CDC/FIFO修正後 | 4構成のfocused 1件36.60秒成功、2 logs STOPPED/panicなし。S2/P4 compile成功。全40件はこれから実行 |
 | CDC＋MSC同時通信 | 新規1件59.01秒＋既存2件81.69秒、6 logs STOPPED/panicなし。製品e329ef6の変更なし。全体収集39件 |
 | 外部ring長指定後の関連6件 | **6 passed、369.22秒**。12 logs STOPPED/panicなし、816開始＋14設定失敗回復/heap一致。`.pytest-results/audio-buffer-extents*` |
 | 製品033f2d8の全38件 | **38 passed、2544.60秒、skip/error/failure/unfinishedなし**。76 logs STOPPED/panicなし。`.pytest-results/audio-alternates-all*` |
@@ -81,7 +82,8 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
    外部pointerに提供byte長2項目を追加し、長さ不足を開始前に検出。Audio本体304 byte（+8）、新規取得点なし。
    configureは他クラスと同様に戻り値esp_err_tで確認する。
    代表複合はHID＋CDC＋Vendorの実通信に加え、CDC＋MSCの同時往復/メディア異常間の継続を確認した。
-   次はAudio＋CDC等、周期転送とbulkを同時に使う複合構成の不足を確認する。
+   Audio＋CDCの4構成も実通信し、疎なIN番号とTX FIFO番号の混同を修正。追加map/取得点なし。
+   次は修正後の全40件を固定ソースで実行し、取消し/STALL/reset/ISOの回帰・80 serial・依存を監査する。
 3. CCIDのmessage>=MPSは仕様上必要。P4 HSでは既定320がMPS512を満たさないため512以上の設定が必要。
    Audioの方向内channel数変更、PCM形状ごとに異なるrate集合、borrowed PCM/外部codec clockは別の設計対象。
 4. OS互換、remote wakeup、長時間、S2/P4の実機FS/HSは後段。S31は現SDK非対応の新規port対象。

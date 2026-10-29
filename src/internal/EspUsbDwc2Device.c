@@ -58,6 +58,12 @@ static EspUsbDwc2RuntimeState *runtime;
 #define DWC2_SETUP_STORAGE_BYTES 64u
 
 static inline unsigned selected_count(uint16_t mask) { return (unsigned)__builtin_popcount((unsigned)mask); }
+// Dedicated TX FIFOs are a compact hardware resource, not USB endpoint IDs.
+// Keep EP0 in FIFO 0 and assign selected IN endpoints by rank, including gaps
+// introduced by OUT-only endpoints or Function endpoint-number reservations.
+static inline uint8_t selected_tx_fifo(uint8_t ep) {
+  return (uint8_t) selected_count((uint16_t)(runtime->mask[ESPUSB_DIR_IN] & ((1u << ep) - 1u)));
+}
 static inline EspUsbDwc2Transfer *selected_transfer(uint8_t ep, uint8_t dir) {
   if (!runtime || dir > 1 || ep >= runtime->ep_count || !(runtime->mask[dir] & (1u << ep))) return NULL;
   const unsigned before = selected_count((uint16_t)(runtime->mask[dir] & ((1u << ep) - 1u)));
@@ -205,8 +211,10 @@ static bool dfifo_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t packet_size, b
       dwc2->grxfsiz = new_sz; // Enlarge RX FIFO
     }
   } else {
+    const uint8_t fifo = selected_tx_fifo(epnum);
     // Check IN endpoints concurrently active limit
     if(0 != dwc2_controller->ep_in_count) {
+      ESPUSB_REQUIRE(fifo < dwc2_controller->ep_in_count);
       ESPUSB_REQUIRE(runtime->controller.allocated_epin_count < dwc2_controller->ep_in_count);
       runtime->controller.allocated_epin_count++;
     }
@@ -226,7 +234,7 @@ static bool dfifo_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t packet_size, b
       dwc2->dieptxf0 = ((uint32_t) fifo_size << DIEPTXF0_TX0FD_Pos) | runtime->controller.dfifo_top;
     } else {
       // DIEPTXF starts at FIFO #1.
-      dwc2->dieptxf[epnum - 1] = ((uint32_t) fifo_size << DIEPTXF_INEPTXFD_Pos) | runtime->controller.dfifo_top;
+      dwc2->dieptxf[fifo - 1] = ((uint32_t) fifo_size << DIEPTXF_INEPTXFD_Pos) | runtime->controller.dfifo_top;
     }
   }
 
@@ -272,7 +280,7 @@ static void edpt_activate(uint8_t rhport, const EspUsbEndpointDescriptor* p_endp
     depctl.set_data0_iso_even = 1;
   }
   if (dir == ESPUSB_DIR_IN) {
-    depctl.tx_fifo_num = epnum;
+    depctl.tx_fifo_num = selected_tx_fifo(epnum);
   }
 
   EspUsbDwc2EndpointRegisters* dep = &dwc2->ep[dir == ESPUSB_DIR_IN ? 0 : 1][epnum];
@@ -306,7 +314,7 @@ static void edpt_disable(uint8_t rhport, uint8_t ep_addr, bool stall) {
     }
 
     // Flush the FIFO, and wait until we have confirmed it cleared.
-    espusb_dwc2_flush_tx(dwc2, epnum);
+    espusb_dwc2_flush_tx(dwc2, selected_tx_fifo(epnum));
   } else {
     if (!edpt_is_enabled(dep) || epnum == 0) {
       // non-control not-enabled: stall if set

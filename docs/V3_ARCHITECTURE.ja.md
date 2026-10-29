@@ -224,3 +224,13 @@ reset/suspend/remote wakeupを独立に試験する。class control handlerへDW
 
 実験一覧と採用基準は[V3_EXPERIMENTS.ja.md](V3_EXPERIMENTS.ja.md)、
 実行結果と次の作業単位は[V3_HANDOFF.ja.md](V3_HANDOFF.ja.md)を参照する。
+
+
+## 専用TX FIFOとendpoint番号
+
+DWC2のIN FIFO番号は、選択済みIN endpoint maskでEP0からの順位を使う。
+USB endpoint番号に空きがあってもFIFOは0から詰め、EP0はFIFO 0へ固定する。
+割当て・endpoint activate・個別flushは同じ対応を使う。maskは開始時に決まり、転送中に組み替えない。
+追加のmap配列・transfer record field・heap取得はない。
+Audio＋CDCでIN endpoint 1/2/4/5を使う構成を実測し、従来のendpoint番号=FIFO番号ではCDC INが進まない問題を修正した。
+詳細・検証範囲は[Audio＋CDC](V3_AUDIO_API.ja.md#audio＋cdcの同時通信とtx-fifo割当て)を参照。
