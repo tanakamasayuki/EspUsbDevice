@@ -15,6 +15,11 @@ Device HS＋Host FS、Device FS＋Host HSの両方で、実linkはFS（12 Mbps�
 HS controllerの動作確認であり、480 MbpsのHS link試験ではない。
 初回2件128.27秒成功。6開始、66 copy往復、24 borrowed TX完了、8正常停止、panicなし。
 記録`.pytest-results/p4-loopback-initial*`。S3の全47件とは別実行。
+追加borrowed RX/TXは2件70.50秒成功、2 logs停止/panicなし。6開始で48 RX＋48 TX返却、
+各方向422814 byte。1〜65537 byteの8サイズを照合し、貸出容量外guardも保持した。
+RXは実受信長ではなく投稿容量全体をDMAへ貸す。初回のguard不一致は容量内のpaddingまで
+不変と期待した試験側の誤りで、製品を変えずguard境界を直して成功した。
+失敗原本`p4-loopback-dma*`、成功原本`p4-loopback-dma-after*`を保持する。
 
 ```sh
 uv run --locked --env-file .env pytest p4 --combo p4 -q -rs
