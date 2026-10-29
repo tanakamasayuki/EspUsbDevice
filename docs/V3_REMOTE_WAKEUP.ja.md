@@ -39,7 +39,9 @@ bus resetを入れ、再列挙後の許可消去と通常通信を確認した�
 停止完了は進行中処理の終了を待つ。停止開始前に既に出力中の信号を即時中断する契約ではない。
 記録はremote-wakeup-{reset,boundaries,stop-before,stop-after}*。
 S2/P4は停止guard後80e8676でもcompile・機械種別・archive・29依存・native pulse/IO/delay出所・
-未選択class除外を確認した。記録remote-final-cross-audit.json。全47件は実行中。S2/P4実機とPC OSは別に残る。
+未選択class除外を確認した。記録remote-final-cross-audit.json。全47件も1917.29秒で成功し、94 logs全停止/panicなし。
+今回も実wake3回/無信号7回/10往復と停止中17回・停止後32回の拒否を確認した。
+記録remote-all-audit.txt。S2/P4実機とPC OSは別に残る。
 
 S3最小probeはinclude_onlyの追加Flash/globalが0のまま。Device宣言のみはFlash261957/global21840 byte。
 旧archive基準261913/21824に対し+44/+16で、Device object自体は196 byteで変わらず、共通生存確認lockが新たにリンクされる。

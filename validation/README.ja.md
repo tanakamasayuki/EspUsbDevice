@@ -7,14 +7,24 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
-## 現在の全体試験
+## 最新の全47件
 
-製品80e8676、試験0144bfbで全47件を実行中。初回は19成功・1失敗、27件未実行。
+製品80e8676、registry試験0144bfbで標準combo allの**47 passed、1917.29秒**。
+skip/error/failure/unfinishedは0。94 logs全STOPPED/panicなし。
+実測817開始＋14設定失敗回復、heap346768一致。typed HID/helper/remoteも同一実行に含む。
+Audio 32 ISO交換/36 guard、Vendor 1000 frame/713000 byte×2・39再接続、heap356392一致。
+remote 3実wake/7無信号/10往復、停止中17回・停止後32回の拒否も監査した。
+S3 Vendor、S2/P4 Vendor＋remoteの29依存/archive/native出所と未選択class除外を確認。
+原本`/tmp/pytest-embedded/2026-10-29_11-06-05-103463/`、
+記録`.pytest-results/remote-all-{audit.txt,serial,transcript.txt,audit.py}`。
+最小構成/S2/P4の修正後再測定は`remote-final-{unused,cross}-audit.json`。
+
+初回は19成功・1失敗、27件未実行。
 Function registryが旧descriptor長161を待ち、実際の175と合わなかった。
 FunctionごとのHID Push/Popで7×2 byte増えるためで、製品コードは変更せず、
 試験をDeviceの申告長とHostがEP0取得した実長の照合へ変更した。
 初回の40 serialは全STOPPED/panicなし。記録`.pytest-results/remote-all-initial*`。
-再実行の結果が出るまで全47件成功とは扱わない。
+修正後は上記の全47件を一括で再実行して成功した。初回失敗の記録も保持する。
 
 ## Remote wakeup
 

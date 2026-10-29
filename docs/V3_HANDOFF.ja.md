@@ -1,12 +1,12 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。worktree `/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品は`80e8676`。remote wakeupの停止guardまで実装し、S3の新規境界試験と
-S2/P4の修正後compile、最小構成の再測定が完了。**標準comboの全47件は実行中**。
-全47件の成功をまだ確定していない。製品と対応probeを変更せず結果を待つ。
-初回は19成功後にregistryの旧descriptor長161の固定期待で停止（実長175）。
-試験0144bfbでDevice申告とHost実取得長の照合へ修正し、全47件を再実行中。
-初回20実行・40 logs全停止/panicなしの記録は`remote-all-initial*`へ保存した。
+最新製品は`80e8676`、registry試験修正は`0144bfb`。
+**標準combo allの全47件が1917.29秒で成功**。skip/error/failure/unfinishedは0、
+94 serial全STOPPED/panicなし。実測817開始＋14設定失敗回復、heap一致も監査した。
+初回はregistryの旧descriptor長161の固定期待で停止（実長175、19成功・1失敗）。
+試験をDevice申告とHost実取得長の照合へ直し、製品を変えずに全47件を再実行して成功した。
+初回の40 logs全停止/panicなしの記録は`remote-all-initial*`へ保存した。
 
 ## 方針と入口
 
@@ -36,6 +36,7 @@ CDCはArduino Stream、VendorはPrint、MIDIはpacket API。worker設定も開�
 
 | 対象 | 証拠・結果 |
 | --- | --- |
+| 最新全体80e8676/0144bfb | **47 passed、1917.29秒、skip/error/failure/unfinished 0**。94 logs全停止/panicなし。817開始＋14設定失敗回復、heap346768一致。typed HID/helper/remote含む。`remote-all*` |
 | 全体の直前基準052bcbb | 全44件3745.31秒成功、88 serial全STOPPED/panicなし。816開始＋14設定失敗回復、heap一致。`archive-all*` |
 | examples | 052bcbbの新8例×S3/S2/P4＝24 compile。各ELF/FQBN/archive/29依存/native出所を監査。`archive-examples-*` |
 | typed HID | System標準usage/array解放、Gamepad角度/中央Null、複合global分離。44照合/52 input、4組のdescriptor意味検査、28不正要求と無信号。新規1件と関連6項目成功。`hid-globals-*` |
@@ -50,13 +51,19 @@ Flash+44/global+16。objectサイズ増ではなく、共通生存確認lockの�
 HID修正中にdescriptor長/取得点の古い固定期待が2件失敗した事実と、修正後の成功を区別する。
 関連6項目は複数実行で確認したもので、一括6件成功のJUnitではない。
 
-## 現在実行中の確認
+## 最新全体監査
 
-製品/probeを`80e8676`に固定し、47件を標準comboで実行している。
-JUnitは`validation/.pytest-results/remote-all.xml`、進捗は`/tmp/espusb-v3-remote-all.txt`。
-終了後に47件・skip/error/failure/unfinished、94 serialの停止/panic、実測取得点の総数・回収、
-class/control/ISO/HID/helper/wakeのwire指標とnative依存を監査する。
-監査scriptは`/tmp/espusb-v3-remote-all-audit.py`。実行中に古いXMLやELFで成功を確定しない。
+製品/probeを固定し、標準combo allで47件全てを同一実行で確認した。
+JUnitは`validation/.pytest-results/remote-all.xml`、集計`remote-all-audit.txt`、
+原本`/tmp/pytest-embedded/2026-10-29_11-06-05-103463/`。
+同prefixのserial/transcriptと、監査script`remote-all-audit.py`も成果物へ保存した。
+
+Audio 32 ISO交換/28旧buffer poison/36 guard、4 Audio Fnの10順次交換、
+CDC＋Audio/MSCの同時往復、NCM/CCID/VideoのHALT回復、reset/cancel/休止を確認。
+Vendor 1000 frame/713000 byte×2・39再接続・80 reset、heap356392一致。
+registryは申告/EP0取得長175一致、7 report IDを確認した。
+remoteは実wake3回/無信号7回/10往復、停止中17回・停止後32回の拒否/照会false。
+S3 VendorとS2/P4 Vendor＋remoteの29依存/archive/native出所・未選択class除外も監査した。
 
 ## 試験の運用
 
@@ -78,7 +85,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 ## 未完了と次の判断
 
-まず固定sourceの全47件を終えて監査・記録する。追加変更や全件再実行は結果に応じて判断する。
+固定sourceの全47件と関連監査は完了。新しい変更や未解決の懸念がなければ同じ試験を繰り返さない。
 S2/P4実機（HS/cache含む）、S31 port、PC OS結線、SD/OTA実媒体、長期連続、
 shared toolkitの配布範囲・release判断は残る。S3 peer成功をこれらの代替にしない。
 remote wakeupは実装済みだが、SoC sleep/PC電源管理/電気適合性を保証した結果ではない。
