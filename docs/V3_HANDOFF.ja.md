@@ -1,7 +1,8 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品はdot_a_linkageのarchive化を追加し、最小include差分0を確認。全class回帰44件と全8例×3 profileの24ビルド/ELF監査は成功。
+最新製品12b165bはSystem Controlを標準usage指定へ統一し、descriptor/Null解放を修正。
+archive化の最小include差分0と全44件は052bcbbで確認。全class回帰44件と全8例×3 profileの24ビルド/ELF監査は成功。
 Audio予約幅はcface78、能力表共有とS3番号6のIN/OUT実測は324231a。
 疎なINのFIFO修正はf5d1571、Audio外部ring長指定e329ef6。metadataは3.0.0、未release。
 mainの文書commit `3fed50d`を取り込み済み。まとまりごとのローカルcommit、pushなし。
@@ -141,3 +142,9 @@ MSCのRAM/FAT helperの独立probeを準備中。44件とは別で、実機結�
 公開System定数1/2/3に対しdescriptorがusage0..3を広告する不整合を発見し、補強/修正を次に行う。
 これらの原本・監査先はvalidation README冒頭へ記録。queued runner59201/23592はexit0で終了済み。
 [remote wakeup調査](V3_REMOTE_WAKEUP.ja.md)は8cc6e02。Core3.3.12/IDF5.5.5のHost制約に注意。
+
+System修正12b165b: 新typed 1件75.44秒＋関連6件510.98秒は全成功。
+14 logs全停止/panicなし、816＋14取得失敗回復とheap346768一致。
+S2/P4のtyped3種のcompile、ELF/29依存/archive/native出所も成功。
+`.pytest-results/hid-system-{descriptor-after,related,cross-audit}*`へ記録した。
+Gamepadのhat中央0もdescriptor上は方向扱いで、次に意味の照合とNull修正を行う。

@@ -7,6 +7,16 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## System Controlの意味とAPI
+
+製品12b165bでSystem Controlを標準usage指定へ揃え、wire selector1/2/3のdescriptorを
+usage129/130/131へ対応させ、0をNull解放とした。名前付き定数の呼び方は維持する。
+新typed 1件75.44秒＋既存HID/descriptor/確保失敗の関連6件510.98秒は全成功。
+14 logs全てSTOPPED/panicなし、816開始＋14設定失敗回復とheap346768一致。
+raw52 inputに加え、4 descriptor写像、48 snapshot、28不正呼出しと4無送信監視を確認した。
+S2/P4のtyped3種のcompile/ELF/29依存/archive/native出所も成功（USB実機ではない）。
+記録`.pytest-results/hid-system-*`。Gamepad hatの意味は別の補強対象として残る。
+
 ## archive設定後の全44件と追加probe
 
 2026-10-29、製品052bcbbのsource/library.propertiesを固定し、標準combo allで
