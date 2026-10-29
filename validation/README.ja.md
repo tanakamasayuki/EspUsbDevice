@@ -7,6 +7,15 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## includeのみの未使用コスト
+
+no_library/include_only/device_onlyをCore3.3.12/S3で比較し、従来includeだけで残る
+IPAddress globals/初期化をmapから特定した。library.propertiesの標準archive設定で、
+include_onlyはno_libraryと同じFlash259465/global21584 byte（差分0）になった。
+Device宣言のみも未選択state/IP globals/USB startup symbolを含まない。
+[実験台帳](../docs/V3_EXPERIMENTS.ja.md#archiveリンクの小規模実測)を参照。
+記録`.pytest-results/unused-before-archive*`と`unused-after-archive*`。全class回帰は別途確認する。
+
 ## Vendorの反復転送と再列挙
 
 新vendor_soakは1000フレーム・各方向713000 byteを全比較し、39 Host再接続、reset hook80回、

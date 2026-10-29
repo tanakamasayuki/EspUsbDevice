@@ -14,7 +14,7 @@ Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在
 | 要件 | 現状と証拠 | 残る確認 |
 | --- | --- | --- |
 | 明示構成・実行時設定・移行 | srcの各configure、V3_MIGRATION/API_DECISIONSと独立probe。build_opt/TinyUSB設定不要 | 全体としての出荷判断は継続 |
-| 未使用コスト | Vendor/Audio等のnmで他class state不在、開始816＋設定14失敗回復、100 begin/endの既存試験 | 新規no_library/include_only比較でincludeだけにFlash1168/BSS等64 byteの差。未使用Netif.cppのIPAddress参照をmapで特定し、除去を次の単位にする |
+| 未使用コスト | Vendor/Audio等のnmで他class state不在、開始816＋設定14失敗回復、100 begin/endの既存試験 | 新規比較のFlash1168/global64 byteを未使用Netif.cppのIPAddress参照と特定。archive化で最小include差分0を確認し、全44件/全examplesを回帰確認する |
 | class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Gamepad/Consumer/Systemのtyped送信はdescriptor writer確認まで。RAM/FAT/SD/Firmware helperの実通信は別途不足 |
 | core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 cache/HSは実機未確認 |
 | 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupはadvertise/API入口がなく、正の経路は未実装。段階5の完了とはしない |
@@ -23,7 +23,7 @@ Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在
 | 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | 拡大benchは未結線。今回の追加で44件収集となる |
 | 機種・OS・配布 | S3–S3実機、S2/P4 compile-only、8つの新examplesと移行ガイド | S2/P4実機、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
 
-今回の優先順は、未使用netifのリンク副作用を除く実験、typed HID/任意helperの不足、
+今回の優先順は、archive化で未使用netifのリンク副作用を除く変更の全体確認、typed HID/任意helperの不足、
 remote wakeupの仕様・入口とS3実験の順に、確認不要で進められる単位を扱う。
 S2/P4/S31の実機やPCへの結線変更を必要とする項目を、S3 peer成功で代替しない。
 

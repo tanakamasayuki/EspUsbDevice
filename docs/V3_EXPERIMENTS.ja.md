@@ -231,3 +231,17 @@ ELF/map/nm/build.optionsとtranscriptは`.pytest-results/unused-before-archive*`
 候補はlibrary.propertiesのdot_a_linkage=trueで、個々の.oの直接リンクをarchiveへ変える。
 [Arduinoの公式仕様](https://docs.arduino.cc/arduino-cli/library-specification/)にある標準propertyで、
 利用側のbuild_optや内部型を増やさない。次にinclude差分と全classのリンク/実通信を確認して採否を決める。
+
+
+### archiveリンクの小規模実測
+
+library.propertiesへ`dot_a_linkage=true`を加え、同じinclude_only/device_onlyを再buildした。
+Arduino標準のarchive生成をmap/fileで確認し、include_onlyはライブラリなしと同じ
+Flash259465/global21584 byteとなった。差分は両方0 byte。
+Device宣言のみはFlash261913/global21824 byteで、IPAddress globals/netif_listと
+未選択Function state、USB startupのsymbolはない。宣言したDeviceと終了処理の共通費用は残る。
+この値はCore3.3.12/S3の最小probeの結果であり、他のCoreや任意のアプリへの固定値ではない。
+
+ELF/map/nm/build.optionsは`.pytest-results/unused-after-archive/`、
+集計は`unused-after-archive-audit.json`へ保存した。設定は利用者のbuild_optへ移さずlibrary側へ置く。
+全classのリンク・override hook・実通信を含む全44件と、現行8 examplesの3 profilesを次に確認する。
