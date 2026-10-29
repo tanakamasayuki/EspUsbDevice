@@ -38,7 +38,7 @@ CDCはArduino Stream、VendorはPrint、MIDIはpacket API。worker設定も開�
 | --- | --- |
 | 最新全体80e8676/0144bfb | **47 passed、1917.29秒、skip/error/failure/unfinished 0**。94 logs全停止/panicなし。817開始＋14設定失敗回復、heap346768一致。typed HID/helper/remote含む。`remote-all*` |
 | 全体の直前基準052bcbb | 全44件3745.31秒成功、88 serial全STOPPED/panicなし。816開始＋14設定失敗回復、heap一致。`archive-all*` |
-| examples | 052bcbbの新8例×S3/S2/P4＝24 compile。各ELF/FQBN/archive/29依存/native出所を監査。`archive-examples-*` |
+| examples 80e8676 | 新8例×S3/S2/P4＝24 compile、全成功。各ELF/FQBN/機械種別/archive/29依存/native出所・未選択class除外を監査。`final-examples-audit.json`。052bcbbの旧結果は`archive-examples-*` |
 | typed HID | System標準usage/array解放、Gamepad角度/中央Null、複合global分離。44照合/52 input、4組のdescriptor意味検査、28不正要求と無信号。新規1件と関連6項目成功。`hid-globals-*` |
 | 失敗注入の更新 | 47構成で実測した817取得点全て失敗/回復、14設定失敗、heap346768一致。固定取得数の期待を撤去。`hid-globals-faults*` |
 | RAM/FAT helper | raw/FAT各4実往復、8開始/guard、RAMのみ。`msc-helpers*` |
@@ -82,6 +82,26 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 実機pytestは一つずつ。対応するbuild/test中は製品とprobeを変更しない。
 別probe/exampleのcompileも出力先を分離する。共有`/tmp/pytest-embedded`の最新directoryを
 根拠にせず、JUnit timestampから当該serial原本を特定する。
+
+## 今回の依頼との照合
+
+S3–S3を初期環境として、確認不要で進められる実装と検証を行った。
+公開releaseや未入手機材の実機認定を完了したという意味ではない。
+
+| 要求 | 現在の証拠 |
+| --- | --- |
+| 基本方針を維持し、CH32RV移植/OEP特化にしない | Device/Function/config/beginの公開API、新8例、API_DECISIONS/CH32RV比較。CH32RV/OEP側は変更しない |
+| build時設定をAPI/構成へ移す | Device/各Functionのconfigure、旧flagの明示拒否、開始/終了・容量・複数instance・失敗回復を全47件で確認 |
+| TinyUSB依存を最後まで除く | 10 class/core/runtime/保守DWC2、構造検査・29 source依存・native symbol出所・license記録。SDK同名headerへのfallbackなし |
+| 使う機能だけの費用 | include追加0/0、Deviceのみの差分説明、24例とprobeの未選択state除外、817取得失敗回復とheap一致 |
+| 自然な基本利用と、破壊変更の利点/不利益 | Vendor自動送出、CDC Stream、copy/borrowed所有権、HID usage、Audio format等の移行表/各API判断。現在版8例×3機種compile成功 |
+| 旧test/sampleと独立し標準comboを使う | validationの新probe、plugin1.10.0、noconftest。combo allで47実行/47成功/未完0、94 logs正常停止 |
+| S2/P4/S31への拡張余地 | port能力表とcontroller境界、S2/P4の29 source・8例compile。S31は新SDK/port対象と明示。五台benchの逐次役割案を全体計画へ記録 |
+| mainとの整合・適度なcommit | mainの3fed50dを含む独立v3 worktree。各実装・試験・監査結果をlocal commitし、pushしない |
+
+文書の相対link検査は現行README/V3 guides/examples/validationで不良0。
+リポジトリ全体のcheckは旧版履歴・legacy移動に伴う399件を報告して失敗する。
+旧資産をv3合否の制約にせず、原本は`validation/.pytest-results/doc-links-final.txt`へ保存した。
 
 ## 未完了と次の判断
 

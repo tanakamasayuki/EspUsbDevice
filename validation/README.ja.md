@@ -18,6 +18,8 @@ S3 Vendor、S2/P4 Vendor＋remoteの29依存/archive/native出所と未選択cla
 原本`/tmp/pytest-embedded/2026-10-29_11-06-05-103463/`、
 記録`.pytest-results/remote-all-{audit.txt,serial,transcript.txt,audit.py}`。
 最小構成/S2/P4の修正後再測定は`remote-final-{unused,cross}-audit.json`。
+同じ製品80e8676で新8 examples×3 profilesの24 compileも全成功。各FQBN/ELF機械種別/
+archive/29依存/native出所/未選択state除外を監査。記録`final-examples-audit.json`と各transcript。
 
 初回は19成功・1失敗、27件未実行。
 Function registryが旧descriptor長161を待ち、実際の175と合わなかった。
