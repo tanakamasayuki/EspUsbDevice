@@ -11,6 +11,13 @@ Device製品source `80e8676`、probe `f5c69dd`。
 
 両controllerのDevice動作を確認したが、**480 MbpsのHS link試験ではない**。
 
+## 追加したMSC/MIDIとP4X調査
+
+MSC＋2 cable MIDIの新規4件が31.85秒で成功。8開始、24 write/24 read、256 MIDI往復、
+4 logs正常停止/panicなし。これまでの6件と合わせP4は10項目を別実行で確認した。
+標準allの収集はS3 47＋P4 10＝57件。P4X用postv3 compileも成功したが、接続中2台はともにv1.3。
+[差異・SDK設定・追加機材と試験計画](../../docs/V3_P4_VARIANTS_AND_BENCH.ja.md)を参照。
+
 ## 結果
 
 標準pluginのcombo `p4: primary=p4_loopback`、独自conftestなし。

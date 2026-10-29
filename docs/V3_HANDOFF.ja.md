@@ -13,6 +13,10 @@ Vendor/CDC/HIDと65537 byteまでのDMAを確認。[P4記録](../validation/p4/R
 公開Host同期INのcache欠落を再現し、Host隔離branch 7f25896で比較成功。
 通常P4試験は公開Host2.10.1のqueue経路で成功し、未公開版には依存しない。
 
+P4次段: 0bf46ddでMSC/MIDI追加4件31.85秒成功、4 logs正常停止/panicなし。
+両実機はv1.3。P4Xはpostv3 compile/ELF/29依存まで確認し、HW検証は未実施。
+[機種差・必要環境と次の試験](V3_P4_VARIANTS_AND_BENCH.ja.md)。次は既存boardのPSRAMとAudio/残classを進める。
+
 ## 方針と入口
 
 Device/Function/config/beginの明示的な構成を維持し、使用する機能だけに費用を持たせる。
