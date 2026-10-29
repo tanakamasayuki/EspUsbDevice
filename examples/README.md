@@ -14,6 +14,7 @@ validation probeとも分けています。容量はconfigure、USB開始はDevi
 | [VendorEcho](VendorEcho/VendorEcho.ino) | Vendor bulk stream, retaining partial writes / partial writeの残りを保持 |
 | [MidiEcho](MidiEcho/MidiEcho.ino) | MIDI 1.0 packet echo, one cable each way / MIDI packet単位のecho |
 | [CompositeCdcMidi](CompositeCdcMidi/CompositeCdcMidi.ino) | CDC + MIDI with independent resources / 個別の容量を持つ複合構成 |
+| [MscCdcBlocks](MscCdcBlocks/MscCdcBlocks.ino) | Raw RAM-backed blocks + CDC callback counts / RAM block callbackとCDC、機能別の容量指定 |
 | [AudioPlayback](AudioPlayback/AudioPlayback.ino) | Runtime PCM formats/rates and currentFormat, consuming samples / PCM形状・rateと選択状態を照会して読み出す |
 | [ReconfigureVendor](ReconfigureVendor/ReconfigureVendor.ino) | `end → configure → begin` switches ring sizes in one binary / 再ビルドせず容量を切替 |
 
@@ -47,12 +48,12 @@ python3 tools/build_check.py esp32s3
 ```
 
 The build helper stores output under `build/examples/<profile>/<sketch>/`.
-All six examples compiled for S3/S2/P4 with Core 3.3.12 (18 builds) after the
+The initial six examples compiled for S3/S2/P4 with Core 3.3.12 (18 builds) after the
 native CDC Stream change. This verifies build compatibility, not USB operation
 on S2/P4.
 
 ビルドhelperの生成物は`build/examples/<profile>/<sketch>/`へ保存します。
-CDCのStream化後、Core 3.3.12で6例×S3/S2/P4の全18ビルドを確認しました。
+CDCのStream化後、Core 3.3.12で最初の6例×S3/S2/P4の全18ビルドを確認しました。
 S2/P4のUSB実機動作を確認した意味ではありません。
 
 AudioPlayback subsequently compiled for all three profiles after PCM alternate support.
@@ -112,3 +113,25 @@ callbacks, other classes and detailed configuration.
 
 基本的な利用例に絞っており、全クラスのcatalogやprotocol/所有権試験の代用ではありません。
 開始に失敗した場合はUSBを停止したままにします。借用転送、callback、他クラスの詳細は各APIガイドを参照してください。
+
+
+MscCdcBlocks exposes an initially zero-filled **raw block device** and a CDC
+console. The 8 KiB RAM backing store has no filesystem, loses its contents on
+reset, and is separate from the 512-byte MSC transfer buffer. Replace the block
+callbacks to use application storage. The CDC console reports read/write
+callback counts once per second when opened, or when sent `?`; these are not
+USB packet counts. Debug `Serial` at 115200 reports setup errors separately.
+
+MscCdcBlocksは8 KiBのRAM領域をraw block deviceとして公開し、CDCでread/write callbackの
+呼出し数を表示します。初期内容は0で、filesystemはなく、resetで内容が消えます。
+RAM保存領域とMSCの512 byte stagingは別の費用です。永続storageを使う場合はcallbackを置き換えます。
+CDC consoleを開くと毎秒、または`?`を送ると回数を返します。USB packet数ではありません。
+別のdebug Serial 115200はsetupエラーの表示用です。filesystem helperはこの例の必須依存にしていません。
+
+MscCdcBlocks compiled for all three profiles with Core 3.3.12; ELF/FQBN/source
+checks also passed. No unselected Audio/NCM/Video/CCID/keymap or FAT helper was
+linked. This is compile-only evidence for the example, separate from the
+independent CDC/MSC hardware probes. Records: `validation/.pytest-results/msc-cdc-example*`.
+
+MscCdcBlocksの3 profile compileとELF/FQBN/依存確認は成功し、未選択機能の混入はありません。
+この例自体のUSB実機・OSでのmount確認を表す結果ではなく、独立したCDC/MSC実機probeとは分けています。

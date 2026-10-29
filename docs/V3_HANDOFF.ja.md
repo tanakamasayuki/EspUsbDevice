@@ -50,7 +50,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 | PCM alternate導入時の関連7件 | 7 passed、358.65秒、14 logs STOPPED/panicなし。`.pytest-results/audio-alternates-related*` |
 | 直前の全体基準 f1c9f29 | 34 passed、1631.13秒、68 logs STOPPED/panicなし。`.pytest-results/wide-loan-all*` |
 | S2/P4 | 外部ring長指定後のAudioPlayback compile成功、各29 sourceの依存/nmに旧stack/SDK fallbackなし。Vendor＋CCIDの基準は033f2d8。USB実機未確認 |
-| examples | 旧6例×S3/S2/P4の18ビルド成功。新AudioPlaybackは3 profileともcompile/ELF/FQBN/nm確認成功 |
+| examples | 初期6例の18ビルド、AudioPlaybackの3ビルドに加え、MscCdcBlocksのS3/S2/P4 compile/ELF/FQBN/依存/nm確認成功。各検証時点は別 |
 
 最新関連7件は、4 PCM形状×2規格の16 ISO交換、14回の旧ring poison、frame境界/状態照会、
 32個の不正alternate要求、13 rate・158 byte RANGE、停止後の再構成、実bus休止、core要求を含む。
@@ -102,3 +102,6 @@ S2/P4 Vendor＋CCIDの修正後compileは完了、transcriptは`.pytest-results/
 このscriptは全80 serial、FIFO対応、Audio/CDC/MSC複合同時進行、外部ring長、既存の回収/STALL/reset、
 S3 Vendor単独＋S2/P4 Vendor/CCIDの全29 source依存/nmを検査する。
 先に成功したfocusedは36.60秒、2 logs STOPPED/panicなし。全40件終了後に最新基準を記録する。
+
+全40件実行中の追加作業は新MscCdcBlocks例と文書のみ。例は分離したbuild/examples配下で3 profileとも成功、
+未選択Audio/NCM/Video/CCID/keymap/FAT helperの除外も確認した。製品/probeはf5d1571のまま。

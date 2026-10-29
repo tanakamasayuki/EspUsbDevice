@@ -177,3 +177,13 @@ serial原本は`/tmp/pytest-embedded/2026-10-28_23-44-07-209913/`（同時通信
 `/tmp/pytest-embedded/2026-10-28_23-45-20-737310/`（既存2件）。
 JUnit/transcript/serialと監査は`.pytest-results/msc-cdc-concurrent*`、`msc-cdc-regression*`。
 39件の一括実行や、OS・HS実機・MSC HALT中のCDC継続まで確認した結果ではない。
+
+
+## 公開APIのblock callback例
+
+新規[MscCdcBlocks](../examples/MscCdcBlocks/MscCdcBlocks.ino)は、8 KiB RAM backing、
+512 byte stagingとCDCを明示的に構成する。filesystemを含まないraw block例で、
+callbackのoffset/size処理と、USB workerで更新する呼出し数をCDC側で読む流れを示す。
+追加のDevice taskは作らない。S3/S2/P4でcompile/ELF/FQBN/全29 source依存の確認に成功し、
+未選択Audio/NCM/Video/CCID/keymap/FAT helperのリンク除外も確認した。
+記録は`.pytest-results/msc-cdc-example*`。例自体のUSB実機・OS検証済みとはしない。
