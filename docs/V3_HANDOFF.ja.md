@@ -41,6 +41,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 | 単位 | 結果・記録 |
 | --- | --- |
+| IN上限の拒否/回復 | 新規1件30.53秒成功、2 logs STOPPED/panicなし。過大3構成を各3回拒否、2 CDCで30往復、製品変更なし。全体収集41件 |
 | FIFO修正後f5d1571の全40件 | **40 passed、1997.81秒、skip/error/failure/unfinishedなし**。80 logs STOPPED/panicなし。`.pytest-results/tx-fifo-all*` |
 | Audio＋CDC/FIFO修正後 | 4構成のfocused 1件36.60秒成功、2 logs STOPPED/panicなし。S2/P4 compile成功。全40件の結果とは区別 |
 | CDC＋MSC同時通信 | 新規1件59.01秒＋既存2件81.69秒、6 logs STOPPED/panicなし。製品e329ef6の変更なし。全体収集39件 |
@@ -85,7 +86,8 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
    代表複合はHID＋CDC＋Vendorの実通信に加え、CDC＋MSCの同時往復/メディア異常間の継続を確認した。
    Audio＋CDCの4構成も実通信し、疎なIN番号とTX FIFO番号の混同を修正。追加map/取得点なし。
    全40件で取消し/STALL/reset/ISOを再確認し、80 serial・回収・依存を監査した。
-   次はS3のIN endpoint個数上限を越えた構成を開始時に拒否するか実験する（ソース上はopen時の判定が主で、未実測）。
+   S3のIN個数上限超過は既存の上位validatorがbegin/DescriptorsOnlyともIRQ前に拒否し、回復後の2 CDCも実測した。
+   「open時判定が主」という見立ては訂正。次はvalidatorの番号上限5とDWC2表のendpoint数7の差を、番号6の実通信で確認する。
 3. CCIDのmessage>=MPSは仕様上必要。P4 HSでは既定320がMPS512を満たさないため512以上の設定が必要。
    Audioの方向内channel数変更、PCM形状ごとに異なるrate集合、borrowed PCM/外部codec clockは別の設計対象。
 4. OS互換、remote wakeup、長時間、S2/P4の実機FS/HSは後段。S31は現SDK非対応の新規port対象。

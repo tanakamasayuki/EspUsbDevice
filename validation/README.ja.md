@@ -7,6 +7,16 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## IN endpoint上限拒否と再構成
+
+`controller_capacity`はS3の2 CDC＋MSC、3 CDC、2 CDC＋2 MSCを各3回開始し、
+ESP_ERR_INVALID_SIZE・IRQ開始0回・資源解放・heap一致を確認する。DescriptorsOnlyも同じ過大構成を拒否する。
+余分なFunctionを削除後、同じ2 CDC参照で開始・30往復できることを確認した。
+**1 passed、30.53秒**、2 logs STOPPED/panicなし。製品f5d1571の変更はない。
+初回probeのmetadata期待値の誤りを修正した記録も保存した。
+詳細と原本は[能力表の実験](../docs/V3_ARCHITECTURE.ja.md#in-endpoint上限の開始時拒否)を参照。
+記録`.pytest-results/controller-capacity*`。全体収集は41件で、以下の全40件とこの新規1件の結果は別の実行である。
+
 ## TX FIFO修正後の全40件（最新）
 
 2026-10-29、製品/probe `f5d1571`を固定。標準`pytest --combo all`は

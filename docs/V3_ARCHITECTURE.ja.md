@@ -234,3 +234,22 @@ USB endpoint番号に空きがあってもFIFOは0から詰め、EP0はFIFO 0へ
 追加のmap配列・transfer record field・heap取得はない。
 Audio＋CDCでIN endpoint 1/2/4/5を使う構成を実測し、従来のendpoint番号=FIFO番号ではCDC INが進まない問題を修正した。
 詳細・検証範囲は[Audio＋CDC](V3_AUDIO_API.ja.md#audio＋cdcの同時通信とtx-fifo割当て)を参照。
+
+
+## IN endpoint上限の開始時拒否
+
+2026-10-29、独立`controller_capacity`でS3の過大な構成を確認した。
+2 CDC＋MSC、3 CDC、2 CDC＋2 MSCは、いずれもbeginがESP_ERR_INVALID_SIZEで拒否する。
+上位のvalidateControllerEndpointsがdescriptor構築中に検証するため、IRQ/worker/PHYを開始せず、
+Functionの転送資源も残らない。DescriptorsOnlyもこの検証を通すので、同じ構成は拒否する。
+当初の「open時にしか確認しない」という見立ては、上位validatorを見落としていたため訂正した。
+
+3構成を各3回拒否し、heapは各構成で一致。余分なFunctionを削除した後は保持した2 CDCを開始でき、
+2 port×5長さ×3構成の30往復に成功。1 passed、30.53秒、2 logs STOPPED/panicなし。
+原本`/tmp/pytest-embedded/2026-10-29_03-31-24-352616/`、記録`.pytest-results/controller-capacity*`。
+初回probeはDescriptorsOnlyなら受け付けると誤って期待したため失敗し、そのログも残した。
+今回は製品f5d1571を変更せず、既存の拒否と修正後の再開始を試験で保証した。
+
+IN個数上限とendpoint番号上限は別の条件である。S2/S3のvalidatorの番号上限5と、
+DWC2 port表のendpoint数7との違いは、この個数試験だけでは解消したと扱わない。
+番号6を使う少数endpointの実通信と、能力表の統一は次の確認対象に残す。
