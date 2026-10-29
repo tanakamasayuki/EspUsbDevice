@@ -140,45 +140,42 @@ void loop() {
       const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
       for (unsigned mode = 0; mode < 46 && ok; ++mode) {
         EspUsbVendorConfig config;
-        unsigned points = 7; // state, two rings, two DMA buffers, two registry tables
-        if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; points = 6; }
+        if (mode == 1) { config.rxMode = EspUsbVendorRxMode::Callback; config.rxCapacity = 0; }
         if (mode == 2) {
           config.rxCapacity = 97; config.txCapacity = 131; config.transferBytes = 128;
-          config.rxBuffer = externalRx + 1; config.txBuffer = externalTx + 1; points = 5;
+          config.rxBuffer = externalRx + 1; config.txBuffer = externalTx + 1;
         }
         if (mode == 3) {
           config.rxMode = EspUsbVendorRxMode::Borrowed;
-          config.rxCapacity = config.txCapacity = config.transferBytes = 0; points = 3;
+          config.rxCapacity = config.txCapacity = config.transferBytes = 0;
         }
-        if (mode == 4) { second = new EspUsbDeviceVendor(device); points = 12; }
-        if (mode == 5) { serialPort = new EspUsbDeviceCdcSerial(device); points = 13; }
+        if (mode == 4) { second = new EspUsbDeviceVendor(device); }
+        if (mode == 5) { serialPort = new EspUsbDeviceCdcSerial(device); }
         if (mode == 6 || mode == 7) {
           config.rxMode = EspUsbBulkRxMode::Disabled; config.rxCapacity = 0;
-          points = 5;
-          if (mode == 7) { config.txCapacity = config.transferBytes = 0; points = 3; }
+          if (mode == 7) { config.txCapacity = config.transferBytes = 0; }
         }
         if (mode == 10 || mode == 11) {
-          hid[0] = new EspUsbDeviceHidVendor(device, 257); points += 9;
-          if (mode == 11) { hid[1] = new EspUsbDeviceHidVendor(device, 63); ++points; }
+          hid[0] = new EspUsbDeviceHidVendor(device, 257);
+          if (mode == 11) { hid[1] = new EspUsbDeviceHidVendor(device, 63); }
         }
-        if (mode == 12) { inputOnly = new EspUsbDeviceHidCustom(device, inputReport, sizeof(inputReport), 1); points += 7; }
-        if (mode == 13) { inputOnly = new EspUsbDeviceHidCustom(device, pushReport, sizeof(pushReport), 1); points += 8; }
+        if (mode == 12) { inputOnly = new EspUsbDeviceHidCustom(device, inputReport, sizeof(inputReport), 1); }
+        if (mode == 13) { inputOnly = new EspUsbDeviceHidCustom(device, pushReport, sizeof(pushReport), 1); }
         if (mode >= 14 && mode <= 20) {
           midi[0] = new EspUsbDeviceMidi(device);
           EspUsbMidiConfig packets; packets.rxPackets = 1; packets.txPackets = 3; packets.transferPackets = 1;
-          unsigned midiPoints = 5;
           if (mode == 15) {
-            packets.rxMode = EspUsbMidiRxMode::Callback; packets.rxPackets = 0; midiPoints = 4;
+            packets.rxMode = EspUsbMidiRxMode::Callback; packets.rxPackets = 0;
             midi[0]->onPacket([](const EspUsbDeviceMidiPacket &) {});
           }
           if (mode == 16) {
             packets.rxPackets = 17; packets.txPackets = 19;
-            packets.rxBuffer = midiRx + 1; packets.txBuffer = midiTx + 1; midiPoints = 3;
+            packets.rxBuffer = midiRx + 1; packets.txBuffer = midiTx + 1;
           }
-          if (mode == 17 || mode == 20) { packets.rxMode = EspUsbMidiRxMode::Disabled; packets.rxPackets = 0; midiPoints -= 2; }
-          if (mode == 18 || mode == 20) { packets.txPackets = packets.transferPackets = 0; midiPoints -= 2; }
-          ok &= midi[0]->configure(packets) == ESP_OK; points += midiPoints;
-          if (mode == 19) { midi[1] = new EspUsbDeviceMidi(device); points += 5; }
+          if (mode == 17 || mode == 20) { packets.rxMode = EspUsbMidiRxMode::Disabled; packets.rxPackets = 0; }
+          if (mode == 18 || mode == 20) { packets.txPackets = packets.transferPackets = 0; }
+          ok &= midi[0]->configure(packets) == ESP_OK;
+          if (mode == 19) { midi[1] = new EspUsbDeviceMidi(device); }
         }
         if (mode >= 21 && mode <= 23) {
           msc[0] = new EspUsbDeviceMsc(device);
@@ -187,11 +184,10 @@ void loop() {
           EspUsbMscConfig storage; storage.transferBytes = 64;
           if (mode == 22) storage.transferBuffer = mscBuffer;
           ok &= msc[0]->configure(storage) == ESP_OK;
-          points += mode == 22 ? 3 : 4;
           if (mode == 23) {
             msc[1] = new EspUsbDeviceMsc(device);
             msc[1]->onRead([](uint32_t, uint32_t, void *, uint32_t n) { return int32_t(n); });
-            ok &= msc[1]->begin(8, 512); points += 2;
+            ok &= msc[1]->begin(8, 512);
           }
         }
         if (mode >= 24 && mode <= 27) {
@@ -200,16 +196,13 @@ void loop() {
           if (mode == 26 || mode == 27) ok &= audio->addCaptureStream().addFormat({48000,2,2,16});
           EspUsbAudioConfig notifications; notifications.eventCapacity = mode == 25 ? 0 : 17;
           ok &= audio->configure(notifications) == ESP_OK;
-          points += mode == 27 ? 8 : mode == 26 ? 5 : 6; // State, selected PCM buffers, feedback and class registry.
-          if (mode != 25) ++points;
         }
         if (mode >= 28 && mode <= 31) {
           dfu[0] = new EspUsbDeviceDfu(device, mode == 28 ? EspUsbDeviceDfuMode::Runtime : EspUsbDeviceDfuMode::Download);
           EspUsbDfuConfig firmware; firmware.transferBytes = 129;
           if (mode == 30) firmware.transferBuffer = dfuBuffer + 1;
           ok &= dfu[0]->configure(firmware) == ESP_OK;
-          points += mode == 29 || mode == 31 ? 4 : 3;
-          if (mode == 31) { dfu[1] = new EspUsbDeviceDfu(device); points += 2; }
+          if (mode == 31) { dfu[1] = new EspUsbDeviceDfu(device); }
         }
         if (mode >= 32 && mode <= 36) {
           net[0] = new EspUsbDeviceNet(device);
@@ -219,7 +212,6 @@ void loop() {
           if (mode == 35) network.rxBuffers = 0;
           if (mode == 36) { network.txBuffers = network.rxBuffers = 2; network.txBuffer = netTx; network.rxBuffer = netRx; network.txBufferBytes = sizeof(netTx); network.rxBufferBytes = sizeof(netRx); }
           ok &= net[0]->configure(network) == ESP_OK;
-          points += mode == 33 ? 4 : mode == 34 || mode == 35 ? 6 : mode == 36 ? 5 : 7;
         }
         if (mode >= 37 && mode <= 40) {
           video[0] = new EspUsbDeviceVideo(device);
@@ -228,11 +220,10 @@ void loop() {
           if (mode == 38) { camera.payloadBytes = 65; camera.payloadBuffer = videoBuffer; camera.payloadBufferBytes = sizeof(videoBuffer); }
           if (mode == 40) camera.payloadBytes = 65535;
           ok &= video[0]->configure(camera) == ESP_OK;
-          points += mode == 38 ? 3 : 4;
           if (mode == 39) {
             video[1] = new EspUsbDeviceVideo(device);
             camera.transport = EspUsbVideoTransport::Bulk; camera.payloadBytes = 65;
-            ok &= video[1]->configure(camera) == ESP_OK; points += 2;
+            ok &= video[1]->configure(camera) == ESP_OK;
           }
         }
         if (mode >= 41 && mode <= 43) {
@@ -240,8 +231,7 @@ void loop() {
           EspUsbCcidConfig card;card.messageBytes=64;card.removable=mode==41;
           const uint8_t atr[]={0x3b,0};
           ok &= ccid[0]->configure(card)==ESP_OK && ccid[0]->insertCard(atr,sizeof(atr));
-          points += mode==41 ? 7:6;
-          if(mode==43){ccid[1]=new EspUsbDeviceCcid(device);ok &= ccid[1]->configure(card)==ESP_OK && ccid[1]->insertCard(atr,sizeof(atr));points+=4;}
+          if(mode==43){ccid[1]=new EspUsbDeviceCcid(device);ok &= ccid[1]->configure(card)==ESP_OK && ccid[1]->insertCard(atr,sizeof(atr));}
         }
         if (mode == 44) {
           audio = new EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2);
@@ -250,7 +240,6 @@ void loop() {
           for (unsigned rate = 8000; rate <= 18000; rate += 1000) ok &= stream.addFormat({rate,2,2,16});
           EspUsbAudioConfig config; config.eventCapacity = 0;
           ok &= audio->configure(config) == ESP_OK;
-          points += 7; // Includes the optional 158-byte clock RANGE reply.
         }
         if (mode == 45) {
           audio = new EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2);
@@ -261,14 +250,21 @@ void loop() {
           }
           EspUsbAudioConfig config; config.eventCapacity = 0; config.playbackBufferFrames = config.captureBufferFrames = 65;
           ok &= audio->configure(config) == ESP_OK;
-          points += 9; // Duplex PCM state/rings/packets/feedback, clock RANGE and registry.
         }
-        points += 6; // Function index + FS, strings, MS OS, BOS, and the selected core/event/DMA block.
         EspUsbDeviceConfig identity;
-        if (mode == 8) { identity.webusbEnabled = true; identity.webusbUrl = "https://example.test/日本語"; ++points; }
-        if (mode == 9) { identity.manufacturer = identity.product = nullptr; --points; }
+        if (mode == 8) { identity.webusbEnabled = true; identity.webusbUrl = "https://example.test/日本語"; }
+        if (mode == 9) { identity.manufacturer = identity.product = nullptr; }
         ok &= vendor.configure(config) == ESP_OK;
         const unsigned configuredOutstanding = outstanding; // Formats remain configured until Function destruction.
+        // Measure this configured graph, then fail every acquisition observed.
+        // This keeps coverage when an implementation adds or removes a resource.
+        calls = 0; failAt = 0;
+        const bool baseline = device.begin(identity);
+        const unsigned points = calls;
+        const bool baselineStopped = device.end() == ESP_OK;
+        ok &= baseline && baselineStopped && outstanding == configuredOutstanding && !badFree && !overflow;
+        Serial.printf("FAULT_CONFIG mode=%u points=%u\r\n", mode, points);
+        if (!ok) Serial.printf("BASELINE_FAILED mode=%u calls=%u live=%u\r\n", mode, points, outstanding);
         for (unsigned point = 1; point <= points && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;
           const bool rejected = !device.begin(identity) && device.lastError() == ESP_ERR_NO_MEM;
@@ -307,7 +303,13 @@ void loop() {
       {
         // Two NCMs fit the S3's IN endpoints; a further Vendor does not.
         EspUsbDevice pair; EspUsbDeviceNet first(pair), second(pair);
-        for (unsigned point = 1; point <= 16 && ok; ++point) {
+        calls = 0; failAt = 0;
+        const bool baseline = pair.begin();
+        const unsigned points = calls;
+        const bool baselineStopped = pair.end() == ESP_OK;
+        ok &= baseline && baselineStopped && !outstanding && !badFree && !overflow;
+        Serial.printf("FAULT_CONFIG mode=46 points=%u\r\n", points);
+        for (unsigned point = 1; point <= points && ok; ++point) {
           calls = 0; failAt = point; failureReached = false;
           const bool rejected = !pair.begin() && pair.lastError() == ESP_ERR_NO_MEM;
           failAt = 0;
@@ -315,8 +317,8 @@ void loop() {
           if (!ok) { Serial.printf("PAIR_FAULT_FAILED point=%u live=%u\r\n",point,outstanding); break; }
           ++failures; calls = 0;
           const bool recovered = pair.begin();
-          if (!recovered || calls != 16) Serial.printf("PAIR_RECOVERY_FAILED point=%u calls=%u error=%d\r\n",point,calls,int(pair.lastError()));
-          ok &= recovered && calls == 16 && pair.end() == ESP_OK && !outstanding;
+          if (!recovered || calls != points) Serial.printf("PAIR_RECOVERY_FAILED point=%u calls=%u error=%d\r\n",point,calls,int(pair.lastError()));
+          ok &= recovered && calls == points && pair.end() == ESP_OK && !outstanding;
           delay(10); if (ok) ++recoveries;
         }
       }

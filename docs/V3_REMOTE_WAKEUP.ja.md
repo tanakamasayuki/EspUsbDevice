@@ -45,3 +45,19 @@ IRQ maskの保存復元・pending statusの処理・通常通信への復帰も�
 Hostから時刻でresumeするだけの試験をDevice起因の成功と数えない。
 無許可/CLEAR後には信号なし、許可後には検出あり、その後payload往復、reset後の許可消去を区別して照合する。
 S3–S3でこの経路を実測してからAPIと時間方式を採用する。PC OSやS2/P4の実機試験は別に残る。
+
+## 次の実験で比較する候補（未実装）
+
+能力設定、Host許可照会、非同期要求をDeviceへ置く。要求成功はqueue受付を示す。
+追加の常駐timer/taskを作らず、既存workerのdeferred callを使う案を先に試す。
+coreの既存Host許可byteを許可/pending flagへ整理できれば、独立したpending領域を増やさずに重複要求を拒否できる。
+既存configurationEpochをcallbackへ渡し、reset/再構成後の古い要求を実行しない。
+DeferredCallは通常のbus世代判定より先に実行され、overflow回復でもdrainされるため、
+callback自身がepoch・stopping/recovering/resetting・構成・Host許可・suspendedを再確認する必要がある。
+公開要求と照会はcontroller lock内でcoreの生存を確認し、停止側も同じlockで拒否状態とcoreの切離しを公開する。
+queueの破棄前に公開側を締め、worker/PHYの終了順序を保つ。
+
+idle時間は要求処理時に保守的に待ってから状態を再確認する案なら、未使用時の時刻領域も不要になる。
+信号時間はROMの短いdelayとcontroller lockによる上限管理を候補とし、2 ms程度のIRQ遅延の影響も含めて実測する。
+この方式を採用するかは実機のK検出/Host復帰/通常通信と、拒否・reset/end境界を確認して決める。
+許可なし・未構成・非suspendでは信号を出さず、受付後の状態変化で要求を取消す契約を明記する。

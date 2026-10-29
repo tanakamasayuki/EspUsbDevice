@@ -7,8 +7,13 @@ def test_allocation_failure(dut, peers):
         device.write("faults")
         device.expect(r"AUDIO_SETTINGS ok=1 formats=24 rates=12 failures=14 object=\d+ model=\d+ controls=\d+\r\n", timeout=30)
         device.expect_exact("AUDIO_CLEAR ok=1\r\n", timeout=10)
-        result = device.expect(r"FAULTS ok=1 failed=816 recovered=816 before=(\d+) after=(\d+)\r\n", timeout=60)
-        assert result.group(1) == result.group(2), "heap leaked across failure/recovery"
+        planned = 0
+        for mode in range(47):
+            baseline = device.expect(fr"FAULT_CONFIG mode={mode} points=(\d+)\r\n", timeout=60)
+            planned += int(baseline.group(1))
+        result = device.expect(r"FAULTS ok=1 failed=(\d+) recovered=(\d+) before=(\d+) after=(\d+)\r\n", timeout=60)
+        assert int(result.group(1)) == int(result.group(2)) == planned, "Some measured acquisition points were not exercised"
+        assert result.group(3) == result.group(4), "heap leaked across failure/recovery"
         # A final real exchange proves the recovered registry still enumerates.
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)

@@ -1,7 +1,7 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品はHID globalのFunction間分離とGamepad hatを修正。新typed 1件51.04秒成功。
+最新製品060214fはHID globalのFunction間分離とGamepad hatを修正。新typed 1件51.04秒成功。
 System Controlの標準usage/array解放は12b165bで導入した。
 archive化の最小include差分0と全44件は052bcbbで確認。全class回帰44件と全8例×3 profileの24ビルド/ELF監査は成功。
 Audio予約幅はcface78、能力表共有とS3番号6のIN/OUT実測は324231a。
@@ -157,3 +157,14 @@ merge時にFunction全体をPush/Popで包み、hatの方向1..8/中央Nullとbu
 統合descriptorはFunctionごと+2 byte、開始時parserの一時stackが必要。通常転送中の追加取得なし。
 Systemの0はarrayの未押下で、Null State bitに依存しない。arrayの不要なbit指定も外した。
 次はこの製品sourceを固定したHID関連6件・S2/P4 typed compileを確認する。
+
+060214fの関連6項目は全て成功結果を確認した。最初の4件はそのまま成功。
+descriptor_storageは古い長さ366の期待で失敗し、申告長とHost取得実長370の照合へ直して成功。
+allocation_failureはmode11の固定23回が実24回と合わず失敗。47構成のbaselineを測り全取得点へ注入する試験へ直した。
+最終1件は51.61秒、817失敗/817回復、14設定失敗とheap346768一致。
+関連3実行の16 logs全停止/panicなし。成功6項目と2期待値失敗を混ぜて一括成功と表現しない。
+S2/P4 typed/Customの修正後compile・29依存/nm/ELF/native出所も成功。
+監査は`.pytest-results/hid-globals-coverage-audit.json`と`hid-globals-cross-audit.json`。
+最新の標準収集は46件（052bcbbの全44件＋新typed/MSC helper）。全46件一括は未実行。
+remote wakeupは調査/候補のみで未実装。既存workerとepochを使い常駐資源を増やさない候補を調査文書末尾に記録した。
+SD/OTA/PC OS、S2/P4実機、S31 portの未完も維持する。

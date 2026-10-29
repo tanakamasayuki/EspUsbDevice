@@ -32,3 +32,8 @@ Systemの解放条件はNull State bitに依存しない。hatの中央はvariab
 両修正後は1 passed、51.04秒、2 logs STOPPED/panicなし。
 単独/複合×2開始でGamepadとSystemの写像を各4回、44 input照合/52 report、28不正指定と4無送信監視を確認。
 記録はvalidation/.pytest-results/hid-{hat-before,globals-before,globals-after}*。
+
+製品060214fの関連6項目も、初回4成功＋descriptor修正後1成功＋取得点修正後1成功として確認した。
+古い長さ366と取得回数23の期待値不一致を保存し、実長照合と47構成のbaseline走査へ変更した。
+全817取得点の失敗/回復とheap346768一致。関連3実行の16 logs全停止/panicなし。
+S2/P4の修正後compile/ELF/29依存/native出所も成功。全46件一括の結果とはしない。

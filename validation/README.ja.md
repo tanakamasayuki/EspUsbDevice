@@ -7,6 +7,25 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## Gamepadと複合HIDのglobal設定
+
+製品060214fでhatの中央Null/8方向/角度とbuttonsの物理範囲を修正し、
+統合時にFunctionごとのglobal Push/Popを追加した。独自の単位を持つFunctionを先に登録しても
+Gamepadの軸へ漏れないことを、Hostが取得したdescriptorの解釈と実input/GET_REPORTで確認した。
+新typedは**1 passed、51.04秒**、2 logs STOPPED/panicなし。Gamepad/Systemの各4写像、52 input、28不正指定の拒否も成功。
+S2/P4のtyped/Custom compile、ELF/29依存/archive/native出所も成功した（USB実機は未確認）。
+記録`.pytest-results/hid-{hat-before,globals-before,globals-after,globals-cross-audit}*`。
+
+関連6項目は、初回4成功、修正後descriptor試験1成功、取得点試験1成功として確認した。
+初回のdescriptor長固定366 byteと、続く取得回数固定23回の期待値不一致は保存した。
+製品sourceは060214fのまま、試験側を実長/実取得点の照合へ変更した。3実行・8 case実行の16 logsは全て停止、panicなし。
+Hostの長さ申告/取得実長は370 byteで一致し、report ID1/2の実input、UTF-8/WebUSBの照合も成功。
+取得点試験は**1 passed、51.61秒**。47構成を開始/終了して実測した全817取得点へ失敗注入し、
+817回とも拒否・回復・解放を確認した。14設定失敗も成功、heap346768→346768。
+各構成のbaseline回数と最終失敗/回復数を照合し、内部の取得回数を試験へ手で写さない。
+記録`.pytest-results/hid-globals-{related-initial,remaining-initial,faults,coverage-audit}*`。
+6件一括の成功XMLではなく、成功した6項目と修正前の2失敗を区別して記録する。
+
 ## System Controlの意味とAPI
 
 製品12b165bでSystem Controlを標準usage指定へ揃え、wire selector1/2/3のdescriptorを

@@ -4,7 +4,8 @@
 #include "text_vectors.h"
 EspUsbHost host;
 std::atomic<uint8_t> address{0};
-std::atomic<unsigned> reports{0}, invalid{0};
+std::atomic<unsigned> reports{0}, invalid{0}, descriptorBytes{0};
+std::atomic<bool> descriptorValid{false};
 bool started = false;
 bool wireText() {
   uint8_t data[260]; size_t actual = 0;
@@ -48,6 +49,10 @@ void setup() {
   host.onDeviceConnected([](const EspUsbHostDeviceInfo &info) {
     if (info.vid == 0x303a && info.pid == 0x4000 && strcmp(info.product, "v3 descriptor storage") == 0) address.store(info.address);
   });
+  host.onHIDReportDescriptor([](const EspUsbHostHIDReportDescriptor &descriptor) {
+    descriptorValid.store(descriptor.length == descriptor.reportedLength && descriptor.length > 255);
+    descriptorBytes.store(descriptor.length);
+  });
   host.onHIDInput([](const EspUsbHostHIDInput &event) {
     if (!event.data || event.length != 2 || event.data[0] < 1 || event.data[0] > 2 || event.data[1] != 0x40 + event.data[0]) { ++invalid; return; }
     reports.fetch_or(1u << event.data[0]);
@@ -57,12 +62,16 @@ void loop() {
   if (!Serial.available()) { delay(1); return; }
   String command = Serial.readStringUntil('\n'); command.trim();
   if (command == "vendor" || command == "hid" || command == "text") {
-    address.store(0); reports.store(0); invalid.store(0);
+    address.store(0); reports.store(0); invalid.store(0); descriptorBytes.store(0); descriptorValid.store(false);
     started = host.begin();
     const uint32_t deadline = millis() + 10000;
     while (started && !address.load() && int32_t(deadline - millis()) > 0) delay(1);
     const bool ready = started && address.load() && (command == "hid" || host.vendorOpen(address.load(), 0, ESP_USB_HOST_VENDOR_READ_ON_DEMAND));
     Serial.printf("HOST_READY %u\r\n", unsigned(ready));
+  } else if (command == "hid_descriptor") {
+    const uint32_t deadline = millis() + 3000;
+    while (!descriptorBytes.load() && int32_t(deadline - millis()) > 0) delay(1);
+    Serial.printf("HID_DESCRIPTOR ok=%u bytes=%u\r\n", unsigned(descriptorValid.load()), descriptorBytes.load());
   } else if (command == "read_text") {
     Serial.printf("TEXT_WIRE %u\r\n", unsigned(wireText()));
   } else if (command.startsWith("exchange ")) {
