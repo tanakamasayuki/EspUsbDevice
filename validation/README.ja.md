@@ -7,6 +7,20 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## P4実機の追加確認
+
+P4 1台のnative HS/FS connectorを物理loopbackし、反対側をEspUsbHost2.10.1で動かす。
+標準combo `p4: primary=p4_loopback`、Core3.3.12、独自conftestなし。
+Device HS＋Host FS、Device FS＋Host HSの両方で、実linkはFS（12 Mbps、MPS64）。
+HS controllerの動作確認であり、480 MbpsのHS link試験ではない。
+初回2件128.27秒成功。6開始、66 copy往復、24 borrowed TX完了、8正常停止、panicなし。
+記録`.pytest-results/p4-loopback-initial*`。S3の全47件とは別実行。
+
+```sh
+uv run --locked --env-file .env pytest p4 --combo p4 -q -rs
+uv run --locked --env-file .env pytest --combo all --collect-only -q
+```
+
 ## 最新の全47件
 
 製品80e8676、registry試験0144bfbで標準combo allの**47 passed、1917.29秒**。
@@ -448,7 +462,7 @@ S2/P4 compile・依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_22-2
 ## 実行
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。
-`.env.example`を`.env`へコピーして実際のportを設定する。P4/S2/S31は現在の対象に含めない。
+`.env.example`を`.env`へコピーして実際のportを設定する。P4は別のloopback comboで追加した。S2/S31は未登録。
 
 ```sh
 cd /home/mt/dev/EspUsbDevice-v3/validation

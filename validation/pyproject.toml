@@ -9,8 +9,9 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["s3"]
+testpaths = ["s3", "p4"]
 addopts = "--noconftest --maxfail=1"
 arduino_combos = [
     "s3: primary=s3_host,device=s3_device",
+    "p4: primary=p4_loopback",
 ]
