@@ -1407,3 +1407,182 @@ S2/P4 compile・全29 sourceの依存/nmも成功。原本`/tmp/pytest-embedded/
 任意の全EP0順序や全競合順序を検証済みとは扱わない。
 初期実機はS3–S3。将来の常駐案はS3二台＋S31–HS–P4–FS–S2の計五台。
 P4は一方がEspUsbDevice、他方がEspUsbHostとなる想定で、二つのDevice controller同時利用を約束しない。
+
+
+## 2026-10-29 remote wakeup停止guardまでの引き渡し原文
+
+以下は整理前の記録。途中の「次」「未実装」は現在の状態ではない。
+
+# v3開発の引き渡し
+
+更新: 2026-10-29。worktree `/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
+最新製品はremote wakeupの停止guardを追加。基本経路f9f807c、新規境界1件45.24秒成功。
+これから固定ソースの全47件を回す。S2/P4は基本版compile済み、停止guard後を再buildする。
+未使用include差分0を維持し、Device宣言のみは共通lockのリンクでFlash+44/global+16。
+詳細は[Remote wakeup](V3_REMOTE_WAKEUP.ja.md)とvalidation README。
+
+## 方針と入口
+
+Device/Function/config/beginの明示的な構成を維持し、使用する機能だけに費用を持たせる。
+旧互換性より一貫した最終形を優先するが、利点のない改名や互換shimは作らない。
+CH32RVはAPI調整の設計事例、OEPは利用者の一例であり、移植・特化の対象ではない。
+
+- [開始停止・移行](V3_MIGRATION.ja.md)、[API判断](V3_API_DECISIONS.ja.md)
+- [独立試験](../validation/README.ja.md)、[所有権](V3_ARCHITECTURE.ja.md)
+- [全体計画](V3_DEVELOPMENT_PLAN.ja.md)、[CH32RV比較](V3_CH32RV_API_ALIGNMENT.ja.md)
+- [DWC2の由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)
+
+[過去の実装・実測記録](V3_PROGRESS_HISTORY.ja.md)は履歴資料。
+今回整理前の引き渡し全文もそこへ保存した。古い「未完」を現状と混同しない。
+詳細な結果はvalidation READMEと各APIガイドへ置き、この文書に重複して積み増さない。
+
+## 現在の実装
+
+Vendor/CDC/HID/MIDI/MSC/Audio/DFU/NCM/CCID/Video、descriptor registry、EP0/core、
+runtime、controller/IRQ/cache、保守DWC2 forkまで本体内部で維持する。
+旧TinyUSB API・vendor build snapshot/configやSDK同名headerへのfallbackはない。
+MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依存・nmと実機を合わせて確認する。
+
+- 資源はinstance設定に応じて開始時確保し、end/rollbackで回収。通常転送中の反復heap取得は避ける。
+- `started`は資源所有、`ready`はHost構成、`suspended`はbus休止。DescriptorsOnlyはworker/PHYなし。
+- workerのstack/priority/coreとevent容量は開始config。空taskやstartTinyUsb互換入口は撤去。
+- CDCはArduino Stream、VendorはPrint。MIDIはpacket APIでPrint/Streamではない。
+- borrowed bulkの総長はmin(UINT32_MAX,PTRDIFF_MAX)。上限queryをそのままmallocせず、アプリの予算を決める。
+- [Audio](V3_AUDIO_API.ja.md)はformat保存を実数化し、停止後のclearFormats、共有clockの複数rate、
+  PCM形状のalternate、currentFormat snapshotに対応。最大frame/packetを開始時に予約し、fence後に再activate。
+  外部ringはpointer＋提供byte長を渡し、最大frame幅に対する不足をbeginで拒否する。
+- ISO OUTの間欠送信で最初のpacketだけ受信する問題を実測し、4480513でincomplete OUTをDMA停止後に返却・再arm。
+- 未選択Functionのstateやkeymapを共通表で引き込まない。Vendor単独ELFとS2/P4 Vendor＋CCIDで確認する。
+
+## 最新の検証範囲
+
+| 単位 | 結果・記録 |
+| --- | --- |
+| archiveリンクの最小probe | include_onlyはno_libraryとFlash259465/global21584で一致（追加0）。device_onlyもIP globals/未使用Fn/startup symbolなし。全44件成功、3745.31秒/88 serial STOPPED/panicなし |
+| Vendor反復/再列挙 | 新規1件59.76秒成功。1000フレーム/713000 byte×2、39再接続、80 reset hook、heap一致。全体収集44件 |
+| Audio予約幅の最小化 | 4 UAC1 duplexの構成/順次転送1件67.36秒＋関連6件441.14秒成功。14 logs STOPPED/panicなし、S2/P4 compile/依存/nm成功。全体収集43件 |
+| 能力表統一/番号6 | 新規2件81.91秒＋関連4件199.67秒成功。12 logs STOPPED/panicなし、S2/P4 compile/依存/nm成功。全体収集42件 |
+| IN上限の拒否/回復 | 新規1件30.53秒成功、2 logs STOPPED/panicなし。過大3構成を各3回拒否、2 CDCで30往復、製品変更なし。全体収集41件 |
+| FIFO修正後f5d1571の全40件 | **40 passed、1997.81秒、skip/error/failure/unfinishedなし**。80 logs STOPPED/panicなし。`.pytest-results/tx-fifo-all*` |
+| Audio＋CDC/FIFO修正後 | 4構成のfocused 1件36.60秒成功、2 logs STOPPED/panicなし。S2/P4 compile成功。全40件の結果とは区別 |
+| CDC＋MSC同時通信 | 新規1件59.01秒＋既存2件81.69秒、6 logs STOPPED/panicなし。製品e329ef6の変更なし。全体収集39件 |
+| 外部ring長指定後の関連6件 | **6 passed、369.22秒**。12 logs STOPPED/panicなし、816開始＋14設定失敗回復/heap一致。`.pytest-results/audio-buffer-extents*` |
+| 製品033f2d8の全38件 | **38 passed、2544.60秒、skip/error/failure/unfinishedなし**。76 logs STOPPED/panicなし。`.pytest-results/audio-alternates-all*` |
+| 外部ring/能力表の追加試験 | 2件124.49秒＋1件31.33秒＋共有probe 3件88.15秒。全て成功、計12 logs STOPPED/panicなし。製品変更なし |
+| PCM alternate導入時の関連7件 | 7 passed、358.65秒、14 logs STOPPED/panicなし。`.pytest-results/audio-alternates-related*` |
+| 直前の全体基準 f1c9f29 | 34 passed、1631.13秒、68 logs STOPPED/panicなし。`.pytest-results/wide-loan-all*` |
+| S2/P4 | 外部ring長指定後のAudioPlayback compile成功、各29 sourceの依存/nmに旧stack/SDK fallbackなし。Vendor＋CCIDの基準は033f2d8。USB実機未確認 |
+| examples | archive設定後052bcbbで全8例×S3/S2/P4の24 compile成功。ELF/FQBN/機械種別/archive/29依存/native出所/nmも監査済み。`.pytest-results/archive-examples-*` |
+
+最新関連7件は、4 PCM形状×2規格の16 ISO交換、14回の旧ring poison、frame境界/状態照会、
+32個の不正alternate要求、13 rate・158 byte RANGE、停止後の再構成、実bus休止、core要求を含む。
+開始816＋設定14取得点の失敗回復、heap346704→346704を確認した。同じ条件を全38件でも確認した。
+全体監査済み。read-only scriptは`/tmp/espusb-v3-audio-alternates-all-audit.py`、
+集計は`.pytest-results/audio-alternates-all-audit.txt`、原本は`/tmp/pytest-embedded/2026-10-28_22-37-36-110392/`。
+
+## 試験の運用
+
+`validation/`だけを開発試験の入口とする。旧tests/examplesは新APIの合否基準やhelperとして使わない。
+plugin配布版1.10.0、local `698bb29`、Core3.3.12、EspUsbHost2.10.1（必要なprobeのみ）。
+標準combo `s3: primary=s3_host,device=s3_device`、`--noconftest --maxfail=1`。
+独自conftest/pluginへhookを移さない。不足機能はplugin側の拡張相談を優先する。
+
+```sh
+cd /home/mt/dev/EspUsbDevice-v3/validation
+uv sync --locked
+uv run --locked --env-file .env pytest --combo all --collect-only -q
+uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-results/v3-all.xml
+```
+
+実機pytestは一つずつ。対応するbuild/test中は製品とprobeを変更しない。
+別exampleのcompileは`build/examples/<profile>/<sketch>/`へ分離し、実機suiteの生成物と共有しない。
+全38件の実行中の追加作業はAudioPlayback例と文書だけで、製品/probeは033f2d8に固定した。
+
+## 次の単位と未完了
+
+1. FIFO修正後の全40件、回収/所有権・依存の監査は完了。AudioPlayback/MscCdcBlocksも各3 profile compile成功。
+2. 外部ringの最大frame境界・guardと能力表拒否/修正後の再開始は確認済み。
+   外部pointerに提供byte長2項目を追加し、長さ不足を開始前に検出。Audio本体304 byte（+8）、新規取得点なし。
+   configureは他クラスと同様に戻り値esp_err_tで確認する。
+   代表複合はHID＋CDC＋Vendorの実通信に加え、CDC＋MSCの同時往復/メディア異常間の継続を確認した。
+   Audio＋CDCの4構成も実通信し、疎なIN番号とTX FIFO番号の混同を修正。追加map/取得点なし。
+   全40件で取消し/STALL/reset/ISOを再確認し、80 serial・回収・依存を監査した。
+   S3のIN個数上限超過は既存の上位validatorがbegin/DescriptorsOnlyともIRQ前に拒否し、回復後の2 CDCも実測した。
+   「open時判定が主」という見立ては訂正。番号上限の差も解消し、S3番号6の双方向通信・番号7拒否を確認。validator/bulk/ISO予算をport表へ統一した。
+   Audio予約幅もmax(IN,OUT)へ合わせ、4 UAC1 duplexの構成/順次転送と既存Audioを実測した。後続Functionの番号は詰まる。
+   全体計画冒頭に現在の証拠と不足を照合した。typed HID、任意storage helper、remote wakeup正経路、長期/OS/他機種は未完。
+   新規no_library/include_onlyで未使用Netif.cppのIPAddress参照によるFlash1168/global64 byteを特定。
+   dot_a_linkage=trueで最小include差分0を確認した。次は全44件と全8 examples×3 profilesを固定ソースで確認する。
+   .pytest-results/unused-after-archive-audit.jsonにELF/map/nm等の場所と数値を記録。
+3. CCIDのmessage>=MPSは仕様上必要。P4 HSでは既定320がMPS512を満たさないため512以上の設定が必要。
+   Audioの方向内channel数変更、PCM形状ごとに異なるrate集合、borrowed PCM/外部codec clockは別の設計対象。
+4. OS互換、remote wakeup、長時間、S2/P4の実機FS/HSは後段。S31は現SDK非対応の新規port対象。
+   任意の全EP0順序や全競合順序まで検証済みとは扱わない。
+5. 共有toolkit管理のrelease workflowは未変更。公開前にvalidation/legacyのarchive範囲をtoolkit側で調整する。
+   新examplesはまだ全クラスcatalogではない。古い非V3資料は履歴として残し、全リンクの修復済みとはしない。
+
+初期実機はS3–S3。将来の常駐案はS3二台＋S31–HS–P4–FS–S2の計五台。
+P4は一方Device/他方Hostを想定し、二つのDevice controllerの同時利用を約束しない。
+
+
+全40件は製品/probeをf5d1571に固定して成功し、最終XMLから
+`/tmp/espusb-v3-tx-fifo-all-audit.py`を実行して監査した。
+S2/P4 Vendor＋CCIDの修正後compileは完了、transcriptは`.pytest-results/tx-fifo-{s2,p4}-build.txt`。
+全80 serial、FIFO対応、Audio/CDC/MSC複合同時進行、外部ring長、既存の回収/STALL/reset、
+S3 Vendor単独＋S2/P4 Vendor/CCIDの全29 source依存/nmは全て成功。
+開始816＋設定14取得点の失敗回復、heap346704→346704、DWC2 storage128/192/256/256も維持。
+集計は`.pytest-results/tx-fifo-all-audit.txt`、原本は`/tmp/pytest-embedded/2026-10-29_02-49-00-060325/`。
+
+全40件実行中の追加作業は新MscCdcBlocks例と文書のみだった。例は分離したbuild/examples配下で3 profileとも成功、
+未選択Audio/NCM/Video/CCID/keymap/FAT helperの除外も確認した。製品/probeはf5d1571のまま。
+
+進行中（052bcbbの製品ソース固定）: `/tmp/espusb-v3-archive-all.txt`、
+`.pytest-results/archive-all.xml`、`/tmp/espusb-v3-archive-examples-{esp32s3,esp32s2,esp32p4}.txt`。
+監査用`/tmp/espusb-v3-archive-all-audit.py`は準備済み。44件/88 serialを期待し、
+Audio予約幅修正後のFIFO対応を使用する。S2/P4は今回のVendorEcho ELFを対象にする。
+終了待ちで同じjobを再起動しない。新規hid_typedは実行中44件の収集には含まれない。
+新規hid_typedはS3 Host/Device compile・1件収集まで成功、実機結果は未確認。
+公開typed APIの単体/複合×2開始、44照合/52 inputを次に確認する。
+
+全24 examplesは全profile `passed=8 failed=0`で終了。
+`/tmp/espusb-v3-archive-examples-audit.py`も成功し、JSON/transcriptを保存済み。
+MSCのRAM/FAT helperの独立probeを準備中。44件とは別で、実機結果はまだない。
+
+052bcbbの全44件は44 passed、3745.31秒、skip/error/failure/unfinishedなし。
+`/tmp/espusb-v3-archive-all-audit.py`成功。88 serial全停止、heap346768一致、
+816＋14の取得失敗回復、Audio/CDC/MSC複合・疎endpoint・追加soakを確認した。
+続くMSC helperも1 passed39.64秒、raw/FAT各4往復、8 guard、2 logs停止。
+新typed初回はraw-onlyで1 passed44.47秒だがSystem descriptorの意味を見ていない。
+公開System定数1/2/3に対しdescriptorがusage0..3を広告する不整合を発見し、補強/修正を次に行う。
+これらの原本・監査先はvalidation README冒頭へ記録。queued runner59201/23592はexit0で終了済み。
+[remote wakeup調査](V3_REMOTE_WAKEUP.ja.md)は8cc6e02。Core3.3.12/IDF5.5.5のHost制約に注意。
+
+System修正12b165b: 新typed 1件75.44秒＋関連6件510.98秒は全成功。
+14 logs全停止/panicなし、816＋14取得失敗回復とheap346768一致。
+S2/P4のtyped3種のcompile、ELF/29依存/archive/native出所も成功。
+`.pytest-results/hid-system-{descriptor-after,related,cross-audit}*`へ記録した。
+Gamepadのhat中央0もdescriptor上は方向扱いで、次に意味の照合とNull修正を行う。
+
+Gamepad/global修正: 元のhatは上39/右118度・中央非Nullで失敗。
+hatだけ修正すると独自Functionの物理単位が複合Gamepadの軸へ漏れて失敗。
+merge時にFunction全体をPush/Popで包み、hatの方向1..8/中央Nullとbuttonsの物理範囲を正した。
+新typedは1 passed51.04秒、2 logs停止/panicなし、単独/複合の各4写像と52 inputを確認。
+統合descriptorはFunctionごと+2 byte、開始時parserの一時stackが必要。通常転送中の追加取得なし。
+Systemの0はarrayの未押下で、Null State bitに依存しない。arrayの不要なbit指定も外した。
+次はこの製品sourceを固定したHID関連6件・S2/P4 typed compileを確認する。
+
+060214fの関連6項目は全て成功結果を確認した。最初の4件はそのまま成功。
+descriptor_storageは古い長さ366の期待で失敗し、申告長とHost取得実長370の照合へ直して成功。
+allocation_failureはmode11の固定23回が実24回と合わず失敗。47構成のbaselineを測り全取得点へ注入する試験へ直した。
+最終1件は51.61秒、817失敗/817回復、14設定失敗とheap346768一致。
+関連3実行の16 logs全停止/panicなし。成功6項目と2期待値失敗を混ぜて一括成功と表現しない。
+S2/P4 typed/Customの修正後compile・29依存/nm/ELF/native出所も成功。
+監査は`.pytest-results/hid-globals-coverage-audit.json`と`hid-globals-cross-audit.json`。
+最新の標準収集は46件（052bcbbの全44件＋新typed/MSC helper）。全46件一括は未実行。
+remote wakeupは調査/候補のみで未実装。既存workerとepochを使い常駐資源を増やさない候補を調査文書末尾に記録した。
+SD/OTA/PC OS、S2/P4実機、S31 portの未完も維持する。
+
+Remoteは能力広告・Host許可・非同期要求を実装した。古い「未実装」は下の履歴記述であり、現状は上記。
+新規試験はS3–S3のclock gate/ungateを伴う手動Hostで実wake status/SOF/payloadを確認。
+worker保留→要求queue→reset→再列挙と、停止中17回/停止後32回の要求・照会拒否も成功。
+S2/P4実機・PC OSのremoteは未確認。全体は47件収集となり、直前の全44件と追加関連実行を混同しない。

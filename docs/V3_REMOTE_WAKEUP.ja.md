@@ -38,12 +38,12 @@ bus resetを入れ、再列挙後の許可消去と通常通信を確認した�
 修正前は停止待機中に照会がtrueのままで失敗し、既存g_stopを使って受付/実行を抑止した。
 停止完了は進行中処理の終了を待つ。停止開始前に既に出力中の信号を即時中断する契約ではない。
 記録はremote-wakeup-{reset,boundaries,stop-before,stop-after}*。
-S2/P4は基本版f9f807cのcompile・29依存・native pulse出所・未選択class除外を確認した。
-停止guard後の再buildと全47件を次に確認する。S2/P4実機とPC OSは別に残る。
+S2/P4は停止guard後80e8676でもcompile・機械種別・archive・29依存・native pulse/IO/delay出所・
+未選択class除外を確認した。記録remote-final-cross-audit.json。全47件は実行中。S2/P4実機とPC OSは別に残る。
 
 S3最小probeはinclude_onlyの追加Flash/globalが0のまま。Device宣言のみはFlash261957/global21840 byte。
 旧archive基準261913/21824に対し+44/+16で、Device object自体は196 byteで変わらず、共通生存確認lockが新たにリンクされる。
-未使用のwake要求・pulse/worker startup/PHY startupや他class stateは含まれない。記録remote-unused-audit.json。
+未使用のwake要求・pulse/worker startup/PHY startupや他class stateは含まれない。停止guard後も同値で、記録remote-final-unused-audit.json。
 
 ## 実装前の調査記録
 
