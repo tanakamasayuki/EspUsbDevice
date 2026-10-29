@@ -1,7 +1,7 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品はdot_a_linkageのarchive化を追加し、最小include差分0を確認。全class回帰はこれから。
+最新製品はdot_a_linkageのarchive化を追加し、最小include差分0を確認。全class回帰44件と全8例×3 profileを実行中。
 Audio予約幅はcface78、能力表共有とS3番号6のIN/OUT実測は324231a。
 疎なINのFIFO修正はf5d1571、Audio外部ring長指定e329ef6。metadataは3.0.0、未release。
 mainの文書commit `3fed50d`を取り込み済み。まとまりごとのローカルcommit、pushなし。
@@ -120,3 +120,11 @@ S3 Vendor単独＋S2/P4 Vendor/CCIDの全29 source依存/nmは全て成功。
 
 全40件実行中の追加作業は新MscCdcBlocks例と文書のみだった。例は分離したbuild/examples配下で3 profileとも成功、
 未選択Audio/NCM/Video/CCID/keymap/FAT helperの除外も確認した。製品/probeはf5d1571のまま。
+
+進行中（052bcbbの製品ソース固定）: `/tmp/espusb-v3-archive-all.txt`、
+`.pytest-results/archive-all.xml`、`/tmp/espusb-v3-archive-examples-{esp32s3,esp32s2,esp32p4}.txt`。
+監査用`/tmp/espusb-v3-archive-all-audit.py`は準備済み。44件/88 serialを期待し、
+Audio予約幅修正後のFIFO対応を使用する。S2/P4は今回のVendorEcho ELFを対象にする。
+終了待ちで同じjobを再起動しない。新規hid_typedは実行中44件の収集には含まれない。
+新規hid_typedはS3 Host/Device compile・1件収集まで成功、実機結果は未確認。
+公開typed APIの単体/複合×2開始、44照合/52 inputを次に確認する。
