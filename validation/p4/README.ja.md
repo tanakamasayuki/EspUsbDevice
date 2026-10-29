@@ -29,7 +29,22 @@ USB DMA stagingは内部RAM。PSRAMへの直接DMAという結果ではない。
 uv run --locked --env-file .env pytest p4/psram --combo p4_psram -q -rs
 ```
 
-## 結果
+## Audio ISOの追加確認
+
+probe e577698、UAC1/UAC2×両controllerの4件33.95秒成功、4 logs全正常停止。
+各2開始し、16 kHz/mono/16 bitのplayback/captureを同時に流した。100 msのwarmup後の
+測定で89600/88064 byteを照合、bad0、playback overrun/capture underrun0。
+UAC1は明示feedbackなし、UAC2はfeedback更新/reject0も確認。codec/I2Sは使わない。
+postv3 Audio compileも成功。P4X実機の確認ではない。
+
+```sh
+uv run --locked --env-file .env pytest p4/audio --combo p4 -q -rs
+```
+
+現在はP4通常14＋PSRAM2の16項目、S3と合わせ63項目を標準allで収集する。
+各単位の実行結果と区別し、全63一括成功とは扱わない。
+
+## 初回6件の結果
 
 標準pluginのcombo `p4: primary=p4_loopback`、独自conftestなし。
 6件全成功、67.84秒、skip/error/failure/unfinished 0。6 serial全て正常停止、panicなし。
@@ -52,7 +67,7 @@ uv run --locked --env-file .env pytest p4 --combo p4 -q -rs
 uv run --locked --env-file .env pytest --combo all --collect-only -q
 ```
 
-標準allではS3の47件＋P4の6件＝53件を、登録した結線に対応するcomboだけで収集する。
+初回は標準allでS3の47件＋P4の6件＝53件を収集した。現在の件数は追加結果を参照。
 S3全47件と今回P4全6件は別実行で成功した。全53件一括成功という記録ではない。
 `TEST_SERIAL_PORT_P4_LOOPBACK`を設定する。他のP4やS2/S31は自動選択しない。
 

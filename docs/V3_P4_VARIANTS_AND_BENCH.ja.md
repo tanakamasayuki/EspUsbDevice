@@ -73,13 +73,14 @@ S3 47件、P4初回6件、今回4件は別実行。57件一括成功という記
 | 確認したいもの | 今ある環境で可能なこと | 追加条件 |
 | --- | --- | --- |
 | MSC/MIDI、Vendor/CDC/HID | 両controllerのFS linkまで実測済み | なし |
-| Audio ISO、Video、DFU、CCID、NCM | 現loopbackでRAM payload/模擬backendの試験を追加可能 | codec/SD/card readerはUSB層の試験には不要。順次probeを追加 |
+| Audio ISO | UAC1/UAC2、両controllerで同時duplexとfeedbackを確認済み | codec/I2S不要。FS link・mono16 kHz/16 bitの範囲 |
+| Video、DFU、CCID、NCM | 現loopbackでRAM payload/模擬backendの試験を追加可能 | SD/card readerはUSB層の試験には不要。順次probeを追加 |
 | PSRAM経由のcopy/ring | **既存boardで32 MiB確認、MSC保存先・Vendor RX/TX ringの実通信成功** | 専用p4_psram profileで有効化。追加RAM board不要。直接PSRAM DMAの検証ではない |
 | 480 MbpsのHS Device | 既存P4 2台のHS–HS、またはPCのUSB2 HS Hostへ接続 | native data cableの結線変更。独立log port。descriptor/bus speedがHIGH/MPS512になったことを確認 |
 | P4X固有の動作 | postv3 compileは完了 | v3.1以降（新規導入ならv3.2確認品）の実機1台、適合するboard/SDK profile |
 | PC OSのclass binding | PCをHS Hostにすれば同時に確認可能 | USB data deviceを実際にそのOSへ接続。serial portのforwardだけでは代替不可 |
 
-PSRAMの実容量/CPU copy経路は確認済み。次はAudio ISOと未確認class、HS実結線、P4X実機。
+PSRAMとAudio ISOは確認済み。次はDFU/CCID/Video/NCMの未確認class、HS実結線、P4X実機。
 NCMを同じMCUのlwIP IP間通信だけで合格にしない。raw frame/USB転送量でwire経由を確認する。
 DFUはまずRAM backendを使い、実OTA/SDへの書込みは別の試験範囲とする。
 
@@ -103,3 +104,20 @@ postv3＋PSRAM enabledのcompile/ELF/SDK package/29依存も成功。P4X実機�
 記録はvalidation/.pytest-results/p4-psram-{initial,native-audit}*、p4x-psram-build.txt。
 標準allのこの時点の収集はS3 47＋P4通常10＋PSRAM2＝59件（実行結果は各単位で別記録）。
 PSRAM comboは通常P4と同じ物理boardなので、実機pytestを並列起動しない。
+
+## Audio ISOの追加結果
+
+probe e577698。UAC1/UAC2×両controllerの4件33.95秒成功、4 logs正常停止/panicなし。
+各caseで2開始し、同時にHost→Deviceへ5a、Device→Hostへ6bのPCMを流した。
+16 kHz/mono/16 bit。開始後100 msはring充填のwarmupとし、その後約350 msを照合した。
+8測定でplayback89600 byte、capture88064 byte、payload不一致なし。測定中の
+playback overrun/capture underrunとも0、active formatのsnapshotも一致した。
+UAC1は明示feedbackなし、UAC2はfeedback更新あり/reject0を確認した。
+
+初回はUAC1にも明示feedbackを要求した試験条件で失敗。PCM自体は正しく、
+protocolごとの契約へ試験を直して片方向4件成功後、duplex4件も成功した。製品の変更はない。
+postv3のAudio compile/ELF/29依存も監査済み。新たな機材・SDK patchは不要だった。
+記録p4-audio-{initial,after,duplex}*、p4x-audio-compile-audit.json。
+
+標準allの最新収集はS3 47＋P4通常14＋PSRAM2＝63項目。各単位の成功記録であり全63一括成功ではない。
+未確認classの追加を継続する。HSの具体的な結線は2台のboard型番とnative connector接続先の確認待ち。

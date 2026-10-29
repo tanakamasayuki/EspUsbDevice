@@ -17,7 +17,7 @@ registry試験0144bfbで旧descriptor長の固定期待を実取得照合へ直�
 | 明示構成・実行時設定・移行 | srcの各configure、V3_MIGRATION/API_DECISIONSと独立probe。build_opt/TinyUSB設定不要 | 全体としての出荷判断は継続 |
 | 未使用コスト | Vendor/Audio等のnmで他class state不在。最新の取得点試験は実測817開始＋14設定失敗回復、100 begin/endも確認 | archive化で最小include差分0。80e8676でも同値。Device宣言のみは旧archive基準からFlash+44/global+16、共通lock等のリンク差分。現在版80e8676の全24 examplesと全47件の回帰は成功 |
 | class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Systemの標準usage/array解放は新規1＋関連6件とS2/P4 compile成功。Gamepad hat/複合global分離は新規1件・関連6項目とS2/P4 compile成功。RAM/FAT helperの8開始/実通信は成功。SD/Firmware helperの実通信は不足 |
-| core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 internal RAM DMAは両controllerのFS linkで確認。480 Mbps HS/PSRAMは未確認 |
+| core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 internal DMA、PSRAM保存先/ringとAudio duplexをFS linkで確認。480 Mbps HSは未確認 |
 | 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupの能力/許可/要求を実装し、S3の実wake・復帰/取消し/停止を確認。全47件回帰も成功、実wake/停止拒否のwire指標を監査済み |
 | 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
 | 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 80e8676の全47件・24 examplesとS2/P4 remote probeを監査。各29依存/archive/native出所を確認済み |

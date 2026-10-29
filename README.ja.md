@@ -67,7 +67,7 @@ controllerのendpoint予算内で組み合わせられ、ライブラリ共通�
 | --- | --- |
 | ESP32-S3 | 二台ピアのFS実機試験。列挙、各クラスの転送、所有権、reset/回復、故障注入 |
 | ESP32-S2 | controller/資源のcompile probe。実機確認は今後 |
-| ESP32-P4 | 両Device controllerのFS loopback実機：Vendor/CDC/HID、borrowed DMA。480 Mbps HS linkは未確認 |
+| ESP32-P4 | 両Device controllerのFS loopback実機：Vendor/CDC/HID/MSC/MIDI/Audio duplex、borrowed DMA、PSRAM保存先/ring。480 Mbps HS linkは未確認 |
 | ESP32-S31 | SDK/controller portを今後追加する対象。現時点では非対応 |
 
 S3二台のnative OTG同士を結線し、書き込み・ログ用portは各boardで別に用意します。

@@ -16,7 +16,9 @@ Vendor/CDC/HIDと65537 byteまでのDMAを確認。[P4記録](../validation/p4/R
 P4次段: 0bf46ddでMSC/MIDI追加4件31.85秒成功、4 logs正常停止/panicなし。
 両実機はv1.3。P4Xはpostv3 compile/ELF/29依存まで確認し、HW検証は未実施。
 [機種差・必要環境と次の試験](V3_P4_VARIANTS_AND_BENCH.ja.md)。PSRAMは53bcfebで2件成功、32 MiBと外部保存先/ringの実通信を確認。
-次はAudio/残classを進める。Audioの初回PCMは正しいが、UAC1にも明示feedbackを期待した試験条件を直し、再実行中。
+Audio e577698のUAC1/UAC2 duplex4件も33.95秒成功。8開始、PCM両方向/feedback/formatを確認。
+PSRAM/Audioのpostv3 compile・29依存/native出所も監査済み。最新収集63件。
+次はDFU/CCID/Video/NCM。HS結線用のboard型番/2台目native接続先は質問済み、未回答。
 
 ## 方針と入口
 
@@ -117,7 +119,7 @@ S3–S3を初期環境として、確認不要で進められる実装と検証�
 ## 未完了と次の判断
 
 固定sourceの全47件と関連監査は完了。新しい変更や未解決の懸念がなければ同じ試験を繰り返さない。
-P4の全class・480 Mbps HS link/PSRAM、S2実機、S31 port、PC OS結線、SD/OTA実媒体、長期連続、
+P4の未確認class・480 Mbps HS link、S2実機、S31 port、PC OS結線、SD/OTA実媒体、長期連続、
 shared toolkitの配布範囲・release判断は残る。S3 peer成功をこれらの代替にしない。
 remote wakeupは実装済みだが、SoC sleep/PC電源管理/電気適合性を保証した結果ではない。
 
