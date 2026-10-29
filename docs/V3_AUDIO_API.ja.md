@@ -375,6 +375,8 @@ FIFOを詰めて割り当てるよう修正した。USBのendpointアドレス�
 4構成それぞれで752/752/938/924回のCDC往復と187回のPCM進行の重なりを確認し、
 全payload・CDC byte総数・line coding・UAC2 feedbackが一致した。
 実registerでもendpoint 5→FIFO 4を含む14割当てを確認した。回数は進行確認の実測値で、性能指標ではない。
-S2/P4 Vendor＋CCID compileも成功。全体40件の回帰確認は別途実行する。
+S2/P4 Vendor＋CCID compileも成功。製品f5d1571を固定した全40件も40 passed、1997.81秒で成功し、
+80 logs STOPPED/panicなし、816開始＋14設定失敗回復/heap一致、FIFO対応と複合進行を監査した。
+全体記録は`.pytest-results/tx-fifo-all*`と[validation README](../validation/README.ja.md)を参照。
 原本`/tmp/pytest-embedded/2026-10-29_02-44-45-563887/`、記録`.pytest-results/audio-cdc*`。
 初回probeのbuild誤りと、修正前のwire失敗・診断結果も別名で保存した。

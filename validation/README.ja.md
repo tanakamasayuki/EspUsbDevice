@@ -7,6 +7,25 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## TX FIFO修正後の全40件（最新）
+
+2026-10-29、製品/probe `f5d1571`を固定。標準`pytest --combo all`は
+**40 passed、0 skipped/failed/error/unfinished、1997.81秒**。80 serial全てSTOPPED、STOP_FAILED/panicなし。
+816開始取得点と14設定取得点の失敗から全て回復し、heap346704→346704 byte。
+借用転送131072 byteの92返却、DWC2 storage128/192/256/256、reset IRQの3深度、
+実bus休止・CCID/Video/NCM HALT回復と3構成のTCP8193 byte交換も維持した。
+
+新しいAudio＋CDCは4構成で同時進行し、endpoint 5→FIFO 4を含む14 register対応を照合した。
+CDC＋MSCも64/4096 byte stagingで同時に進み、メディア異常中の継続・復帰とbyte総数が一致した。
+外部Audio ringの不足長16回・不正な組16回の拒否、36 guard検査、32 ISO交換も成功。
+S3 Vendor単独とS2/P4 Vendor＋CCIDの全29 sourceのcompiler依存/nm/addr2lineを監査し、
+旧stack/SDK TinyUSB fallback、未選択NCM/Video/keymapの混入はない。S2/P4はcompile-only。
+
+原本`/tmp/pytest-embedded/2026-10-29_02-49-00-060325/`、JUnit/transcript/serialコピー、
+監査集計と各nmは`.pytest-results/tx-fifo-all*`。
+実行中のMscCdcBlocks追加は独立した例と文書のみで、製品/probeを変更していない。
+OS/他SoC/HS実機や任意の全競合順序までを検証済みとは扱わない。
+
 ## Audio＋CDCと疎なIN endpointのTX FIFO
 
 `audio_cdc`は周期転送とbulkを同時に使い、UAC1/UAC2・24/48 kHz・Function登録順の4構成を確認する。

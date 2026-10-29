@@ -41,7 +41,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 | 単位 | 結果・記録 |
 | --- | --- |
-| FIFO修正後の全40件 | **実行中、未完了**。`.pytest-results/tx-fifo-all.xml`、`/tmp/espusb-v3-tx-fifo-all.txt`。exec session 14035 |
+| FIFO修正後f5d1571の全40件 | **40 passed、1997.81秒、skip/error/failure/unfinishedなし**。80 logs STOPPED/panicなし。`.pytest-results/tx-fifo-all*` |
 | Audio＋CDC/FIFO修正後 | 4構成のfocused 1件36.60秒成功、2 logs STOPPED/panicなし。S2/P4 compile成功。全40件の結果とは区別 |
 | CDC＋MSC同時通信 | 新規1件59.01秒＋既存2件81.69秒、6 logs STOPPED/panicなし。製品e329ef6の変更なし。全体収集39件 |
 | 外部ring長指定後の関連6件 | **6 passed、369.22秒**。12 logs STOPPED/panicなし、816開始＋14設定失敗回復/heap一致。`.pytest-results/audio-buffer-extents*` |
@@ -78,13 +78,14 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 ## 次の単位と未完了
 
-1. 全38件とAudioPlayback例の3 profileビルド、回収/所有権・依存の監査は完了。
+1. FIFO修正後の全40件、回収/所有権・依存の監査は完了。AudioPlayback/MscCdcBlocksも各3 profile compile成功。
 2. 外部ringの最大frame境界・guardと能力表拒否/修正後の再開始は確認済み。
    外部pointerに提供byte長2項目を追加し、長さ不足を開始前に検出。Audio本体304 byte（+8）、新規取得点なし。
    configureは他クラスと同様に戻り値esp_err_tで確認する。
    代表複合はHID＋CDC＋Vendorの実通信に加え、CDC＋MSCの同時往復/メディア異常間の継続を確認した。
    Audio＋CDCの4構成も実通信し、疎なIN番号とTX FIFO番号の混同を修正。追加map/取得点なし。
-   次は修正後の全40件を固定ソースで実行し、取消し/STALL/reset/ISOの回帰・80 serial・依存を監査する。
+   全40件で取消し/STALL/reset/ISOを再確認し、80 serial・回収・依存を監査した。
+   次はS3のIN endpoint個数上限を越えた構成を開始時に拒否するか実験する（ソース上はopen時の判定が主で、未実測）。
 3. CCIDのmessage>=MPSは仕様上必要。P4 HSでは既定320がMPS512を満たさないため512以上の設定が必要。
    Audioの方向内channel数変更、PCM形状ごとに異なるrate集合、borrowed PCM/外部codec clockは別の設計対象。
 4. OS互換、remote wakeup、長時間、S2/P4の実機FS/HSは後段。S31は現SDK非対応の新規port対象。
@@ -96,12 +97,13 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 P4は一方Device/他方Hostを想定し、二つのDevice controllerの同時利用を約束しない。
 
 
-全40件の実行中は製品/probeをf5d1571に固定。監査scriptは
-`/tmp/espusb-v3-tx-fifo-all-audit.py`（XMLの最終成功後に実行）。
+全40件は製品/probeをf5d1571に固定して成功し、最終XMLから
+`/tmp/espusb-v3-tx-fifo-all-audit.py`を実行して監査した。
 S2/P4 Vendor＋CCIDの修正後compileは完了、transcriptは`.pytest-results/tx-fifo-{s2,p4}-build.txt`。
-このscriptは全80 serial、FIFO対応、Audio/CDC/MSC複合同時進行、外部ring長、既存の回収/STALL/reset、
-S3 Vendor単独＋S2/P4 Vendor/CCIDの全29 source依存/nmを検査する。
-先に成功したfocusedは36.60秒、2 logs STOPPED/panicなし。全40件終了後に最新基準を記録する。
+全80 serial、FIFO対応、Audio/CDC/MSC複合同時進行、外部ring長、既存の回収/STALL/reset、
+S3 Vendor単独＋S2/P4 Vendor/CCIDの全29 source依存/nmは全て成功。
+開始816＋設定14取得点の失敗回復、heap346704→346704、DWC2 storage128/192/256/256も維持。
+集計は`.pytest-results/tx-fifo-all-audit.txt`、原本は`/tmp/pytest-embedded/2026-10-29_02-49-00-060325/`。
 
-全40件実行中の追加作業は新MscCdcBlocks例と文書のみ。例は分離したbuild/examples配下で3 profileとも成功、
+全40件実行中の追加作業は新MscCdcBlocks例と文書のみだった。例は分離したbuild/examples配下で3 profileとも成功、
 未選択Audio/NCM/Video/CCID/keymap/FAT helperの除外も確認した。製品/probeはf5d1571のまま。
