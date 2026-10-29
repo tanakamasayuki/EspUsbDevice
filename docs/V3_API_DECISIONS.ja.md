@@ -843,3 +843,21 @@ IN/OUTは同じ番号を共有でき、Audioもmax(IN数,OUT数)を使う。空�
 新たなfield/map/heap取得はなく、通常のDevice/Function/config/beginやPCM APIは維持する。
 4 UAC1 duplexの同時構成と順次転送、既存の単独/CDC複合を実機で確認した。
 詳細は[Audioガイド](V3_AUDIO_API.ja.md#functionのendpoint番号予約幅)。
+
+
+## CH32RV調整の反映: Video投稿結果とCDCの送信待ち（2026-10-30）
+
+VideoはsubmitFrame(frame,length)でEspUsbTransferSubmissionを返す形へ統一した。
+sendFrameのboolと、受理したframeを一度だけ返す契約は維持する。旧3引数overloadは残さない。
+[Videoの現行契約](V3_VIDEO_API.ja.md#frameの所有権と通知)を参照。
+
+CDCはArduinoのSerialとしての入口を優先し、copy writeをTX timeoutまでの空き待ちへ、
+flushをDMA/ZLPまでの期限付き完了待ちへ変更する。従来の「CDCも非blockingを維持」という判断を更新する。
+既定1000 ms、setTxTimeoutMs(0)で即時partial。読出しのStream timeoutは独立し、DTR必須化はしない。
+USB workerではpartial/送出開始のみ、ISRでは受理しない。reset/停止の世代変化で待ちを打ち切る。
+共通bulk・Vendor・MIDI・借用投稿の非blocking操作は維持し、CDCだけにtimeout/世代のmemberを置く。
+新しいring・待ちtask・mutexは追加しない。無期限の完了や無欠落の保証にはしない。
+[CDCの現行契約](V3_CDC_API.ja.md#cdc送信の期限とflush)を参照。
+
+関連CDC12件が374.48秒で一括成功。Video12件は直前の製品02c7509で179.81秒成功。
+実行ごとのsourceとserialを保存し、全80項目の一括成功とは扱わない。

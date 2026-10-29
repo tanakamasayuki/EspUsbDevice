@@ -3,6 +3,7 @@
 #include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbDeviceBus.h"
 #include "internal/EspUsbDeviceEndpoint.h"
+#include "internal/EspUsbRuntime.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -37,8 +38,35 @@ bool EspUsbDeviceCdcSerial::begin() {
   return true;
 }
 void EspUsbDeviceCdcSerial::end() {
+  txEpoch_.fetch_add(1, std::memory_order_relaxed);
   EspUsbDeviceBulkStream::end();
   espusb::internal::freeUsbMemory(controlBuffer_); controlBuffer_ = nullptr;
+}
+size_t EspUsbDeviceCdcSerial::write(const uint8_t *buffer, size_t size) {
+  if (!buffer || !size || xPortInIsrContext() || !writeCapacity()) return 0;
+  // The USB worker must remain free to deliver the completions we wait for.
+  if (espusb::internal::usbRuntimeInTask()) return EspUsbDeviceBulkStream::write(buffer, size);
+  const uint32_t timeout = txTimeoutMs(), started = millis();
+  const uint32_t epoch = txEpoch_.load(std::memory_order_relaxed);
+  size_t written = 0;
+  do {
+    if (epoch != txEpoch_.load(std::memory_order_relaxed) || !mounted()) break;
+    written += EspUsbDeviceBulkStream::write(buffer + written, size - written);
+    if (written == size || !timeout) break;
+    // Also make progress with autoFlush=false or a full copied TX ring.
+    EspUsbDeviceBulkStream::flush();
+    if (millis() - started >= timeout) break;
+    vTaskDelay(1);
+  } while (millis() - started < timeout);
+  return written;
+}
+void EspUsbDeviceCdcSerial::flush() {
+  if (xPortInIsrContext()) return;
+  const uint32_t timeout = txTimeoutMs(), started = millis();
+  const uint32_t epoch = txEpoch_.load(std::memory_order_relaxed);
+  EspUsbDeviceBulkStream::flush();
+  if (!timeout || espusb::internal::usbRuntimeInTask()) return;
+  while (epoch == txEpoch_.load(std::memory_order_relaxed) && mounted() && txPending() && millis() - started < timeout) vTaskDelay(1);
 }
 void EspUsbDeviceCdcSerial::assignFunctionIds(uint8_t instance, uint8_t stringIndex) { instance_ = instance; stringIndex_ = stringIndex; }
 esp_err_t EspUsbDeviceCdcSerial::setName(const char *name) {
@@ -114,6 +142,7 @@ esp_err_t EspUsbDeviceCdcSerial::onBreak(BreakCallback callback) {
   breakCallback_ = std::move(callback); return ESP_OK;
 }
 void EspUsbDeviceCdcSerial::onBulkReset() {
+  txEpoch_.fetch_add(1, std::memory_order_relaxed);
   notifyEndpoint_ = 0;
   portENTER_CRITICAL(&cdcLock);
   const bool changed = lineState_.dtr || lineState_.rts;

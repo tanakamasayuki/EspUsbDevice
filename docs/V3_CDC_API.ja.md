@@ -4,7 +4,8 @@
 VendorとCDCは`EspUsbDeviceBulkStream`のring、DMA、借用・返却、取消しを共有する。
 MIDIも同じcopy転送を使うが、公開APIは4 byte event単位とし、byte streamや借用転送を直接使わせない。
 共通EP0/coreとDWC2も本体内部で保守する。
-現在はCDCをArduino Stream、VendorをPrintとして公開し、MIDIはどちらからも派生させない。開始modeとworker設定は[移行ガイド](V3_MIGRATION.ja.md)を参照。
+現在はCDCをArduino Stream、VendorをPrintとして公開し、MIDIはどちらからも派生させない。
+2026-10-30からCDCのcopy write/flushは期限付き待ちを行う。Vendorと共通bulkの非blocking操作とは区別する。開始modeとworker設定は[移行ガイド](V3_MIGRATION.ja.md)を参照。
 
 ## 普通の利用
 
@@ -73,7 +74,7 @@ consume(console);
   setTimeoutはapplication側の読出し待ちで、USBの転送timeoutやbegin configではない。
 - peekは先頭の0..255、または空/非Stream RX modeなら-1を返す。消費せず、追加のcache領域を持たない。
   reset/end後も別のpeek cacheに古いbyteを残さない。
-- copy writeはpartial/nonblockingのまま。flushは送出開始で、wire完了待ちには変えない。
+- CDCのcopy writeはTX timeoutまで空きを待ち、flushは送信完了を待つ。期限0ならどちらも待たない。
 - readString等を選べばArduino Stringの費用を払う。通常のread/readBytesにStringを介在させない。
 
 Streamの既定timeoutは1000 ms。setTimeoutの値はFunction objectの状態として保持し、
@@ -93,6 +94,28 @@ Core3.3.12/S3、同じ小さなCDC echoのprobeで比較した。v2との性能�
 同toolchainでのsizeofはCDC 224→232、Vendor 168→168、MIDI 208→200、共通bulk 152→144 byte。
 CDCのStream stateが8 byte増える一方、MIDIから不要なPrint stateを除く。
 数値はこのprobeの記録で、全アプリ/他SoCのFlash増分を保証しない。
+
+## CDC送信の期限とflush
+
+`setTxTimeoutMs(timeout)`でcopy送信の待ち期限を指定する。既定1000 ms、0は即時partial。
+`txTimeoutMs()`で現在値を読める。稼働中も変更でき、各write/flushは呼出し開始時の値を使う。
+読出し用のStream::setTimeoutとは独立し、どちらもend→beginで保持する。
+
+空きがあればwriteはコピーしてすぐ戻る。要求長がringを超える場合も、通常taskでは期限内で
+残りを送り、受理した総数を返す。printも同じ経路を使い、単純なconsole.printの操作は維持する。
+切断/reset/停止や期限切れではpartial/0を返し得る。無欠落を保証するものではない。
+DTRはこれまでどおりwriteの必須条件ではなく、connected=falseでもHost構成済みなら送れる。
+
+flushはpendingのcopy送出を開始し、data/DMAと必要なZLPまで期限付きで待つ。
+Hostアプリの読出し完了を意味しない。期限切れでもpending dataを捨てず、後でHostが再開すれば続行する。
+voidなので期限切れを戻り値では通知しない。`autoFlush=false`でもflushは送出を始める。
+copy writeが空き待ちへ入る場合も送出を進めるので、大きなwriteが満杯のまま待ち続けない。
+期限0のwriteだけならautoFlush=falseの蓄積動作を維持する。
+
+USB workerのcallbackからのwriteは即時partial、flushは送出開始のみ。
+workerが自分の完了を待って停止することを防ぐ。ISRではwriteは0、flushは何もしない。
+借用writeDirect、Vendor/MIDI、共通bulkのwrite/flushにはこの待ちを加えない。
+CDC objectだけにtimeoutとreset/停止の世代を持ち、新しいring/待ち専用task/同期objectは確保しない。
 
 ## Arduino Printからの空き容量照会
 
@@ -122,7 +145,8 @@ MIDIはpacket APIを使う。後続のStream整理ではPrint継承自体を撤�
 CDCの既定値は、Hostの大きなreadへ少量のserial dataを渡せる動作を保つためである。
 Vendorは従来のv3のContinueを維持し、必要なら同じ設定で明示できる。
 ZLPが不要な連続streamではContinueを選べる。ZLPは一回のwriteをメッセージ境界にする契約ではなく、
-複数writeが蓄積されていればまとめて送出される。flushは送出開始で、完了待ちではない。
+複数writeが蓄積されていればまとめて送出される。CDCのflushはdataと必要な終端ZLPの完了まで期限付きで待つ。
+Vendor/共通bulkのflushは従来どおり送出開始のみ。
 ZLP送出中に次の送信を割り込ませず、コピー完了通知へ0 byte通知を追加しない。
 借用TXの`EspUsbTransferTermination`は転送単位の明示指定のままで、stream設定とは別である。
 
@@ -224,3 +248,28 @@ S2/P4 compileと新CdcConsole例のS3 compileも成功。実機はS3–S3のみ�
 続く製品`56a2c9a`固定の全34件も成功（2510.86秒、0 skipped/error/failure/unfinished）。
 68 serial全てSTOPPED、panicなし、774取得点の回復とheap前後同量を確認した。
 詳細は[一括結果](../validation/README.ja.md#native-stream変更後の全34件)。
+
+
+## CH32RV調整後のTX待ちの実測（2026-10-30）
+
+新規cdc_txの3件、既存cdc_stream/bulk_standard/audio_cdcの各1件、P4 loopback6件の
+計12件を標準combo allの一回で成功（374.48秒、skip/error/failure/unfinished 0）。
+18 serial logs全て正常停止、panic/heap破損なし。P4は両controllerのFS linkである。
+
+新規S3 probeは64-byte TX ring・64-byte stagingでautoFlushの有無を変え、
+DTR=1/0の各4097-byte printを照合した。Hostをbus suspendして実際に送信を止め、
+timeout0と60 ms、ringは空だがDMAだけ未完了のflush、resume後の送出を確認した。
+worker callbackは64 byteの即時partial、待ち途中のDevice.endは1000 msの期限前に復帰した。
+TX容量0なら1000 ms設定でも即座に0を返す。新規caseのHost受信16900 byteは全て内容一致。
+ISR経路を実機で発火した試験ではない。
+
+初回はring空きとDMA stagingを同じ容量とみなしたprobeの期待で失敗した。
+copy TXはDMAへ移した時点でringの空きが戻るため、停止HostへはDMA＋ringの計128 byteを受理し得る。
+この区別へ期待を直して2件成功後、TX無効化を追加し、最終12件も成功した。
+記録はvalidation/.pytest-results/cdc-tx-{initial,after,related}*、cdc-tx-audit.json。
+
+S2 CdcConsoleもcompile成功。29 source依存/未使用class state除去を監査した。
+今回のS2 buildではCDC objectは240 byteで、Stream化時の232 byteから8 byte増える。
+増加はCDCだけのtimeout/停止世代で、新しいheap領域や待ちtaskは追加しない。
+S2実機の結果ではない。記録cdc-tx-s2*。
+標準allの収集はS3 50＋P4通常28＋PSRAM2＝80件。全80件を一括実行した結果ではない。

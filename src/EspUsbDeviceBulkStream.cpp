@@ -515,6 +515,13 @@ void EspUsbDeviceBulkStream::flush() {
   if (state_ && !state_->stopping && state_->tx.used) { state_->flushing = true; state_->transmit(); }
   portEXIT_CRITICAL(&bulkLock);
 }
+bool EspUsbDeviceBulkStream::txPending() const {
+  portENTER_CRITICAL(&bulkLock);
+  const bool pending = state_ && !state_->stopping &&
+      (state_->tx.used || state_->txBusy || state_->directBuffer || state_->cancelTx);
+  portEXIT_CRITICAL(&bulkLock);
+  return pending;
+}
 bool EspUsbDeviceBulkStream::directWriteSupported() { return true; }
 size_t EspUsbDeviceBulkStream::maxDirectTransfer() const {
   portENTER_CRITICAL(&bulkLock);

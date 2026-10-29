@@ -1109,6 +1109,7 @@ protected:
   virtual size_t filterBulkRx(uint8_t *, size_t n) { return n; }
   virtual bool validateBulkTx(const uint8_t *, size_t) const { return true; }
   size_t copyTransferCapacity() const;
+  bool txPending() const;
   virtual uint16_t openBulkInterface(uint8_t port, const uint8_t *descriptor, uint16_t length,
       uint8_t &in, uint8_t &out, uint16_t &mps) = 0;
   bool openBulkPair(uint8_t port, const uint8_t *endpoints, uint8_t &in, uint8_t &out, uint16_t &mps);
@@ -1163,9 +1164,14 @@ class EspUsbDeviceCdcSerial : public EspUsbDeviceBulkStream, public Stream
 public:
   using Print::write;
   size_t write(uint8_t value) override { return EspUsbDeviceBulkStream::write(value); }
-  size_t write(const uint8_t *buffer, size_t size) override { return EspUsbDeviceBulkStream::write(buffer, size); }
+  // Copies all bytes when possible, waiting up to the TX timeout for room.
+  // Worker calls stay nonblocking; ISR calls accept nothing.
+  size_t write(const uint8_t *buffer, size_t size) override;
   int availableForWrite() override { return EspUsbDeviceBulkStream::availableForWrite(); }
-  void flush() override { EspUsbDeviceBulkStream::flush(); }
+  // Starts copied TX and waits for data/ZLP completion within the TX timeout.
+  void flush() override;
+  void setTxTimeoutMs(uint32_t timeout) { txTimeoutMs_.store(timeout, std::memory_order_relaxed); }
+  uint32_t txTimeoutMs() const { return txTimeoutMs_.load(std::memory_order_relaxed); }
   using EspUsbDeviceBulkStream::read;
   int available() override { return EspUsbDeviceBulkStream::available(); }
   int read() override { return EspUsbDeviceBulkStream::read(); }
@@ -1199,6 +1205,7 @@ protected:
   void onBulkReset() override;
   bool onBulkExtraCompletion(uint8_t endpoint, uint8_t result, uint32_t bytes) override;
 private:
+  std::atomic<uint32_t> txTimeoutMs_{1000}, txEpoch_{0};
   const char *name_ = nullptr;
   uint8_t instance_ = 0, stringIndex_ = 0, notifyEndpoint_ = 0;
   uint8_t *controlBuffer_ = nullptr;

@@ -150,4 +150,5 @@ S3–S3の独立validationを基準にし、conftestを追加しない。P4の�
 - Video submitFrameのSubmission戻り値を適用。sendFrameは維持し、旧3引数overloadは撤去。
   S3 8件＋P4 FS 4件の関連12件を一括成功（179.81秒）。[現行Video API](V3_VIDEO_API.ja.md)を参照。
 - VideoのISO既定512 byteと、Bulkを勧める用途をAPIガイドへ追記。transportの既定自体は維持。
-- 残りのCDC/Audio/DFU/MSCは上記の判断案であり、適用済みではない。
+- CDCのwrite/flushへ期限付き待ちを適用。setTxTimeoutMs、timeout0、worker/停止の扱いは[CDCガイド](V3_CDC_API.ja.md#cdc送信の期限とflush)を参照。新規3件＋既存S3 3件＋P4 6件の関連12件が一括成功（374.48秒）。S2基本例もcompile成功。
+- Audio/DFU/MSCは上記の判断案であり、適用済みではない。

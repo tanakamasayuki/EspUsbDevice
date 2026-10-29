@@ -49,7 +49,8 @@ MIDIと共通化した転送層で、RX/TX/transfer各1 byteのVendor往復も�
 
 writeは受け入れたbyteをコピーし、そのbyte数を返す。partialを扱い、復帰後は元bufferを再利用できる。
 `autoFlush=true`なら一byteでも送出が進む。`autoFlush=false`では明示flushまでringに保持する。
-flushは待ち処理ではなく、溜まったdataの送出開始である。空のflushは以降のwriteへ影響しない。
+Vendorのflushは待ち処理ではなく、溜まったdataの送出開始である。
+CDCのArduino facadeには[期限付き送信待ち](V3_CDC_API.ja.md#cdc送信の期限とflush)があり、このVendorの契約とは異なる。空のflushは以降のwriteへ影響しない。
 
 Arduinoの`Print&`へ渡した場合の`availableForWrite()`も実際のcopy送信の空きを返す。
 intへ収まらない値はINT_MAXに飽和する。size_tでの照会は`writeAvailable() const`を使える。

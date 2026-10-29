@@ -132,3 +132,28 @@ System ControlはConsumer Controlと同じく標準usage IDを引数にする。
 整数1/2/3の直書きやusage()との比較は変更が必要。0による解放は維持する。
 wire selectorとusageを正しくdescriptorで対応させ、未対応値は送信せず拒否する。
 [詳細と利点・影響](V3_HID_API.ja.md#system-controlのusage指定)を参照。
+
+
+## CH32RVとの調整によるv3開発途中の変更（2026-10-30）
+
+Videoの詳細な投稿APIは、id出力引数を廃止して共通のSubmission戻り値へ統一した。
+
+```cpp
+const auto submission = camera.submitFrame(frame, length);
+if (submission) {
+  // frameはonFrameResultで返るまで有効・不変に保つ。
+  // 必要ならcamera.cancelFrame(submission.id);
+} else {
+  // submission.errorを確認。idは0で、frameは借用されていない。
+}
+```
+
+単純なcamera.sendFrame(frame,length)は従来どおりboolを返す。
+[Videoの拒否理由と所有権](V3_VIDEO_API.ja.md#frameの所有権と通知)を参照。
+
+CDCは通常taskのwrite/printで、空きが足りない場合にTX timeoutまで待つ。
+flushも送信中のDMAと必要な終端ZLPまで期限付きで待つ。既定は1000 ms。
+従来の即時partialと送出開始だけの動作が必要なら、console.setTxTimeoutMs(0)を指定する。
+読出しのStream::setTimeoutとは独立する。DTR必須化や共通bulk/Vendor/MIDIへの待ち追加は行わない。
+worker callbackからは待たず、ISRでは送信を受理しない。通常の宣言/begin/printの基本例は変更不要。
+[CDCの期限・停止とflush](V3_CDC_API.ja.md#cdc送信の期限とflush)を参照。
