@@ -42,6 +42,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 | 単位 | 結果・記録 |
 | --- | --- |
+| Vendor反復/再列挙 | 新規1件59.76秒成功。1000フレーム/713000 byte×2、39再接続、80 reset hook、heap一致。全体収集44件 |
 | Audio予約幅の最小化 | 4 UAC1 duplexの構成/順次転送1件67.36秒＋関連6件441.14秒成功。14 logs STOPPED/panicなし、S2/P4 compile/依存/nm成功。全体収集43件 |
 | 能力表統一/番号6 | 新規2件81.91秒＋関連4件199.67秒成功。12 logs STOPPED/panicなし、S2/P4 compile/依存/nm成功。全体収集42件 |
 | IN上限の拒否/回復 | 新規1件30.53秒成功、2 logs STOPPED/panicなし。過大3構成を各3回拒否、2 CDCで30往復、製品変更なし。全体収集41件 |
@@ -92,7 +93,9 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
    S3のIN個数上限超過は既存の上位validatorがbegin/DescriptorsOnlyともIRQ前に拒否し、回復後の2 CDCも実測した。
    「open時判定が主」という見立ては訂正。番号上限の差も解消し、S3番号6の双方向通信・番号7拒否を確認。validator/bulk/ISO予算をport表へ統一した。
    Audio予約幅もmax(IN,OUT)へ合わせ、4 UAC1 duplexの構成/順次転送と既存Audioを実測した。後続Functionの番号は詰まる。
-   次は全体計画の残項目と現在の実装・検証範囲を照合し、S3で未完の必須項目を絞る。
+   全体計画冒頭に現在の証拠と不足を照合した。typed HID、任意storage helper、remote wakeup正経路、長期/OS/他機種は未完。
+   新規no_library/include_onlyで未使用Netif.cppのIPAddress参照によるFlash1168/global64 byteを特定。
+   次はdot_a_linkageのarchive化を実験し、include差分を除けるかと全classリンク/実通信を確認する。
 3. CCIDのmessage>=MPSは仕様上必要。P4 HSでは既定320がMPS512を満たさないため512以上の設定が必要。
    Audioの方向内channel数変更、PCM形状ごとに異なるrate集合、borrowed PCM/外部codec clockは別の設計対象。
 4. OS互換、remote wakeup、長時間、S2/P4の実機FS/HSは後段。S31は現SDK非対応の新規port対象。

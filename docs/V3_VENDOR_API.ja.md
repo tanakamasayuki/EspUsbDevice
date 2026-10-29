@@ -272,3 +272,13 @@ S2/P4はcompile成功、実機の確認はS3–S3のみ。結果はvalidation/.p
 製品`f1c9f29`固定の全34件も成功（1631.13秒、0 skipped/error/failure/unfinished）。
 68 serial全てSTOPPED、panicなし。774取得点の回復とheap前後同量、他classとの回帰も確認。
 詳細は[一括結果](../validation/README.ja.md#wide-loan変更後の全34件)。
+
+
+## 背圧を含む連続往復
+
+vendor_soakで1000フレーム・各方向713000 byteを照合し、39回のHost再列挙と終了後heap一致、
+非整列外部ringのguardを確認した。1 passed、59.76秒、2 logs STOPPED/panicなし。
+HostはINをcontinuous callbackで受信しながら同期OUTを送る。
+echo要求がDeviceのRX/TX保存量を超える場合、同期OUTを完了させてから初めてINを読むと相互待ちになる。
+Hostの並行受信、またはアプリの明示的な送受信分割で背圧を進める。capacityを無条件に大きくする契約は追加しない。
+詳細と原本は[実験記録](V3_EXPERIMENTS.ja.md#2026-10-29-e1e2の追加観測cface78)を参照。

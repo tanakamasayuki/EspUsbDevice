@@ -8,6 +8,25 @@ Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在
 [引き渡し](V3_HANDOFF.ja.md)、[API変更の判断](V3_API_DECISIONS.ja.md)、
 [所有権の出発案](V3_ARCHITECTURE.ja.md)、[実験台帳](V3_EXPERIMENTS.ja.md)を参照。
 
+2026-10-29の実装・証拠の照合: 製品cface78時点でNative class/core/DWC2とS3の代表構成まで進んだ。
+全体43件の収集に加え、今回vendor_soakを追加。古い段階名や初期case数を現在の合否として扱わない。
+
+| 要件 | 現状と証拠 | 残る確認 |
+| --- | --- | --- |
+| 明示構成・実行時設定・移行 | srcの各configure、V3_MIGRATION/API_DECISIONSと独立probe。build_opt/TinyUSB設定不要 | 全体としての出荷判断は継続 |
+| 未使用コスト | Vendor/Audio等のnmで他class state不在、開始816＋設定14失敗回復、100 begin/endの既存試験 | 新規no_library/include_only比較でincludeだけにFlash1168/BSS等64 byteの差。未使用Netif.cppのIPAddress参照をmapで特定し、除去を次の単位にする |
+| class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Gamepad/Consumer/Systemのtyped送信はdescriptor writer確認まで。RAM/FAT/SD/Firmware helperの実通信は別途不足 |
+| core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 cache/HSは実機未確認 |
+| 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupはadvertise/API入口がなく、正の経路は未実装。段階5の完了とはしない |
+| 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
+| 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 新しいarchive設定を採用するなら再度実機/リンクを確認 |
+| 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | 拡大benchは未結線。今回の追加で44件収集となる |
+| 機種・OS・配布 | S3–S3実機、S2/P4 compile-only、8つの新examplesと移行ガイド | S2/P4実機、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
+
+今回の優先順は、未使用netifのリンク副作用を除く実験、typed HID/任意helperの不足、
+remote wakeupの仕様・入口とS3実験の順に、確認不要で進められる単位を扱う。
+S2/P4/S31の実機やPCへの結線変更を必要とする項目を、S3 peer成功で代替しない。
+
 v3は、現在の明示的な構成と基本的な使い勝手を軸に、使う機能だけにコード・メモリ・実行コストを
 持たせるmajor releaseとする。公開APIを整理し、ビルド時の容量・転送方式設定を実行時の設定へ移す。
 最終設計の一貫性を互換性より優先する。基本例はなるべく同じ操作感にするが、よりよい設計になるなら変更できる。
@@ -190,7 +209,7 @@ conftestは標準化できない必要性が実証された場合の最後の手
 plugin 1.10.0のrelease guideのprofile組合せ、`--combo`、peerの章を再確認した。
 `--combo all`は対応profileのない組を展開せず、適合する組がないtestは`combo=none`でskipする。
 port未設定によるskipは未検証、設定済みportへの接続やbuild/upload失敗はerror、通信不一致はfailed。
-全件skipを失敗にする標準optionは追加候補として記録し、現在は今回の結果が15 passedであることを確認する。
+全件skipを失敗にする標準optionは追加候補として記録し、初期15件の結果だけに依存せず、各実行の収集数・JUnit・未完了数を確認する。
 終了値0だけを合格としない。旧`--usb-require`の独自監査は撤去した。
 試験は逐次実行し、compile省略時もuploadは行うというpluginの通常動作に従う。
 
@@ -264,6 +283,7 @@ Host役割交代時のVBUS source競合を防ぐ構成にする。USB-Cのrole�
 
 ## 次に着手する作業
 
-[API変更の判断](V3_API_DECISIONS.ja.md)に沿ってVendorの短い送信と容量・modeを優先する。
+当初優先したVendorの短い送信と容量・modeは実装・試験済み。現在の次作業は冒頭の照合表と
+[引き渡し](V3_HANDOFF.ja.md)を参照する。
 [引き渡し](V3_HANDOFF.ja.md)の独立S3–S3 probeから着手し、APIごとに影響と実験結果を記録する。
 旧test/sampleへの追従や、汎用registryの先行完成を目的にしない。

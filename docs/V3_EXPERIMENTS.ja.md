@@ -1,7 +1,8 @@
 # v3 実験台帳
 
 2026-10-26。実施済みの準備試験は[V3_HANDOFF.ja.md](V3_HANDOFF.ja.md)に記録する。
-本書E1以降は新実装を使って判断する実験仕様であり、合格済みではない。
+本書E1以降は新実装を使って判断する実験仕様である。実施済み・未実施は現在の引き渡しと
+開発計画の照合表、各API/validationの記録を参照し、本書だけから合否を推定しない。
 v2との網羅的な速度比較は不要。新実装の設計判断に必要な小さい比較だけ行う。
 数値は初回の試験条件であり、根拠があれば測定後に変えて判断理由を残す。
 
@@ -31,7 +32,7 @@ profile / 実機 / negotiated speed:
 - S3–S3のVendor往復を1/63/64/65/127/128/129 byteで確認する。開始・停止はtest本文で明示する。
 - plugin 1.10.0の標準`arduino_combos`・port・lock・dut/peersを使用し、`--combo all`で実行する。
   現在はS3–S3一組だけ。通信assertionをretry/skipで隠さない。
-- 現在は15ケースなので、今回15 passedであることとJUnitを確認する。終了値0だけでは全件skipを区別できない。
+- 初期は15ケースだった。現在の収集数・成否は各実行のJUnitと引き渡しで確認する。終了値0だけでは全件skipを区別できない。
 - pluginは組合せ単位のログ・結果とcleanup失敗後の中断を提供する。
   必須case監査・serial監査など不足が必要になったらpluginへの追加候補として整理する。
   独自conftestを別のファイルへ移して使い続けない。
@@ -197,3 +198,36 @@ v2比較値がないことはリリースを止める理由にしない。
 難しい境界はSol Highへ上げるか、ユーザーが選んだ現モデルでレビューする。モデル変更自体を自動化しない。
 別agentを常駐させることは前提にしない。
 購入機材や対応対象の追加を選ぶ場面だけは事実と選択肢を残し、実機なしで成功を補わない。
+
+
+## 2026-10-29 E1/E2の追加観測（cface78）
+
+標準combo/noconftestのvendor_soakは1 passed、59.76秒、2 logs STOPPED/panicなし。
+一意な32 bit連番を含む5/63/64/65/129/257/1024/4097 byteを1000フレーム送り、
+各方向713000 byteを全payload比較した。Hostを25フレームごとに再起動・再列挙し、
+39再接続、Deviceのreset hook80回を観測。CPU ringは非整列の外部257/509 byte、
+転送staging128 byteでguardを維持し、終了後のheapは356328→356328。
+実原本`/tmp/pytest-embedded/2026-10-29_04-36-15-691653/`、`.pytest-results/vendor-soak*`。
+
+初回Hostは同期OUTの完了後にINを開始し、1024 byteで背圧と相互待ちになった。
+Local EspUsbHostの実装/ヘッダでもvendorWriteは完了待ちであることを確認した。
+Hostをcontinuous IN＋callback受信へ直すと成立した。Device側のbufferを広げる修正は行っていない。
+初回の失敗もvendor-soak-initial-half-duplex-host*へ保持した。
+この試験は完全なフレームの間で再接続し、転送途中の取消し/resetは既存の独立probeで確認する。
+
+Core3.3.12/S3同一FQBNの小さいbuildを比較した。v2比較や測定frameworkではなく、未使用参照の切分けである。
+
+| probe | Flash (CLI) | globals (CLI) |
+| --- | --- | --- |
+| no_library | 259465 | 21584 |
+| include_only | 260633 | 21648 |
+| device_only（beginなし） | 263081 | 21880 |
+
+includeだけの差はFlash1168/global64 byte。nm/mapで、未使用EspUsbDeviceNetif.cpp.oの
+IPAddress constructor参照がArduino core.a(IPAddress.cpp.o)を取り込み、INADDR_NONE/IN6ADDR_ANYと
+その初期化・printTo、netif_listを残すことを確認した。Native USB task/PHYの自動開始を検出した結果ではない。
+ELF/map/nm/build.optionsとtranscriptは`.pytest-results/unused-before-archive*`へ保存した。
+
+候補はlibrary.propertiesのdot_a_linkage=trueで、個々の.oの直接リンクをarchiveへ変える。
+[Arduinoの公式仕様](https://docs.arduino.cc/arduino-cli/library-specification/)にある標準propertyで、
+利用側のbuild_optや内部型を増やさない。次にinclude差分と全classのリンク/実通信を確認して採否を決める。

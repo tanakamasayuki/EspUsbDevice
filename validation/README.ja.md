@@ -7,6 +7,14 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## Vendorの反復転送と再列挙
+
+新vendor_soakは1000フレーム・各方向713000 byteを全比較し、39 Host再接続、reset hook80回、
+外部ring guardと終了後heap356328→356328を確認した。1 passed、59.76秒、2 logs STOPPED/panicなし。
+初回の同期OUT→同期INによる相互待ちはHostの並行受信で修正し、失敗記録も保持した。
+詳細と原本は[実験台帳](../docs/V3_EXPERIMENTS.ja.md#2026-10-29-e1e2の追加観測cface78)を参照。
+記録`.pytest-results/vendor-soak*`。全体収集44件。この新規1件を全44件一括や長期連続の結果とは扱わない。
+
 ## Audio Functionの番号予約幅
 
 `audio_functions`は4 UAC1 duplexの同時構成を行い、各組のISOを順に選択して異なるPCM値を照合する。
