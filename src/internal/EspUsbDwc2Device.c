@@ -506,21 +506,17 @@ void espusb_controller_set_address(uint8_t rhport, uint8_t dev_addr) {
 }
 
 void espusb_controller_remote_wakeup(uint8_t rhport) {
-  (void) rhport;
-
+  espusb_controller_lock(false);
+  if (!espusb_controller_io_ready(rhport)) { espusb_controller_unlock(false); return; }
   EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
-
-  // set remote wakeup
   dwc2->dctl |= DCTL_RWUSIG;
-
-  // enable SOF to detect bus resume
+  // SOF confirms actual resume; requesting wakeup alone does not clear suspend.
   dwc2->gintsts = GINTSTS_SOF;
   dwc2->gintmsk |= GINTMSK_SOFM;
-
-  // Per specs: remote wakeup signal bit must be clear within 1-15ms
+  // Bound the signal without a scheduler tick or task preemption in the pulse.
   espusb_dwc2_wakeup_delay();
-
   dwc2->dctl &= ~DCTL_RWUSIG;
+  espusb_controller_unlock(false);
 }
 
 void espusb_controller_connect(uint8_t rhport) {

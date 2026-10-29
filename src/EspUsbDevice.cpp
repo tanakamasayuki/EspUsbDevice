@@ -1,6 +1,7 @@
 #include "EspUsbDevice.h"
 #include "internal/EspUsbHidDescriptor.h"
 #include "internal/EspUsbRuntime.h"
+#include "internal/EspUsbDeviceCore.h"
 #include "internal/EspUsbMemory.h"
 #include "internal/EspUsbDeviceRestart.h"
 #include <memory>
@@ -944,6 +945,24 @@ bool EspUsbDevice::suspended() const
 #endif
 }
 
+bool EspUsbDevice::remoteWakeupEnabled() const
+{
+#if ESP_USB_DEVICE_HAS_OTG
+  return usbStarted_ && espusb::internal::usbRemoteWakeupEnabled();
+#else
+  return false;
+#endif
+}
+
+esp_err_t EspUsbDevice::remoteWakeup()
+{
+#if ESP_USB_DEVICE_HAS_OTG
+  return usbStarted_ ? espusb::internal::requestUsbRemoteWakeup() : ESP_ERR_INVALID_STATE;
+#else
+  return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
 const EspUsbDeviceConfig &EspUsbDevice::config() const
 {
   return config_;
@@ -1578,7 +1597,7 @@ bool EspUsbDevice::buildConfigurationDescriptor(bool highSpeed)
   uint8_t *bytes = buffer.get();
   bytes[0] = 9; bytes[1] = USB_DESC_CONFIGURATION; put16(bytes + 2, uint16_t(required));
   bytes[4] = uint8_t(interfaces); bytes[5] = 1; bytes[6] = 0;
-  bytes[7] = uint8_t(0x80 | (config_.selfPowered ? 0x40 : 0)); bytes[8] = powerToDescriptor(config_.maxPowerMilliamps);
+  bytes[7] = uint8_t(0x80 | (config_.selfPowered ? 0x40 : 0) | (config_.remoteWakeupSupported ? 0x20 : 0)); bytes[8] = powerToDescriptor(config_.maxPowerMilliamps);
   if (!highSpeed && !validateControllerEndpoints(bytes, uint16_t(required))) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
   if (highSpeed) { configDescriptorHighSpeed_ = buffer.release(); highSpeedDescriptorLength_ = uint16_t(required); }
   else { configDescriptor_ = buffer.release(); configDescriptorLength_ = uint16_t(required); }

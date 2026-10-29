@@ -141,6 +141,8 @@ struct EspUsbDeviceConfig
   // what every release before this emitted.
   uint16_t deviceVersion = 0x0100;
   bool selfPowered = false;
+  // Advertise capability; only the Host can enable its use.
+  bool remoteWakeupSupported = false;
   uint16_t maxPowerMilliamps = 100;
   bool webusbEnabled = false;
   // nullptr advertises WebUSB without a landing page. When enabled, a URL
@@ -612,6 +614,12 @@ public:
   // Bus suspend is independent of Host configuration: ready() stays true.
   // False before USB startup, in DescriptorsOnly mode, and after end().
   bool suspended() const;
+  // Task-context Host-permission query; false after reset/end or in an ISR.
+  bool remoteWakeupEnabled() const;
+  // Task-context, nonblocking queue request. ESP_OK means accepted, not resumed.
+  // Rejected unless configured, suspended and enabled by the Host. Later state
+  // changes can cancel an accepted request. Duplicate pending requests fail.
+  esp_err_t remoteWakeup();
 
   const EspUsbDeviceConfig &config() const;
   uint16_t hidEndpointSize() const;

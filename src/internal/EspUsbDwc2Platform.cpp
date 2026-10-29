@@ -5,6 +5,7 @@
 #include "EspUsbController.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_rom_sys.h"
 #include "soc/periph_defs.h"
 #include "soc/usb_wrap_struct.h"
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
@@ -75,7 +76,7 @@ void espusb_dwc2_set_pulls(uint8_t port, bool connected) {
   config.dp_pulldown = config.dm_pulldown = !connected;
   USB_WRAP.otg_conf.val = config.val;
 }
-void espusb_dwc2_wakeup_delay(void) { vTaskDelay(pdMS_TO_TICKS(1)); }
+void espusb_dwc2_wakeup_delay(void) { esp_rom_delay_us(2000); }
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
 bool espusb_controller_dcache_clean(const void *p, uint32_t n) {
   return synchronize(p, n, ESP_CACHE_MSYNC_FLAG_DIR_C2M);

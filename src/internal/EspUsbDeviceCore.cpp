@@ -9,6 +9,7 @@
 #include "EspUsbDeviceBus.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/task.h"
 #include <algorithm>
 #include <atomic>
 #include <new>
@@ -17,7 +18,7 @@
 namespace {
 constexpr uint8_t Invalid = 255, Busy = 1, Claimed = 2, Halted = 4;
 // Deferred jobs are worker queue items, never controller events.
-constexpr uint8_t DeferredCall = 255;
+constexpr uint8_t DeferredCall = 255, WakeEnabled = 1, WakePending = 2;
 constexpr size_t PacketBytes = 64;
 portMUX_TYPE hardwareLock = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE endpointLock = portMUX_INITIALIZER_UNLOCKED;
@@ -53,7 +54,8 @@ struct Core {
   std::atomic<uint8_t> configuration{0};
   std::atomic<EspUsbSpeed> speed{ESPUSB_SPEED_INVALID};
   bool addressed = false, selfPowered = false;
-  std::atomic<bool> remoteWakeup{false}, recovering{false}, stopping{false}, resetting{false};
+  std::atomic<uint8_t> wakeupFlags{0};
+  std::atomic<bool> recovering{false}, stopping{false}, resetting{false};
   Endpoint *endpoint(uint8_t address) {
     if ((address & 0x70) || (address & 15) >= endpointCount) return nullptr;
     return endpoints + (address & 15)*2 + (address >> 7);
@@ -86,7 +88,7 @@ struct Core {
   }
   void resetDrivers() {
     configurationEpoch.fetch_add(1);
-    configuration.store(0); remoteWakeup = selfPowered = false;
+    configuration.store(0); wakeupFlags.store(0); selfPowered = false;
     control = {};
     for (unsigned i=0;i<unsigned(endpointCount)*2;++i) {
       endpoints[i].driver=Invalid; endpoints[i].type=0; endpoints[i].interfaceNumber=Invalid; endpoints[i].opened.store(false); endpoints[i].flags.store(0);
@@ -225,12 +227,13 @@ struct Core {
     switch (r.bRequest) {
     case 0: {
       if (r.bmRequestType!=128 || r.wValue || r.wIndex || r.wLength!=2) return false;
-      uint8_t state[2]={uint8_t(unsigned(selfPowered) | unsigned(remoteWakeup)<<1),0}; return reply(state,2);
+      uint8_t state[2]={uint8_t(unsigned(selfPowered) | unsigned(bool(wakeupFlags.load() & WakeEnabled))<<1),0}; return reply(state,2);
     }
     case 1: case 3: {
       const auto *p=espusb_device_descriptor_configuration(0);
       if (r.bmRequestType || r.wValue!=1 || r.wIndex || r.wLength || !configuration.load() || !p || !(p[7]&32)) return false;
-      remoteWakeup=r.bRequest==3; return status();
+      if (r.bRequest==3) wakeupFlags.fetch_or(WakeEnabled); else wakeupFlags.fetch_and(uint8_t(~WakeEnabled));
+      return status();
     }
     case 5:
       if (r.bmRequestType || r.wValue>127 || r.wIndex || r.wLength || configuration.load()) return false;
@@ -313,6 +316,31 @@ struct Core {
   }
 };
 Core *core=nullptr;
+bool wakeReady(const Core *s) {
+  return s && !s->stopping && !s->recovering && !s->resetting && !s->overflow &&
+      s->workerBus.load()==s->bus.load() && s->configuration.load() && s->connected &&
+      s->suspended && (s->wakeupFlags.load() & WakeEnabled);
+}
+void runRemoteWakeup(void *context) {
+  const uint32_t epoch=uint32_t(reinterpret_cast<uintptr_t>(context));
+  portENTER_CRITICAL(&hardwareLock);
+  auto *s=core;
+  const bool current=s && s->configurationEpoch.load()==epoch;
+  const bool allowed=current && (s->wakeupFlags.load() & WakePending) && wakeReady(s);
+  if(current && !allowed)s->wakeupFlags.fetch_and(uint8_t(~WakePending));
+  portEXIT_CRITICAL(&hardwareLock);
+  if(!allowed)return;
+  // A full five milliseconds after observing suspend is conservative relative
+  // to the USB five-millisecond idle minimum. No persistent timer is needed.
+  vTaskDelay(pdMS_TO_TICKS(5)+1);
+  portENTER_CRITICAL(&hardwareLock);
+  s=core;
+  if(s && s->configurationEpoch.load()==epoch) {
+    if((s->wakeupFlags.load() & WakePending) && wakeReady(s))espusb_controller_remote_wakeup(s->port);
+    s->wakeupFlags.fetch_and(uint8_t(~WakePending));
+  }
+  portEXIT_CRITICAL(&hardwareLock);
+}
 size_t aligned(size_t n,size_t alignment) { return (n+alignment-1)&~(alignment-1); }
 }
 
@@ -353,7 +381,7 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
   if (!espusb_dwc2_runtime_prepare(port,memory+dcdOffset,dcdBytes,outMask,inMask)) {
     vQueueDelete(s->queue); s->~Core(); freeUsbMemory(s); return ESP_FAIL;
   }
-  core=s;
+  portENTER_CRITICAL(&hardwareLock); core=s; portEXIT_CRITICAL(&hardwareLock);
   for (unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].init) s->drivers[i].init();
   if (!espusb_controller_init(port,highSpeed)) { stopUsbDeviceCore(); return ESP_FAIL; }
   if (!espusb_controller_int_enable(port)) { stopUsbDeviceCore(); return ESP_FAIL; }
@@ -361,12 +389,37 @@ esp_err_t startUsbDeviceCore(uint8_t port,bool highSpeed,uint16_t queueDepth) {
 }
 void stopUsbDeviceCore() {
   auto *s=core; if(!s)return;
-  s->stopping=true; espusb_controller_int_disable(s->port); espusb_controller_disconnect(s->port); espusb_controller_deinit(s->port);
+  portENTER_CRITICAL(&hardwareLock); s->stopping=true; portEXIT_CRITICAL(&hardwareLock);
+  espusb_controller_int_disable(s->port); espusb_controller_disconnect(s->port); espusb_controller_deinit(s->port);
   const bool mounted=s->configuration.exchange(0)!=0;
   for(unsigned i=0;i<s->driverCount;++i) if(s->drivers[i].deinit)s->drivers[i].deinit();
   if(mounted)espusb_device_on_unmount();
   espusb_dwc2_runtime_release();
-  vQueueDelete(s->queue); core=nullptr; s->~Core(); freeUsbMemory(s);
+  portENTER_CRITICAL(&hardwareLock); core=nullptr; portEXIT_CRITICAL(&hardwareLock);
+  vQueueDelete(s->queue); s->~Core(); freeUsbMemory(s);
+}
+bool usbRemoteWakeupEnabled() {
+  if(xPortInIsrContext())return false;
+  portENTER_CRITICAL(&hardwareLock);
+  auto *s=core;
+  const bool enabled=s && !s->stopping && !s->resetting && s->configuration.load() && (s->wakeupFlags.load() & WakeEnabled);
+  portEXIT_CRITICAL(&hardwareLock); return enabled;
+}
+esp_err_t requestUsbRemoteWakeup() {
+  if(xPortInIsrContext())return ESP_ERR_INVALID_STATE;
+  portENTER_CRITICAL(&hardwareLock);
+  auto *s=core;
+  esp_err_t result=ESP_ERR_INVALID_STATE;
+  if(wakeReady(s) && !(s->wakeupFlags.load() & WakePending)) {
+    s->wakeupFlags.fetch_or(WakePending);
+    Event event={}; event.data.rhport=s->port; event.data.event_id=DeferredCall;
+    event.data.func_call.func=runRemoteWakeup;
+    // An opaque epoch value, never dereferenced. No per-request allocation.
+    event.data.func_call.param=reinterpret_cast<void *>(uintptr_t(s->configurationEpoch.load()));
+    if(s->post(event,false))result=ESP_OK;
+    else {s->wakeupFlags.fetch_and(uint8_t(~WakePending));result=ESP_ERR_TIMEOUT;}
+  }
+  portEXIT_CRITICAL(&hardwareLock); return result;
 }
 uint8_t usbEndpointInterface(uint8_t port,uint8_t address) {
   auto *ep=core && core->port==port ? core->endpoint(address) : nullptr;

@@ -1,7 +1,40 @@
-# Remote wakeupの実装前調査
+# v3 Remote wakeup
 
-2026-10-29。以下は採用済みAPIではなく、製品052bcbbを固定した回帰試験中の調査である。
-現在はDeviceConfigにadvertise設定も公開要求APIもない。coreのHost許可bitとDCDの信号処理だけで完了とはしない。
+2026-10-29。S3–S3で基本経路を確認した。能力広告、Host許可、アプリ要求を別に扱う。
+
+```cpp
+EspUsbDeviceConfig config;
+config.remoteWakeupSupported = true; // 既定false。begin時のdescriptorへ反映。
+device.begin(config);
+// loop()等のtask contextで、外部イベントがあったとき:
+if (device.suspended() && device.remoteWakeupEnabled()) {
+  esp_err_t result = device.remoteWakeup();
+  // ESP_OKはqueue受付。実際の復帰はsuspended()で観測する。
+}
+```
+
+remoteWakeupEnabled()は現在の構成に対するHostの許可を返す。reset/endでfalseとなる。
+要求はesp_err_tを直接確認する。停止中、DescriptorsOnly、未構成、非suspend、未許可、ISR、
+既にpendingの場合はInvalidState。queueに空きがなければTimeout。
+workerからの非同期要求も可能。受付後のresume/CLEAR/reset/再構成/停止で不要になった要求は実行しない。
+照会もtask context用で、ISRではfalseを返す。Hostの許可をアプリが自分で設定するAPIは設けない。
+
+常駐timer/taskや独立したpending領域を増やさず、既存worker/queue、許可byteと構成世代を使う。
+実行時に5 ms以上の保守的な待機後、状態を再確認して信号を出す。
+信号区間はROM delayの2000 usをcontroller lock内で使う。使用時に実行coreの割込みが約2 ms遅れるため、
+他の時間制約との調整はアプリの判断になる。未使用時にこの待機を行わない。
+これはbus復帰の要求であり、SoC sleepやPCの電源管理・電気適合性まで検証したものではない。
+
+基本試験は1 passed、50.20秒、2 logs STOPPED/panicなし。
+能力なしのSET_FEATURE拒否、11不正状態要求、6回の無信号、3 Device起因wake、10双方向payload、
+CLEAR後の拒否とHost再初期化によるbus reset後の許可消去を確認した。
+Hostのwake statusとSOF frame進行、Deviceの休止解除と実通信を合わせて確認する。
+初期Hostはclock gateを含まない休止手順でframeが再開せず失敗した。固定SDKは変更せず、
+試験用Hostにclock gate/ungateを含む休止・復帰とIRQ policy保存/復元を実装して成功した。
+記録はvalidation/.pytest-results/remote-wakeup-{first,diagnosed,armed,auto,clock}*。
+保留要求の取消し境界と全体回帰、S2/P4 compileは次に確認する。S2/P4実機とPC OSは別に残る。
+
+## 実装前の調査記録
 
 ## 規格と状態
 
@@ -46,7 +79,7 @@ Hostから時刻でresumeするだけの試験をDevice起因の成功と数え�
 無許可/CLEAR後には信号なし、許可後には検出あり、その後payload往復、reset後の許可消去を区別して照合する。
 S3–S3でこの経路を実測してからAPIと時間方式を採用する。PC OSやS2/P4の実機試験は別に残る。
 
-## 次の実験で比較する候補（未実装）
+## 実装に使った候補と残る境界試験
 
 能力設定、Host許可照会、非同期要求をDeviceへ置く。要求成功はqueue受付を示す。
 追加の常駐timer/taskを作らず、既存workerのdeferred callを使う案を先に試す。
