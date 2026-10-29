@@ -1,7 +1,7 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品は疎なIN endpointに対するDWC2 TX FIFO割当てを修正。Audio外部ring長指定はe329ef6。metadataは3.0.0、未release。
+最新製品f5d1571は疎なIN endpointに対するDWC2 TX FIFO割当てを修正。Audio外部ring長指定はe329ef6。metadataは3.0.0、未release。
 mainの文書commit `3fed50d`を取り込み済み。まとまりごとのローカルcommit、pushなし。
 
 ## 方針と入口
@@ -41,7 +41,8 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 | 単位 | 結果・記録 |
 | --- | --- |
-| Audio＋CDC/FIFO修正後 | 4構成のfocused 1件36.60秒成功、2 logs STOPPED/panicなし。S2/P4 compile成功。全40件はこれから実行 |
+| FIFO修正後の全40件 | **実行中、未完了**。`.pytest-results/tx-fifo-all.xml`、`/tmp/espusb-v3-tx-fifo-all.txt`。exec session 14035 |
+| Audio＋CDC/FIFO修正後 | 4構成のfocused 1件36.60秒成功、2 logs STOPPED/panicなし。S2/P4 compile成功。全40件の結果とは区別 |
 | CDC＋MSC同時通信 | 新規1件59.01秒＋既存2件81.69秒、6 logs STOPPED/panicなし。製品e329ef6の変更なし。全体収集39件 |
 | 外部ring長指定後の関連6件 | **6 passed、369.22秒**。12 logs STOPPED/panicなし、816開始＋14設定失敗回復/heap一致。`.pytest-results/audio-buffer-extents*` |
 | 製品033f2d8の全38件 | **38 passed、2544.60秒、skip/error/failure/unfinishedなし**。76 logs STOPPED/panicなし。`.pytest-results/audio-alternates-all*` |
@@ -93,3 +94,11 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 初期実機はS3–S3。将来の常駐案はS3二台＋S31–HS–P4–FS–S2の計五台。
 P4は一方Device/他方Hostを想定し、二つのDevice controllerの同時利用を約束しない。
+
+
+全40件の実行中は製品/probeをf5d1571に固定。監査scriptは
+`/tmp/espusb-v3-tx-fifo-all-audit.py`（XMLの最終成功後に実行）。
+S2/P4 Vendor＋CCIDの修正後compileは完了、transcriptは`.pytest-results/tx-fifo-{s2,p4}-build.txt`。
+このscriptは全80 serial、FIFO対応、Audio/CDC/MSC複合同時進行、外部ring長、既存の回収/STALL/reset、
+S3 Vendor単独＋S2/P4 Vendor/CCIDの全29 source依存/nmを検査する。
+先に成功したfocusedは36.60秒、2 logs STOPPED/panicなし。全40件終了後に最新基準を記録する。
