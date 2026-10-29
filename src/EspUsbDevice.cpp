@@ -388,7 +388,7 @@ static constexpr uint8_t GAMEPAD_REPORT_DESCRIPTOR[] = {
     0x75, 0x08,       //   Report Size (8)
     0x95, 0x06,       //   Report Count (6)
     0x81, 0x02,       //   Input (Data,Var,Abs)
-    0x15, 0x00,       //   Logical Minimum (0)
+    0x15, 0x01,       //   Logical Minimum (1): directions 1..8
     0x25, 0x08,       //   Logical Maximum (8)
     0x35, 0x00,       //   Physical Minimum (0)
     0x46, 0x3b, 0x01, //   Physical Maximum (315)
@@ -396,8 +396,9 @@ static constexpr uint8_t GAMEPAD_REPORT_DESCRIPTOR[] = {
     0x09, 0x39,       //   Usage (Hat switch)
     0x75, 0x08,       //   Report Size (8)
     0x95, 0x01,       //   Report Count (1)
-    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0x81, 0x42,       //   Input (Data,Var,Abs,Null): center is 0
     0x65, 0x00,       //   Unit (None)
+    0x45, 0x01,       //   Physical Maximum (1) for the buttons
     0x05, 0x09,       //   Usage Page (Button)
     0x19, 0x01,       //   Usage Minimum (Button 1)
     0x29, 0x20,       //   Usage Maximum (Button 32)
@@ -435,7 +436,7 @@ static constexpr uint8_t SYSTEM_CONTROL_REPORT_DESCRIPTOR[] = {
     0x29, 0x83,       //   Usage Maximum (System Wake Up)
     0x75, 0x08,       //   Report Size (8)
     0x95, 0x01,       //   Report Count (1)
-    0x81, 0x40,       //   Input (Data,Array,Abs,Null): selector 0 releases
+    0x81, 0x00,       //   Input (Data,Array,Abs): zero means no asserted item
     0xc0,             // End Collection
 };
 
@@ -1463,7 +1464,11 @@ bool mergeHidReport(uint8_t *dst, size_t capacity, const uint8_t *source, size_t
 {
   written = 0;
   bool inserted = false, skipExistingId = false;
-  if (!source || length < 6 || !reportId) return false;
+  if (!source || length < 6 || !reportId || (dst && !capacity)) return false;
+  // Each Function describes an independent HID. Keep its global units,
+  // ranges, report sizes and IDs from leaking into the next Function.
+  if (dst) dst[written] = 0xa4; // Push
+  ++written;
   for (size_t offset = 0; offset < length;) {
     const size_t bytes = hidItemLength(source + offset, length - offset);
     if (!bytes) return false;
@@ -1482,7 +1487,10 @@ bool mergeHidReport(uint8_t *dst, size_t capacity, const uint8_t *source, size_t
     }
     offset += bytes;
   }
-  return inserted;
+  if (!inserted || written == UINT16_MAX || (dst && written == capacity)) return false;
+  if (dst) dst[written] = 0xb4; // Pop
+  ++written;
+  return true;
 }
 }
 

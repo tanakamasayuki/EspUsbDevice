@@ -36,6 +36,20 @@ HidVendorのsendInputは長すぎるpayloadを切り詰めずfalseを返すよ�
 sendの成功はコピーを保持して転送を開始したことを示す。Hostでの受信完了を待つAPIではない。
 busy時のtimeoutとcallback内でtimeout=0を使う方針も維持する。workerからの待ち付き送信は拒否する。
 
+## Gamepadの中央と方向
+
+Gamepadのhatは公開定数を維持する。中央0はNull、方向1～8は上から時計回りに0～315度へ対応する。
+8 bitのwire値や入力容量は変えず、logical rangeを1～8、InputをNull対応にする。
+hatの後のbuttonsも物理範囲0～1へ戻す。以前のlogical range0～8では、中央0が方向として扱われ、
+上1/右3も約39/118度に対応していた。
+根拠は[HID 1.11](https://www.usb.org/sites/default/files/hid1_11.pdf) §6.2.2.5のhat/nullの説明。
+
+統合したHIDでは各Functionのreport descriptor全体をglobal Push/Popで区切る。
+独自Functionの単位・物理範囲を次のFunctionへ引き継がない。各Function内のPush/Popはその内側で維持する。
+統合descriptorにFunctionごと2 byteが加わり、開始時の解析は実際の最大push深さだけ一時stackを使う。
+解析後にstackを解放し、通常転送中に確保しない。単独Functionはこの統合処理を行わない。
+Gamepad自身のdescriptorもbuttonsのPhysical Maximum指定の2 byteが増えるが、入力容量やmemberは増えない。
+
 ## System Controlのusage指定
 
 System Controlのpress/sendUsage/clickはGeneric Desktopの標準usage IDを受け取る。
@@ -49,12 +63,14 @@ systemControl.release();
 ```
 
 wireのarray selectorは1/2/3のまま、descriptorはそれをusage0x81/0x82/0x83へ対応させる。
-selector 0は範囲外のNullとして解放を示す。以前のusage0..3の広告は電源操作の意味になっていなかった。
+selector 0は押されている要素がないことを示す。以前のusage0..3の広告は電源操作の意味になっていなかった。
 Consumer Controlと同じくAPIではusageを指定できる利点があり、数値直書きとusage()の数値比較は変更が必要になる。
 メソッドの型、report容量、descriptor長、Functionのmember/heap取得点は増やさない。
 WAKE_HOSTは通常のHID入力であり、busが休止している時の[remote wakeup](V3_REMOTE_WAKEUP.ja.md)を暗黙に実行しない。
 
-根拠は[HID Usage Tables 1.7](https://usb.org/sites/default/files/hut1_7.pdf)のGeneric Desktop表と§4.5.1。
+根拠は[HID Usage Tables 1.7](https://usb.org/sites/default/files/hut1_7.pdf)のGeneric Desktop表と§4.5.1、
+[HID 1.11](https://www.usb.org/sites/default/files/hid1_11.pdf) §6.2.2.5のarray推奨（logical minimum=1、0=未押下）。
+arrayのInputではData/Array/Absolute以外の属性を意味の証明に使わない。
 
 ## 独自HIDと容量
 

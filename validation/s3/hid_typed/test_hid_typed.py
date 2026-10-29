@@ -13,8 +13,10 @@ def test_hid_typed(dut, peers):
             for mode in range(4):
                 command(device, f"start {mode}", "STARTED 1", 30)
                 command(dut, "start", "HOST_READY 1", 30)
+                if mode in (0, 3):
+                    command(dut, "gamepad_descriptor", "GAMEPAD_DESCRIPTOR ok=1 up=0 right=90 left_up=315 null=1 axes=1 buttons=1")
                 if mode in (2, 3):
-                    command(dut, "system_descriptor", "SYSTEM_DESCRIPTOR ok=1 power=129 sleep=130 wake=131 null=1")
+                    command(dut, "system_descriptor", "SYSTEM_DESCRIPTOR ok=1 power=129 sleep=130 wake=131 release=1")
                 for kind in (range(3) if mode == 3 else (mode,)):
                     for phase in range(3 if kind == 0 else 4):
                         command(dut, f"arm {kind} {phase}", "ARMED")

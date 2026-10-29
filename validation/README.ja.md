@@ -10,7 +10,7 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 ## System Controlの意味とAPI
 
 製品12b165bでSystem Controlを標準usage指定へ揃え、wire selector1/2/3のdescriptorを
-usage129/130/131へ対応させ、0をNull解放とした。名前付き定数の呼び方は維持する。
+usage129/130/131へ対応させ、0を未押下のarray selectorとした。名前付き定数の呼び方は維持する。
 新typed 1件75.44秒＋既存HID/descriptor/確保失敗の関連6件510.98秒は全成功。
 14 logs全てSTOPPED/panicなし、816開始＋14設定失敗回復とheap346768一致。
 raw52 inputに加え、4 descriptor写像、48 snapshot、28不正呼出しと4無送信監視を確認した。

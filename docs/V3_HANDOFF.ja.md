@@ -1,7 +1,8 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品12b165bはSystem Controlを標準usage指定へ統一し、descriptor/Null解放を修正。
+最新製品はHID globalのFunction間分離とGamepad hatを修正。新typed 1件51.04秒成功。
+System Controlの標準usage/array解放は12b165bで導入した。
 archive化の最小include差分0と全44件は052bcbbで確認。全class回帰44件と全8例×3 profileの24ビルド/ELF監査は成功。
 Audio予約幅はcface78、能力表共有とS3番号6のIN/OUT実測は324231a。
 疎なINのFIFO修正はf5d1571、Audio外部ring長指定e329ef6。metadataは3.0.0、未release。
@@ -148,3 +149,11 @@ System修正12b165b: 新typed 1件75.44秒＋関連6件510.98秒は全成功。
 S2/P4のtyped3種のcompile、ELF/29依存/archive/native出所も成功。
 `.pytest-results/hid-system-{descriptor-after,related,cross-audit}*`へ記録した。
 Gamepadのhat中央0もdescriptor上は方向扱いで、次に意味の照合とNull修正を行う。
+
+Gamepad/global修正: 元のhatは上39/右118度・中央非Nullで失敗。
+hatだけ修正すると独自Functionの物理単位が複合Gamepadの軸へ漏れて失敗。
+merge時にFunction全体をPush/Popで包み、hatの方向1..8/中央Nullとbuttonsの物理範囲を正した。
+新typedは1 passed51.04秒、2 logs停止/panicなし、単独/複合の各4写像と52 inputを確認。
+統合descriptorはFunctionごと+2 byte、開始時parserの一時stackが必要。通常転送中の追加取得なし。
+Systemの0はarrayの未押下で、Null State bitに依存しない。arrayの不要なbit指定も外した。
+次はこの製品sourceを固定したHID関連6件・S2/P4 typed compileを確認する。

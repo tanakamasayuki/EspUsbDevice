@@ -2,6 +2,13 @@
 #include <EspUsbDevice.h>
 EspUsbDevice device;
 EspUsbDeviceHidGamepad *gamepad = nullptr;
+EspUsbDeviceHidCustom *scaled = nullptr;
+// A valid independent Function leaves non-default physical units/range behind.
+// The automatic merger must keep those globals inside that Function.
+const uint8_t scaledDescriptor[] = {
+  0x06,0x00,0xff,0x09,0x01,0xa1,0x01,0x15,0x00,0x25,0x64,
+  0x35,0x00,0x46,0xe8,0x03,0x65,0x11,0x75,0x08,0x95,0x01,0x81,0x02,0xc0
+};
 EspUsbDeviceHidConsumerControl *consumer = nullptr;
 EspUsbDeviceHidSystemControl *systemControl = nullptr;
 void setup() { Serial.begin(115200); Serial.setTimeout(100); }
@@ -10,6 +17,7 @@ void loop() {
   String command = Serial.readStringUntil('\n'); command.trim();
   if (command.startsWith("start ")) {
     const unsigned mode = command.substring(6).toInt();
+    if (mode == 3) scaled = new EspUsbDeviceHidCustom(device, scaledDescriptor, sizeof(scaledDescriptor), 16);
     if (mode == 0 || mode == 3) gamepad = new EspUsbDeviceHidGamepad(device);
     if (mode == 1 || mode == 3) consumer = new EspUsbDeviceHidConsumerControl(device);
     if (mode == 2 || mode == 3) systemControl = new EspUsbDeviceHidSystemControl(device);
@@ -48,7 +56,7 @@ void loop() {
     Serial.printf("INVALID_SYSTEM ok=%u rejected=7 usage=%u\r\n", unsigned(ok), unsigned(systemControl->usage()));
   } else if (command == "stop") {
     bool ok = device.end() == ESP_OK;
-    delete gamepad; gamepad = nullptr; delete consumer; consumer = nullptr;
+    delete gamepad; gamepad = nullptr; delete scaled; scaled = nullptr; delete consumer; consumer = nullptr;
     delete systemControl; systemControl = nullptr;
     Serial.println(ok ? "STOPPED" : "STOP_FAILED");
   }

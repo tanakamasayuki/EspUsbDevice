@@ -21,3 +21,14 @@ HostがEP0から取得したarray定義を解析し、selector1/2/3→usage129/1
 2 logs STOPPED/panicなし。初回のdescriptor不一致の失敗・停止ログもbeforeとして保存した。
 記録はvalidation/.pytest-results/hid-system-descriptor-{before,after}*。
 S2/P4 profileはDeviceのcompile確認用で、常設s3 comboの実機対象は変えない。
+
+追加のsemantic検査では、Gamepadのhatから上/右/左上の角度と中央Nullを解釈し、軸とbuttonsの単位/範囲も確認する。
+複合modeでは単位・物理範囲を持つ独自HIDを先に登録し、Gamepadへ漏れないことを要求する。
+修正前は単独hatが上39/右118度・中央非Nullとなって失敗した。
+hat修正だけでは複合の軸へ独自単位が漏れて失敗し、両方の失敗・停止ログを別名で保持した。
+Systemの0はarrayの未押下として照合する。HID 1.11のarray属性の規定に合わせ、
+Systemの解放条件はNull State bitに依存しない。hatの中央はvariable fieldのNullとして確認する。
+
+両修正後は1 passed、51.04秒、2 logs STOPPED/panicなし。
+単独/複合×2開始でGamepadとSystemの写像を各4回、44 input照合/52 report、28不正指定と4無送信監視を確認。
+記録はvalidation/.pytest-results/hid-{hat-before,globals-before,globals-after}*。
