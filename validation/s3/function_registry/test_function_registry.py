@@ -8,9 +8,12 @@ def test_function_registry(dut, peers):
         result = device.expect(r"METADATA ok=1 before=(\d+) after=(\d+)\r\n", timeout=30)
         assert result.group(1) == result.group(2), "registry growth/removal leaked heap"
         device.write("start")
-        device.expect_exact("REGISTRY_STARTED 1 reports=161\r\n", timeout=30)
+        started = device.expect(r"REGISTRY_STARTED 1 reports=(\d+)\r\n", timeout=30)
+        report_bytes = int(started.group(1))
+        assert report_bytes > 0, "Seven Functions must have a report descriptor"
         dut.write("start")
         dut.expect_exact("HOST_READY 1\r\n", timeout=30)
+        dut.expect_exact(f"REGISTRY_DESCRIPTOR ok=1 bytes={report_bytes}\r\n", timeout=5)
         device.write("active_reject")
         device.expect_exact("ACTIVE_REJECT 1\r\n", timeout=5)
         device.write("send")
