@@ -212,7 +212,8 @@ if (!result) recycleUnsubmitted(buffer);  // rejected: still ours
 
 SoC能力はportごとの表にし、runtimeのP4限定分岐をS31へ拡張し続けない。
 現行DWC2 tableではS2/S3/P4 FSはendpoint数7、IN数5（EP0を含む）、FIFO256 words、
-P4 HSは16/8/1024。現validatorのendpoint番号上限と一致しない箇所はE6で確認する。
+P4 HSは16/8/1024。validatorとbulk/ISOのFIFO予算計算も同じport表を参照する。
+S3の番号6はIN/OUTを実測した。S2/P4は今回もcompile-onlyであり、実機確認とは分ける。
 数字だけで追加endpointを許可しない。EP0、RX FIFO、DMA endpoint-info、各IN FIFOを同じ計画で計上する。
 HS controllerはFSへfallbackし得るので、FS/HS descriptor双方と構成可否を用意する。
 S31はHS port番号がP4と同じとは限らず、Core、PHY、DCD、board配線を新規に検証する。
@@ -252,4 +253,28 @@ Functionの転送資源も残らない。DescriptorsOnlyもこの検証を通す
 
 IN個数上限とendpoint番号上限は別の条件である。S2/S3のvalidatorの番号上限5と、
 DWC2 port表のendpoint数7との違いは、この個数試験だけでは解消したと扱わない。
-番号6を使う少数endpointの実通信と、能力表の統一は次の確認対象に残す。
+番号6を使う少数endpointの実通信と、能力表の統一は次節で確認した。
+
+
+## endpoint番号6と能力表の統一
+
+2026-10-29、endpoint_numberはIN/OUTの個数を各1に保ち、番号を5→6→1→6へ変える。
+修正前は5で通信するが6をESP_ERR_INVALID_SIZE、IRQ開始0回で拒否した。
+上位validatorはS2/S3の番号を5までに制限し、下位のport表はEP0込み7番号を持つため不一致だった。
+validator、bulk double-buffer予算、ISO IN FIFO予算の重複したSoC定数を削除し、
+EspUsbDwc2Portのep_count/ep_in_count/otg_dfifo_depthを共通の参照元にした。
+AutoはHS優先、FS-onlyでのdetached HS inspectionは従来どおりFSの物理予算を使い、
+実際に存在しないcontrollerの起動はruntimeが拒否する。
+
+S3の番号6でIN/OUT双方の実通信に成功した。4回の構成で20往復、各番号はFIFO 1へ詰め、
+外部ring guardを維持。番号7はIRQ前に拒否した。IN個数の上限4は増やさず、
+過大3構成のUSB開始9回・metadata3回の拒否、heap一致と構成修正後の2 CDC 30往復も維持した。
+新規2件は2 passed、81.91秒、4 logs STOPPED/panicなし。
+原本`/tmp/pytest-embedded/2026-10-29_03-39-37-170682/`、記録`.pytest-results/endpoint-number*`。
+
+関連control/descriptor/allocation/Audio＋CDC 4件も4 passed、199.67秒、8 logs STOPPED/panicなし。
+816開始＋14設定取得点の失敗から回復し、heap346704→346704、DWC2 storage128/192/256/256を維持。
+S2/P4 Vendor＋CCID compile、S3/S2/P4各29 sourceの依存/nmと未使用機能除外も成功した。
+object field・map配列・heap取得点・転送時の処理は追加せず、開始時に既存の能力表を読む。
+原本`/tmp/pytest-embedded/2026-10-29_03-42-10-556094/`、記録`.pytest-results/controller-table*`。
+全体収集は42件。この2＋4件を、全42件の一括実行やS2/P4実通信の結果とは扱わない。

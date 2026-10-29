@@ -7,6 +7,17 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## endpoint番号と共通のcontroller能力表
+
+`endpoint_number`は少数のIN/OUTを番号5→6→1→6で実通信し、20往復・FIFO 1・外部guardを確認する。
+旧validatorによる番号6の拒否を再現後、validatorとbulk/ISO FIFO予算をDWC2 port表へ統一した。
+番号7はIRQ開始前に拒否し、IN個数上限4も維持。過大構成の拒否と2 CDCへの回復も成功した。
+新規2件は2 passed、81.91秒、4 logs STOPPED/panicなし。
+関連control/descriptor/allocation/Audio＋CDC 4件も4 passed、199.67秒、8 logs STOPPED/panicなし。
+816開始＋14設定失敗回復、heap一致、DWC2 storage128/192/256/256を維持し、S2/P4 compileも成功。
+詳細と原本は[能力表統一の記録](../docs/V3_ARCHITECTURE.ja.md#endpoint番号6と能力表の統一)を参照。
+記録`.pytest-results/endpoint-number*`、`controller-table*`。全体収集42件で、この関連試験を全42件の一括実行とは扱わない。
+
 ## IN endpoint上限拒否と再構成
 
 `controller_capacity`はS3の2 CDC＋MSC、3 CDC、2 CDC＋2 MSCを各3回開始し、

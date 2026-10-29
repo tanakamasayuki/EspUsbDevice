@@ -31,6 +31,11 @@ extern const EspUsbDwc2Port espusb_dwc2_ports[ESPUSB_DWC2_PORT_COUNT];
 static inline const EspUsbDwc2Port *espusb_dwc2_port(uint8_t port) {
   return port < ESPUSB_DWC2_PORT_COUNT ? espusb_dwc2_ports + port : NULL;
 }
+static inline const EspUsbDwc2Port *espusb_dwc2_port_for_speed(bool highSpeed) {
+  for (uint8_t port = 0; port < ESPUSB_DWC2_PORT_COUNT; ++port)
+    if (espusb_dwc2_ports[port].highSpeed == highSpeed) return espusb_dwc2_ports + port;
+  return NULL;
+}
 // One active controller owns one IRQ registration. Mask/unmask reuses it;
 // release only during controller shutdown, before freeing core storage.
 bool espusb_dwc2_enable_irq(uint8_t port);

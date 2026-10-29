@@ -32,6 +32,7 @@
 
 #if defined(SOC_USB_OTG_SUPPORTED) && SOC_USB_OTG_SUPPORTED
 #include "internal/EspUsbDeviceBus.h"
+#include "internal/EspUsbDwc2Platform.h"
 // espusb_device_edpt_claim() / espusb_device_edpt_xfer(), for EspUsbDeviceVendor::writeDirect().
 #include "internal/EspUsbDeviceEndpoint.h"
 #if __has_include("esp_memory_utils.h")
@@ -677,6 +678,14 @@ namespace
 // Defined with the rest of the Microsoft OS 2.0 helpers, below; begin() needs it
 // before that.
 bool isDeviceInterfaceGuid(const char *guid);
+#if ESP_USB_DEVICE_HAS_OTG
+const EspUsbDwc2Port *descriptorController(bool highSpeed) {
+  const auto *port = espusb_dwc2_port_for_speed(highSpeed);
+  // Detached HS inspection on FS-only hardware retains its physical budget.
+  // Runtime selection still refuses an unavailable physical controller.
+  return port ? port : espusb_dwc2_port_for_speed(false);
+}
+#endif
 } // namespace
 
 struct EspUsbDevice::RegistrationTransaction {
@@ -2008,27 +2017,16 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
     return 0;
   }
 
-  // The DWC2 port's own geometry, from _dwc2_controller[] in dwc2_esp32.h.
-  // Mirrored rather than read back because the decision has to be made before
-  // core startup, which is where those tables first become reachable.
-#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+#if !ESP_USB_DEVICE_HAS_OTG
   (void)highSpeed;
-  constexpr uint16_t fifoDepthWords = 256;
-  constexpr uint8_t endpointCount = 7;
-#elif defined(CONFIG_IDF_TARGET_ESP32P4)
-  const uint16_t fifoDepthWords = highSpeed ? 1024 : 256;
-  const uint8_t endpointCount = highSpeed ? 16 : 7;
-#else
-  (void)highSpeed;
-  if (fits)
-  {
-    *fits = false;
-  }
+  if (fits) *fits = false;
   return 0;
-#endif
+#else
+  const auto *port = descriptorController(highSpeed);
+  if (!port) { if (fits) *fits = false; return 0; }
+  const uint16_t fifoDepthWords = port->otg_dfifo_depth;
+  const uint8_t endpointCount = port->ep_count;
 
-#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || \
-    defined(CONFIG_IDF_TARGET_ESP32P4)
   // grxfsiz as calc_device_grxfsiz() computes it: a fixed overhead plus room
   // for the largest OUT packet, plus two words per endpoint.
   const auto receiveWords = [endpointCount](uint16_t largestOutPacket) -> uint16_t {
@@ -2157,24 +2155,15 @@ bool EspUsbDevice::hasIsochronousInEndpoint(bool highSpeed) const
 
 bool EspUsbDevice::transmitFifoFits(bool highSpeed) const
 {
-  // Same geometry as bulkInDoubleBufferMask(), from _dwc2_controller[] in
-  // dwc2_esp32.h, mirrored because the decision precedes controller startup.
-#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
-  (void)highSpeed;
-  constexpr uint16_t fifoDepthWords = 256;
-  constexpr uint8_t endpointCount = 7;
-#elif defined(CONFIG_IDF_TARGET_ESP32P4)
-  const uint16_t fifoDepthWords = highSpeed ? 1024 : 256;
-  const uint8_t endpointCount = highSpeed ? 16 : 7;
-#else
-  // An unrepresented target is not second-guessed: the endpoint allocator still has
-  // the final say, and refusing to start here would be worse than letting it.
+#if !ESP_USB_DEVICE_HAS_OTG
   (void)highSpeed;
   return true;
-#endif
+#else
+  const auto *port = descriptorController(highSpeed);
+  if (!port) return false;
+  const uint16_t fifoDepthWords = port->otg_dfifo_depth;
+  const uint8_t endpointCount = port->ep_count;
 
-#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || \
-    defined(CONFIG_IDF_TARGET_ESP32P4)
   // begin has already built the selected speed. Inspect that immutable
   // snapshot instead of re-entering the public detached descriptor builder.
   const uint8_t *descriptor = highSpeed ? configDescriptorHighSpeed_ : configDescriptor_;
@@ -2253,21 +2242,13 @@ bool EspUsbDevice::validateControllerEndpoints(const uint8_t *descriptor,
   {
     return false;
   }
-#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
-  constexpr uint8_t maxEndpointNumber = 5;
-  constexpr uint8_t maxNonControlInEndpoints = 4;
-  constexpr uint8_t maxNonControlOutEndpoints = 5;
-#elif defined(CONFIG_IDF_TARGET_ESP32P4)
-  // P4 rhport 0 is the FS controller (7 endpoint numbers total, 5 IN
-  // endpoints including EP0). rhport 1 is the HS controller (16 endpoint
-  // numbers total, 8 IN endpoints including EP0). Auto selects HS on P4.
-  const bool fullSpeed = config_.controller == EspUsbController::FullSpeed;
-  const uint8_t maxEndpointNumber = fullSpeed ? 6 : 15;
-  const uint8_t maxNonControlInEndpoints = fullSpeed ? 4 : 7;
-  const uint8_t maxNonControlOutEndpoints = fullSpeed ? 6 : 15;
+#if ESP_USB_DEVICE_HAS_OTG
+  const auto *port = descriptorController(config_.controller != EspUsbController::FullSpeed);
+  if (!port || !port->ep_count) return false;
+  const uint8_t maxEndpointNumber = port->ep_count - 1;
+  const uint8_t maxNonControlInEndpoints = port->ep_in_count ? port->ep_in_count - 1 : maxEndpointNumber;
+  const uint8_t maxNonControlOutEndpoints = maxEndpointNumber;
 #else
-  // Unknown future targets keep USB's protocol maximum until their controller
-  // capabilities are represented here.
   constexpr uint8_t maxEndpointNumber = 15;
   constexpr uint8_t maxNonControlInEndpoints = 15;
   constexpr uint8_t maxNonControlOutEndpoints = 15;
