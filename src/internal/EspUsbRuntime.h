@@ -42,6 +42,7 @@ esp_err_t startUsbRuntime(const UsbRuntimeOptions &options);
 bool stopUsbRuntime();
 bool usbRuntimeInTask();
 bool usbRuntimeStarted();
+bool usbRuntimeStopping();
 uint8_t usbRuntimeRhport();
 
 } // namespace internal

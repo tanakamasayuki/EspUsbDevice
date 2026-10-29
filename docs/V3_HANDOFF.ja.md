@@ -1,12 +1,10 @@
 # v3開発の引き渡し
 
-更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品060214fはHID globalのFunction間分離とGamepad hatを修正。新typed 1件51.04秒成功。
-System Controlの標準usage/array解放は12b165bで導入した。
-archive化の最小include差分0と全44件は052bcbbで確認。全class回帰44件と全8例×3 profileの24ビルド/ELF監査は成功。
-Audio予約幅はcface78、能力表共有とS3番号6のIN/OUT実測は324231a。
-疎なINのFIFO修正はf5d1571、Audio外部ring長指定e329ef6。metadataは3.0.0、未release。
-mainの文書commit `3fed50d`を取り込み済み。まとまりごとのローカルcommit、pushなし。
+更新: 2026-10-29。worktree `/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
+最新製品はremote wakeupの停止guardを追加。基本経路f9f807c、新規境界1件45.24秒成功。
+これから固定ソースの全47件を回す。S2/P4は基本版compile済み、停止guard後を再buildする。
+未使用include差分0を維持し、Device宣言のみは共通lockのリンクでFlash+44/global+16。
+詳細は[Remote wakeup](V3_REMOTE_WAKEUP.ja.md)とvalidation README。
 
 ## 方針と入口
 
@@ -168,3 +166,8 @@ S2/P4 typed/Customの修正後compile・29依存/nm/ELF/native出所も成功。
 最新の標準収集は46件（052bcbbの全44件＋新typed/MSC helper）。全46件一括は未実行。
 remote wakeupは調査/候補のみで未実装。既存workerとepochを使い常駐資源を増やさない候補を調査文書末尾に記録した。
 SD/OTA/PC OS、S2/P4実機、S31 portの未完も維持する。
+
+Remoteは能力広告・Host許可・非同期要求を実装した。古い「未実装」は下の履歴記述であり、現状は上記。
+新規試験はS3–S3のclock gate/ungateを伴う手動Hostで実wake status/SOF/payloadを確認。
+worker保留→要求queue→reset→再列挙と、停止中17回/停止後32回の要求・照会拒否も成功。
+S2/P4実機・PC OSのremoteは未確認。全体は47件収集となり、直前の全44件と追加関連実行を混同しない。

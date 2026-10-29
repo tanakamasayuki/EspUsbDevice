@@ -7,6 +7,15 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## Remote wakeup
+
+能力広告・Host許可・非同期要求を明示的に分けた。[APIと費用](../docs/V3_REMOTE_WAKEUP.ja.md)を参照。
+基本1件50.20秒、queued reset/end境界追加後の1件45.24秒は成功。各2 logs停止/panicなし。
+Device起因wake3回、無信号7回、payload10往復、duplicate拒否、保留中のresetを確認した。
+停止待機中17回/停止後32回の要求・照会も拒否/false。古い停止guardなしの失敗も保存。
+記録`.pytest-results/remote-wakeup-*`。全47件の同一実行の結果ではない。
+未使用includeの追加コスト0を維持し、Device宣言のみは共通lockリンク分+44 Flash/+16 global。
+
 ## Gamepadと複合HIDのglobal設定
 
 製品060214fでhatの中央Null/8方向/角度とbuttonsの物理範囲を修正し、

@@ -100,6 +100,7 @@ void setup(){Serial.begin(115200);Serial.setTimeout(100);}
 void loop() {
   if(!Serial.available()){delay(1);return;}String s=Serial.readStringUntil('\n');s.trim();
   if(s=="start") {
+    Serial.println("HOST_STARTING");
     in=out=0;usb_host_config_t cfg={};cfg.intr_flags=ESP_INTR_FLAG_LEVEL1;
 #if CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK
     cfg.enum_filter_cb=[](const usb_device_desc_t *d,uint8_t *){return d->idVendor==0x303a && d->idProduct==0x4000;};

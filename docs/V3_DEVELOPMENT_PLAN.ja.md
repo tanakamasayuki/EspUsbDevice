@@ -17,10 +17,10 @@ Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在
 | 未使用コスト | Vendor/Audio等のnmで他class state不在、開始816＋設定14失敗回復、100 begin/endの既存試験 | 新規比較のFlash1168/global64 byteを未使用Netif.cppのIPAddress参照と特定。archive化で最小include差分0を確認し、全24 examplesのcompile/ELF監査は成功。全44件の実機回帰も成功、88 serial全停止/panicなし |
 | class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Systemの標準usage/array解放は新規1＋関連6件とS2/P4 compile成功。Gamepad hat/複合global分離は新規1件・関連6項目とS2/P4 compile成功。RAM/FAT helperの8開始/実通信は成功。SD/Firmware helperの実通信は不足 |
 | core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 cache/HSは実機未確認 |
-| 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupはadvertise/API入口がなく、正の経路は未実装。段階5の完了とはしない |
+| 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupの能力/許可/要求を実装し、S3の実wake・復帰/取消し/停止を確認。全47件回帰を確認する |
 | 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
 | 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 052bcbbの全44件・24 examples・29依存とnative出所を確認済み |
-| 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | 拡大benchは未結線。typed HIDとMSC helperを含め46件収集（全44件の一括結果とは別） |
+| 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | 拡大benchは未結線。typed HID/MSC helper/remoteを含め47件収集（全44件の一括結果とは別） |
 | 機種・OS・配布 | S3–S3実機、S2/P4 compile-only、8つの新examplesと移行ガイド | S2/P4実機、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
 
 今回の優先順は、archive化で未使用netifのリンク副作用を除く変更の全体確認、typed HID/任意helperの不足、

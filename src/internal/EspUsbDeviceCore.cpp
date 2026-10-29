@@ -5,6 +5,7 @@
 #include "EspUsbDeviceEndpoint.h"
 #include "EspUsbDwc2Runtime.h"
 #include "EspUsbMemory.h"
+#include "EspUsbRuntime.h"
 #include "EspUsbController.h"
 #include "EspUsbDeviceBus.h"
 #include "freertos/FreeRTOS.h"
@@ -317,7 +318,7 @@ struct Core {
 };
 Core *core=nullptr;
 bool wakeReady(const Core *s) {
-  return s && !s->stopping && !s->recovering && !s->resetting && !s->overflow &&
+  return s && !espusb::internal::usbRuntimeStopping() && !s->stopping && !s->recovering && !s->resetting && !s->overflow &&
       s->workerBus.load()==s->bus.load() && s->configuration.load() && s->connected &&
       s->suspended && (s->wakeupFlags.load() & WakeEnabled);
 }
@@ -402,7 +403,7 @@ bool usbRemoteWakeupEnabled() {
   if(xPortInIsrContext())return false;
   portENTER_CRITICAL(&hardwareLock);
   auto *s=core;
-  const bool enabled=s && !s->stopping && !s->resetting && s->configuration.load() && (s->wakeupFlags.load() & WakeEnabled);
+  const bool enabled=s && !usbRuntimeStopping() && !s->stopping && !s->resetting && s->configuration.load() && (s->wakeupFlags.load() & WakeEnabled);
   portEXIT_CRITICAL(&hardwareLock); return enabled;
 }
 esp_err_t requestUsbRemoteWakeup() {

@@ -44,11 +44,32 @@ def test_remote_wakeup(dut, peers):
                     command(dut, "feature 0", "FEATURE value=0 accepted=1 status=0 valid=1")
             if support:
                 command(dut, "feature 1", "FEATURE value=1 accepted=1 status=1 valid=1")
+                command(dut, "suspend", "SUSPENDED 1")
+                command(device, "state 1", "STATE ready=1 suspended=1 enabled=1")
+                command(device, "park", "PARKED 1")
+                command(device, "request", "REQUEST error=0")
+                command(device, "request", "REQUEST error=259")  # Deterministic duplicate.
                 command(dut, "stop", "STOPPED", 30)
-                command(dut, "start", "HOST_READY ok=1 capable=1", 30)
+                dut.write("start")
+                dut.expect_exact("HOST_STARTING\r\n", timeout=5)
+                command(device, "wait_reset", "RESET_BLOCKED 1")
+                command(device, "release", "RELEASED 1")
+                dut.expect_exact("HOST_READY ok=1 capable=1\r\n", timeout=30)
                 command(dut, "status", "STATUS valid=1 enabled=0")
                 command(device, "state 0", "STATE ready=1 suspended=0 enabled=0")
+                command(dut, "suspend", "SUSPENDED 1")
+                command(device, "state 1", "STATE ready=1 suspended=1 enabled=0")
+                command(device, "request", "REQUEST error=259")
+                command(dut, "quiet", "WAKE seen=0 resumed=1")
+                command(device, "state 0", "STATE ready=1 suspended=0 enabled=0")
                 exchange()
+                command(dut, "feature 1", "FEATURE value=1 accepted=1 status=1 valid=1")
+                command(dut, "suspend", "SUSPENDED 1")
+                command(device, "state 1", "STATE ready=1 suspended=1 enabled=1")
+                device.write("end_race")
+                result = device.expect(r"END_RACE ok=([01]) accepted=(\d+) denied=(\d+) stopping=(\d+) post=(\d+) bad=(\d+)\r\n", timeout=30)
+                assert result.group(1) == b"1" and result.group(6) == b"0"
+                assert int(result.group(2)) >= 1 and int(result.group(4)) >= 16 and int(result.group(5)) >= 32
             for board in (dut, device):
                 command(board, "stop", "STOPPED", 30)
     finally:

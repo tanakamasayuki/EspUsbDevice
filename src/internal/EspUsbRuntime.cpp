@@ -227,6 +227,8 @@ bool stopUsbRuntime()
   return true;
 }
 
+bool usbRuntimeStopping() { return g_stop.load(); }
+
 bool usbRuntimeStarted()
 {
   return g_phy != nullptr && g_deviceTask != nullptr;
