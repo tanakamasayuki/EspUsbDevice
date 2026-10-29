@@ -7,6 +7,26 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## archive設定後の全44件と追加probe
+
+2026-10-29、製品052bcbbのsource/library.propertiesを固定し、標準combo allで
+**44 passed、0 skipped/failed/error/unfinished、3745.31秒**。88 serial全てSTOPPED、panicなし。
+全class、816開始＋14設定失敗回復、heap346768→346768、取消し/reset/STALL/実bus休止を確認した。
+Audio 32 ISO交換・36 guard、4 Audio Fnの10順次交換・40状態照会、IN上限拒否と番号6も維持。
+Vendor 1000 frame/713000 byte×2・39再接続・80 reset、heap356392→356392。
+全24 examplesとS3/S2/P4 Vendor ELFのarchive/29依存/native出所の監査も成功した。
+集計`.pytest-results/archive-all-audit.txt`、原本`/tmp/pytest-embedded/2026-10-29_04-54-45-321153/`。
+
+続けた新規MSC helperは**1 passed、39.64秒**、2 logs STOPPED/panicなし。
+8回開始し、511 byte sectorの7-block往復×4、FAT12上の1537 byte fileの読出し/書換え×4を
+公開helper側のreadBlock/readFileでも照合した。guard、別fileとRAM未使用末尾も保持した。
+原本`/tmp/pytest-embedded/2026-10-29_05-58-02-529930/`、記録`.pytest-results/msc-helpers*`。
+
+新規typed HIDの初回は1 passed、44.47秒、44 input/GET_REPORT照合・52 input・2 logs STOPPED。
+ただしraw byteだけの確認でSystem Control descriptorのusage不整合を検出しないため、補強中。
+`.pytest-results/hid-typed-raw-only*`として保持し、意味の正しさの証明には使わない。
+これらの追加2件は全44件の同一実行に含まれない。SD/OTA/PC OS/他機種の実機も別に残る。
+
 ## includeのみの未使用コスト
 
 no_library/include_only/device_onlyをCore3.3.12/S3で比較し、従来includeだけで残る
@@ -18,7 +38,7 @@ Device宣言のみも未選択state/IP globals/USB startup symbolを含まない
 製品052bcbbの全8 examples×S3/S2/P4、計24ビルドは全て成功した。
 各ELFのFQBN/機械種別、archive生成、29 sourceの依存とnative controllerのsymbol/出所を監査した。
 未選択Net/Video/CCIDと旧stackの混入はない。記録は`.pytest-results/archive-examples-*`。
-S2/P4はcompile-onlyであり、全classの実機回帰44件は別途実行中。
+S2/P4はcompile-onlyであり、全classの実機回帰44件も上記の通り成功。
 
 ## Vendorの反復転送と再列挙
 
@@ -58,7 +78,7 @@ ESP_ERR_INVALID_SIZE・IRQ開始0回・資源解放・heap一致を確認する�
 詳細と原本は[能力表の実験](../docs/V3_ARCHITECTURE.ja.md#in-endpoint上限の開始時拒否)を参照。
 記録`.pytest-results/controller-capacity*`。全体収集は41件で、以下の全40件とこの新規1件の結果は別の実行である。
 
-## TX FIFO修正後の全40件（最新）
+## TX FIFO修正後の全40件（f5d1571）
 
 2026-10-29、製品/probe `f5d1571`を固定。標準`pytest --combo all`は
 **40 passed、0 skipped/failed/error/unfinished、1997.81秒**。80 serial全てSTOPPED、STOP_FAILED/panicなし。

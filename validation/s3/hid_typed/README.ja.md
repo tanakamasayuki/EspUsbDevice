@@ -9,3 +9,7 @@ HostはS3上のEspUsbHostであり、PC OSのシステム操作・ゲーム互�
 2026-10-29: S3 Host/Deviceのcompileと標準comboによる1件収集は成功。
 実機はarchive変更後の全44件がS3ペアを解放してから実行する。現時点では実機成功の記録ではない。
 44回のinput/GET_REPORT照合、clickの押下・解放を含む52 input reportを予定する。
+
+初回raw-onlyは1 passed、44.47秒、44照合/52 input、2 logs STOPPEDだった。
+ただしSystem Controlのdescriptor意味を検証していないため、正しいusageの証明とは扱わない。
+raw-only結果を別名保存して、公開定数とHostのdescriptor解釈を使う試験へ補強する。

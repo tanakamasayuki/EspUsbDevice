@@ -1,7 +1,7 @@
 # v3開発の引き渡し
 
 更新: 2026-10-29。作業場所`/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品はdot_a_linkageのarchive化を追加し、最小include差分0を確認。全class回帰44件を実行中。全8例×3 profileの24ビルド/ELF監査は成功。
+最新製品はdot_a_linkageのarchive化を追加し、最小include差分0を確認。全class回帰44件と全8例×3 profileの24ビルド/ELF監査は成功。
 Audio予約幅はcface78、能力表共有とS3番号6のIN/OUT実測は324231a。
 疎なINのFIFO修正はf5d1571、Audio外部ring長指定e329ef6。metadataは3.0.0、未release。
 mainの文書commit `3fed50d`を取り込み済み。まとまりごとのローカルcommit、pushなし。
@@ -43,7 +43,7 @@ MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依�
 
 | 単位 | 結果・記録 |
 | --- | --- |
-| archiveリンクの最小probe | include_onlyはno_libraryとFlash259465/global21584で一致（追加0）。device_onlyもIP globals/未使用Fn/startup symbolなし。全44件は実行中 |
+| archiveリンクの最小probe | include_onlyはno_libraryとFlash259465/global21584で一致（追加0）。device_onlyもIP globals/未使用Fn/startup symbolなし。全44件成功、3745.31秒/88 serial STOPPED/panicなし |
 | Vendor反復/再列挙 | 新規1件59.76秒成功。1000フレーム/713000 byte×2、39再接続、80 reset hook、heap一致。全体収集44件 |
 | Audio予約幅の最小化 | 4 UAC1 duplexの構成/順次転送1件67.36秒＋関連6件441.14秒成功。14 logs STOPPED/panicなし、S2/P4 compile/依存/nm成功。全体収集43件 |
 | 能力表統一/番号6 | 新規2件81.91秒＋関連4件199.67秒成功。12 logs STOPPED/panicなし、S2/P4 compile/依存/nm成功。全体収集42件 |
@@ -132,3 +132,12 @@ Audio予約幅修正後のFIFO対応を使用する。S2/P4は今回のVendorEch
 全24 examplesは全profile `passed=8 failed=0`で終了。
 `/tmp/espusb-v3-archive-examples-audit.py`も成功し、JSON/transcriptを保存済み。
 MSCのRAM/FAT helperの独立probeを準備中。44件とは別で、実機結果はまだない。
+
+052bcbbの全44件は44 passed、3745.31秒、skip/error/failure/unfinishedなし。
+`/tmp/espusb-v3-archive-all-audit.py`成功。88 serial全停止、heap346768一致、
+816＋14の取得失敗回復、Audio/CDC/MSC複合・疎endpoint・追加soakを確認した。
+続くMSC helperも1 passed39.64秒、raw/FAT各4往復、8 guard、2 logs停止。
+新typed初回はraw-onlyで1 passed44.47秒だがSystem descriptorの意味を見ていない。
+公開System定数1/2/3に対しdescriptorがusage0..3を広告する不整合を発見し、補強/修正を次に行う。
+これらの原本・監査先はvalidation README冒頭へ記録。queued runner59201/23592はexit0で終了済み。
+[remote wakeup調査](V3_REMOTE_WAKEUP.ja.md)は8cc6e02。Core3.3.12/IDF5.5.5のHost制約に注意。
