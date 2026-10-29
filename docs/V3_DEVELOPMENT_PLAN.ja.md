@@ -8,23 +8,23 @@ Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在
 [引き渡し](V3_HANDOFF.ja.md)、[API変更の判断](V3_API_DECISIONS.ja.md)、
 [所有権の出発案](V3_ARCHITECTURE.ja.md)、[実験台帳](V3_EXPERIMENTS.ja.md)を参照。
 
-2026-10-29の実装・証拠の照合: 製品cface78時点でNative class/core/DWC2とS3の代表構成まで進んだ。
-全体43件の収集に加え、今回vendor_soakを追加。古い段階名や初期case数を現在の合否として扱わない。
+2026-10-29の実装・証拠の照合: 製品80e8676でNative class/core/DWC2、typed HID、remote wakeupまで実装。
+直前の全44件成功と、現在実行中の全47件を区別する。古い段階名や初期case数を現在の合否として扱わない。
 
 | 要件 | 現状と証拠 | 残る確認 |
 | --- | --- | --- |
 | 明示構成・実行時設定・移行 | srcの各configure、V3_MIGRATION/API_DECISIONSと独立probe。build_opt/TinyUSB設定不要 | 全体としての出荷判断は継続 |
-| 未使用コスト | Vendor/Audio等のnmで他class state不在、開始816＋設定14失敗回復、100 begin/endの既存試験 | 新規比較のFlash1168/global64 byteを未使用Netif.cppのIPAddress参照と特定。archive化で最小include差分0を確認し、全24 examplesのcompile/ELF監査は成功。全44件の実機回帰も成功、88 serial全停止/panicなし |
+| 未使用コスト | Vendor/Audio等のnmで他class state不在。最新の取得点試験は実測817開始＋14設定失敗回復、100 begin/endも確認 | archive化で最小include差分0。80e8676でも同値。Device宣言のみは旧archive基準からFlash+44/global+16、共通lock等のリンク差分。全24 examplesと全44件の回帰は成功 |
 | class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Systemの標準usage/array解放は新規1＋関連6件とS2/P4 compile成功。Gamepad hat/複合global分離は新規1件・関連6項目とS2/P4 compile成功。RAM/FAT helperの8開始/実通信は成功。SD/Firmware helperの実通信は不足 |
 | core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 cache/HSは実機未確認 |
 | 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupの能力/許可/要求を実装し、S3の実wake・復帰/取消し/停止を確認。全47件回帰を確認する |
 | 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
-| 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 052bcbbの全44件・24 examples・29依存とnative出所を確認済み |
+| 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 052bcbbの全44件・24 examplesを監査。80e8676のS2/P4 remote probeも29依存/archive/native出所を監査済み |
 | 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | 拡大benchは未結線。typed HID/MSC helper/remoteを含め47件収集（全44件の一括結果とは別） |
 | 機種・OS・配布 | S3–S3実機、S2/P4 compile-only、8つの新examplesと移行ガイド | S2/P4実機、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
 
-今回の優先順は、archive化で未使用netifのリンク副作用を除く変更の全体確認、typed HID/任意helperの不足、
-remote wakeupの仕様・入口とS3実験の順に、確認不要で進められる単位を扱う。
+archive化・typed HID・RAM/FAT helper・remote wakeupの個別確認は済んだ。
+現在は80e8676の全47件を固定ソースで実行し、停止・回収とwire指標を監査する。
 S2/P4/S31の実機やPCへの結線変更を必要とする項目を、S3 peer成功で代替しない。
 
 v3は、現在の明示的な構成と基本的な使い勝手を軸に、使う機能だけにコード・メモリ・実行コストを
