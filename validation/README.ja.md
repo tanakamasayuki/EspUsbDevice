@@ -7,6 +7,17 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## CDC＋MSCの同時通信
+
+2026-10-29、製品`e329ef6`を変更せず、新case `test_msc_cdc_concurrent`を追加した。
+MSC staging64/4096 byteとCDC RX97/TX131 byteで同時往復し、MSC呼出し中にもCDCが完了することを確認。
+MSCのmedia-not-presentと復帰を挟んでもCDCが進み、両方向のbyte数・payloadとMSCのguard/offsetは一致した。
+1 passed、59.01秒、2 logs STOPPED/panicなし。共有probeの既存storage/raw BOTも2 passed、81.69秒、
+4 logs STOPPED/panicなし。いずれもskip/error/failure/unfinishedなし。
+標準plugin combo/all、noconftestのままで全体収集は39件。全39件の一括実行結果ではない。
+詳細とserial原本は[MSCガイド](../docs/V3_MSC_API.ja.md#cdcとの同時通信)を参照。
+記録は`.pytest-results/msc-cdc-concurrent*`、`msc-cdc-regression*`。
+
 ## Audio外部ring長指定後の関連6件
 
 2026-10-29、Audio ConfigへplaybackBufferBytes/captureBufferBytesを追加。

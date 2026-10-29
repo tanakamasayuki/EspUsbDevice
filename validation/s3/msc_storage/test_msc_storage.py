@@ -47,3 +47,47 @@ def test_msc_storage(dut, peers):
             except Exception as exc:
                 errors.append(f"{name}: {exc}")
         assert not errors, "USB stop failed: " + "; ".join(errors)
+
+
+def test_msc_cdc_concurrent(dut, peers):
+    """Small CDC rings keep progressing during BOT and media-not-present errors."""
+    device = peers["device"]
+
+    def command(board, text, reply, timeout=15):
+        board.write(text)
+        board.expect_exact(reply + "\r\n", timeout=timeout)
+
+    try:
+        for capacity in (64, 4096):
+            command(device, f"start {capacity} 3", f"STARTED 1 capacity={capacity}", 30)
+            command(dut, "start", "HOST_READY 1", 30)
+            command(dut, "cdc_start", "CDC_STARTED 1")
+            command(dut, "roundtrip", "ROUNDTRIP 1", 30)
+            dut.write("cdc_progress")
+            dut.expect(r"CDC_PROGRESS ok=1 echoes=\d+ overlap=\d+\r\n", timeout=15)
+            command(device, "absent", "MEDIA_CHANGED")
+            command(dut, "error 1", "ERROR_SENSE 1 key=2 asc=58")
+            dut.write("cdc_progress")
+            dut.expect(r"CDC_PROGRESS ok=1 echoes=\d+ overlap=\d+\r\n", timeout=15)
+            command(device, "present", "MEDIA_CHANGED")
+            command(dut, "ready", "READY 1")
+            command(dut, "roundtrip", "ROUNDTRIP 1", 30)
+            dut.write("cdc_stop")
+            result = dut.expect(r"CDC_RESULT stopped=1 echoes=(\d+) bytes=(\d+) overlap=(\d+) bad=0\r\n", timeout=15)
+            assert int(result.group(1)) >= 10
+            assert int(result.group(3)) > 0, "CDC completed no echoes while an MSC call was pending"
+            device.write("cdc_stats")
+            counts = device.expect(r"CDC_BYTES received=(\d+) sent=(\d+)\r\n", timeout=5)
+            assert counts.group(1) == counts.group(2) == result.group(2)
+            device.write("stats")
+            device.expect(r"STATS reads=\d+ writes=\d+ offsets=1 guards=1\r\n", timeout=5)
+            for board in (dut, device):
+                command(board, "stop", "STOPPED", 30)
+    finally:
+        errors = []
+        for name, board in (("host", dut), ("device", device)):
+            try:
+                command(board, "stop", "STOPPED", 30)
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+        assert not errors, "USB stop failed: " + "; ".join(errors)

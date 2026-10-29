@@ -2,6 +2,7 @@
 #include <EspUsbDevice.h>
 #include <esp_heap_caps.h>
 #include <atomic>
+#include <algorithm>
 EspUsbDevice device;
 EspUsbDeviceMsc disk(device);
 uint8_t storage[32 * 512];
@@ -12,6 +13,14 @@ EspUsbDeviceCdcSerial *serialPort = nullptr;
 EspUsbDeviceMsc *second = nullptr;
 bool readOnly = false;
 unsigned sectorBytes = 512;
+uint32_t cdcReceived = 0, cdcSent = 0;
+void pumpSerial() {
+  if (!serialPort) return;
+  uint8_t data[64];
+  const size_t count = std::min(sizeof(data), serialPort->writeAvailable());
+  const size_t n = serialPort->read(data,count);
+  if (n) { cdcReceived += n; cdcSent += serialPort->write(data,n); }
+}
 void callbacks(bool readonly) {
   disk.onRead([](uint32_t lba, uint32_t offset, void *buffer, uint32_t bytes) -> int32_t {
     ++reads; offsets.store(offsets.load() && offset < sectorBytes && lba < 32 && bytes <= sizeof(storage) - (lba * sectorBytes + offset));
@@ -47,6 +56,7 @@ bool metadata() {
 }
 void setup() { Serial.begin(115200); Serial.setTimeout(100); }
 void loop() {
+  pumpSerial();
   if (!Serial.available()) { delay(1); return; }
   String command = Serial.readStringUntil('\n'); command.trim();
   if (command == "metadata") {
@@ -66,7 +76,13 @@ void loop() {
     EspUsbMscConfig config; config.transferBytes = bytes; config.name = "Runtime storage";
     if (mode == 1) config.transferBuffer = external + 64;
     bool ok = disk.configure(config) == ESP_OK && disk.begin(32, sectorBytes);
-    if (mode == 3) serialPort = new EspUsbDeviceCdcSerial(device);
+    cdcReceived = cdcSent = 0;
+    if (mode == 3) {
+      serialPort = new EspUsbDeviceCdcSerial(device);
+      EspUsbBulkStreamConfig serialConfig;
+      serialConfig.rxCapacity = 97; serialConfig.txCapacity = 131; serialConfig.transferBytes = 64;
+      ok &= serialPort->configure(serialConfig) == ESP_OK;
+    }
     if (mode == 4) {
       second = new EspUsbDeviceMsc(device);
       second->onRead([](uint32_t, uint32_t, void *buffer, uint32_t n) { memset(buffer, 0xa5, n); return int32_t(n); });
@@ -81,6 +97,8 @@ void loop() {
     disk.mediaPresent(command == "present"); Serial.println("MEDIA_CHANGED");
   } else if (command == "fail" || command == "recover") {
     ioFail.store(command == "fail"); Serial.println("IO_CHANGED");
+  } else if (command == "cdc_stats") {
+    Serial.printf("CDC_BYTES received=%u sent=%u\r\n", unsigned(cdcReceived), unsigned(cdcSent));
   } else if (command == "stats") {
     bool guards = true;
     for (unsigned i = 0; i < 64; ++i) guards &= external[i] == 0x5a && external[64 + disk.transferCapacity() + i] == 0x5a;

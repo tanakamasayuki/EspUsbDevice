@@ -156,3 +156,24 @@ WRITEは処理済み64 byteが残り、残りのsectorは変更されないこ�
 
 TinyUSB manifestは24 file / 2 compiled sourcesで一致。旧tests/examplesはmainと同じ。
 全29件の一括再試験、任意Host HALTからの進行中SCSI継続、bus reset/endとの全競合順序、OS/実mediaは未完了。
+
+
+## CDCとの同時通信
+
+2026-10-29、製品`e329ef6`のまま独立MSC probeに同時通信の試験を追加した。
+CDCはRX97/TX131 byteのring、64 byteのcopy転送で1/63/64/65/129 byteを連続往復し、
+別のHost taskとmainからCDC・MSCを同時に使う。Deviceには専用taskを追加せず、loopでCDCをechoする。
+MSCは64/4096 byte stagingそれぞれで1/2/7/8 blockを読み書きし、payload・offset・guardを比較した。
+
+1 passed、59.01秒、2 logs STOPPED/panicなし。CDCは112/105往復、7148/6762 byteを送り、
+Host受信とDevice送受信の総byte数は一致した。MSC呼出し中のCDC完了は29/14回で、
+逐次で両方を成功させただけの試験ではない。MSCのmediaPresent(false)でNot Ready/Medium Not Presentを
+返す間もCDCは5往復以上進み、メディア復帰後に再度MSC payloadを照合した。
+回数や転送量は合否の最小進行量を確認するための値で、性能指標ではない。
+
+共有probeの既存storage/raw BOT 2件も2 passed、81.69秒、4 logs STOPPED/panicなし。
+製品・公開API変更は不要だった。標準comboとnoconftestを維持し、全体収集は39件。
+serial原本は`/tmp/pytest-embedded/2026-10-28_23-44-07-209913/`（同時通信）、
+`/tmp/pytest-embedded/2026-10-28_23-45-20-737310/`（既存2件）。
+JUnit/transcript/serialと監査は`.pytest-results/msc-cdc-concurrent*`、`msc-cdc-regression*`。
+39件の一括実行や、OS・HS実機・MSC HALT中のCDC継続まで確認した結果ではない。
