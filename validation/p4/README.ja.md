@@ -11,7 +11,14 @@ Device製品source `80e8676`。現在の結果は次表、初期probeの詳細�
 
 両controllerのDevice動作を確認したが、**480 MbpsのHS link試験ではない**。
 
-## 現在の結果（2026-10-30）
+## API調整後の関連回帰
+
+Video投稿型統一02c7509のP4 Video4件と、CDC期限付き送信22afc15のloopback6件が成功。
+前者はS3も含む12件179.81秒、後者も関連12件374.48秒の一括実行に含まれる。
+今回も両controllerのFS link。以前の30件を最新版で全て再実行したという意味ではない。
+記録video-submission-initial*、cdc-tx-related*。標準allの現在収集はS3 50＋P4 30＝80件。
+
+## 基準80e8676の結果（2026-10-30）
 
 全10 classの基本的なwire通信を、両Device controller・FS linkで確認した。
 製品sourceとユーザーAPIに今回の変更はない。新規probeを標準comboで実行し、conftestは追加していない。

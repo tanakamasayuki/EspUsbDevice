@@ -7,13 +7,26 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## CH32RV調整後の関連試験（2026-10-30）
+
+Video製品02c7509はS3制御/HALT回復2＋ISO/Bulk lifecycle6＋P4 Video4の12件を179.81秒で成功。
+CDC製品22afc15は新規TX待ち3＋既存S3関連3＋P4 loopback6の12件を374.48秒で成功。
+それぞれ標準combo allの一回で実行し、20/18 serial logs全て正常停止・panicなし。
+新規CDCは独立sketch/profileと標準peersを使い、conftestや専用pluginを追加していない。
+[Video](../docs/V3_VIDEO_API.ja.md)、[CDC](../docs/V3_CDC_API.ja.md)の現行契約と結果を参照。
+S2 CDC基本例のcompile/29 source依存/未使用class除去も確認した。S2実機は未確認。
+
+現在の標準all収集はS3 50＋P4通常28＋PSRAM2＝80件。全80件一括実行の結果ではない。
+基準80e8676の全S3 47件と、以前のP4各probe30件の記録は後段へ保持する。
+原本はvalidation/.pytest-resultsのvideo-submission-initial*、cdc-tx-related*、cdc-tx-s2*。
+
 ## P4実機の追加確認
 
 追加のPSRAM2件82.35秒、Audio duplex4件33.95秒も成功した。
 既存boardで32 MiB、MSC保存先/Vendor両ringのPSRAM利用、両controllerのUAC1/UAC2 ISOを確認。
 CCID4、Video4、DFU2、NCM4も追加してP4は計30 caseを各probeの別実行で成功。
 全10 classの基本通信を両controllerのFS linkで確認した。製品source変更なし。
-現在の標準all収集はS3 47＋P4通常28＋PSRAM2＝77件。[現行P4記録](p4/README.ja.md)。
+このP4追加時点の標準all収集はS3 47＋P4通常28＋PSRAM2＝77件。[現行P4記録](p4/README.ja.md)。
 全77件一括成功の記録ではなく、下記の各実行結果を参照。
 
 ### 初期P4の確認

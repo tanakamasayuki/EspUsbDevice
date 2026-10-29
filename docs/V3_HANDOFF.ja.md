@@ -1,7 +1,13 @@
 # v3開発の引き渡し
 
 更新: 2026-10-30。worktree `/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
-最新製品は`80e8676`、registry試験修正は`0144bfb`。
+最新製品は`22afc15`。Video投稿型統一は`02c7509`、CDC期限付きTX待ちは`22afc15`。
+Video関連12件179.81秒、CDC関連12件374.48秒がそれぞれ一括成功。S2 CdcConsole compileも成功。
+最新収集80件（S3 50＋P4 30）。全80件一括実行の結果ではない。
+[今回のAPI変更と移行](V3_MIGRATION.ja.md#ch32rvとの調整によるv3開発途中の変更2026-10-30)、
+[CH32RVとの判断・残るAudio/DFU/MSC](V3_CH32RV_API_ALIGNMENT.ja.md)。
+
+直前の基準製品`80e8676`、registry試験修正`0144bfb`では、
 **標準combo allの全47件が1917.29秒で成功**。skip/error/failure/unfinishedは0、
 94 serial全STOPPED/panicなし。実測817開始＋14設定失敗回復、heap一致も監査した。
 初回はregistryの旧descriptor長161の固定期待で停止（実長175、19成功・1失敗）。
@@ -20,7 +26,7 @@ Audio e577698のUAC1/UAC2 duplex4件も33.95秒成功。8開始、PCM両方向/f
 PSRAM/Audioのpostv3 compile・29依存/native出所も監査済み。
 CCID ee12cc1の4件、Video 2a7c4b0の4件、DFU 2eb53b0の2件、NCM 9059f36の4件も成功。
 P4は各単位で計30件成功、全10 classの基本wire通信/両controller FSを確認。製品変更なし。
-追加4 classのnative ELF/29依存/未選択class除去も監査。最新all収集77件（S3 47＋P4 30）。
+追加4 classのnative ELF/29依存/未選択class除去も監査。このP4追加時点のall収集77件（S3 47＋P4 30）。
 全77一括成功という記録ではない。HS結線用のboard型番/2台目native接続先は質問済み、未回答。
 次は480 Mbps HS link、P4X実機、PC OS binding。NCM明示close併用時のHost再開始は別の未解決経路。
 

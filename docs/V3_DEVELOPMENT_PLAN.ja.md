@@ -1,5 +1,10 @@
 # EspUsbDevice v3 開発計画
 
+2026-10-30追記：最新製品22afc15でCDCの期限付きwrite/flush、02c7509でVideoのSubmission戻り値を適用。
+関連12件ずつが一括成功、S2 CDC基本例もcompile成功。最新の収集80件を全件再実行した結果ではない。
+下記の80e8676/全47件・24 examples等はそれぞれの時点の検証記録として保持する。
+残るCH32RV調整はAudio overflow、DFU受付、MSC媒体交換。[判断と検査計画](V3_CH32RV_API_ALIGNMENT.ja.md)。
+
 作成日: 2026-10-25。調査基準: EspUsbDevice 2.6.1、commit `b1094cd`。
 
 2026-10-26更新: 開発用試験は既存test/sampleから独立した`validation/`へ変更した。
