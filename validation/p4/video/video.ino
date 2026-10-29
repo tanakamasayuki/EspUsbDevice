@@ -54,7 +54,10 @@ void loop() {
       if(!ok) break;
       memset(storage,0xc3,sizeof(storage));expectedIndex.store(sent);expectedLength.store(n);
       for(size_t i=0;i<n;++i) storage[64+i]=uint8_t(i*37+n+sent);
-      ok &= video->sendFrame(storage+64,n);uint32_t deadline=millis()+5000;
+      // Exercise the shared submission shape and the unchanged simple facade.
+      if(sent%2) ok &= video->sendFrame(storage+64,n);
+      else {const auto submission=video->submitFrame(storage+64,n);ok &= bool(submission) && submission.id;}
+      uint32_t deadline=millis()+5000;
       while(ok && (frames.load()<sent+1 || results.load()<sent+1) && int32_t(deadline-millis())>0) delay(1);
       ok &= frames.load()==sent+1 && results.load()==sent+1 && bad.load()==0;
       for(size_t i=0;i<64;++i) guards &= storage[i]==0xc3;

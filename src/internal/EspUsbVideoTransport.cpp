@@ -297,16 +297,16 @@ void VideoTransport::end(EspUsbDeviceVideo &o) {
 }
 bool VideoTransport::streaming(const EspUsbDeviceVideo &o) { VideoGuard guard; return o.state_ && o.state_->canStream(); }
 size_t VideoTransport::capacity(const EspUsbDeviceVideo &o) { VideoGuard guard; return o.state_ ? o.videoConfig_.payloadBytes : 0; }
-esp_err_t VideoTransport::submit(EspUsbDeviceVideo &o,const void *data,size_t n,uint64_t &id) {
-  id=0; VideoGuard guard; auto *s=o.state_;
-  if (!s || !s->canStream()) return ESP_ERR_INVALID_STATE;
-  if (!data || !n || n>o.maxFrameSize() || uintptr_t(data)>UINTPTR_MAX-n || (o.format_==EspUsbDeviceVideoFormat::Yuy2 && n!=o.maxFrameSize())) return ESP_ERR_INVALID_ARG;
-  if (s->frame) return ESP_ERR_INVALID_STATE;
-  if (!nextFrameId) return ESP_ERR_INVALID_STATE;
+EspUsbTransferSubmission VideoTransport::submit(EspUsbDeviceVideo &o,const void *data,size_t n) {
+  VideoGuard guard; auto *s=o.state_;
+  if (!data || !n || n>o.maxFrameSize() || uintptr_t(data)>UINTPTR_MAX-n || (o.format_==EspUsbDeviceVideoFormat::Yuy2 && n!=o.maxFrameSize())) return {EspUsbTransferError::BadArgument,0};
+  if (!s || !s->canStream()) return {EspUsbTransferError::NotMounted,0};
+  if (s->frame) return {EspUsbTransferError::Busy,0};
+  if (!nextFrameId) return {EspUsbTransferError::TransferFailed,0};
   s->frame=static_cast<const uint8_t *>(data); s->length=n; s->done=0; s->fid^=1; s->id=nextFrameId++;
   o.inFlight_.store(true);
-  if (!postUsbRuntimeJob(s->job)) { s->frame=nullptr; o.inFlight_.store(false); return ESP_ERR_INVALID_STATE; }
-  id=s->id; return ESP_OK;
+  if (!postUsbRuntimeJob(s->job)) { s->frame=nullptr; o.inFlight_.store(false); return {EspUsbTransferError::TransferFailed,0}; }
+  return {EspUsbTransferError::None,s->id};
 }
 esp_err_t VideoTransport::cancel(EspUsbDeviceVideo &o,uint64_t id) {
   VideoGuard guard; auto *s=o.state_;

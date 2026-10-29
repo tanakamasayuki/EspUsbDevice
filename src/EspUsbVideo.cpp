@@ -444,8 +444,8 @@ void EspUsbDeviceVideo::end() {
   running_.store(false); inFlight_.store(false); commit_ = {};
 }
 bool EspUsbDeviceVideo::streaming() const { return espusb::internal::VideoTransport::streaming(*this); }
-esp_err_t EspUsbDeviceVideo::submitFrame(const void *frame, size_t length, uint64_t &id) { return espusb::internal::VideoTransport::submit(*this,frame,length,id); }
-bool EspUsbDeviceVideo::sendFrame(const void *frame, size_t length) { uint64_t id; return submitFrame(frame,length,id) == ESP_OK; }
+EspUsbTransferSubmission EspUsbDeviceVideo::submitFrame(const void *frame, size_t length) { return espusb::internal::VideoTransport::submit(*this,frame,length); }
+bool EspUsbDeviceVideo::sendFrame(const void *frame, size_t length) { return bool(submitFrame(frame,length)); }
 esp_err_t EspUsbDeviceVideo::cancelFrame(uint64_t id) { return espusb::internal::VideoTransport::cancel(*this,id); }
 esp_err_t EspUsbDeviceVideo::onFrameResult(FrameResultCallback c) { if (running_) return ESP_ERR_INVALID_STATE; frameResultCallback_ = std::move(c); return ESP_OK; }
 esp_err_t EspUsbDeviceVideo::onFrameComplete(FrameCompleteCallback c) { if (running_) return ESP_ERR_INVALID_STATE; frameCompleteCallback_ = std::move(c); return ESP_OK; }

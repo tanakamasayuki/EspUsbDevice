@@ -2,7 +2,7 @@
 
 2026-10-30追記：末尾にCH32RV側からの6点の再検討を記録した。
 以下の10月28日比較は当時のsnapshotであり、現在のCH32RV側の未対応一覧ではない。
-再検討は実装前の判断案。ESP製品sourceは`80e8676`のままである。
+再検討は80e8676を基準とする判断案。実装の進捗は末尾の適用記録を参照。
 
 2026-10-28、ローカル`ArduinoCore-CH32RV/libraries/CH32RVUsbDevice/src/`の公開headerを比較。
 当該libraryの直近commitは`d99f8979`。これは移植計画でも、CH32RV側を変更した記録でもない。
@@ -143,3 +143,11 @@ S3–S3の独立validationを基準にし、conftestを追加しない。P4の�
 
 未使用Functionへtimeout state、追加ring、媒体監視task等を一律追加しない。
 既存の77件の収集/各実行結果は現行製品の証拠であり、上記変更案の検証済み扱いにはしない。
+
+
+### 適用記録
+
+- Video submitFrameのSubmission戻り値を適用。sendFrameは維持し、旧3引数overloadは撤去。
+  S3 8件＋P4 FS 4件の関連12件を一括成功（179.81秒）。[現行Video API](V3_VIDEO_API.ja.md)を参照。
+- VideoのISO既定512 byteと、Bulkを勧める用途をAPIガイドへ追記。transportの既定自体は維持。
+- 残りのCDC/Audio/DFU/MSCは上記の判断案であり、適用済みではない。

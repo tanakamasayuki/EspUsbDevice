@@ -61,8 +61,9 @@ void loop() {
     Serial.printf("STARTED %u\r\n",unsigned(ok));
   } else if (c.startsWith("queue ")) {
     unsigned i,n;sscanf(c.c_str(),"queue %u %u",&i,&n);
-    esp_err_t e=i<2 ? video[i]->submitFrame(i ? pixels : frame,n,ticket[i]) : ESP_ERR_INVALID_ARG;
-    Serial.printf("QUEUED %u %d\r\n",i,int(e));
+    const auto submission=i<2 ? video[i]->submitFrame(i ? pixels : frame,n) : EspUsbTransferSubmission{EspUsbTransferError::BadArgument,0};
+    if(i<2) ticket[i]=submission.id;
+    Serial.printf("QUEUED %u %u\r\n",i,unsigned(submission.error));
   } else if(c.startsWith("armed "))Serial.printf("ARMED %u\r\n",unsigned(armed(c.substring(6).toInt())));
   else if(c.startsWith("ready ")) {
     unsigned i=c.substring(6).toInt();const uint32_t until=millis()+2000;
@@ -71,9 +72,9 @@ void loop() {
   } else if(c.startsWith("halted ")) {
     unsigned i=c.substring(7).toInt();const uint32_t until=millis()+2000;
     while(video[i]->frameInFlight() && int32_t(until-millis())>0)delay(1);
-    uint64_t id=99;
+    const auto submission=video[i]->submitFrame(i ? pixels:frame,i ? 512:257);
     bool ok=!video[i]->frameInFlight() && !video[i]->streaming() &&
-        video[i]->submitFrame(i ? pixels:frame,i ? 512:257,id)==ESP_ERR_INVALID_STATE && !id;
+        !submission && submission.error==EspUsbTransferError::NotMounted && !submission.id;
     Serial.printf("HALTED %u\r\n",unsigned(ok));
   } else if(c.startsWith("halt_stats ")) {
     unsigned i=0,expected=0;sscanf(c.c_str(),"halt_stats %u %u",&i,&expected);
@@ -81,14 +82,18 @@ void loop() {
     while(results[i].load()<expected && int32_t(until-millis())>0)delay(1);
     Serial.printf("HALT_STATS %u results=%u success=%u cancel=%u error=%u unknown=%u bad=%u pending=%u\r\n",i,results[i].load(),successes[i].load(),cancels[i].load(),transferErrors[i].load(),unknownErrors[i].load(),bad[i].load(),unsigned(video[i]->frameInFlight()));
   } else if (c=="busy") {
-    uint64_t id=99;
-    bool ok=camera.submitFrame(frame,257,id)==ESP_ERR_INVALID_STATE && !id;
+    const auto submission=camera.submitFrame(frame,257);
+    bool ok=!submission && submission.error==EspUsbTransferError::Busy && !submission.id;
     ok &= camera.cancelFrame(ticket[1])==ESP_ERR_NOT_FOUND && raw.cancelFrame(ticket[0])==ESP_ERR_NOT_FOUND;
     Serial.printf("BUSY %u\r\n",unsigned(ok));
   } else if (c.startsWith("invalid ")) {
-    unsigned i=c.substring(8).toInt();uint64_t id=99;
-    bool ok=video[i]->submitFrame(i ? pixels : frame,i ? 511 : 65537,id)==ESP_ERR_INVALID_ARG && !id;
-    id=99;ok &= video[i]->submitFrame(nullptr,1,id)==ESP_ERR_INVALID_ARG && !id;
+    unsigned i=c.substring(8).toInt();
+    const auto oversized=video[i]->submitFrame(i ? pixels : frame,i ? 511 : 65537);
+    const auto nullFrame=video[i]->submitFrame(nullptr,1);
+    const auto empty=video[i]->submitFrame(i ? pixels : frame,0);
+    bool ok=!oversized && oversized.error==EspUsbTransferError::BadArgument && !oversized.id;
+    ok &= !nullFrame && nullFrame.error==EspUsbTransferError::BadArgument && !nullFrame.id;
+    ok &= !empty && empty.error==EspUsbTransferError::BadArgument && !empty.id;
     Serial.printf("INVALID %u\r\n",unsigned(ok));
   } else if (c.startsWith("cancel ")) {
     unsigned i=c.substring(7).toInt();esp_err_t e=video[i]->cancelFrame(ticket[i]);

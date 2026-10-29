@@ -17,9 +17,8 @@ camera.onFrameResult([](const EspUsbTransferResult &result) {
 });
 device.begin();
 // hostのcommitと、ISOの場合はstreaming alternate選択を待つ。
-uint64_t id = 0;
-// camera.submitFrame(encodedFrame, encodedBytes, id);
-// camera.cancelFrame(id); // 非同期。返却通知までframeを保持する。
+// const auto submission = camera.submitFrame(encodedFrame, encodedBytes);
+// if (submission) camera.cancelFrame(submission.id); // 非同期。返却通知までframeを保持する。
 ```
 
 ## 設定と費用
@@ -28,6 +27,14 @@ uint64_t id = 0;
 ISO packetは省略時にpayload容量から導出し、FS1023/HS1024を上限とする。
 `isochronousPacketBytes`を明示する場合も3..1024。ISOの実payloadはstaging容量とpacketの小さい方。
 BulkのUSB packetはFS64/HS512で、payloadは複数packetに分割できる。
+
+既定transportはIsochronous、既定payloadBytesは512。FSでもISO packetは既定512であり、
+bulkのFS MPS64による約62 KB/s制限をISOへ当てはめない。毎1 msに512 byteを1 packet送る仮定では、
+2-byte UVC headerを除く理論値は510000 byte/s。実測帯域・持続fpsの保証ではない。
+ISOは帯域を予約して周期的に送る用途に向き、転送量が不足する場合も再送で埋め合わせない。
+可変サイズのMJPEGや、帯域予約より転送量を優先する用途にはBulkを勧める。
+BulkはUSBの再送を使える一方、帯域と遅延は他のtrafficの影響を受ける。
+どちらもSoCのFIFO、複合Function、frameの大きさとfpsを合わせて選び、必要な方式をconfigureで明示する。
 controllerのFIFO/endpoint能力が足りない構成は開始に失敗する。APIの数値上限は全てのSoCでの成功保証ではない。
 
 begin時に選択Functionの状態と一つのDMA staging bufferだけを確保し、通常frame転送中には確保しない。
@@ -42,7 +49,21 @@ configure、format/size/fps/最大frame、callback登録は開始後の変更を
 
 ## frameの所有権と通知
 
-`sendFrame()`の通常操作は維持する。詳細な結果が必要な場合は`submitFrame(..., id)`と`onFrameResult()`を使う。
+`sendFrame()`の通常操作は維持する。詳細な結果が必要な場合は`submitFrame(frame, length)`と`onFrameResult()`を使う。
+戻り値はVendor/CDCのwriteDirectと同じ`EspUsbTransferSubmission`。成功時はbool変換がtrueでidが非0。
+拒否はid=0、借用なし、返却callbackなし。errorは次のように区別する。
+
+| error | 意味 |
+| --- | --- |
+| BadArgument | NULL/空/最大frame超過、YUY2実サイズ不一致、不正なaddress span |
+| NotMounted | 未開始/未commit、ISO alternate未選択、停止・再構成fence・HALT等でstreaming不可 |
+| Busy | 受理済みのframeがまだ借用中 |
+| TransferFailed | 内部投稿を受理できない、またはidを発行できない |
+
+Videoのframe自体にはDMA alignmentを要求しない。payload stagingのalignment条件とは別。
+従来の3引数`submitFrame(frame, length, id)`は2引数の戻り値へ移行し、旧overloadは残さない。
+`cancelFrame(submission.id)`は従来どおりesp_err_tを返す。
+
 一つのFunctionで一つのframeを借用する。frameは非NULL・非空、MJPEGは最大frame以下、YUY2はwidth×height×2と一致が必要。
 成功、Cancelled、BusReset、TransferError、Stoppedの各終了で一度返却する。
 `actualBytes`はUVC headerを除く確認済みframe byte数で、abort中など送信量を確定できない場合は`actualBytesKnown=false`。
@@ -53,7 +74,7 @@ configure、format/size/fps/最大frame、callback登録は開始後の変更を
 alternate変更と再commitでも旧frameの返却を待つ。onCommitは所有権返却の通知ではない。
 callbackはUSB worker上で実行し、軽い処理と次frame投稿にとどめる。
 Deviceのend、Functionの破棄、callback差し替えなどのlifecycle操作をcallbackから行わない。
-同時投稿は直列化され、既存frameがある場合はInvalidState。frame返却通知前の解放・変更は禁止。
+同時投稿は直列化され、既存frameがある場合はSubmissionのBusy。frame返却通知前の解放・変更は禁止。
 
 稼働中Functionの外側からの破棄はDeviceを停止し、worker/DMA停止後に状態を解放する。
 未登録/二重begin/別runtimeの稼働中beginはInvalidState、startErrorで理由を返す。
@@ -140,7 +161,7 @@ Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。conftestや独自pyt
 bulk endpointへのSET_FEATURE ENDPOINT_HALTでは、DMAと古い完了eventを退役させ、
 借用中frameを`TransferError`で一度だけ返却する。送信中の量を確定できなければ
 `actualBytesKnown=false`とし、確認済み部分だけを`actualBytes`へ入れる。
-HALT中は`streaming()`がfalse、`submitFrame()`はInvalidStateでid=0、
+HALT中は`streaming()`がfalse、`submitFrame()`はNotMountedでid=0、
 単純な`sendFrame()`はfalseになる。拒否した投稿の所有権を受け取らず、返却callbackも発行しない。
 
 CLEAR_FEATUREでは対象endpointだけDATA0へ戻し、既存のCommit設定のまま再開する。
@@ -180,3 +201,14 @@ S2/P4はcompile-only成功。全体の収集は32件で、今回の製品変更�
 原本は`/tmp/pytest-embedded/2026-10-27_20-05-52-165319/`。
 JUnit/transcript/serialコピーは`validation/.pytest-results/video-halt-final*`、集計は`video-halt-audit.txt`。
 全EP0順序、SET/CLEARの全競合とbus reset/end、OSや他SoC/HS実通信は別の未検証範囲として残す。
+
+
+## CH32RV調整後の投稿API（2026-10-30）
+
+submitFrameをEspUsbTransferSubmission戻り値へ統一した。sendFrameのboolは維持する。
+不正な引数はBadArgument、streaming不可はNotMounted、既存loanはBusy、内部投稿失敗はTransferFailed。
+S3制御/HALT回復2件＋ISO/Bulkの借用寿命6件＋P4両controller/両transport4件の
+計12件を標準combo allの一回の実行で成功（179.81秒、skip/error/failure/unfinished 0）。
+不正frame/NULL/空の拒否とid=0、未開始、Busy、cancel/end/recommit返却、guard/heapを確認した。
+P4は実link FS。HS帯域・P4X・PC OSの認定は含まない。
+記録はvalidation/.pytest-results/video-submission-initial*。

@@ -983,7 +983,7 @@ enum class EspUsbTransferError : uint8_t
   NotSupported,
   // No device, or this interface's endpoints are not open yet.
   NotMounted,
-  // Null buffer, zero length, or beyond maxDirectTransfer().
+  // Invalid buffer/length, including a Function's format or capacity limit.
   BadArgument,
   // The buffer's address is not 64-byte aligned. Its *length* need not be.
   NotAligned,
@@ -1932,7 +1932,9 @@ public:
   // configured frame size; MJPEG accepts 1..maxFrameSize() bytes.
   // Concurrent callers are serialized; a second pending frame is refused.
   bool sendFrame(const void *frame, size_t length);
-  esp_err_t submitFrame(const void *frame, size_t length, uint64_t &id);
+  // Same submission/result contract as writeDirect; the frame itself does not
+  // require DMA alignment. A rejected submission has id=0 and borrows nothing.
+  EspUsbTransferSubmission submitFrame(const void *frame, size_t length);
   // Asynchronous: ownership returns through onFrameResult, not this call.
   // A stale/zero ticket returns ESP_ERR_NOT_FOUND.
   esp_err_t cancelFrame(uint64_t id);

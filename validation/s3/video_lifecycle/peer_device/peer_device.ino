@@ -10,7 +10,9 @@ alignas(64) uint8_t externalPayload[1024];
 std::atomic<unsigned> results{0}, resultBad{0}, stopped{0}, cancelled{0};
 bool metadata() {
   EspUsbDevice d; EspUsbDeviceVideo v(d);
-  bool ok=!v.setFormat(static_cast<EspUsbDeviceVideoFormat>(255));
+  const uint8_t sample=1;const auto notStarted=v.submitFrame(&sample,1);
+  bool ok=!notStarted && notStarted.error==EspUsbTransferError::NotMounted && !notStarted.id;
+  ok &= !v.setFormat(static_cast<EspUsbDeviceVideoFormat>(255));
   ok &= !v.setMaxFrameSize(UINT32_MAX) && v.maxFrameSize()==19200;
   ok &= v.setFrameSize(17,17) && !v.setFormat(EspUsbDeviceVideoFormat::Yuy2);
   ok &= v.setFrameSize(16,17) && v.setFormat(EspUsbDeviceVideoFormat::Yuy2) && v.maxFrameSize()==544;
@@ -60,8 +62,9 @@ void loop() {
     unsigned n=command.substring(6).toInt();
     Serial.printf("QUEUED %u\r\n",unsigned(video->sendFrame(frame,n)));
   } else if (command=="cancel") {
-    uint64_t id=0;
-    bool ok=video->submitFrame(frame,65536,id)==ESP_OK && id && video->cancelFrame(id)==ESP_OK;
+    const auto submission=video->submitFrame(frame,65536);
+    const uint64_t id=submission.id;
+    bool ok=bool(submission) && id && video->cancelFrame(id)==ESP_OK;
     const uint32_t until=millis()+5000;
     while (video->frameInFlight() && int32_t(until-millis())>0) delay(1);
     ok &= !video->frameInFlight() && results.load()==5 && cancelled.load()==1 && !resultBad.load();
