@@ -14,4 +14,5 @@ addopts = "--noconftest --maxfail=1"
 arduino_combos = [
     "s3: primary=s3_host,device=s3_device",
     "p4: primary=p4_loopback",
+    "p4_psram: primary=p4_psram",
 ]
