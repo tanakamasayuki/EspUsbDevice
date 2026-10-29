@@ -27,7 +27,12 @@ PSRAM/Audioのpostv3 compile・29依存/native出所も監査済み。
 CCID ee12cc1の4件、Video 2a7c4b0の4件、DFU 2eb53b0の2件、NCM 9059f36の4件も成功。
 P4は各単位で計30件成功、全10 classの基本wire通信/両controller FSを確認。製品変更なし。
 追加4 classのnative ELF/29依存/未選択class除去も監査。このP4追加時点のall収集77件（S3 47＋P4 30）。
-全77一括成功という記録ではない。HS結線用のboard型番/2台目native接続先は質問済み、未回答。
+全77一括成功という記録ではない。
+ユーザーからP4X（esp32-series-80f1b2d71d86、HWCDC/JTAG）と旧P4
+（esp32-p4-80f1b2d0b261、CH340 UART）のHS直結を確認した。
+.envへp4_hs_host/p4_hs_device/p4x_hs_host/p4x_hs_deviceのport割当を予約。
+通常peer＋p4_p4x_hs/p4x_p4_hsのcombo案を[P4 bench計画](V3_P4_VARIANTS_AND_BENCH.ja.md)へ記録。
+HS sketch/profile/combo自体はまだ追加せず、flashもしていない。現行all収集80件は維持する。
 次は480 Mbps HS link、P4X実機、PC OS binding。NCM明示close併用時のHost再開始は別の未解決経路。
 
 ## 方針と入口

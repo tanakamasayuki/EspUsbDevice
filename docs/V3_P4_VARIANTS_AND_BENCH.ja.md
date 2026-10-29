@@ -8,10 +8,12 @@
 | serial alias末尾 | esptoolの実測 | 現在確認できた結線 |
 | --- | --- | --- |
 | e0aa24 | ESP32-P4 revision v1.3 | 同一P4のHS–FS loopback。両Device controllerをFS linkで確認 |
-| d0b261 | ESP32-P4 revision v1.3 | 書き込み・識別portを確認。native HSポートの接続先/board型番は未確定 |
+| d0b261 | ESP32-P4 revision v1.3 | CH340 UARTで制御。ユーザー申告で下記P4XとHS直結 |
+| d71d86 | ユーザー申告P4X。chip revisionは初回試験前に実測 | USB JTAG/serial debug unitで制御。d0b261とHS直結 |
 
-識別はchip-id（実際はMAC読出し）で行い、2台目へ試験firmwareはまだ書き込んでいない。
-P4X実機の存在は確認できていない。board名だけで判断せず、silicon revisionとFQBNを記録する。
+旧P4 2台の識別はchip-id（実際はMAC読出し）で行った。d0b261へ試験firmwareはまだ書き込んでいない。
+2026-10-30、ユーザーからP4X–P4のHS直結を確認。OSのread-only確認ではP4Xが303a:1001の
+USB JTAG/serial debug unit、P4は1a86:7523のCH340。chip revisionとFQBNは初回試験前に照合する。
 
 ## P4Xは名前だけの変更ではない
 
@@ -77,7 +79,7 @@ S3 47件、P4初回6件、今回4件は別実行。57件一括成功という記
 | Video、DFU、CCID、NCM | **両controllerで基本通信/再開始を確認済み** | SD/card reader不要。Videoはsynthetic payload、DFUはRAM backend、NCMはraw frame |
 | PSRAM経由のcopy/ring | **既存boardで32 MiB確認、MSC保存先・Vendor RX/TX ringの実通信成功** | 専用p4_psram profileで有効化。追加RAM board不要。直接PSRAM DMAの検証ではない |
 | 480 MbpsのHS Device | 既存P4 2台のHS–HS、またはPCのUSB2 HS Hostへ接続 | native data cableの結線変更。独立log port。descriptor/bus speedがHIGH/MPS512になったことを確認 |
-| P4X固有の動作 | postv3 compileは完了 | v3.1以降（新規導入ならv3.2確認品）の実機1台、適合するboard/SDK profile |
+| P4X固有の動作 | postv3 compile完了。P4X–P4 HS直結もユーザーから確認 | 初回にrevision実測、適合SDK/FQBN、HWCDC logとHSデータの独立動作を検査 |
 | PC OSのclass binding | PCをHS Hostにすれば同時に確認可能 | USB data deviceを実際にそのOSへ接続。serial portのforwardだけでは代替不可 |
 
 既存FS loopbackで全10 classの基本通信とPSRAM利用を確認した。次の機材依存gateはHS実結線とP4X実機。
@@ -127,6 +129,97 @@ CCID4、Video4、DFU2、NCM4の14 caseも追加し、P4は通常28＋PSRAM2の�
 全10 classの基本通信・両controllerのFS link・再開始を確認。最新all収集はS3 47＋P4 30＝77件で、
 全77一括実行の結果ではない。[詳細と制約](../validation/p4/README.ja.md)。製品sourceは80e8676のまま。
 
-480 Mbpsは既存2台のHS–HSまたはPC接続の変更が必要。2台のboard型番とnative connector接続先は確認待ち。
-P4Xはcompileまでで実機未確認。常駐bench追加台数は増やさず、P4枠をP4Xへ置換する案を維持する。
+2026-10-30にユーザーからP4X d71d86–P4 d0b261のHS直結を確認した。以下のpeer計画で進める。
+P4Xの動作は現時点でcompileまで、HS実機試験はまだ行っていない。常駐benchのP4枠の置換案は維持する。
 未選択classの除去とnative controller出所も追加4 classのELFで確認した。
+
+
+## HS直結peerのprofileと実行計画（2026-10-30）
+
+普通のprimary Host＋peer_device構造を使い、テスト関数はdutとpeers["device"]を受け取る。
+plugin1.10.0/698bb29のREADME/TESTING_ADVANCEDを再確認した。結線で決まる組を標準comboへ列挙し、
+profileの直積・独自conftest・テスト本文での設備選択を追加しない。
+
+### 名前とport割当
+
+profileは「SoC世代＋HS＋役割」。MACやtty番号を名前へ埋めず、物理boardは.envへ割り当てる。
+旧単体loopbackのp4_loopback/p4_psramとは別の名前にする。
+
+| profile | 役割 | .envのkey | 制御/log alias末尾 |
+| --- | --- | --- | --- |
+| p4_hs_host | primary Host | TEST_SERIAL_PORT_P4_HS_HOST | esp32-p4-80f1b2d0b261 |
+| p4x_hs_device | peer Device | TEST_SERIAL_PORT_PEER_DEVICE_P4X_HS_DEVICE | esp32-series-80f1b2d71d86 |
+| p4x_hs_host | primary Host | TEST_SERIAL_PORT_P4X_HS_HOST | esp32-series-80f1b2d71d86 |
+| p4_hs_device | peer Device | TEST_SERIAL_PORT_PEER_DEVICE_P4_HS_DEVICE | esp32-p4-80f1b2d0b261 |
+
+.env.exampleへkeyを追加し、ignoredな.envには指定された実portを設定した。
+これは割当の予約であり、HS sketch/profile/実行comboを実装済みという意味ではない。
+
+追加するcomboはHostを先に並べた名前とする。
+
+```toml
+arduino_combos = [
+  # 既存s3/p4/p4_psramは残す。
+  "p4_p4x_hs: primary=p4_hs_host,device=p4x_hs_device",
+  "p4x_p4_hs: primary=p4x_hs_host,device=p4_hs_device",
+]
+```
+
+最初は安定済み旧P4 Host→新規P4X DeviceでDevice実装を確認し、その後P4X Host→旧P4 Device。
+逆向きは同じ結線でVBUS供給元/connector役割を切替できることを確認してから有効化する。
+ソフトのroleだけを替えて電源側も切り替わったと仮定しない。必要なら先に一方向だけを登録する。
+同じ2台を再利用するため逐次実行とし、終了・資源解放を確認してから次comboへ移る。
+
+### build設定と通信経路
+
+| 対象 | FQBN案 | Serialの経路 |
+| --- | --- | --- |
+| 旧P4両role | esp32:esp32:esp32p4:ChipVariant=prev3,USBMode=default,CDCOnBoot=default | UART0→CH340 |
+| P4X両role | esp32:esp32:esp32p4:ChipVariant=postv3,USBMode=hwcdc,CDCOnBoot=cdc | HWCDC/JTAG |
+
+Core3.3.12のboards.txt/HardwareSerial.hでSerialの割当を確認した。
+P4Xを従来のUSBMode=default/CDCOnBoot=defaultでbuildすると、SerialはUART0となって今回のCDCにlogが出ない。
+USBMode=hwcdcは制御/logの選択であり、試験データにTinyUSB CDCを使う設定ではない。
+試験対象はEspUsbDeviceのHS controllerと、相手側EspUsbHostのHIGH_SPEED port。
+P4Xでは独立したHWCDC/JTAGを保持し、試験対象のCDC classへ制御/logを混ぜない。
+初回はPSRAM無効の小さな構成から始め、後段でenabledの別profileを加える。
+P4Xのchip revisionを読んでpostv3 SDKの対応範囲（今回min3.1）を満たすことを確かめてからflashする。
+Hostも含めてCore/公開EspUsbHost2.10.1を固定し、build_opt.hによる試験条件の切替はしない。
+
+### 共通peer試験へ段階的に広げる
+
+新しい共通入口をvalidation/peer/へ置き、最初のvendor_linkで両HS comboを扱う。
+同じsketchのs3_host/s3_device profileと既存s3 comboも使えるようにし、共通の契約をFS/HSで比較する。
+その段階でpyprojectのtestpathsへpeerを追加する。既存s3/や単体p4/を一度に移動しない。
+
+既存のS3試験をそのまま全てHSへ流すのは避ける。MPS64の固定期待、FSのFIFO/ISO interval、
+S3専用register、endpoint数上限を前提にしたcaseがある。共通化するcaseだけ速度/能力から期待を決め、
+FS固有のcaseは現在の場所へ残す。性能や機能を同じに見せるためのsilent fallbackはしない。
+
+| 段階 | 確認すること |
+| --- | --- |
+| 0 実機識別と経路 | 両chip revision、対応FQBN/SDK、別log経路、停止した状態から開始、HostとDeviceが別boardであること |
+| 1 HS列挙＋Vendor copy | HostでUSB_SPEED_HIGH、実列挙descriptorのbulk MPS512をassert。VID/PID/product照合、双方向payload、short/ZLPと511/512/513、4095/4096/4097等の境界 |
+| 2 借用と再開始 | TX/RXの返却status/id/実長、cancel/reset/endで一度返却、guard保持。65535/65536/65537も対象。RX容量は実MPSへ切上げ、3回程度のbegin/endと役割交代後の再実行 |
+| 3 よく使うclass | CDC期限/flush、HID、RAM MSC、MIDI、CCID、RAM backend DFU。まず単独、次に代表的な複合構成 |
+| 4 HSの周期転送 | UAC1/UAC2 duplex/feedback、Video ISO/Bulk。HS descriptor/interval/FIFOを個別に検査し、FS時の値をそのまま期待しない |
+| 5 NCMと外部RAM | raw Ethernet/NTBのwire往復。P4X PSRAM保存先/ringも追加。MCU内IP routingや直接PSRAM DMAを検証の代わりにしない |
+
+copy/borrowedの大きな転送は別caseにし、最大長のbufferを全classへ常駐させない。
+Vendor INの主経路は公開Hostのcache準備済みqueue＋callbackで内容を照合する。
+既知のvendorReadSync cache問題は別のHost問題として記録し、HS成立の必須試験へ混ぜない。
+FSへfallbackした場合はHS試験失敗とする。build/接続/timeoutの問題をskipで隠さない。
+今回の目的は動作と契約の確認で、旧版とのbenchmarkや最大帯域の最適化を先にしない。
+
+実装後の入口は次の形にする。現在はまだHS profile/試験未追加なので、このコマンドの実行段階ではない。
+
+```sh
+uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
+uv run --locked --env-file .env pytest peer --combo p4_p4x_hs --combo p4x_p4_hs -q -rs
+uv run --locked --env-file .env pytest --combo all -q -rs
+```
+
+--combo allは各sketchに存在するprofileだけを適用するので、S3/単体loopback/HS peerを一発で逐次実行できる。
+このため既存S3 sketchへ未検証のP4 profileを機械的に追加する必要はない。
+HS用profile/試験を追加した時点でcollect-onlyのnodeidと件数、port割当を確認する。
+今回の段階では.env割当と計画だけを追加し、現行allの収集80件を増やしていない。
