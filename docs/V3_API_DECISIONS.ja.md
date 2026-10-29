@@ -832,3 +832,14 @@ frame数はアプリが望むring量、byte長は提供する配列の範囲と�
 未選択Audioには費用を持ち込まず、転送時の新しいheap取得や容量検査は追加しない。
 全クラスのconfigureはesp_err_tの戻り値を確認する既存方針を維持し、Device.lastErrorへの新たな横断書換えはしない。
 検証結果は[Audioガイド](V3_AUDIO_API.ja.md#外部ringのbyte長指定)を参照。
+
+
+## Audioのendpoint予約幅
+
+endpointCountを、方向付きendpointの個数ではなく実際に予約する番号幅へ合わせる。
+IN/OUTは同じ番号を共有でき、Audioもmax(IN数,OUT数)を使う。空きを予約していた旧値の互換維持はしない。
+利点は複数Audio Functionで有効な資源を使い切る前に番号不足にならず、後続Functionへも番号を詰められること。
+不利益はAudioに続くFunctionのアドレス変更と、固定アドレスを使うHostの修正が必要なこと。
+新たなfield/map/heap取得はなく、通常のDevice/Function/config/beginやPCM APIは維持する。
+4 UAC1 duplexの同時構成と順次転送、既存の単独/CDC複合を実機で確認した。
+詳細は[Audioガイド](V3_AUDIO_API.ja.md#functionのendpoint番号予約幅)。

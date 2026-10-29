@@ -224,12 +224,11 @@ uint8_t EspUsbAudioFunction::interfaceCount() const
 
 uint8_t EspUsbAudioFunction::endpointCount() const
 {
-  return static_cast<uint8_t>((playbackEnabled_ ? 1U : 0U) +
-                              (playbackEnabled_ &&
-                                       protocol_ == EspUsbAudioProtocol::Uac2
-                                   ? 1U
-                                   : 0U) +
-                              (captureEnabled_ ? 1U : 0U));
+  const uint8_t inputs = static_cast<uint8_t>((captureEnabled_ ? 1U : 0U) +
+      (playbackEnabled_ && protocol_ == EspUsbAudioProtocol::Uac2 ? 1U : 0U));
+  // DescriptorLayout allocates each direction independently, so an OUT
+  // endpoint and an IN endpoint can share the same number.
+  return std::max(inputs, static_cast<uint8_t>(playbackEnabled_ ? 1U : 0U));
 }
 
 uint16_t EspUsbAudioFunction::configurationDescriptor(

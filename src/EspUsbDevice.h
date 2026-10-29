@@ -857,6 +857,8 @@ public:
       uint8_t *dst, size_t capacity, uint8_t interfaceNumber,
       uint8_t endpointNumber, bool highSpeed);
   virtual uint8_t interfaceCount() const = 0;
+  // Span of endpoint numbers reserved for this Function, not the number of
+  // directional endpoint addresses. IN and OUT may share one number.
   virtual uint8_t endpointCount() const = 0;
   // Name to publish for this function, or null for none. A composite device
   // that repeats one class needs it: without a string the host has nothing to

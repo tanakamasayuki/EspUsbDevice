@@ -7,6 +7,15 @@ v2資産から読み込み・収集・helperのimport・sketchの流用をせず
 `--noconftest`によりconftest読込みを無効にしている。
 `--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
 
+## Audio Functionの番号予約幅
+
+`audio_functions`は4 UAC1 duplexの同時構成を行い、各組のISOを順に選択して異なるPCM値を照合する。
+旧span=2では番号7を必要として開始できなかったが、実割当てと同じmax(IN数,OUT数)へ合わせると開始できる。
+開始/終了2回、10 ISO交換・40状態照会を含む1件は1 passed、67.36秒、2 logs STOPPED/panicなし。
+関連6件も6 passed、441.14秒、12 logs STOPPED/panicなし。失敗回復・heap一致と既存のAudio機能を維持した。
+S2/P4 compile、3機種の依存/nm確認も成功。詳細と原本は[Audioガイド](../docs/V3_AUDIO_API.ja.md#functionのendpoint番号予約幅)を参照。
+記録`.pytest-results/audio-function-span*`。全体収集43件で、全43件の一括実行結果ではない。
+
 ## endpoint番号と共通のcontroller能力表
 
 `endpoint_number`は少数のIN/OUTを番号5→6→1→6で実通信し、20往復・FIFO 1・外部guardを確認する。

@@ -380,3 +380,39 @@ S2/P4 Vendor＋CCID compileも成功。製品f5d1571を固定した全40件も40
 全体記録は`.pytest-results/tx-fifo-all*`と[validation README](../validation/README.ja.md)を参照。
 原本`/tmp/pytest-embedded/2026-10-29_02-44-45-563887/`、記録`.pytest-results/audio-cdc*`。
 初回probeのbuild誤りと、修正前のwire失敗・診断結果も別名で保存した。
+
+
+## Functionのendpoint番号予約幅
+
+endpointCountは方向付きアドレスの合計ではなく、次のFunctionへ進めるendpoint番号の幅を返す。
+AudioのDescriptorLayoutはIN/OUTを独立に割り当て、反対方向なら番号を共有するため、
+予約幅もIN必要数とOUT必要数の最大値に合わせる。
+
+| 構成 | 旧予約幅 | 新予約幅 |
+| --- | --- | --- |
+| UAC1 Playbackのみ/Captureのみ | 1 | 1 |
+| UAC1 duplex | 2 | 1 |
+| UAC2 Playback＋feedback | 2 | 1 |
+| UAC2 Captureのみ | 1 | 1 |
+| UAC2 duplex＋feedback | 3 | 2 |
+
+単一Functionの操作やPCM APIは変わらない。後続Functionのendpoint番号は詰まるため、
+Hostはdescriptorからアドレスを取得し、旧アドレスを固定しない。
+Functionや転送stateのfield、map配列、heap取得点は増やさず、IN個数やFIFOの物理上限も変えない。
+
+独立audio_functionsは4 UAC1 duplexを24 kHz/stereo 16 bitで同時に構成する。
+修正前はspan=2のため番号1/3/5/7を必要とし、ESP_ERR_INVALID_SIZEで開始できなかった。
+修正後はspan=1で開始でき、各組を0→3→1→2→0の順に選び、Functionごとに異なるPCM値を照合する。
+全4組の8 endpointを同時に転送した試験ではなく、構成を維持したまま各組を順に転送する確認である。
+
+開始/終了2回を含む**1 passed、67.36秒**。10 ISO交換と40状態照会に成功し、
+未選択Functionは初回選択まで転送量0、全payloadの経路が一致。2 logs STOPPED/panicなし。
+原本`/tmp/pytest-embedded/2026-10-29_04-00-18-485270/`、記録`.pytest-results/audio-function-span*`。
+初回probeのStream型名衝突と、修正前の開始拒否も別名で保存した。
+
+関連6件も**6 passed、441.14秒**。12 logs STOPPED/panicなし、816開始＋14設定失敗回復、
+heap346704→346704、Audio本体304/model16/control52を維持した。
+既存Audio＋CDCの4構成、32 PCM alternate交換、36 guard、4休止構成、rate/RANGEと停止後再構成も成功。
+S2/P4 AudioPlayback compile、S3/S2/P4各29 source依存/nmと未使用機能除外も成功した。
+原本`/tmp/pytest-embedded/2026-10-29_04-01-47-457798/`、記録`.pytest-results/audio-function-span-related*`。
+全体収集は43件。この1＋6件を全43件一括実行やOS/S2/P4実機の結果とは扱わない。
