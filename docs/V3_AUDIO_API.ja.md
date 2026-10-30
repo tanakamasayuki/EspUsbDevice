@@ -416,3 +416,64 @@ heap346704→346704、Audio本体304/model16/control52を維持した。
 S2/P4 AudioPlayback compile、S3/S2/P4各29 source依存/nmと未使用機能除外も成功した。
 原本`/tmp/pytest-embedded/2026-10-29_04-01-47-457798/`、記録`.pytest-results/audio-function-span-related*`。
 全体収集は43件。この1＋6件を全43件一括実行やOS/S2/P4実機の結果とは扱わない。
+
+
+## CH32RV調整向け：Playbackあふれ仕様の初稿（2026-10-30）
+
+CH32RV側がESPの仕様を確認するための文書。以下は製品22afc15の現行実装を基準とする。
+新しい既定方針への合意ではなく、現行挙動と未決事項を分ける。今回の追記によるコード変更・追加実機試験はない。
+対象はHost→DeviceのPlayback。Captureのwriteへ同じ上書き方針を適用しない。
+
+### 現行ESP：未読を保持し、新着の入らない末尾を捨てる
+
+sample frameは全channelの1時刻分で、byte数F=channels×bytesPerSample（subslot幅）。
+有効bit数bitsPerSampleだけからbyte数を計算しない。順序はFIFOで、readは最も古い未読frameから返す。
+正常完了し、streamがactiveかつ切替処理中でない受信packetについて、次の規則で処理する。
+
+- Bを受信byte数、Cを現在の形式に対する実効ring容量、Uを現在の未読byte数とする。
+- 新着の完全なframeはA=floor(B/F)×F byte。空きもframe単位に切り下げ、K=min(A,C-U) byteを受理する。
+- 既存の未読U byteを残し、新着packetの先頭K byteを末尾へ追加する。残りB-K byteを破棄する。
+- 古い未読frameを追い出したり、受信packet全体の受理まで待ったりしない。次のUSB受信を継続する。
+- packet末尾に不完全なframeがあれば保存しない。次packetと結合する隠れbufferも持たない。
+
+式は内部lockで直列化された1回の処理を表す。利用側がcapacityとavailableを別々に読んで、
+その間の受信/読出しまで含めた予約や同一時点のsnapshotを得られるわけではない。
+実装の照合先は[AudioTransportの受信処理](../src/internal/EspUsbAudioTransport.cpp)。
+
+| 状態（文字はsample frame） | 新着 | 処理後の未読 | 破棄 |
+| --- | --- | --- | --- |
+| 容量4、未読A/B/C | D/E/F | A/B/C/D | E/F |
+| 容量4、満杯A/B/C/D | E/F | A/B/C/D | E/F |
+| 容量2、空 | A/B/C | A/B | C |
+| 容量0 | A/B | 空 | A/B |
+
+従って、読出しが止まっていると古いPCMが残る。保存byte数には上限があるが、音の鮮度や
+実時間での遅延上限を保証しない。live再生の追従性と、先に受けた未読の保持は別の要求として扱う。
+readの要求長はframe単位へ切り下げ、受理済みのframeだけを返す。
+ringのwrapや外部bufferでもこの順序を変えず、sample frameの途中から読出し位置をずらさない。
+
+### statsと明示的な破棄
+
+- B-K>0なら、そのpacketに対してoverrunCountを1増やし、overrunBytesへB-Kを加算する。
+  現行のoverrunBytesにはring満杯だけでなく、packet末尾の不完全frameの破棄も含まれる。
+- transferredBytesはUSBで正常受信したBを数える。アプリがreadした量やringへ入ったKとは区別する。
+- 容量0でも有効なpacketを受信すれば、全量の破棄をoverrunへ記録する。
+- clearBufferは未読queueを消す。既にarmしたpacketを取り消す操作ではなく、後続完了で再びPCMが入ることがある。
+- resetStatsは統計の初期化で、queueの破棄とは別。counterはuint32_tで、長時間集計ではwrapも扱う。
+
+Captureはアプリのwriteで入る分だけcopyし、実際の受理byte数を返す。未受理分は呼出側で扱う。
+Playbackの既定を変える議論だけで、Captureのpartial契約まで変えない。
+
+### 仕様策定で決める点・確認待ち
+
+CH32RV側は別作業の完了後にESP仕様と他の調整項目を確認予定。次を未決事項として共有する。
+
+1. 未読を残す現行方針を既定として維持するか、live再生向けに古いframeを捨てる方針へ変えるか。
+2. 一方を唯一の方針にするか、Playback configで選択可能にするか。未使用側へ追加buffer/taskを持たせない。
+3. 古い方を捨てる場合の、packetがringより大きいときの保持範囲とsample frame境界。
+4. 不完全frameの破棄をoverrunへ含める現行statsを維持するか、区別するか。
+5. 選択した方針の順序・wrap・容量0・packet超過・statsを、内容の異なるPCMで検査する合格条件。
+
+以前の調整メモにある「古いPCMを捨てる既定を推奨」は提案であり、決定ではない。
+この初稿をCH32RV側で確認後、既定・API・影響を合意し、必要な変更と試験を行う。
+[残作業](../TODO.ja.md#優先する残作業)、[調整メモ](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。

@@ -49,7 +49,7 @@ CH32RV側の変更はこの作業で行わない。両者を合わせる場合�
 | 項目 | 判断案 | 主な影響 |
 | --- | --- | --- |
 | CDC write/flush | CDCのArduino facadeを期限付き待ちへ見直す。共通bulkはnonblockingを維持 | 普通のprintの欠落を減らせる一方、満杯時に待ちが生じる |
-| Audio playback overflow | live再生では古いsample frameを捨てる既定を推奨。必要なら保持方針を選択可能にする | 最新の音へ復帰できるが、未読順序と欠落箇所が変わる |
+| Audio playback overflow | ESP現行の未読保持/新着破棄の仕様を文書化し、CH32RV側で確認後に再判断 | 古いPCM破棄の既定案は未確定。順序・frame境界・statsを含めて決める |
 | Video既定transport | FS=約62 KB/sという理由だけでは変更しない。Bulkを勧める条件とpacket予算を説明 | ESPの既定ISO packetは512で、64-byte前提と異なる |
 | Video submitFrame | EspUsbTransferSubmissionへ統一する案に賛成 | sendFrameの基本例は維持。詳細APIの利用側を移行する |
 | DFU onDetach | ACK前の受付判定と、受付後の通知・再起動方針を分ける | voidをboolへ置き換えるだけではHostへの要求拒否にならない |
@@ -151,4 +151,7 @@ S3–S3の独立validationを基準にし、conftestを追加しない。P4の�
   S3 8件＋P4 FS 4件の関連12件を一括成功（179.81秒）。[現行Video API](V3_VIDEO_API.ja.md)を参照。
 - VideoのISO既定512 byteと、Bulkを勧める用途をAPIガイドへ追記。transportの既定自体は維持。
 - CDCのwrite/flushへ期限付き待ちを適用。setTxTimeoutMs、timeout0、worker/停止の扱いは[CDCガイド](V3_CDC_API.ja.md#cdc送信の期限とflush)を参照。新規3件＋既存S3 3件＋P4 6件の関連12件が一括成功（374.48秒）。S2基本例もcompile成功。
-- Audio/DFU/MSCは上記の判断案であり、適用済みではない。
+- Audioは[ESP現行仕様のレビュー用初稿](V3_AUDIO_API.ja.md#ch32rv調整向けplaybackあふれ仕様の初稿2026-10-30)を用意した。
+  先方はESPの「何を残すか」を確認したいとのこと。別作業の完了後に他項目も確認予定。
+  先方確認待ちだけでなくESP側の仕様策定・最終合意も残作業であり、古いPCM破棄案は未確定。
+- Audio/DFU/MSCの実装変更は未適用。現在の残作業は[TODO](../TODO.ja.md#優先する残作業)を参照。

@@ -3,7 +3,10 @@
 2026-10-30追記：最新製品22afc15でCDCの期限付きwrite/flush、02c7509でVideoのSubmission戻り値を適用。
 関連12件ずつが一括成功、S2 CDC基本例もcompile成功。最新の収集80件を全件再実行した結果ではない。
 下記の80e8676/全47件・24 examples等はそれぞれの時点の検証記録として保持する。
-残るCH32RV調整はAudio overflow、DFU受付、MSC媒体交換。[判断と検査計画](V3_CH32RV_API_ALIGNMENT.ja.md)。
+残るCH32RV調整はAudio overflowの仕様策定、DFU受付、MSC媒体交換。
+AudioはESPの保持方針を先方が確認予定で、先方は別作業後に他項目も確認する。既定変更は未決定。
+S2/S31は物品調達中。S31はベータ版コアが必要で、利用version/commitを確定してprofileを分ける。
+[現在のTODO](../TODO.ja.md)、[判断と検査計画](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
 
 作成日: 2026-10-25。調査基準: EspUsbDevice 2.6.1、commit `b1094cd`。
 
@@ -26,7 +29,7 @@ registry試験0144bfbで旧descriptor長の固定期待を実取得照合へ直�
 | 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupの能力/許可/要求を実装し、S3の実wake・復帰/取消し/停止を確認。全47件回帰も成功、実wake/停止拒否のwire指標を監査済み |
 | 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
 | 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 80e8676の全47件・24 examplesとS2/P4 remote probeを監査。各29依存/archive/native出所を確認済み |
-| 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | 拡大benchは未結線。typed HID/MSC helper/remoteを含め全47件一括成功、skip/error/failure/unfinished 0 |
+| 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | HS直結benchは申告済みでprobe/combo追加待ち。S2/S31は調達中。typed HID/MSC helper/remoteを含め全47件一括成功、skip/error/failure/unfinished 0 |
 | 機種・OS・配布 | S3–S3実機、P4両controller FSの全10 class基本通信/PSRAM実機30 case、S2 compile、8つの新examplesと移行ガイド | S2実機、P4の480 Mbps HS link/全機能、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
 
 archive化・typed HID・RAM/FAT helper・remote wakeupの個別確認は済んだ。
@@ -293,3 +296,43 @@ Host役割交代時のVBUS source競合を防ぐ構成にする。USB-Cのrole�
 [引き渡し](V3_HANDOFF.ja.md)を参照する。
 [引き渡し](V3_HANDOFF.ja.md)の独立S3–S3 probeから着手し、APIごとに影響と実験結果を記録する。
 旧test/sampleへの追従や、汎用registryの先行完成を目的にしない。
+
+
+## Arduino-ESP32 4系コアの検証方針（2026-10-30）
+
+ユーザー指定の[開発版Board Manager index](https://espressif.github.io/arduino-esp32/package_esp32_dev_index.json)を使う。
+2026-10-30のindex取得では4.0.0-RC1と4.0.0-alpha1の登録を確認した。最初の対象はRC1へ固定する。
+RC1は細部が変わり得る開発版なので、今回の結果はRC1に対する暫定的な確認として扱う。
+この節は計画であり、4系コアのinstall/build/実機試験はまだ行っていない。
+
+### 標準環境を保ったprofile分離
+
+既存Core3.3.12のprofile/comboは維持する。4系はs3_device_core4、p4x_hs_device_core4等の
+別profileへplatform versionとplatform_index_urlを明記し、別build出力と実機port割当を使う案を優先する。
+同じ物理boardを複数profileへ割り当てる場合も、標準comboで成立する結線だけを逐次実行する。
+既存profileを一時的に4系へ変更する案は、profile分離では足りない理由がある場合に限定する。
+その場合は隔離worktree/環境で行い、変更前のversion/configを記録し、標準環境へ戻して確認する。
+conftestによる差替えや、利用者のCoreを暗黙に置き換える仕組みは追加しない。
+
+### 最初に実施する範囲
+
+| 対象 | 4系での位置付けと確認 |
+| --- | --- |
+| S31 | 必須。調達中のため先にtarget/FQBN/SDKとcompile条件を調べる。到着後はP4 HS Hostとのpeer、基本通信から各class/停止回収へ展開。CoreのS31対応だけでEspUsbDeviceのcontroller/endpoint/DMA/cache対応まで成立すると仮定しない |
+| S3 | 任意の互換性smoke。代表probeをcompileし、既存S3 peerで列挙、CDC/Vendor往復、開始/終了を短く確認する |
+| S2 | まずcompile。調達後はFS peerの代表caseも確認する。未入手の実機結果は補わない |
+| P4/P4X | まずcompile。HS直結の基準が成立した後、HIGH/MPS512、bulk往復、開始/終了を短く再確認し、必要に応じISOの代表caseを加える |
+
+最初はHostを既知の3.3.12、Deviceを4.0.0-RC1にしてDevice libraryの互換性を切り分ける。
+Host側も4系へ移す場合はEspUsbHostの互換性を別の確認項目にする。
+compileで全体のCore/SDK API差を洗い出し、実機のPHY/EP0/bulk/lifecycleのsmokeを先に行う。
+差異が出たclassやISO等の境界を追加で検査し、初回から全機種の全caseや性能比較を必須にはしない。
+最終的なS31対応やrelease判定では、このsmokeとは別に必要な機能回帰を揃える。
+
+### RC更新と正式版への追従
+
+- 各結果へCoreの完全なversion、index URL、取得packageのchecksum/識別情報、SDK/toolchain/Host version、FQBNと製品commitを残す。
+- latest等の浮動指定を使わない。次RCや正式版を試すときは変更したversionと理由を記録し、クリーンbuildと依存先の照合から始める。
+- 最初は同じ短いsmokeを再実行し、Core/SDK差分と不具合に応じて関係するcaseを広げる。関係のない全試験を毎回無条件に繰り返さない。
+- 4系への分岐は実際に必要なAPI/能力差へ限定し、3系で通っていた経路の退行を確認する。未検証の条件を一括で対応済みにしない。
+- RC1で成功してもRC2/正式版や4系全体の対応保証とはしない。最終対応表と配布条件は採用版を固定して更新する。

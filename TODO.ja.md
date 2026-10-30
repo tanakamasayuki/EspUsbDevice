@@ -1,5 +1,48 @@
 # TODO
 
+更新日: 2026-10-30。現行v3の残作業。実装・検証状況は[引き渡し](docs/V3_HANDOFF.ja.md)を参照。
+基本方針は明示的なDevice/Function/config/begin、使う機能だけに費用を持たせること。
+旧版とのbenchmarkは優先作業にしない。以下の記録追加だけで、実装や検証を完了扱いにしない。
+
+## 優先する残作業
+
+- [ ] **HS直結検証**：P4X `esp32-series-80f1b2d71d86`（HWCDC/JTAG）とP4 `esp32-p4-80f1b2d0b261`（CH340 UART）。.env割当は予約済み。通常のdut＋peer_device、p4_p4x_hs/p4x_p4_hsのsketch/profile/comboを実装する。実revision/SDK照合、HIGH/MPS512、Vendor往復・借用返却・再開始から始め、各classと代表複合へ広げる。役割反転はVBUS/connector役割の切替を確認してから。[profileと段階別計画](docs/V3_P4_VARIANTS_AND_BENCH.ja.md#hs直結peerのprofileと実行計画2026-10-30)。
+- [ ] **S2実機検証（物品調達中）**：現在はcompile確認まで。到着後、P4 FS Hostとのpeerで列挙・各class・reset/end/借用返却を確認し、S2固有のROM DFU移行も別に確認する。S3での成功を代替にしない。
+- [ ] **S31対応・実機検証（物品調達中）**：ユーザー申告でビルドにベータ版コアが必要。まず4.0.0-RC1のS31 target/FQBNとSDK・toolchainを確認し、以後も採用するbeta版のversion/commitを固定して、既存の安定版Core profileと分離してcompileから始める。port能力/driver対応を確認後、P4 HS Hostとのpeerを追加する。S31 Hostの対応は別途確認し、Device成功だけで逆向きも対応済みとしない。
+- [ ] **Arduino-ESP32 4系の互換性検証**：指定の[開発版index](https://espressif.github.io/arduino-esp32/package_esp32_dev_index.json)を使い、まず4.0.0-RC1へ固定する。S31は必須。他のS3/S2/P4/P4Xは代表probeのcompileと短い実機試験から始める。3.3.12を標準として残し、別のcore4 profile/comboを優先する。一時切替が必要なら隔離した環境と復帰手順を用意する。RC1の成功を4系全体の対応済みとせず、RC更新/正式版で差分に応じて再試験する。[版固定・試験範囲と更新方針](docs/V3_DEVELOPMENT_PLAN.ja.md#arduino-esp32-4系コアの検証方針2026-10-30)。
+- [ ] **CH32RVコアとのUSBスタック調整**：先方は別作業中で、その完了後に他の項目も確認予定。CDCの期限付きwrite/flushとVideoのSubmission統一はESP側へ反映済み。残る項目は両側の利用者API・実行context・所有権と、未使用コストを照合して決める。[調整メモ](docs/V3_CH32RV_API_ALIGNMENT.ja.md)。
+- [ ] **Audio overflowの仕様策定・先方確認**：単なる確認待ちにせず、ESP側で「どのPCMを残すか」を定義する。現行の未読保持/新着末尾破棄、sample frame境界、容量不足/容量0、破棄stats、captureとの違いを[ESP仕様のレビュー用初稿](docs/V3_AUDIO_API.ja.md#ch32rv調整向けplaybackあふれ仕様の初稿2026-10-30)へ文書化した。CH32RV側はこのESP仕様を確認したいとのこと。以前の古いPCM破棄案は未確定で、既定方針・選択APIの要否は確認後に決め、必要な実装と内容照合試験を追加する。
+- [ ] **DFU DETACHの受付仕様**：CH32RV側の確認後に、ACK前の可否判定、ACK後の通知/再起動方針、拒否時のHost応答を整理する。boolで再起動を抑止することとUSB要求拒否は区別する。現行のvoid callbackを単に置換して済ませない。
+- [ ] **MSC媒体交換**：先方確認後、mediaPresent変更とUNIT ATTENTION 06/28/00、通知の消費条件、同値設定、I/O途中の交換を定義・実装・試験する。Host filesystemのcache再読を無条件には保証しない。
+
+## 関連Hostライブラリの未解決事項
+
+- [ ] **P4同期Vendor INのcache処理**：公開EspUsbHost2.10.1での再現と隔離修正branch fix/p4-vendor-read-cache・7f25896の比較結果を、Host側で現行版と照合し、修正取込み/配布の扱いを決める。現行Device試験は公開版のqueue経路を使用。[再現記録](validation/p4/README.ja.md#hostのcache不具合の切り分け)。
+- [ ] **NCM明示close後のHost再開始**：networkClose→Device終了→Host終了で2回目の開始が失敗した経路を、Host側で切り分け・回帰試験する。通常のDevice切断→Host終了で成功した結果と区別する。[P4記録](validation/p4/README.ja.md#後半4-classの詳細)。
+
+## 追加検証・出荷前の作業
+
+- [ ] **PC OSとの互換性**：v3 Native stackでWindows/Linux/macOSのclass binding、CDC/HID、MSC mount/eject、UVC表示、WinUSB/libusb/WebUSB、DFU toolを確認する。旧v2のPC実測結果をv3の成功として引き継がない。
+- [ ] **実SD・Firmware/OTA helperの実通信**：RAM backendの試験と分け、実媒体・実更新先での書込み/検証/終了処理を確認する。汎用USB層の基本試験にSDやcodecを必須にしない。
+- [ ] **長時間・電源/異常系の追加確認**：特にHS/P4Xと新規機種で連続転送、再接続、休止/復帰、代表的な停止競合を確認する。既存S3の固定回数試験を全機種・任意の競合の証明としない。
+- [ ] **release候補の固定sourceでの最終回帰**：機材と合意したAPIが揃った時点で標準combo all、現行examplesの対象別build、依存/未使用機能/ライセンスを確認する。現状は80件の収集と関連試験までで、最新製品の全80件一括実行は未実施。実機なし・skip・unfinishedは機種/組ごとに区別する。
+- [ ] **v3の配布・release手順**：shared toolkitの配布範囲、対応Core/機種、beta版S31の扱い、移行資料を確定する。RELEASE_CHECKLIST/CIの旧testsや旧profile参照をvalidationと現行examplesへ見直す。legacyの古いリンク不良を一括修正する作業とは分ける。公開release/tag/pushは未実施。
+
+## CH32RV調整で反映済み
+
+- [x] Video submitFrameをEspUsbTransferSubmission戻り値へ統一（02c7509）。単純なsendFrameは維持。S3/P4関連12件成功。
+- [x] CDCにsetTxTimeoutMsと期限付きwrite/flushを追加（22afc15）。S3/P4関連12件とS2基本例compile成功。
+- [x] ESP現行Audio overflowの挙動をレビュー用に文書化。方針の最終合意・変更実装・新しいoverflow内容照合試験は未完了。
+
+## v2時点の記録
+
+以下は旧版の記録。未完のcheckboxも当時の状態であり、v3の残作業として自動的に引き継がない。
+例えばAudio複数rate、Vendor借用TX/RX、Video Bulk/peerはv3で実装・検証が進んでいる。
+将来の拡張候補を含め、再開する際は現行仕様と照合する。
+
+<details>
+<summary>旧TODOの未完了・完了履歴を表示</summary>
+
 更新日: 2026-09-16（UVC カメラ class を実装し Windows 実機で検証。あわせて isochronous IN の送信 FIFO 予算を `begin()` で検査するようにした）
 
 ## 未完了
@@ -57,3 +100,6 @@
 - [x] NKRO の状態送信 API。`sendReport(const EspUsbDeviceNkroKeyboardReport &)` で保持キー全体を 1 レポート送信、`heldState()` で最後に Host へ伝えた状態を公開。内部状態を公開型 1 個（`nkroState_`）に統一して private `setKeyBit()` を廃止し、bitmap レイアウトと modifier 振り分けの定義を 1 箇所に。`enableNkro()` 未実行時は失敗（boot protocol 時は従来どおり畳む）、重複送信の抑制は呼び出し側の責務。併せて `releaseUsage()` が modifier usage を落とさない穴と、増分 API が範囲外 usage を黙って無視する点も修正。EspBle と同一形状。host unit test `tests/unit/nkro_report` と peer test `tests/peer/hid_keyboard_nkro` で検証。`docs/DESIGN_NOTES.ja.md`「N-key rollover」参照。
 - [x] NKRO の peer テスト。`tests/peer/hid_keyboard_nkro` に状態送信 API の検証を追加（1 レポートで 10 usages + modifier、`heldState()` 一致、`releaseAll()` の modifier クリア、`enableNkro()` 未実行時の失敗）。EspUsbHost は以前から bitmap レポートをパースできており、DESIGN_NOTES の「未検証」記述が古かった。EspUsbHost は modifier を key event ではなく `event.modifiers` で返すため、modifier の assert は `mod=` フィールドで行う。
 - [x] LED 状態の getter `ledState()` 追加。`onOutputReport()` は単一 slot で、統合レイヤが callback を占有するとスケッチ側から Lock 状態を読めなかった。LED は event でなく状態なので listener 基盤は新設せず getter で解決。callback の有無に関係なく更新し、`begin()` で初期化する。`tests/peer/hid_keyboard` に callback あり／なし両方の検証を追加。`onProtocol()` / `onOutputReport()` の listener 化自体は保留（Device 側は EspBle も単一 slot で一貫しており、やるなら両者同時）。`docs/DESIGN_NOTES.ja.md`「LED output report の観測」参照。
+
+
+</details>
