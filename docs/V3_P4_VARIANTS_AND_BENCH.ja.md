@@ -233,3 +233,18 @@ uv run --locked --env-file .env pytest --combo all -q -rs
 このため既存S3 sketchへ未検証のP4 profileを機械的に追加する必要はない。
 HS用profile/試験を追加した時点でcollect-onlyのnodeidと件数、port割当を確認する。
 現時点では.env割当とcombo登録だけで、現行allの収集80件を増やしていない。
+
+## HS直結の列挙とVBUS（2026-10-31）
+
+probe `validation/p4_hs/link`。両comboとも1件ずつ成功した（旧P4 Host 24.15秒、P4X Host 83.57秒。後者は初回build込み）。
+各向きでvbusSensingを無効/有効にして2回ずつ開始し、Hostは1209:0002をspeed=2（HS）で読んだ。
+Device側のGOTGCTL BSesVld（bit19）は、Hostを開始する前から次の値だった。
+
+| Device | vbusSensing有効時のBSesVld | 列挙 |
+| --- | --- | --- |
+| P4X（2-4） | 1（Host開始前から） | HS |
+| 旧P4（2-3） | 0（Host開始後も） | HS（BSesVld=0のままでも成立） |
+
+旧P4ではBSesVldがVBUSの有無を示さないため、VBUSをどちらのboardが出しているかはここからは決められない。
+P4X側で見えたVBUSも、Host側のsoftwareが出したものではない。BSesVldはHost開始前から1だった。
+逆向きcomboもこの結線で列挙できたので、試験を有効化した。
