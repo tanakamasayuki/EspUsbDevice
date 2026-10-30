@@ -245,6 +245,7 @@ Device側のGOTGCTL BSesVld（bit19）は、Hostを開始する前から次の�
 | P4X（2-4） | 1（Host開始前から） | HS |
 | 旧P4（2-3） | 0（Host開始後も） | HS（BSesVld=0のままでも成立） |
 
-旧P4ではBSesVldがVBUSの有無を示さないため、VBUSをどちらのboardが出しているかはここからは決められない。
+旧P4ではBSesVldがVBUSの有無を示さない。ユーザーによると2-3と2-4はどちらもhubのportから給電されており、
+VBUSの向きで試験は変わらないので調べない（台帳oep-bench d7ce197）。片方の電源断はbenchの規則どおり両portをまとめて切る。
 P4X側で見えたVBUSも、Host側のsoftwareが出したものではない。BSesVldはHost開始前から1だった。
 逆向きcomboもこの結線で列挙できたので、試験を有効化した。
