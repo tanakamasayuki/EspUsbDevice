@@ -110,7 +110,8 @@ DFUのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 c
 ## DETACH受付APIの仕様案
 
 2026-10-30、**未実装・レビュー用**。上記の現行void callbackとは別の提案である。
-CH32RV側はbool callbackをSETUP段階で呼ぶ受付判定を実装済み。
+CH32RV側から本案のAPIを実装し、X035C8実機試験を通したとの返答を受領。
+以下の受付・移行分離に合意した。ESP側の実装・検証は未着手である。
 ESPも要求受付と、受付後に実行する移行処理を分ける。
 
 ```cpp
@@ -156,4 +157,5 @@ USB上の拒否を表すのはSETUPでのSTALLであり、ACK後にboolを返し
 
 合格条件は拒否時のwire STALL・状態不変・予約なし、許可時のACK後1回だけの移行、
 ACK前取消し、拒否後再試行、custom handler、停止との競合。ROM移行そのものは別の実機試験とする。
-[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)と合意してから実装へ進む。
+APIの合意を基に、残る期限・予約取消しの詳細を確定して実装へ進む。
+[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。

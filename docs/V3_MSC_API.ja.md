@@ -192,7 +192,10 @@ callbackのoffset/size処理と、USB workerで更新する呼出し数をCDC側
 ## 媒体変更通知のAPI仕様案
 
 2026-10-30、**未実装・レビュー用**。現行ESPのmediaPresentはatomic flagの変更のみ。
-CH32RV側は以下のfalse→true通知を実装済み。ESPも利用者の呼出しを変えずに通知を加える案。
+CH32RV側から本案のAPIを実装し、X035C8実機試験を通したとの返答を受領。
+false→trueの通知契約は合意。進行中I/Oは先方が媒体エラーで失敗させる実装であり、
+当初のESP案との差として相談事項になった。以下ではESP側の案をその方向へ修正する。
+**I/O中断の詳細は相談中、ESPの実装・試験は未着手**。
 
 ```cpp
 // 現在の呼出し方を維持する。新しい明示通知APIは今回追加しない。
@@ -218,9 +221,18 @@ ASC/ASCQの意味は[T10の割当表](https://www.t10.org/lists/asc-num.htm)に�
 ### I/Oと所有権の境界
 
 mediaPresentは同期的なI/O停止APIではなく、voidの呼出し方を維持する。
-提案では受理済みcommandを強制取消しせず、次のcommand受付でpresenceとpendingを判定する。
-開始済みread/writeは保持した媒体状態で完了し、途中のpresence変更だけで成功した部分を
-巻き戻す保証はしない。この境界は現行処理との照合・変更が必要で、実装済みとは扱わない。
+当初案の「開始済みcommandを最後まで続ける」という保証は取り下げる。
+物理媒体の抜去でアクセス不能になった場合、開始済みでも残りのread/writeを媒体エラーで
+失敗させる方向を採る。mediaPresent(false)も後続のbackendアクセスを止める契機として扱う。
+既に実行中の同期callbackを強制中断する機構は設けず、次のcallbackを呼ぶ前に不在を確認する。
+callback自身が抜去を検出した場合も、既存のI/O失敗契約で復帰する。
+成功済みの書込みは巻き戻さず、command全体を成功として返さない。
+エラー後の残転送・residue・CSWはBOTの規則に従い、未処理データを新しい媒体へ書き込まない。
+
+この方向はESP側の修正案であり、先方との詳細確認が残る。不在検出時のSenseと、
+途中でfalse→trueになった場合に旧commandを再開させない識別方法を実装前に確定する。
+pendingの媒体変更通知と、進行中commandのI/O失敗は別の状態として扱い、
+媒体エラーを返しただけで未通知のUNIT ATTENTIONを消費しない。
 
 このsetterだけで保存先pointerを破棄・交換してよいとはしない。callbackとその参照先は
 Device.end成功まで有効に保つ。callback/geometryの交換は引き続き停止中だけとする。
@@ -235,5 +247,6 @@ Device.end成功まで有効に保つ。callback/geometryの交換は引き続�
 
 合格条件はfalse→true→TUR失敗→REQUEST SENSE→TUR成功、同値設定、初回present、
 INQUIRY/REQUEST SENSE先行、不在、複数変更の集約、通知前の再抜去、reset/end/BOT回復、
-read/write途中の変更と正確なBOT residue/CSW。OSでのmount/ejectは別試験にする。
+read/write途中の抜去による残りの処理の失敗、同一command中の再挿入で旧I/Oを継続しないこと、
+処理済み部分の非rollback、後続callbackの抑止と正確なBOT residue/CSW。OSでのmount/ejectは別試験にする。
 [調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。

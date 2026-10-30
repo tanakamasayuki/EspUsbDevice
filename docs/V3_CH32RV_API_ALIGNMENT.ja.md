@@ -5,20 +5,21 @@
 2026-10-30。今回はAPI仕様の整理だけを行い、製品コード・試験構成は変更しない。
 ESPの現行製品は22afc15。CH32RV側の返答は
 `/home/mt/dev_wch/ArduinoCore-CH32RV/docs/usb-espusbdevice-v3.ja.md`の3章を参照した。
-先方作業ツリー上の返答・実装であり、公開版の対応保証や実機検証の記録ではない。
+追加返答ではAudio/DFU/MSCの3案を実装し、X035C8実機試験を通したとのこと。
+これは先方報告として記録し、公開版の対応保証やESP側の実機検証の代替にしない。
 
 | 項目 | 現状 | 次にレビューする仕様 |
 | --- | --- | --- |
 | CDC | ESPの期限付きwrite/flushは適用済み。CH32RVもgetterと借用中の受付を調整済み | DTRなしで捨てるCH32RVと、DTRを要求しないESPの差は明示して残す |
-| Audio | ESPはDropNewest相当、CH32RVはDropOldest相当。先方は選択APIの命名待ち | [保持方針の仕様案](V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)。playbackOverflowPolicy、2種類の保持方針、DropOldest既定を提案 |
+| Audio | ESPはDropNewest相当、CH32RVはDropOldest相当。選択API名とDropOldest既定に合意済み | [保持方針の仕様案](V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)。playbackOverflowPolicy、2種類の保持方針、DropOldest既定に合意 |
 | Video | Submission統一は適用済み。FS packetの前提違いにより既定変更依頼は取り下げ | ESPのISO、CH32RVのBulkを維持 |
-| DFU | ESPはACK後void callback。CH32RVはSETUPでbool判定へ変更済み | [受付仕様案](V3_DFU_API.ja.md#detach受付apiの仕様案)。onDetachで可否、setDetachHandlerで受付後の移行を分離 |
-| MSC | ESPはpresent flagのみ。CH32RVはfalse→trueの通知を実装済み | [媒体変更仕様案](V3_MSC_API.ja.md#媒体変更通知のapi仕様案)。呼出し方を保ち、通知消費条件とI/O境界を定義 |
+| DFU | ESPはACK後void callback。CH32RVは受付判定と移行handlerの分離を実装・試験済み（先方報告） | [受付仕様案](V3_DFU_API.ja.md#detach受付apiの仕様案)。onDetachで可否、setDetachHandlerで受付後の移行を分離 |
+| MSC | ESPはpresent flagのみ。CH32RVはfalse→trueの通知を実装済み | [媒体変更仕様案](V3_MSC_API.ja.md#媒体変更通知のapi仕様案)。通知契約は合意。進行中I/Oは残りを媒体エラーで失敗させる方向へESP案を修正し、詳細を相談 |
 
 ### 進め方と確定前の論点
 
 1. 各案のAPI名、既定値、状態遷移、callback context、buffer寿命をレビューする。
-2. Audioの既定変更、DFUの期限・再起動予約の取消し、MSCの進行中I/O境界を確定する。
+2. AudioのAPIとDropOldest既定は合意済み。DFUの期限・再起動予約の取消し、MSCの抜去検出・途中再挿入・BOT失敗処理の詳細を確定する。
 3. 合意後にAudio→DFU→MSCの単位で実装し、変更ごとに関連試験とcommitを行う。
 
 今回の文書はレビュー可能な提案であり、API追加や動作変更の完了ではない。

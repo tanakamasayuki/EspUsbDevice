@@ -10,10 +10,10 @@
 - [ ] **S2実機検証（物品調達中）**：現在はcompile確認まで。到着後、P4 FS Hostとのpeerで列挙・各class・reset/end/借用返却を確認し、S2固有のROM DFU移行も別に確認する。S3での成功を代替にしない。
 - [ ] **S31対応・実機検証（物品調達中）**：ユーザー申告でビルドにベータ版コアが必要。まず4.0.0-RC1のS31 target/FQBNとSDK・toolchainを確認し、以後も採用するbeta版のversion/commitを固定して、既存の安定版Core profileと分離してcompileから始める。port能力/driver対応を確認後、P4 HS Hostとのpeerを追加する。S31 Hostの対応は別途確認し、Device成功だけで逆向きも対応済みとしない。
 - [ ] **Arduino-ESP32 4系の互換性検証**：指定の[開発版index](https://espressif.github.io/arduino-esp32/package_esp32_dev_index.json)を使い、まず4.0.0-RC1へ固定する。S31は必須。他のS3/S2/P4/P4Xは代表probeのcompileと短い実機試験から始める。3.3.12を標準として残し、別のcore4 profile/comboを優先する。一時切替が必要なら隔離した環境と復帰手順を用意する。RC1の成功を4系全体の対応済みとせず、RC更新/正式版で差分に応じて再試験する。[版固定・試験範囲と更新方針](docs/V3_DEVELOPMENT_PLAN.ja.md#arduino-esp32-4系コアの検証方針2026-10-30)。
-- [ ] **CH32RVコアとのUSBスタック調整**：先方返答を確認済み。CDC/Videoは適用済み、Audioは選択API名待ち、DFU/MSCは先方で対応済み。ESP側の仕様案をレビューし、合意後に実装する。[現状と仕様レビュー入口](docs/V3_CH32RV_API_ALIGNMENT.ja.md#現在の調整状況と仕様レビュー入口)。
-- [ ] **Audio overflowの仕様確定・実装**：[API仕様案](docs/V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)を作成済み。playbackOverflowPolicy、DropNewest/DropOldest、保持範囲・stats・容量0・frame境界を提案。DropOldest既定への変更と命名は未合意。合意後に実装し、内容照合試験を行う。Capture partial契約を維持する。
+- [ ] **CH32RVコアとのUSBスタック調整**：先方返答を確認済み。CDC/Videoは適用済み、Audio/DFU/MSCは先方で実装しX035C8試験成功との報告。APIとAudioのDropOldest既定は合意。MSC進行中I/Oは残りを媒体エラーにする方向へESP案を修正し、詳細を相談する。ESP側は未実装。[現状と仕様レビュー入口](docs/V3_CH32RV_API_ALIGNMENT.ja.md#現在の調整状況と仕様レビュー入口)。
+- [ ] **Audio overflowの仕様確定・実装**：[API仕様案](docs/V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)を作成済み。playbackOverflowPolicy、DropNewest/DropOldest、保持範囲・stats・容量0・frame境界を提案。DropOldest既定への変更と命名は合意済み。次はESPで実装し、内容照合試験を行う。Capture partial契約を維持する。
 - [ ] **DFU DETACHの仕様確定・実装**：[仕様案](docs/V3_DFU_API.ja.md#detach受付apiの仕様案)を作成済み。onDetachのSETUP時bool判定と、setDetachHandlerのACK後移行を分離。期限と既定再起動予約のend/reset時取消しを確定してから実装・wire試験を行う。
-- [ ] **MSC媒体交換の仕様確定・実装**：[仕様案](docs/V3_MSC_API.ja.md#媒体変更通知のapi仕様案)を作成済み。mediaPresentの呼出し方を保ち、false→true通知・消費条件・同値設定・I/O境界を提案。境界の実装可能性を照合して確定し、実装・BOT試験を行う。Host filesystemのcache再読は保証しない。
+- [ ] **MSC媒体交換の仕様確定・実装**：[仕様案](docs/V3_MSC_API.ja.md#媒体変更通知のapi仕様案)を作成済み。mediaPresentの呼出し方を保ち、false→true通知・消費条件・同値設定・I/O境界を提案。開始済みcommandの継続保証を取り下げ、残りを媒体エラーで失敗させる方向。抜去Sense、途中再挿入時の旧command識別、後続callback抑止を相談・確定し、実装・BOT試験を行う。Host filesystemのcache再読は保証しない。
 
 ## 関連Hostライブラリの未解決事項
 
@@ -32,7 +32,7 @@
 
 - [x] Video submitFrameをEspUsbTransferSubmission戻り値へ統一（02c7509）。単純なsendFrameは維持。S3/P4関連12件成功。
 - [x] CDCにsetTxTimeoutMsと期限付きwrite/flushを追加（22afc15）。S3/P4関連12件とS2基本例compile成功。
-- [x] ESP現行Audio overflowの挙動をレビュー用に文書化。方針の最終合意・変更実装・新しいoverflow内容照合試験は未完了。
+- [x] ESP現行Audio overflowの挙動をレビュー用に文書化。DropOldest既定と選択APIは合意済み。ESPでの変更実装・新しいoverflow内容照合試験は未完了。
 
 ## v2時点の記録
 

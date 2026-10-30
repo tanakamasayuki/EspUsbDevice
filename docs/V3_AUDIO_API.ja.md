@@ -421,7 +421,7 @@ S2/P4 AudioPlayback compile、S3/S2/P4各29 source依存/nmと未使用機能除
 ## CH32RV調整向け：Playbackあふれ仕様の初稿（2026-10-30）
 
 CH32RV側がESPの仕様を確認するための文書。以下は製品22afc15の現行実装を基準とする。
-新しい既定方針への合意ではなく、現行挙動と未決事項を分ける。今回の追記によるコード変更・追加実機試験はない。
+以下は現行挙動の記録であり、後述する合意済みの新仕様と区別する。文書整理によるコード変更・追加実機試験はない。
 対象はHost→DeviceのPlayback。Captureのwriteへ同じ上書き方針を適用しない。
 
 ### 現行ESP：未読を保持し、新着の入らない末尾を捨てる
@@ -466,8 +466,8 @@ Playbackの既定を変える議論だけで、Captureのpartial契約まで変�
 
 ### Playback保持方針のAPI仕様案
 
-2026-10-30のレビュー案。**以下のAPIは未実装で、既定変更も未合意**。
-CH32RV側の返答は、DropOldestは実装済み、選択APIはESP側の命名待ちとなっている。
+2026-10-30の仕様案に対し、CH32RV側からAPIを実装しX035C8実機試験を通したとの返答を受領。
+**命名とDropOldest既定は合意済み。ESP側は未実装**。先方の試験結果は先方報告であり、ESPの検証結果ではない。
 
 ```cpp
 // 提案。現在のheaderにはまだ存在しない。
@@ -480,10 +480,10 @@ enum class EspUsbAudioOverflowPolicy : uint8_t {
 //     EspUsbAudioOverflowPolicy::DropOldest;
 ```
 
-推奨案はDropOldestを既定とし、ライブ再生で読出し再開後に古い音を流し続けにくくする。
+合意した仕様ではDropOldestを既定とし、ライブ再生で読出し再開後に古い音を流し続けにくくする。
 現行ESPと同じ保持順が必要な用途はDropNewestを明示する。いずれも欠落のない録音は保証しない。
 単純なconfigure→beginの手順は変わらないが、あふれた際の保持内容は変わるため、
-既定値はCH32RV側とのレビューで確定する。CH32RVでは型prefixのみ読み替え、field名と値名を合わせる案。
+既定値の変更を移行時に明示する。CH32RVでは型prefixを読み替え、field名と値名を合わせる。
 
 configureで停止中だけ指定する。稼働中はESP_ERR_INVALID_STATE、未知のenum値は
 ESP_ERR_INVALID_ARGで拒否し、失敗時は既存設定を保持する。configuration()は選択値を返す。
@@ -519,6 +519,6 @@ policyの設定値と受信時の分岐はAudio固有の費用とし、未使用
 - 不正enum、開始中configure、end→再開始、alternate/形式変更時のqueue初期化を確認する。
 - Captureのpartial契約と、追加buffer/taskを持たないことを確認する。
 
-レビューで確定する点は、DropOldestへの既定変更と上記の型・field名。
-その他の保持範囲とstatsもこの案を照合対象とし、合意→実装→関連試験の順で進める。
+DropOldest既定と上記の型・field名は合意済み。保持範囲とstatsを含むこの仕様を基準に、
+次はESP側の実装と関連試験を行う。CH32RVの成功をESP側の合格条件の代替にしない。
 [調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)、[残作業](../TODO.ja.md#優先する残作業)を参照。
