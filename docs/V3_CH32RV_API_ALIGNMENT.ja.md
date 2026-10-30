@@ -1,5 +1,36 @@
 # CH32RVとの利用者API調整メモ
 
+## 現在の調整状況と仕様レビュー入口
+
+2026-10-30。今回はAPI仕様の整理だけを行い、製品コード・試験構成は変更しない。
+ESPの現行製品は22afc15。CH32RV側の返答は
+`/home/mt/dev_wch/ArduinoCore-CH32RV/docs/usb-espusbdevice-v3.ja.md`の3章を参照した。
+先方作業ツリー上の返答・実装であり、公開版の対応保証や実機検証の記録ではない。
+
+| 項目 | 現状 | 次にレビューする仕様 |
+| --- | --- | --- |
+| CDC | ESPの期限付きwrite/flushは適用済み。CH32RVもgetterと借用中の受付を調整済み | DTRなしで捨てるCH32RVと、DTRを要求しないESPの差は明示して残す |
+| Audio | ESPはDropNewest相当、CH32RVはDropOldest相当。先方は選択APIの命名待ち | [保持方針の仕様案](V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)。playbackOverflowPolicy、2種類の保持方針、DropOldest既定を提案 |
+| Video | Submission統一は適用済み。FS packetの前提違いにより既定変更依頼は取り下げ | ESPのISO、CH32RVのBulkを維持 |
+| DFU | ESPはACK後void callback。CH32RVはSETUPでbool判定へ変更済み | [受付仕様案](V3_DFU_API.ja.md#detach受付apiの仕様案)。onDetachで可否、setDetachHandlerで受付後の移行を分離 |
+| MSC | ESPはpresent flagのみ。CH32RVはfalse→trueの通知を実装済み | [媒体変更仕様案](V3_MSC_API.ja.md#媒体変更通知のapi仕様案)。呼出し方を保ち、通知消費条件とI/O境界を定義 |
+
+### 進め方と確定前の論点
+
+1. 各案のAPI名、既定値、状態遷移、callback context、buffer寿命をレビューする。
+2. Audioの既定変更、DFUの期限・再起動予約の取消し、MSCの進行中I/O境界を確定する。
+3. 合意後にAudio→DFU→MSCの単位で実装し、変更ごとに関連試験とcommitを行う。
+
+今回の文書はレビュー可能な提案であり、API追加や動作変更の完了ではない。
+最初の合格条件は各APIガイドへ記載した。実装時は独立したS3–S3 validationから始め、
+conftestへ特殊操作を加えない。今回の整理では実機・全件回帰・benchmarkを実行しない。
+使わない機能への費用を避け、Device/Function/config/beginを基本にする方針は維持する。
+単純な利用手順は保ち、曖昧な契約を残すための互換overloadは追加しない。
+
+## 過去の比較・判断記録
+
+以下は当時の根拠を保存した記録。現在の未対応一覧は上の表を正とする。
+
 2026-10-30追記：末尾にCH32RV側からの6点の再検討を記録した。
 以下の10月28日比較は当時のsnapshotであり、現在のCH32RV側の未対応一覧ではない。
 再検討は80e8676を基準とする判断案。実装の進捗は末尾の適用記録を参照。
@@ -152,6 +183,5 @@ S3–S3の独立validationを基準にし、conftestを追加しない。P4の�
 - VideoのISO既定512 byteと、Bulkを勧める用途をAPIガイドへ追記。transportの既定自体は維持。
 - CDCのwrite/flushへ期限付き待ちを適用。setTxTimeoutMs、timeout0、worker/停止の扱いは[CDCガイド](V3_CDC_API.ja.md#cdc送信の期限とflush)を参照。新規3件＋既存S3 3件＋P4 6件の関連12件が一括成功（374.48秒）。S2基本例もcompile成功。
 - Audioは[ESP現行仕様のレビュー用初稿](V3_AUDIO_API.ja.md#ch32rv調整向けplaybackあふれ仕様の初稿2026-10-30)を用意した。
-  先方はESPの「何を残すか」を確認したいとのこと。別作業の完了後に他項目も確認予定。
-  先方確認待ちだけでなくESP側の仕様策定・最終合意も残作業であり、古いPCM破棄案は未確定。
+  その後、先方から選択APIの命名待ちとの返答を確認。現在の具体案と合意事項は冒頭から各APIガイドを参照。
 - Audio/DFU/MSCの実装変更は未適用。現在の残作業は[TODO](../TODO.ja.md#優先する残作業)を参照。

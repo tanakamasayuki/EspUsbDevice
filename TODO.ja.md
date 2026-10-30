@@ -10,10 +10,10 @@
 - [ ] **S2実機検証（物品調達中）**：現在はcompile確認まで。到着後、P4 FS Hostとのpeerで列挙・各class・reset/end/借用返却を確認し、S2固有のROM DFU移行も別に確認する。S3での成功を代替にしない。
 - [ ] **S31対応・実機検証（物品調達中）**：ユーザー申告でビルドにベータ版コアが必要。まず4.0.0-RC1のS31 target/FQBNとSDK・toolchainを確認し、以後も採用するbeta版のversion/commitを固定して、既存の安定版Core profileと分離してcompileから始める。port能力/driver対応を確認後、P4 HS Hostとのpeerを追加する。S31 Hostの対応は別途確認し、Device成功だけで逆向きも対応済みとしない。
 - [ ] **Arduino-ESP32 4系の互換性検証**：指定の[開発版index](https://espressif.github.io/arduino-esp32/package_esp32_dev_index.json)を使い、まず4.0.0-RC1へ固定する。S31は必須。他のS3/S2/P4/P4Xは代表probeのcompileと短い実機試験から始める。3.3.12を標準として残し、別のcore4 profile/comboを優先する。一時切替が必要なら隔離した環境と復帰手順を用意する。RC1の成功を4系全体の対応済みとせず、RC更新/正式版で差分に応じて再試験する。[版固定・試験範囲と更新方針](docs/V3_DEVELOPMENT_PLAN.ja.md#arduino-esp32-4系コアの検証方針2026-10-30)。
-- [ ] **CH32RVコアとのUSBスタック調整**：先方は別作業中で、その完了後に他の項目も確認予定。CDCの期限付きwrite/flushとVideoのSubmission統一はESP側へ反映済み。残る項目は両側の利用者API・実行context・所有権と、未使用コストを照合して決める。[調整メモ](docs/V3_CH32RV_API_ALIGNMENT.ja.md)。
-- [ ] **Audio overflowの仕様策定・先方確認**：単なる確認待ちにせず、ESP側で「どのPCMを残すか」を定義する。現行の未読保持/新着末尾破棄、sample frame境界、容量不足/容量0、破棄stats、captureとの違いを[ESP仕様のレビュー用初稿](docs/V3_AUDIO_API.ja.md#ch32rv調整向けplaybackあふれ仕様の初稿2026-10-30)へ文書化した。CH32RV側はこのESP仕様を確認したいとのこと。以前の古いPCM破棄案は未確定で、既定方針・選択APIの要否は確認後に決め、必要な実装と内容照合試験を追加する。
-- [ ] **DFU DETACHの受付仕様**：CH32RV側の確認後に、ACK前の可否判定、ACK後の通知/再起動方針、拒否時のHost応答を整理する。boolで再起動を抑止することとUSB要求拒否は区別する。現行のvoid callbackを単に置換して済ませない。
-- [ ] **MSC媒体交換**：先方確認後、mediaPresent変更とUNIT ATTENTION 06/28/00、通知の消費条件、同値設定、I/O途中の交換を定義・実装・試験する。Host filesystemのcache再読を無条件には保証しない。
+- [ ] **CH32RVコアとのUSBスタック調整**：先方返答を確認済み。CDC/Videoは適用済み、Audioは選択API名待ち、DFU/MSCは先方で対応済み。ESP側の仕様案をレビューし、合意後に実装する。[現状と仕様レビュー入口](docs/V3_CH32RV_API_ALIGNMENT.ja.md#現在の調整状況と仕様レビュー入口)。
+- [ ] **Audio overflowの仕様確定・実装**：[API仕様案](docs/V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)を作成済み。playbackOverflowPolicy、DropNewest/DropOldest、保持範囲・stats・容量0・frame境界を提案。DropOldest既定への変更と命名は未合意。合意後に実装し、内容照合試験を行う。Capture partial契約を維持する。
+- [ ] **DFU DETACHの仕様確定・実装**：[仕様案](docs/V3_DFU_API.ja.md#detach受付apiの仕様案)を作成済み。onDetachのSETUP時bool判定と、setDetachHandlerのACK後移行を分離。期限と既定再起動予約のend/reset時取消しを確定してから実装・wire試験を行う。
+- [ ] **MSC媒体交換の仕様確定・実装**：[仕様案](docs/V3_MSC_API.ja.md#媒体変更通知のapi仕様案)を作成済み。mediaPresentの呼出し方を保ち、false→true通知・消費条件・同値設定・I/O境界を提案。境界の実装可能性を照合して確定し、実装・BOT試験を行う。Host filesystemのcache再読は保証しない。
 
 ## 関連Hostライブラリの未解決事項
 

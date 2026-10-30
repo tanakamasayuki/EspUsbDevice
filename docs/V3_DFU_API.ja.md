@@ -105,3 +105,55 @@ descriptor/registryと取消し・転送境界を含む。
 serial原本は`/tmp/pytest-embedded/2026-10-26_19-27-27-183733/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-dfu-all*`。
 DFUのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致、
 旧tests/examplesはmainと同一で、mainはv3の祖先。実OTAの適用・再起動と他SoC/HSは未検証。
+
+
+## DETACH受付APIの仕様案
+
+2026-10-30、**未実装・レビュー用**。上記の現行void callbackとは別の提案である。
+CH32RV側はbool callbackをSETUP段階で呼ぶ受付判定を実装済み。
+ESPも要求受付と、受付後に実行する移行処理を分ける。
+
+```cpp
+// 提案するRuntime用API。現行headerには未反映。
+using DetachCallback = std::function<bool()>;
+esp_err_t onDetach(DetachCallback callback);
+using DetachHandler = std::function<void()>;
+esp_err_t setDetachHandler(DetachHandler handler);
+```
+
+onDetachは受付判定、setDetachHandlerは既定のROM loader移行を置き換える処理とする。
+単なる通知を登録しただけで移行方式が変わる曖昧さを避けるため、後者はhandlerと命名する。
+共通化の対象はonDetachの名前と受付契約。ESP固有の移行handlerをCH32RVへ必須にしない。
+両方とも登録・解除は停止中のみで、稼働中はESP_ERR_INVALID_STATE、設定は変更しない。
+空のcallbackは無条件受付へ、空のhandlerは既定移行へ戻す。Downloadでの登録は
+ESP_ERR_INVALID_ARGとして拒否する案。DownloadのonComplete/restartWhenCompleteは変更しない。
+
+| 段階 | 提案する処理 |
+| --- | --- |
+| SETUP | 形式・対象interface・Runtime状態を検査し、有効なDETACHだけでonDetachを1回呼ぶ |
+| false | EP0をSTALL。appIDLEを保ち、移行handlerや再起動予約を実行しない |
+| trueまたは未登録 | status段階を用意する。この時点では移行処理を始めない |
+| status ACK完了 | appDETACHへ遷移し、handlerがあれば1回呼ぶ。なければ既定ROM移行を予約する |
+| ACK前の取消し/reset/end | 受付判定の副作用を巻き戻す機構は持たず、移行handlerと再起動予約は実行しない |
+
+受付判定はUSB workerで短時間に返す。アプリが公開したbusy状態の参照などに限定し、
+保存領域の書換え、待機、end、構成変更を行わない。拒否後の再試行は新しい要求として判定する。
+移行handlerもworkerで呼び、重い処理やDevice停止はアプリtaskへ引き継ぐ。
+handlerを指定したアプリはUSB detachと移行を完了する責任を持つ。単にログを出すだけでは
+既定ROM移行は行われない。既定移行の可否にはSoC・boot設定の制約が残る。
+
+USB上の拒否を表すのはSETUPでのSTALLであり、ACK後にboolを返して再起動を抑止する設計にはしない。
+[DFU 1.1の5.1節と付録A](https://www.usb.org/sites/default/files/DFU_1.1.pdf)を照合先とする。
+現在宣言しているbitWillDetach=1に対応したdetach/attachの責任はhandlerにも及ぶ。
+既存のdetachTimeoutMs、要求wTimeout、固定再起動猶予の関係は実装前に別途確定し、
+単なるtimeout復帰を移行成功として扱わない。ACK後に予約した再起動とend/resetの競合・取消しも
+実装前のレビュー項目とする。今回の案で期限処理まで確定済みとはしない。
+
+移行時は既存のvoid onDetachへ渡した処理をsetDetachHandlerへ移す。
+拒否が必要な場合だけbool onDetachを追加する。callbackなしの単純なRuntime利用は変更しない。
+利点はHostへの拒否と実際の移行を区別できること。不利益は既存callbackの移行と、
+受付後の移行責任を理解する必要があること。
+
+合格条件は拒否時のwire STALL・状態不変・予約なし、許可時のACK後1回だけの移行、
+ACK前取消し、拒否後再試行、custom handler、停止との競合。ROM移行そのものは別の実機試験とする。
+[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)と合意してから実装へ進む。

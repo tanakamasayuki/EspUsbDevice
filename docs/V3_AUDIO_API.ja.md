@@ -464,16 +464,61 @@ ringのwrapや外部bufferでもこの順序を変えず、sample frameの途中
 Captureはアプリのwriteで入る分だけcopyし、実際の受理byte数を返す。未受理分は呼出側で扱う。
 Playbackの既定を変える議論だけで、Captureのpartial契約まで変えない。
 
-### 仕様策定で決める点・確認待ち
+### Playback保持方針のAPI仕様案
 
-CH32RV側は別作業の完了後にESP仕様と他の調整項目を確認予定。次を未決事項として共有する。
+2026-10-30のレビュー案。**以下のAPIは未実装で、既定変更も未合意**。
+CH32RV側の返答は、DropOldestは実装済み、選択APIはESP側の命名待ちとなっている。
 
-1. 未読を残す現行方針を既定として維持するか、live再生向けに古いframeを捨てる方針へ変えるか。
-2. 一方を唯一の方針にするか、Playback configで選択可能にするか。未使用側へ追加buffer/taskを持たせない。
-3. 古い方を捨てる場合の、packetがringより大きいときの保持範囲とsample frame境界。
-4. 不完全frameの破棄をoverrunへ含める現行statsを維持するか、区別するか。
-5. 選択した方針の順序・wrap・容量0・packet超過・statsを、内容の異なるPCMで検査する合格条件。
+```cpp
+// 提案。現在のheaderにはまだ存在しない。
+enum class EspUsbAudioOverflowPolicy : uint8_t {
+  DropNewest, // 古い未読を保持し、新着の入らない末尾を捨てる
+  DropOldest, // 古い未読を捨て、最新の完全なframeを保持する
+};
+// EspUsbAudioConfigへ追加するfield:
+// EspUsbAudioOverflowPolicy playbackOverflowPolicy =
+//     EspUsbAudioOverflowPolicy::DropOldest;
+```
 
-以前の調整メモにある「古いPCMを捨てる既定を推奨」は提案であり、決定ではない。
-この初稿をCH32RV側で確認後、既定・API・影響を合意し、必要な変更と試験を行う。
-[残作業](../TODO.ja.md#優先する残作業)、[調整メモ](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
+推奨案はDropOldestを既定とし、ライブ再生で読出し再開後に古い音を流し続けにくくする。
+現行ESPと同じ保持順が必要な用途はDropNewestを明示する。いずれも欠落のない録音は保証しない。
+単純なconfigure→beginの手順は変わらないが、あふれた際の保持内容は変わるため、
+既定値はCH32RV側とのレビューで確定する。CH32RVでは型prefixのみ読み替え、field名と値名を合わせる案。
+
+configureで停止中だけ指定する。稼働中はESP_ERR_INVALID_STATE、未知のenum値は
+ESP_ERR_INVALID_ARGで拒否し、失敗時は既存設定を保持する。configuration()は選択値を返す。
+実行中の切替setterは設けず、end→configure→beginで変更する。
+
+### 提案する保持範囲と統計
+
+F、B、A、C、Uは上の現行仕様と同じ。Cは物理容量をFの倍数へ切り下げた実効容量とする。
+readと受信によるqueue更新は直列化し、途中のframeや並び替えを公開しない。
+
+| 方針 | 処理後のqueue | そのpacketで数える破棄byte数 |
+| --- | --- | --- |
+| DropNewest | 古いU byte＋新着の先頭K byte。K=min(A,C-U) | B-K |
+| DropOldest | R=min(A,C)、D=max(0,U+R-C)。古いqueueの先頭D byteを捨て、新着の完全frame部分の末尾R byteを追加 | D+B-R |
+
+DropOldestは「古いqueue＋新着の完全frame列」の末尾C byteを残す操作に相当する。
+容量4、未読A/B/C、新着D/E/FならDropNewestはA/B/C/D、DropOldestはC/D/E/F。
+容量2の空queueへA/B/Cが来た場合は、それぞれA/BとB/Cになる。
+末尾の不完全frameは両方で破棄し、次packetへ持ち越さない。容量0は全量破棄し受信を続ける。
+
+破棄があった受信packetごとにoverrunCountを1増やす。overrunBytesは上表の値を加算する。
+DropOldestでは今回packetからの破棄だけでなく、過去に受理したPCMの追い出しも数える。
+transferredBytesはUSBで正常受信した量のまま維持する。read量や保持量のcounterへ変えない。
+clearBuffer/resetStatsの意味、Captureのpartial write契約は現行どおりとする。
+追加ring、packet間の断片buffer、監視task、破棄ごとのcallbackは設けない。
+policyの設定値と受信時の分岐はAudio固有の費用とし、未使用Functionへ持ち込まない。
+
+### 実装時の合格条件と未決事項
+
+- 内容の異なるPCMで両方の順序、満杯、wrap、packetより小さいring、容量0を照合する。
+- F=6/8、Fの倍数でない物理容量、不完全な末尾を含め、常に完全frameだけを返す。
+- 古いPCMの追い出し、新着破棄、断片破棄についてcount/bytesを照合する。
+- 不正enum、開始中configure、end→再開始、alternate/形式変更時のqueue初期化を確認する。
+- Captureのpartial契約と、追加buffer/taskを持たないことを確認する。
+
+レビューで確定する点は、DropOldestへの既定変更と上記の型・field名。
+その他の保持範囲とstatsもこの案を照合対象とし、合意→実装→関連試験の順で進める。
+[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)、[残作業](../TODO.ja.md#優先する残作業)を参照。

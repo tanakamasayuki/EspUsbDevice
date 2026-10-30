@@ -187,3 +187,53 @@ callbackのoffset/size処理と、USB workerで更新する呼出し数をCDC側
 追加のDevice taskは作らない。S3/S2/P4でcompile/ELF/FQBN/全29 source依存の確認に成功し、
 未選択Audio/NCM/Video/CCID/keymap/FAT helperのリンク除外も確認した。
 記録は`.pytest-results/msc-cdc-example*`。例自体のUSB実機・OS検証済みとはしない。
+
+
+## 媒体変更通知のAPI仕様案
+
+2026-10-30、**未実装・レビュー用**。現行ESPのmediaPresentはatomic flagの変更のみ。
+CH32RV側は以下のfalse→true通知を実装済み。ESPも利用者の呼出しを変えずに通知を加える案。
+
+```cpp
+// 現在の呼出し方を維持する。新しい明示通知APIは今回追加しない。
+msc.mediaPresent(false);
+// 媒体の準備。進行中I/Oや保存先の寿命は以下の契約に従う。
+msc.mediaPresent(true);
+```
+
+- Host構成済みの間のfalse→trueで、そのMSCのLUN 0に媒体変更のpendingを立てる。
+- true→true、false→falseは変更通知を作らない。true→falseは不在を表し、単独では交換通知を作らない。
+- 開始前や未構成中の変更は通知を予約しない。初回列挙でpresent=trueでも交換扱いにしない。
+- pending中の次の有効なLUN 0のSCSI commandをUNIT ATTENTION（sense key 06、ASC/ASCQ 28/00）で失敗させ、pendingを消費する。
+  INQUIRYとREQUEST SENSEは除外し、先に来てもpendingを消費しない。不正CBWや存在しないLUNでも消費しない。
+- 通知失敗後のREQUEST SENSEは06/28/00を返し、通常のsense消費規則でclearする。
+  REQUEST SENSE自体をUNIT ATTENTIONで失敗させない。次の通常commandは最新のpresentを調べる。
+- 通知前に複数回挿入されてもpendingは1件にまとめる。再び不在になっていても保留した変更は1回通知し、その後はNot Ready/Medium Not Present（02/3A/00）を返す。
+- USB reset、構成解除、endでpendingとsenseを初期化する。BOT reset recoveryでは未通知pendingを維持し、回復だけを新しい媒体変更と扱わない。
+
+ASC/ASCQの意味は[T10の割当表](https://www.t10.org/lists/asc-num.htm)に従う。
+上記の通知時期・消費条件は本ライブラリの提案契約であり、OSのfilesystem cache再読や
+任意のOSでの自動再mountを保証するものではない。
+
+### I/Oと所有権の境界
+
+mediaPresentは同期的なI/O停止APIではなく、voidの呼出し方を維持する。
+提案では受理済みcommandを強制取消しせず、次のcommand受付でpresenceとpendingを判定する。
+開始済みread/writeは保持した媒体状態で完了し、途中のpresence変更だけで成功した部分を
+巻き戻す保証はしない。この境界は現行処理との照合・変更が必要で、実装済みとは扱わない。
+
+このsetterだけで保存先pointerを破棄・交換してよいとはしない。callbackとその参照先は
+Device.end成功まで有効に保つ。callback/geometryの交換は引き続き停止中だけとする。
+稼働中に物理媒体を抜けるbackendは、callback内で安全にアクセス失敗を返す責任を持つ。
+安全なI/O静止・flush・保存先交換の完了通知を行う新APIは今回の範囲外。
+容量やsector長を変える交換はend→再設定→beginとし、同一geometryの論理的な再挿入から扱う。
+アプリとHostが同じfilesystemを同時更新する権限管理も、このflagでは解決しない。
+
+利点は既存の挿抜操作のままHostへ変更を知らせられること。不利益は次のcommandが意図的に
+一度失敗することと、I/O停止・保存先解放まで行うAPIと誤解しない配慮が必要なこと。
+追加費用はMSC固有のpending状態とcommand境界の判定に限定し、監視taskや媒体copyを加えない。
+
+合格条件はfalse→true→TUR失敗→REQUEST SENSE→TUR成功、同値設定、初回present、
+INQUIRY/REQUEST SENSE先行、不在、複数変更の集約、通知前の再抜去、reset/end/BOT回復、
+read/write途中の変更と正確なBOT residue/CSW。OSでのmount/ejectは別試験にする。
+[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
