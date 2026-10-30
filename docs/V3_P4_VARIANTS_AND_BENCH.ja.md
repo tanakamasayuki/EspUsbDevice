@@ -259,3 +259,19 @@ Device側はNVSの自動開始で起動し、確認後に自動開始を消し�
 確認手順はscratchのscriptで行い、標準試験には含めない。peer_deviceの`autostart`命令はその手順のためのもの。
 P4X側で見えたVBUSも、Host側のsoftwareが出したものではない。BSesVldはHost開始前から1だった。
 逆向きcomboもこの結線で列挙できたので、試験を有効化した。
+
+## HS直結 段階1〜2：Vendor（2026-10-31）
+
+probe `validation/peer/vendor_link`（testpathsへ`peer`を追加）。両comboで成功した：旧P4 Hostは69.29秒、P4X Hostは126.54秒。どちらも初回build込みで、p4_hs/linkとの2件。
+Hostは公開EspUsbHost2.10.1のHIGH_SPEED portを使い、Vendor INはcache準備済みのread queueとcallbackで受ける。各試験で次を3回繰り返す。
+
+- 列挙：Hostでspeed=2、bulk IN/OUTのMPS 512。DeviceではMPSを読む公開APIがないので、wire上のdescriptorで判定する。
+- コピー方式のecho：1/511/512/513/4095/4096/4097 byte。Device側でecho量とbad=0を確かめる。
+- 借用RX→借用TX：1/511/512/513/4097/65535/65536/65537 byte。完了は1回で、status・実長・buffer・idが一致し、DMA領域の外のguardが残る。RXはMPSの倍数へ切り上げて渡す。
+- 借用RXの取消し：cancelDirectRxで完了が1回だけ、status=cancelled、idが一致。
+- 未完了の借用RXを持ったままend()：Stoppedで1回だけ返る。今回はend()の中で返っていた（at_end=1）が、試験はそこまで要求しない。
+
+**見つけた不具合**：P4X Deviceで、65535 byteの借用RXが9216 byte以降で0xa5のまま残った。完了は成功・実長65535と報告していた。
+OUT DMAの開始時にbufferのdirtyなcache行を書き戻していなかったのが原因。DMAの途中で行が追い出されると、受信データの上に書き戻される。
+試験の中で書戻しを足すと3回とも成功したので、原因を確定した。製品側で、OUT armでもcleanするように直した。
+FS（旧loopback）では表に出ていなかった。P4/P4_PSRAM/P4X-PC/HS直結の全32件で回帰を確認した。S3はcache同期が空の実装なので影響しない。
