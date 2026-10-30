@@ -13,7 +13,7 @@ ESPの現行製品は22afc15。CH32RV側の返答は
 | CDC | ESPの期限付きwrite/flushは適用済み。CH32RVもgetterと借用中の受付を調整済み | DTRなしで捨てるCH32RVと、DTRを要求しないESPの差は明示して残す |
 | Audio | 両方ともplaybackOverflowPolicy（既定DropOldest）を実装済み。ESPはS3–S3で内容照合試験に成功 | [保持方針と実測](V3_AUDIO_API.ja.md#espでの実装と実測2026-10-30) |
 | Video | Submission統一は適用済み。FS packetの前提違いにより既定変更依頼は取り下げ | ESPのISO、CH32RVのBulkを維持 |
-| DFU | ESPはACK後void callback。CH32RVはSETUP時のbool onDetachのみ実装・試験済み。setDetachHandlerはESP独自 | [受付仕様案](V3_DFU_API.ja.md#detach受付apiの仕様案)。onDetachで可否、setDetachHandlerで受付後の移行を分離 |
+| DFU | 両方ともSETUP時のbool onDetachを実装。受付後はend()/resetでも取り消さないことでCH32RVコアと合意（先方は修正予定）。setDetachHandlerはESP独自 | [受付と移行・実測](V3_DFU_API.ja.md#detachの受付と移行2026-10-30-実装) |
 | MSC | ESPはpresent flagのみ。CH32RVはfalse→trueの通知を実装済み | [媒体変更仕様案](V3_MSC_API.ja.md#媒体変更通知のapi仕様案)。通知契約は合意。抜去は02/3A/00、抜去世代で再挿入後の旧command継続を禁止する仕様を採用。ESP未実装 |
 
 追加返答f80b4451の差分を確認。MSCは抜去時02/3A/00、抜去回数比較、失敗READのresidueを修正。

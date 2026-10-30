@@ -107,57 +107,44 @@ DFUのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 c
 旧tests/examplesはmainと同一で、mainはv3の祖先。実OTAの適用・再起動と他SoC/HSは未検証。
 
 
-## DETACH受付APIの仕様案
+## DETACHの受付と移行（2026-10-30 実装）
 
-2026-10-30、**未実装・レビュー用**。上記の現行void callbackとは別の提案である。
-CH32RV側で実装・試験した共通APIはSETUP時に可否を返すonDetachのみ。
-setDetachHandlerはESP独自の提案で、CH32RVには存在しない。以前の「両方を実装・試験済み」
-という記述を訂正する。期限と再起動予約の取消しはESP側の宿題であり、先方への追加作業依頼はない。
-ESP側の実装・検証は未着手である。
-ESPも要求受付と、受付後に実行する移行処理を分ける。
+当初の仕様案（ACK後のvoid callbackを、SETUP時の受付判定と受付後の移行に分ける）を、
+P4XとLinux PCの実測とCH32RVコアとの相談を基に確定・実装した。
 
 ```cpp
-// 提案するRuntime用API。現行headerには未反映。
-using DetachCallback = std::function<bool()>;
+using DetachCallback = std::function<bool()>;  // SETUP時。falseでSTALL
 esp_err_t onDetach(DetachCallback callback);
-using DetachHandler = std::function<void()>;
+using DetachHandler = std::function<void()>;   // status ACK後に1回。既定のROM移行を置換
 esp_err_t setDetachHandler(DetachHandler handler);
 ```
 
-onDetachは受付判定、setDetachHandlerは既定のROM loader移行を置き換える処理とする。
-単なる通知を登録しただけで移行方式が変わる曖昧さを避けるため、後者はhandlerと命名する。
-共通化の対象はonDetachの名前と受付契約。ESP固有の移行handlerをCH32RVへ必須にしない。
-両方とも登録・解除は停止中のみで、稼働中はESP_ERR_INVALID_STATE、設定は変更しない。
-空のcallbackは無条件受付へ、空のhandlerは既定移行へ戻す。Downloadでの登録は
-ESP_ERR_INVALID_ARGとして拒否する案。DownloadのonComplete/restartWhenCompleteは変更しない。
-
-| 段階 | 提案する処理 |
+| 段階 | 動作 |
 | --- | --- |
-| SETUP | 形式・対象interface・Runtime状態を検査し、有効なDETACHだけでonDetachを1回呼ぶ |
-| false | EP0をSTALL。appIDLEを保ち、移行handlerや再起動予約を実行しない |
-| trueまたは未登録 | status段階を用意する。この時点では移行処理を始めない |
-| status ACK完了 | appDETACHへ遷移し、handlerがあれば1回呼ぶ。なければ既定ROM移行を予約する |
-| ACK前の取消し/reset/end | 受付判定の副作用を巻き戻す機構は持たず、移行handlerと再起動予約は実行しない |
+| SETUP | 0x21/DETACH/wLength 0かつappIDLEだけを有効とし、onDetachを1回呼ぶ。falseならSTALLで状態・予約とも変えない |
+| 受付 | status段階を返す。この時点では移行しない |
+| status ACK | appDETACHへ遷移し、handlerがあれば1回呼ぶ。なければ100 ms後のROM loader移行を予約 |
+| 受付後 | end()、USB reset、SET_CONFIGURATION 0のいずれでも取り消さない |
+| 期限 | appDETACHはmin(wValue, detachTimeoutMs)で保ち、満了でappIDLEへ戻る。既定の移行はwValueに左右されない |
 
-受付判定はUSB workerで短時間に返す。アプリが公開したbusy状態の参照などに限定し、
-保存領域の書換え、待機、end、構成変更を行わない。拒否後の再試行は新しい要求として判定する。
-移行handlerもworkerで呼び、重い処理やDevice停止はアプリtaskへ引き継ぐ。
-handlerを指定したアプリはUSB detachと移行を完了する責任を持つ。単にログを出すだけでは
-既定ROM移行は行われない。既定移行の可否にはSoC・boot設定の制約が残る。
+登録はRuntimeの停止中だけ。開始中はESP_ERR_INVALID_STATE、DownloadではESP_ERR_INVALID_ARG。
+空のcallbackは無条件受付、空のhandlerは既定の移行へ戻す。どちらもUSB workerで呼ぶので、
+待機・end()・保存領域の書換えはせず、重い処理はアプリtaskへ渡す。
 
-USB上の拒否を表すのはSETUPでのSTALLであり、ACK後にboolを返して再起動を抑止する設計にはしない。
-[DFU 1.1の5.1節と付録A](https://www.usb.org/sites/default/files/DFU_1.1.pdf)を照合先とする。
-現在宣言しているbitWillDetach=1に対応したdetach/attachの責任はhandlerにも及ぶ。
-既存のdetachTimeoutMs、要求wTimeout、固定再起動猶予の関係は実装前に別途確定し、
-単なるtimeout復帰を移行成功として扱わない。ACK後に予約した再起動とend/resetの競合・取消しも
-実装前のレビュー項目とする。今回の案で期限処理まで確定済みとはしない。
+### 判断の根拠となった実測
 
-移行時は既存のvoid onDetachへ渡した処理をsetDetachHandlerへ移す。
-拒否が必要な場合だけbool onDetachを追加する。callbackなしの単純なRuntime利用は変更しない。
-利点はHostへの拒否と実際の移行を区別できること。不利益は既存callbackの移行と、
-受付後の移行責任を理解する必要があること。
+`validation/p4x_pc/dfu_detach`（P4X v3.2のHSをbench 3-4でLinux PCへ直結、pyusb）。**1 passed、58.34秒**。
+記録`validation/.pytest-results/dfu-detach*`、数値は`dfu-detach-measure.json`。
 
-合格条件は拒否時のwire STALL・状態不変・予約なし、許可時のACK後1回だけの移行、
-ACK前取消し、拒否後再試行、custom handler、停止との競合。ROM移行そのものは別の実機試験とする。
-APIの合意を基に、残る期限・予約取消しの詳細を確定して実装へ進む。
-[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
+| 項目 | 結果 | 判断 |
+| --- | --- | --- |
+| ACK後の再起動待ち0/1/5/20/100 ms、各10回 | 50/50でstatus完了。制御転送は最大0.52 ms、Hostの消失検出はACKの136〜253 ms後で待ちによる差なし | 既定の100 msを維持。wValueと連動させない |
+| appDETACHの期限 | wValue 300で301 ms、3000（detachTimeoutMs 1000）で1001 ms後にappIDLE。期限内の再DETACHはSTALL | min(wValue, detachTimeoutMs)を採用 |
+| ACKの0/20/50/90 ms後にend() | 12/12でend()は1 ms以内にESP_OK、再起動も実行、panicなし | 取り消さない。CH32RVも同じ方針に修正する |
+| ACK直後のHost port reset | 5/5で再起動を実行 | 取り消さない |
+| onDetachが2回false | 2回ともSTALL、GETSTATEはappIDLEのまま、handler未実行。3回目で受付・appDETACH | SETUPでの拒否を採用 |
+
+PC側では、新しく列挙された機器を別processが調べている間にinterfaceのclaimがEBUSYになることがあった（1実行で3〜10回）。
+要求はbusへ出ていないので再送しており、Deviceの挙動とは区別する。CH32RVコア側の回答では、先方は期限を持たず必ず移行する。
+end()で取り消されていたのは意図しない動作で、同じ「取り消さない」契約へ直すとのこと。共通の契約は
+「SETUPでonDetachが判定し、受け付けたら必ず移行する」。setDetachHandlerとappDETACHの状態はESP独自。

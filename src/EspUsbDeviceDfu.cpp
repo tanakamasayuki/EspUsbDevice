@@ -113,7 +113,7 @@ struct EspUsbDfuState {
     }
     if (o.mode_ == EspUsbDeviceDfuMode::Runtime) {
       if (r->bRequest != 0 || r->bmRequestType != 0x21 || r->wLength || s->state != AppIdle) return false;
-      if (stage == ESPUSB_CONTROL_STAGE_SETUP) return espusb_device_control_status(port, r);
+      if (stage == ESPUSB_CONTROL_STAGE_SETUP) return (!o.detachCallback_ || o.detachCallback_()) && espusb_device_control_status(port, r);
       if (stage == ESPUSB_CONTROL_STAGE_ACK) {
         s->state = AppDetach;
         const uint16_t ms = r->wValue < o.config_.detachTimeoutMs ? r->wValue : o.config_.detachTimeoutMs;
@@ -218,13 +218,20 @@ uint16_t EspUsbDeviceDfu::configurationDescriptor(uint8_t *dst, uint8_t itf, uin
   if (dst) memcpy(dst, data, sizeof(data)); return sizeof(data);
 }
 size_t EspUsbDeviceDfu::transferCapacity() const { return state_ && state_->buffer ? config_.transferBytes : 0; }
-esp_err_t EspUsbDeviceDfu::onDetach(DetachCallback c) { if (state_) return ESP_ERR_INVALID_STATE; detachCallback_ = std::move(c); return ESP_OK; }
+esp_err_t EspUsbDeviceDfu::onDetach(DetachCallback c) {
+  if (state_) return ESP_ERR_INVALID_STATE; if (mode_ != EspUsbDeviceDfuMode::Runtime) return ESP_ERR_INVALID_ARG;
+  detachCallback_ = std::move(c); return ESP_OK;
+}
+esp_err_t EspUsbDeviceDfu::setDetachHandler(DetachHandler h) {
+  if (state_) return ESP_ERR_INVALID_STATE; if (mode_ != EspUsbDeviceDfuMode::Runtime) return ESP_ERR_INVALID_ARG;
+  detachHandler_ = std::move(h); return ESP_OK;
+}
 esp_err_t EspUsbDeviceDfu::onProgress(ProgressCallback c) { if (state_) return ESP_ERR_INVALID_STATE; progressCallback_ = std::move(c); return ESP_OK; }
 esp_err_t EspUsbDeviceDfu::onComplete(CompleteCallback c) { if (state_) return ESP_ERR_INVALID_STATE; completeCallback_ = std::move(c); return ESP_OK; }
 esp_err_t EspUsbDeviceDfu::onError(ErrorCallback c) { if (state_) return ESP_ERR_INVALID_STATE; errorCallback_ = std::move(c); return ESP_OK; }
 esp_err_t EspUsbDeviceDfu::restartWhenComplete(bool enable) { if (state_) return ESP_ERR_INVALID_STATE; restartWhenComplete_ = enable; return ESP_OK; }
 void EspUsbDeviceDfu::handleDetach() {
-  if (detachCallback_) detachCallback_();
+  if (detachHandler_) detachHandler_();
   else espusb::internal::scheduleDeviceRestart(&device_, 100, true);
 }
 void EspUsbDeviceDfu::handleAbort() {

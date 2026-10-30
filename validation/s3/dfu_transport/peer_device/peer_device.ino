@@ -61,7 +61,7 @@ void loop() {
     }
     detached = inject = 0;
     dfu[2] = new EspUsbDeviceDfu(device, EspUsbDeviceDfuMode::Runtime);
-    ok &= dfu[2]->onDetach([]() { ++detached; }) == ESP_OK;
+    ok &= dfu[2]->setDetachHandler([]() { ++detached; }) == ESP_OK;
     ok &= device.begin();
     ok &= dfu[0]->transferCapacity() == size && dfu[1]->transferCapacity() == 65 && !dfu[2]->transferCapacity();
     ok &= dfu[0]->configure({}) == ESP_ERR_INVALID_STATE && dfu[0]->setBackend({}) == ESP_ERR_INVALID_STATE;

@@ -20,6 +20,11 @@ S2 CDC基本例のcompile/29 source依存/未使用class除去も確認した。
 基準80e8676の全S3 47件と、以前のP4各probe30件の記録は後段へ保持する。
 原本はvalidation/.pytest-resultsのvideo-submission-initial*、cdc-tx-related*、cdc-tx-s2*。
 
+## DFU DETACHとP4X–PC（2026-10-30）
+
+`p4x_pc/dfu_detach`がP4X HS（bench 3-3/3-4、combo `p4x_pc`）とLinux PCの初回試験。1 passed、58.34秒。
+DFU関連のS3/P4既存3件も105.16秒で成功。標準all収集は82件。[実測と判断](../docs/V3_DFU_API.ja.md#判断の根拠となった実測)。
+
 ## Audio overflow（2026-10-30）
 
 playbackOverflowPolicy追加に伴い`s3/audio_overflow`を新設。両方針の保持内容/statsをmodelと照合し1 passed（31.49秒）。

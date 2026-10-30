@@ -170,3 +170,13 @@ audio.configure(config);
 configure→beginの手順と、あふれない場合の動作は変わらない。overrunBytesには、新着の破棄に加えて
 DropOldestで追い出した過去のPCMも数える。Captureのpartial writeは変更しない。
 [保持方針と統計](V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)を参照。
+
+DFU RuntimeのonDetachは、SETUP時に受付可否を返すbool callbackへ変わった。従来のvoid onDetachへ
+渡していた移行処理（既定の再起動を置き換えるもの）はsetDetachHandlerへ移す。
+
+```cpp
+runtime.onDetach([]() { return !busy; });          // 拒否が必要な場合だけ。falseでSTALL
+runtime.setDetachHandler([]() { startMyUpdate(); }); // 受付後の移行を自分で行う場合
+```
+
+どちらも登録しない単純な利用は変更不要。[DETACHの受付と移行](V3_DFU_API.ja.md#detachの受付と移行2026-10-30-実装)を参照。

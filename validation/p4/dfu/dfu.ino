@@ -96,7 +96,7 @@ void setup() {
   };
   backend.manifest=[]() {++manifests;return EspUsbDfuStatus::Ok;};
   backend.abort=[]() {++aborts;};
-  dfu.setBackend(backend);runtime.onDetach([](){++detached;});
+  dfu.setBackend(backend);runtime.setDetachHandler([](){++detached;});
 }
 void loop() {
   if(!Serial.available()) {delay(1);return;}

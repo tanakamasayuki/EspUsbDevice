@@ -2493,7 +2493,14 @@ struct EspUsbDfuState;
 class EspUsbDeviceDfu : public EspUsbDeviceClass
 {
 public:
-  using DetachCallback = std::function<void()>;
+  // SETUP of a valid DFU_DETACH, on the USB worker. false stalls the request
+  // and changes nothing. Return quickly: no waiting, end() or storage writes.
+  using DetachCallback = std::function<bool()>;
+  // After the accepted DETACH's status stage, on the USB worker, once.
+  // Replaces the default restart into the ROM loader: the handler then owns
+  // leaving the bus (bitWillDetach). end()/reset do not withdraw an accepted
+  // DETACH; refuse in onDetach instead.
+  using DetachHandler = std::function<void()>;
   using ProgressCallback = std::function<void(size_t written)>;
   using CompleteCallback = std::function<bool()>;
   using ErrorCallback = std::function<void(EspUsbDfuStatus status)>;
@@ -2519,7 +2526,9 @@ public:
   uint16_t transferSize() const { return uint16_t(config_.transferBytes); }
   // Actual allocated Download buffer bytes; 0 before begin/end or in Runtime.
   size_t transferCapacity() const;
+  // Runtime only, while stopped. Empty restores accept / default restart.
   esp_err_t onDetach(DetachCallback callback);
+  esp_err_t setDetachHandler(DetachHandler handler);
   esp_err_t onProgress(ProgressCallback callback);
   // Built-in OTA only: false vetoes the image and restores the running boot partition.
   esp_err_t onComplete(CompleteCallback callback);
@@ -2547,6 +2556,7 @@ private:
   std::atomic<size_t> written_{0};
   EspUsbDeviceFirmwareUpdate firmware_;
   DetachCallback detachCallback_;
+  DetachHandler detachHandler_;
   ProgressCallback progressCallback_;
   CompleteCallback completeCallback_;
   ErrorCallback errorCallback_;
