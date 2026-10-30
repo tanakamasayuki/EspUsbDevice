@@ -13,13 +13,18 @@ ESPの現行製品は22afc15。CH32RV側の返答は
 | CDC | ESPの期限付きwrite/flushは適用済み。CH32RVもgetterと借用中の受付を調整済み | DTRなしで捨てるCH32RVと、DTRを要求しないESPの差は明示して残す |
 | Audio | ESPはDropNewest相当、CH32RVはDropOldest相当。選択API名とDropOldest既定に合意済み | [保持方針の仕様案](V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)。playbackOverflowPolicy、2種類の保持方針、DropOldest既定に合意 |
 | Video | Submission統一は適用済み。FS packetの前提違いにより既定変更依頼は取り下げ | ESPのISO、CH32RVのBulkを維持 |
-| DFU | ESPはACK後void callback。CH32RVは受付判定と移行handlerの分離を実装・試験済み（先方報告） | [受付仕様案](V3_DFU_API.ja.md#detach受付apiの仕様案)。onDetachで可否、setDetachHandlerで受付後の移行を分離 |
-| MSC | ESPはpresent flagのみ。CH32RVはfalse→trueの通知を実装済み | [媒体変更仕様案](V3_MSC_API.ja.md#媒体変更通知のapi仕様案)。通知契約は合意。進行中I/Oは残りを媒体エラーで失敗させる方向へESP案を修正し、詳細を相談 |
+| DFU | ESPはACK後void callback。CH32RVはSETUP時のbool onDetachのみ実装・試験済み。setDetachHandlerはESP独自 | [受付仕様案](V3_DFU_API.ja.md#detach受付apiの仕様案)。onDetachで可否、setDetachHandlerで受付後の移行を分離 |
+| MSC | ESPはpresent flagのみ。CH32RVはfalse→trueの通知を実装済み | [媒体変更仕様案](V3_MSC_API.ja.md#媒体変更通知のapi仕様案)。通知契約は合意。抜去は02/3A/00、抜去世代で再挿入後の旧command継続を禁止する仕様を採用。ESP未実装 |
+
+追加返答f80b4451の差分を確認。MSCは抜去時02/3A/00、抜去回数比較、失敗READのresidueを修正。
+先方のX035C8 usb-peer-classes PASSは、2ブロックREADで抜去後に次のreadを呼ばないことの確認。
+EspUsbHost 2.10.0のdata STALL後のCSW未取得により、Senseのwire確認はできていない。
+[詳細と試験範囲](V3_MSC_API.ja.md#ch32rv側の確認結果とhostの制約)を参照。
 
 ### 進め方と確定前の論点
 
 1. 各案のAPI名、既定値、状態遷移、callback context、buffer寿命をレビューする。
-2. AudioのAPIとDropOldest既定は合意済み。DFUの期限・再起動予約の取消し、MSCの抜去検出・途中再挿入・BOT失敗処理の詳細を確定する。
+2. AudioのAPIとDropOldest既定は合意済み。MSCの02/3A/00と抜去世代は採用。DFUの期限・再起動予約の取消しはESP側だけで確定する。MSCの同期・BOT処理はESP実装時に照合する。
 3. 合意後にAudio→DFU→MSCの単位で実装し、変更ごとに関連試験とcommitを行う。
 
 今回の文書はレビュー可能な提案であり、API追加や動作変更の完了ではない。

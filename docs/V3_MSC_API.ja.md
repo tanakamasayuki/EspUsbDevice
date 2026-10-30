@@ -192,10 +192,8 @@ callbackのoffset/size処理と、USB workerで更新する呼出し数をCDC側
 ## 媒体変更通知のAPI仕様案
 
 2026-10-30、**未実装・レビュー用**。現行ESPのmediaPresentはatomic flagの変更のみ。
-CH32RV側から本案のAPIを実装し、X035C8実機試験を通したとの返答を受領。
-false→trueの通知契約は合意。進行中I/Oは先方が媒体エラーで失敗させる実装であり、
-当初のESP案との差として相談事項になった。以下ではESP側の案をその方向へ修正する。
-**I/O中断の詳細は相談中、ESPの実装・試験は未着手**。
+CH32RV側の追加対応f80b4451を確認。抜去時Senseと抜去世代の扱いは下記を共通仕様として採用する。
+X035C8のusb-peer-classes PASSは先方報告として記録する。**ESP側は未実装・未検証**。
 
 ```cpp
 // 現在の呼出し方を維持する。新しい明示通知APIは今回追加しない。
@@ -222,17 +220,25 @@ ASC/ASCQの意味は[T10の割当表](https://www.t10.org/lists/asc-num.htm)に�
 
 mediaPresentは同期的なI/O停止APIではなく、voidの呼出し方を維持する。
 当初案の「開始済みcommandを最後まで続ける」という保証は取り下げる。
-物理媒体の抜去でアクセス不能になった場合、開始済みでも残りのread/writeを媒体エラーで
-失敗させる方向を採る。mediaPresent(false)も後続のbackendアクセスを止める契機として扱う。
-既に実行中の同期callbackを強制中断する機構は設けず、次のcallbackを呼ぶ前に不在を確認する。
-callback自身が抜去を検出した場合も、既存のI/O失敗契約で復帰する。
-成功済みの書込みは巻き戻さず、command全体を成功として返さない。
-エラー後の残転送・residue・CSWはBOTの規則に従い、未処理データを新しい媒体へ書き込まない。
+抜去を検出した場合、開始済みでも残りのread/writeをNot Ready / Medium Not Present
+（02/3A/00）で失敗させる。mediaPresent(false)を後続backendアクセスの停止契機とする。
+true→falseごとに抜去世代を進め、command開始時の世代を保持する。次のbackend呼出し前に、
+presentであることと開始時から抜去世代が変わっていないことの両方を確認する。
+false→trueが短時間に起きても旧commandを再開せず、新媒体へ未処理データを書き込まない。
+同値のfalse再設定は世代を進めない。世代比較とpresence更新の同期方法はESP実装で詰める。
 
-この方向はESP側の修正案であり、先方との詳細確認が残る。不在検出時のSenseと、
-途中でfalse→trueになった場合に旧commandを再開させない識別方法を実装前に確定する。
-pendingの媒体変更通知と、進行中commandのI/O失敗は別の状態として扱い、
-媒体エラーを返しただけで未通知のUNIT ATTENTIONを消費しない。
+既に実行中の同期callbackは強制中断せず、いま扱っている処理単位の復帰を待つ。
+CH32RV側の表現は「いま扱っている1ブロックを最後まで」であり、ESPではsectorより小さい
+offset付きcallbackもあるため、抜去後に追加callbackを呼んでsectorを完成させる保証にはしない。
+以降のread/write callbackは呼ばない。既に成功した書込みは巻き戻さず、残りがあるcommandは
+成功として返さない。物理抜去をbackendが先に検出する場合も、アクセス不能を安全に返す必要がある。
+存在が変わらない一般のbackend失敗は既存の媒体エラーと区別し、すべてを02/3A/00へ置き換えない。
+
+失敗したREADのresidueには、失敗までにHostへ転送済みの量を反映する。
+callbackで読み出したがUSBではまだ送っていないbyteを、送信済みと数えない。
+WRITEも実際の処理済み量とBOTの規則に基づいて残転送・residue・CSWを扱う。
+pendingの媒体変更通知と進行中commandの失敗は別の状態とし、
+抜去による02/3A/00を返しても未通知のUNIT ATTENTIONを消費しない。
 
 このsetterだけで保存先pointerを破棄・交換してよいとはしない。callbackとその参照先は
 Device.end成功まで有効に保つ。callback/geometryの交換は引き続き停止中だけとする。
@@ -250,3 +256,19 @@ INQUIRY/REQUEST SENSE先行、不在、複数変更の集約、通知前の再�
 read/write途中の抜去による残りの処理の失敗、同一command中の再挿入で旧I/Oを継続しないこと、
 処理済み部分の非rollback、後続callbackの抑止と正確なBOT residue/CSW。OSでのmount/ejectは別試験にする。
 [調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
+
+
+### CH32RV側の確認結果とHostの制約
+
+f80b4451の差分では、抜去回数の比較、02/3A/00、失敗READのresidue修正を確認した。
+先方報告のX035C8 usb-peer-classesでは、2ブロックREAD(10)の1ブロック目で抜去し、
+command失敗と2ブロック目のread callbackが呼ばれないことを確認した。
+02/3A/00のwire取得、途中再挿入、WRITEの全条件まで実機確認済みとは扱わない。
+
+先方のEspUsbHost 2.10.0では、data STALL後にCSWを取得せず終了し、後続CSWが1件ずれ、
+reset recoveryも行われないため再接続まで通信できないとの報告がある。
+そのため抜去検査はDevice再生成直前の最後に置かれ、Senseは取得できていない。
+先方はBOT 6.7.2に反するHost動作として報告しており、Device側の互換回避は行っていない。
+この報告と上記のESP側2.10.1での記録は、版と回復経路が異なるため混同しない。
+ESPでの実装試験では、既存の手動Host経路などでhalt解除後のCSW・REQUEST SENSE・次commandまで
+検査する。標準Hostの改修は別作業とし、DeviceをHostの不具合へ合わせない。

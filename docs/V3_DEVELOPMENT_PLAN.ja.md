@@ -6,7 +6,8 @@
 残るCH32RV調整はAudio overflowの仕様策定、DFU受付、MSC媒体交換。
 先方返答を確認し、3項目の具体的なAPI仕様案を作成。現在は仕様レビュー段階で、実装は未変更。
 AudioのDropOldest既定とAPIは合意済み。3案のCH32RV実装はX035C8試験成功との報告。
-DFUの期限/停止競合、MSC抜去時に残りを媒体エラーにする詳細は引き続き確定する。
+MSCは02/3A/00と抜去世代比較を採用。DFUの期限/停止競合はESP側の宿題として確定する。
+CH32RVのDFU実装はonDetachのみで、setDetachHandlerはESP独自。
 S2/S31は物品調達中。S31はベータ版コアが必要で、利用version/commitを確定してprofileを分ける。
 [現在のTODO](../TODO.ja.md)、[判断と検査計画](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
 
