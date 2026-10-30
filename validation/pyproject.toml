@@ -6,6 +6,7 @@ dependencies = [
     "pytest>=8",
     "pytest-embedded-arduino-cli>=1.10.0",
     "pytest-embedded-serial>=2.0",
+    "pyusb>=1.2",
 ]
 
 [tool.pytest.ini_options]
@@ -15,4 +16,7 @@ arduino_combos = [
     "s3: primary=s3_host,device=s3_device",
     "p4: primary=p4_loopback",
     "p4_psram: primary=p4_psram",
+    "p4_p4x_hs: primary=p4_hs_host,device=p4x_hs_device",
+    "p4x_p4_hs: primary=p4x_hs_host,device=p4_hs_device",
+    "p4x_pc: primary=p4x_hs_pc",
 ]

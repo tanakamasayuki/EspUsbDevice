@@ -6,7 +6,7 @@
 
 ## 優先する残作業
 
-- [ ] **HS直結検証**：P4X `esp32-series-80f1b2d71d86`（HWCDC/JTAG）とP4 `esp32-p4-80f1b2d0b261`（CH340 UART）。.env割当は予約済み。通常のdut＋peer_device、p4_p4x_hs/p4x_p4_hsのsketch/profile/comboを実装する。実revision/SDK照合、HIGH/MPS512、Vendor往復・借用返却・再開始から始め、各classと代表複合へ広げる。役割反転はVBUS/connector役割の切替を確認してから。[profileと段階別計画](docs/V3_P4_VARIANTS_AND_BENCH.ja.md#hs直結peerのprofileと実行計画2026-10-30)。
+- [ ] **HS直結検証**：bench 2-4のP4X `esp32-series-80f1b2d71d86`（HWCDC/JTAG、v3.2）と2-3のP4 `esp32-p4-80f1b2d0b261`（CH340 UART、v1.3）。.env割当とcombo登録済み。通常のdut＋peer_device、p4_p4x_hs/p4x_p4_hsのsketch/profile/comboを実装する。実revision/SDK照合、HIGH/MPS512、Vendor往復・借用返却・再開始から始め、各classと代表複合へ広げる。役割反転はVBUS/connector役割の切替を確認してから。[profileと段階別計画](docs/V3_P4_VARIANTS_AND_BENCH.ja.md#hs直結peerのprofileと実行計画2026-10-30)。
 - [ ] **S2実機検証（物品調達中）**：現在はcompile確認まで。到着後、P4 FS Hostとのpeerで列挙・各class・reset/end/借用返却を確認し、S2固有のROM DFU移行も別に確認する。S3での成功を代替にしない。
 - [ ] **S31対応・実機検証（物品調達中）**：ユーザー申告でビルドにベータ版コアが必要。まず4.0.0-RC1のS31 target/FQBNとSDK・toolchainを確認し、以後も採用するbeta版のversion/commitを固定して、既存の安定版Core profileと分離してcompileから始める。port能力/driver対応を確認後、P4 HS Hostとのpeerを追加する。S31 Hostの対応は別途確認し、Device成功だけで逆向きも対応済みとしない。
 - [ ] **Arduino-ESP32 4系の互換性検証**：指定の[開発版index](https://espressif.github.io/arduino-esp32/package_esp32_dev_index.json)を使い、まず4.0.0-RC1へ固定する。S31は必須。他のS3/S2/P4/P4Xは代表probeのcompileと短い実機試験から始める。3.3.12を標準として残し、別のcore4 profile/comboを優先する。一時切替が必要なら隔離した環境と復帰手順を用意する。RC1の成功を4系全体の対応済みとせず、RC更新/正式版で差分に応じて再試験する。[版固定・試験範囲と更新方針](docs/V3_DEVELOPMENT_PLAN.ja.md#arduino-esp32-4系コアの検証方針2026-10-30)。
@@ -24,7 +24,7 @@
 
 ## 追加検証・出荷前の作業
 
-- [ ] **PC OSとの互換性**：v3 Native stackでWindows/Linux/macOSのclass binding、CDC/HID、MSC mount/eject、UVC表示、WinUSB/libusb/WebUSB、DFU toolを確認する。旧v2のPC実測結果をv3の成功として引き継がない。
+- [ ] **PC OSとの互換性**：Linuxはbench 3-3/3-4のP4X（HS直結、combo `p4x_pc`、pyusb）を使える。v3 Native stackでWindows/Linux/macOSのclass binding、CDC/HID、MSC mount/eject、UVC表示、WinUSB/libusb/WebUSB、DFU toolを確認する。旧v2のPC実測結果をv3の成功として引き継がない。
 - [ ] **実SD・Firmware/OTA helperの実通信**：RAM backendの試験と分け、実媒体・実更新先での書込み/検証/終了処理を確認する。汎用USB層の基本試験にSDやcodecを必須にしない。
 - [ ] **長時間・電源/異常系の追加確認**：特にHS/P4Xと新規機種で連続転送、再接続、休止/復帰、代表的な停止競合を確認する。既存S3の固定回数試験を全機種・任意の競合の証明としない。
 - [ ] **release候補の固定sourceでの最終回帰**：機材と合意したAPIが揃った時点で標準combo all、現行examplesの対象別build、依存/未使用機能/ライセンスを確認する。現状は80件の収集と関連試験までで、最新製品の全80件一括実行は未実施。実機なし・skip・unfinishedは機種/組ごとに区別する。

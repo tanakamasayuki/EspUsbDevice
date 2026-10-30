@@ -23,6 +23,7 @@ dependencies = [
     { name = "pytest" },
     { name = "pytest-embedded-arduino-cli" },
     { name = "pytest-embedded-serial" },
+    { name = "pyusb" },
 ]
 
 [package.metadata]
@@ -30,6 +31,7 @@ requires-dist = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-embedded-arduino-cli", specifier = ">=1.10.0" },
     { name = "pytest-embedded-serial", specifier = ">=2.0" },
+    { name = "pyusb", specifier = ">=1.2" },
 ]
 
 [[package]]
@@ -203,6 +205,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c8/f3/62f2ced4415c51d70ac1bca4631457857c8600bd81f8db5311d874a8200b/pytest_embedded_serial-2.9.3.tar.gz", hash = "sha256:74dba0b5d8ef62015d4b4df0aa8a90c3b25bc6fe8fe832c159dc3e55675d9d8a", size = 5575, upload-time = "2026-08-31T11:53:21.541Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/ee/69ee4e98400cd4680745ee77183b101e5d2f220a1f308c21f012ea266c0a/pytest_embedded_serial-2.9.3-py3-none-any.whl", hash = "sha256:1cf6b6c3acbe3496c4f5ed7af78d281271c644c2552c5640aff1d576a78a9c31", size = 5890, upload-time = "2026-08-31T11:53:20.703Z" },
+]
+
+[[package]]
+name = "pyusb"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/6b/ce3727395e52b7b76dfcf0c665e37d223b680b9becc60710d4bc08b7b7cb/pyusb-1.3.1.tar.gz", hash = "sha256:3af070b607467c1c164f49d5b0caabe8ac78dbed9298d703a8dbf9df4052d17e", size = 77281, upload-time = "2025-01-08T23:45:01.866Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/28/b8/27e6312e86408a44fe16bd28ee12dd98608b39f7e7e57884a24e8f29b573/pyusb-1.3.1-py3-none-any.whl", hash = "sha256:bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430", size = 58465, upload-time = "2025-01-08T23:45:00.029Z" },
 ]
 
 [[package]]

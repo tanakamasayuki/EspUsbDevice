@@ -5,15 +5,25 @@
 
 ## 接続中の実機
 
-| serial alias末尾 | esptoolの実測 | 現在確認できた結線 |
-| --- | --- | --- |
-| e0aa24 | ESP32-P4 revision v1.3 | 同一P4のHS–FS loopback。両Device controllerをFS linkで確認 |
-| d0b261 | ESP32-P4 revision v1.3 | CH340 UARTで制御。ユーザー申告で下記P4XとHS直結 |
-| d71d86 | ユーザー申告P4X。chip revisionは初回試験前に実測 | USB JTAG/serial debug unitで制御。d0b261とHS直結 |
+設備の正本はOEP benchの台帳`/home/mt/dev_oep/oep-bench/hosts/native-linux/README.ja.md`と
+同ディレクトリの`inventory.json`。位置`N-M`はハブNのport M。下表は2026-10-30の照合結果。
 
-旧P4 2台の識別はchip-id（実際はMAC読出し）で行った。d0b261へ試験firmwareはまだ書き込んでいない。
-2026-10-30、ユーザーからP4X–P4のHS直結を確認。OSのread-only確認ではP4Xが303a:1001の
-USB JTAG/serial debug unit、P4は1a86:7523のCH340。chip revisionとFQBNは初回試験前に照合する。
+| 位置 | serial alias末尾 | esptoolの実測 | 結線と用途 |
+| --- | --- | --- | --- |
+| 2-1 | e0aa24 | ESP32-P4 v1.3 | 同一P4のHS–FS loopback。combo `p4`/`p4_psram` |
+| 2-3 | d0b261 | ESP32-P4 v1.3 | CH340 UARTで制御。2-4とHS直結。combo `p4_p4x_hs`/`p4x_p4_hs` |
+| 2-4 | d71d86 | ESP32-P4 v3.2（P4X） | USB JTAG/serial（303a:1001）で制御。2-3とHS直結 |
+| 3-3/3-4 | 19c5 | ESP32-P4 v3.2（P4X） | 1枚のboard。3-3がUSB JTAG/serialの制御/log、3-4がnative HSでLinux PCへ直結。combo `p4x_pc` |
+
+P4X 2台はrevision v3.2で、postv3 SDKの対応範囲（min3.1）を満たす。chip-idは機器lockを取って実測した。
+3-4はOSから480M（libusbのspeed=3）で見える。台帳上は汎用機材で、試験firmwareの書込みと書き戻し不要は
+台帳の規則に従う。3-3と3-4は同一boardなので、手動操作では両方の機器lockを取る。
+3-4の既存firmwareは台帳上OEP probeとして管理しないDFU対応firmwareで、上書きしてよい。
+
+PC Host用に`validation`の依存へpyusbを追加した。sg3_utils/dfu-utilは未導入で、BOT/DFUの検査は
+pyusbから生のcontrol/bulk転送で行う。既存のudev規則で一般userが開けるのは`1209:0001`など一部の
+VID/PIDだけなので、PC試験のsketchはこのVID/PIDを使うか、規則の追加をユーザーへ依頼する。
+OSのclass driver（usb-storage等）が先にbindする構成ではdetachの扱いを試験側で明示する。
 
 ## P4Xは名前だけの変更ではない
 
@@ -153,7 +163,7 @@ profileは「SoC世代＋HS＋役割」。MACやtty番号を名前へ埋めず�
 | p4_hs_device | peer Device | TEST_SERIAL_PORT_PEER_DEVICE_P4_HS_DEVICE | esp32-p4-80f1b2d0b261 |
 
 .env.exampleへkeyを追加し、ignoredな.envには指定された実portを設定した。
-これは割当の予約であり、HS sketch/profile/実行comboを実装済みという意味ではない。
+2026-10-30にcomboもpyprojectへ登録した。HS sketch/profileは未追加で、収集件数は変わらない。
 
 追加するcomboはHostを先に並べた名前とする。
 
@@ -222,4 +232,4 @@ uv run --locked --env-file .env pytest --combo all -q -rs
 --combo allは各sketchに存在するprofileだけを適用するので、S3/単体loopback/HS peerを一発で逐次実行できる。
 このため既存S3 sketchへ未検証のP4 profileを機械的に追加する必要はない。
 HS用profile/試験を追加した時点でcollect-onlyのnodeidと件数、port割当を確認する。
-今回の段階では.env割当と計画だけを追加し、現行allの収集80件を増やしていない。
+現時点では.env割当とcombo登録だけで、現行allの収集80件を増やしていない。
