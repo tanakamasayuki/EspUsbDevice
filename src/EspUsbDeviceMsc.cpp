@@ -33,6 +33,8 @@ struct EspUsbMscState {
   uint32_t tag = 0, hostBytes = 0, deviceBytes = 0, done = 0, limit = 0, lba = 0, armed = 0;
   bool hostIn = false, deviceIn = false, blockIo = false;
   uint32_t resetEpoch = 0, fenceEpoch = 0;
+  // media_ when the command began, and the last insertion already reported.
+  uint32_t commandMedia = 0, insertionsSeen = 0;
   espusb::internal::UsbRuntimeJob recoveryJob{recover, this};
   explicit EspUsbMscState(EspUsbDeviceMsc &o) : owner(o) {}
   ~EspUsbMscState() {
@@ -41,6 +43,9 @@ struct EspUsbMscState {
   }
   void sense(uint8_t k, uint8_t a, uint8_t q = 0) { key = k; asc = a; ascq = q; status = 1; }
   bool ready() { if (owner.testUnitReady()) return true; sense(2, 0x3a); return false; }
+  // Forget media changes made before the Host (re)configured the device.
+  void forgetInsertions() { insertionsSeen = owner.insertions_.load(); }
+  bool mediumGone() { if (owner.mediaUnchanged(commandMedia)) return false; sense(2, 0x3a); finishData(); return true; }
   bool arm(uint8_t ep, uint32_t bytes) {
     armed = bytes;
     if (stopping.load()) return false;
@@ -72,6 +77,7 @@ struct EspUsbMscState {
     if (done == limit) { finishData(); return; }
     const uint32_t n = std::min(uint32_t(owner.config_.transferBytes), limit - done);
     if (deviceIn && blockIo) {
+      if (mediumGone()) return;
       const uint32_t block = owner.blockSize_;
       const int32_t read = owner.read10(lba + done / block, done % block, buffer, n);
       if (read != int32_t(n)) { sense(3, 0x11); finishData(); return; }
@@ -87,6 +93,13 @@ struct EspUsbMscState {
     // CBW was copied before this shared DMA region becomes response storage.
     memset(buffer, 0, 36);
     const auto *c = command;
+    commandMedia = owner.media_.load();
+    // An unreported insertion fails the next command once (SPC UNIT ATTENTION),
+    // except INQUIRY and REQUEST SENSE, which must not lose it.
+    const uint32_t insertions = owner.insertions_.load();
+    if (insertions != insertionsSeen && c[0] != 0x12 && c[0] != 0x03) {
+      insertionsSeen = insertions; sense(6, 0x28); return;
+    }
     switch (c[0]) {
     case 0x00: ready(); break; // TEST UNIT READY
     case 0x12: // INQUIRY: standard page only
@@ -178,7 +191,7 @@ struct EspUsbMscState {
     for (auto *s = first; s; s = s->next) {
       ++s->resetEpoch;
       s->in = s->out = 0; s->interface = 255; s->stage = Stage::Command;
-      s->key = s->asc = s->ascq = 0;
+      s->key = s->asc = s->ascq = 0; s->forgetInsertions();
       s->interfaceReset = s->needsBotReset = s->clearIn = s->clearOut = false;
     }
   }
@@ -198,7 +211,7 @@ struct EspUsbMscState {
     }
     if (!in || !out) return 0;
     s->port = port; s->interface = itf->bInterfaceNumber; s->in = in; s->out = out; s->packetSize = packetSize;
-    s->commandReady(); return 23;
+    s->forgetInsertions(); s->commandReady(); return 23;
   }
   static bool control(uint8_t port, uint8_t phase, const EspUsbControlRequest *r) {
     auto *s = first;
@@ -235,8 +248,9 @@ struct EspUsbMscState {
       if (phase != ESPUSB_CONTROL_STAGE_SETUP) return true;
       if (!espusb_device_edpt_abort(port, s->in) || !espusb_device_edpt_abort(port, s->out)) return false;
       ++s->resetEpoch;
+      // Transport only: the sense of the last failure and an untold medium
+      // change survive, as SCSI state; a USB reset or end() clears them.
       s->stage = Stage::Recovery; s->clearIn = s->clearOut = s->needsBotReset = false;
-      s->key = s->asc = s->ascq = 0;
       espusb::internal::postUsbRuntimeJob(s->recoveryJob);
       return espusb_device_control_status(port, r);
     }
@@ -260,6 +274,7 @@ struct EspUsbMscState {
       bytes = wanted;
       if (!s->deviceIn && s->blockIo) {
         const uint32_t block = s->owner.blockSize_;
+        if (s->status != 2 && s->mediumGone()) return true;
         if (s->status != 2 && s->owner.write10(s->lba + s->done / block, s->done % block, s->buffer, bytes) != int32_t(bytes)) {
           s->sense(3, 0x0c); s->finishData(); return true;
         }
@@ -385,7 +400,11 @@ esp_err_t EspUsbDeviceMsc::productRevision(const char *value)
 
 void EspUsbDeviceMsc::mediaPresent(bool value)
 {
-  mediaPresent_ = value;
+  uint32_t media = media_.load();
+  do {
+    if (bool(media & 1) == value) return;
+  } while (!media_.compare_exchange_weak(media, value ? media | 1 : (media + 2) & ~uint32_t(1)));
+  if (value) ++insertions_;
 }
 
 void EspUsbDeviceMsc::isWritable(bool value)
@@ -428,12 +447,12 @@ void EspUsbDeviceMsc::inquiry(uint8_t vendor[8], uint8_t product[16], uint8_t re
 
 bool EspUsbDeviceMsc::testUnitReady() const
 {
-  return mediaPresent_;
+  return media_.load() & 1;
 }
 
 void EspUsbDeviceMsc::capacity(uint32_t *blockCount, uint16_t *blockSize) const
 {
-  if (!mediaPresent_)
+  if (!testUnitReady())
   {
     *blockCount = 0;
     *blockSize = 0;
@@ -450,7 +469,7 @@ bool EspUsbDeviceMsc::startStop(uint8_t powerCondition, bool start, bool loadEje
 
 int32_t EspUsbDeviceMsc::read10(uint32_t lba, uint32_t offset, void *buffer, uint32_t size)
 {
-  if (!mediaPresent_ || !readCallback_)
+  if (!testUnitReady() || !readCallback_)
   {
     return -1;
   }
@@ -459,7 +478,7 @@ int32_t EspUsbDeviceMsc::read10(uint32_t lba, uint32_t offset, void *buffer, uin
 
 int32_t EspUsbDeviceMsc::write10(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size)
 {
-  if (!mediaPresent_ || !writable_ || !writeCallback_)
+  if (!testUnitReady() || !writable_ || !writeCallback_)
   {
     return -1;
   }

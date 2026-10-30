@@ -191,7 +191,7 @@ callbackのoffset/size処理と、USB workerで更新する呼出し数をCDC側
 
 ## 媒体変更通知のAPI仕様案
 
-2026-10-30、**未実装・レビュー用**。現行ESPのmediaPresentはatomic flagの変更のみ。
+2026-10-30に**ESPでも実装し、P4X–PCのwireで確認した**（本節末尾）。以下は当初の仕様案の記述を残す。
 CH32RV側の追加対応f80b4451を確認。抜去時Senseと抜去世代の扱いは下記を共通仕様として採用する。
 X035C8のusb-peer-classes PASSは先方報告として記録する。**ESP側は未実装・未検証**。
 
@@ -257,6 +257,33 @@ read/write途中の抜去による残りの処理の失敗、同一command中の
 処理済み部分の非rollback、後続callbackの抑止と正確なBOT residue/CSW。OSでのmount/ejectは別試験にする。
 [調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
 
+
+### ESPでの実装とwire確認（2026-10-30）
+
+media_は「存在bit＋抜去回数」の1語、挿入はinsertions_の回数で表す。commandはdecode時のmedia_を保持し、
+各read/write callbackの前に同じ値か（存在し、抜去がないか）を確かめる。違えば02/3A/00で残りを失敗させる。
+未通知の挿入はINQUIRY/REQUEST SENSE以外の次のcommandで06/28/00を1回返す。SET_CONFIGURATIONとUSB resetでは
+それ以前の挿入を捨て、BOT reset recoveryでは未通知の挿入と直前の失敗のsenseを両方残す（SCSIの状態として扱う。
+CH32RVコアと同じ判断）。追加の費用はMSC固有の2語と比較だけで、taskやlockは足していない。
+
+`validation/p4x_pc/msc_media`はP4X HSをLinux PCへ直結し、pyusbでCBW/CSWを直接扱う（usb-storageはdetach）。
+EspUsbHostのCSW回収の問題を経由せずにSense/residueを確かめられる。
+
+| 条件 | wireの結果 |
+| --- | --- |
+| 抜去、同値false | TUR失敗、sense 02/3A/00。同値で変化なし |
+| 挿入 | INQUIRY成功・REQUEST SENSE 00/00/00で消費なし。次のTURだけ失敗・06/28/00、その次は成功 |
+| 0→1→0→1 | 通知は1件 |
+| 0→1→0 | 06/28/00の後に02/3A/00 |
+| BOT reset recovery | 未通知の挿入、直前の02/3A/00とも残る |
+| READ(10) 4 block、1 block目のcallback内で抜去 | 512 byte後にIN STALL、CSW status 1・residue 1536、以後のread callback 0、02/3A/00 |
+| 同上で即座に再挿入 | 同じく失敗し旧commandは続かない。後続TURで06/28/00を1回 |
+| 4 block目のcallbackで抜去 | 2048 byte、status 0 |
+| WRITE(10) 4 block、1 block目の後に抜去 | OUT STALL、status 1・residue 1536。1 block目は書込済み、2 block目は元のまま |
+
+1回目の実行で**1 passed、72.90秒**、BOT reset時のsense保持を加えた再実行も成功。S3のmsc_storageは
+再挿入直後のTURが成功する前提だったため、06/28を1回確かめてからready確認する形へ直した。
+MSCを使うS3/P4の既存probe（classes、psram、allocation_failure等）も全て成功（12件769秒＋5件151秒）。
 
 ### CH32RV側の確認結果とHostの制約
 

@@ -180,3 +180,8 @@ runtime.setDetachHandler([]() { startMyUpdate(); }); // 受付後の移行を自
 ```
 
 どちらも登録しない単純な利用は変更不要。[DETACHの受付と移行](V3_DFU_API.ja.md#detachの受付と移行2026-10-30-実装)を参照。
+
+MSCのmediaPresent(true)は、Hostが構成済みの間なら次のcommandを一度だけUNIT ATTENTION（06/28/00）で失敗させる。
+mediaPresent(false)は進行中のREAD/WRITEの残りを02/3A/00で失敗させ、そのcommandの以後のcallbackを呼ばない。
+呼び方は変わらない。再挿入直後のTUR成功を前提にしたHost側処理は、一度の06/28を許容する。
+[媒体変更とwire確認](V3_MSC_API.ja.md#espでの実装とwire確認2026-10-30)を参照。

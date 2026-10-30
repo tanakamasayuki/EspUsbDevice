@@ -80,6 +80,11 @@ void loop() {
     Serial.printf("ERROR_SENSE %u key=%u asc=%u\r\n", unsigned(ok), unsigned(sense.senseKey), unsigned(sense.additionalSenseCode));
   } else if (command == "read") {
     Serial.printf("READ %u\r\n", unsigned(host.mscReadBlocks(3, buffer, 1, address.load())));
+  } else if (command == "changed") {
+    // The first command after a reinsertion reports UNIT ATTENTION 06/28 once.
+    EspUsbHostMscSense sense; bool ok = !host.mscTestUnitReady(address.load());
+    ok &= host.mscLastSense(sense, address.load()) && sense.senseKey == 6 && sense.additionalSenseCode == 0x28;
+    Serial.printf("CHANGED_SENSE %u key=%u asc=%u\r\n", unsigned(ok), unsigned(sense.senseKey), unsigned(sense.additionalSenseCode));
   } else if (command == "ready") {
     Serial.printf("READY %u\r\n", unsigned(host.mscTestUnitReady(address.load())));
   } else if (command == "cdc_start") {

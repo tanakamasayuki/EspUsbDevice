@@ -20,6 +20,11 @@ S2 CDC基本例のcompile/29 source依存/未使用class除去も確認した。
 基準80e8676の全S3 47件と、以前のP4各probe30件の記録は後段へ保持する。
 原本はvalidation/.pytest-resultsのvideo-submission-initial*、cdc-tx-related*、cdc-tx-s2*。
 
+## MSC媒体交換（2026-10-30）
+
+`p4x_pc/msc_media`でBOT/SCSIをPCから直接検査し成功。S3 msc_storageは06/28の一度の失敗を期待する形へ更新。
+MSC関連の既存probeも全て成功。標準all収集は83件。[結果](../docs/V3_MSC_API.ja.md#espでの実装とwire確認2026-10-30)。
+
 ## DFU DETACHとP4X–PC（2026-10-30）
 
 `p4x_pc/dfu_detach`がP4X HS（bench 3-3/3-4、combo `p4x_pc`）とLinux PCの初回試験。1 passed、58.34秒。

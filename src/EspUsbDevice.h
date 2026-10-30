@@ -2031,6 +2031,11 @@ public:
   esp_err_t vendorID(const char *value);
   esp_err_t productID(const char *value);
   esp_err_t productRevision(const char *value);
+  // false -> true while the Host has the device configured is reported once,
+  // as UNIT ATTENTION 06/28/00, to the next command but INQUIRY/REQUEST SENSE.
+  // true -> false fails the rest of a running READ/WRITE with 02/3A/00 and
+  // no further storage callbacks for it, even if the medium returns meanwhile.
+  // A callback already running is not interrupted. Same value: no change.
   void mediaPresent(bool value);
   void isWritable(bool value);
   esp_err_t onRead(EspUsbDeviceMscReadCallback callback);
@@ -2060,7 +2065,11 @@ private:
   char revision_[5] = "1.0";
   uint32_t blockCount_ = 0;
   uint16_t blockSize_ = 0;
-  std::atomic<bool> mediaPresent_{false};
+  // Bit 0: present. Above it: removals so far, so a command can tell that
+  // the medium it began on went away even if another one is back now.
+  std::atomic<uint32_t> media_{0};
+  std::atomic<uint32_t> insertions_{0};
+  bool mediaUnchanged(uint32_t since) const { return (since & 1) && media_.load() == since; }
   std::atomic<bool> writable_{true};
   EspUsbDeviceMscReadCallback readCallback_;
   EspUsbDeviceMscWriteCallback writeCallback_;

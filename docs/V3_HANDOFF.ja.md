@@ -1,6 +1,9 @@
 # v3開発の引き渡し
 
 更新: 2026-10-30。worktree `/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
+2026-10-30後半：CH32RV調整の残りAudio（2408716）・DFU（72e0743）・MSCを実装し、各関連試験に成功。
+DFU/MSCはbench 3-3/3-4のP4XをLinux PCへHS直結したcombo `p4x_pc`で、数値とwireを根拠に仕様を決めた。
+[Audio](V3_AUDIO_API.ja.md#espでの実装と実測2026-10-30)、[DFU](V3_DFU_API.ja.md#判断の根拠となった実測)、[MSC](V3_MSC_API.ja.md#espでの実装とwire確認2026-10-30)。標準all収集83件、全件一括は未実施。
 最新製品は`22afc15`。Video投稿型統一は`02c7509`、CDC期限付きTX待ちは`22afc15`。
 Video関連12件179.81秒、CDC関連12件374.48秒がそれぞれ一括成功。S2 CdcConsole compileも成功。
 最新収集80件（S3 50＋P4 30）。全80件一括実行の結果ではない。
