@@ -173,6 +173,8 @@ esp_err_t EspUsbAudioFunction::configure(const EspUsbAudioConfig &config)
   if ((config.playbackBuffer && (!config.playbackBufferFrames || !config.playbackBufferBytes)) ||
       (config.captureBuffer && (!config.captureBufferFrames || !config.captureBufferBytes)) ||
       (!config.playbackBuffer && config.playbackBufferBytes) || (!config.captureBuffer && config.captureBufferBytes)) return ESP_ERR_INVALID_ARG;
+  if (config.playbackOverflowPolicy != EspUsbAudioOverflowPolicy::DropNewest &&
+      config.playbackOverflowPolicy != EspUsbAudioOverflowPolicy::DropOldest) return ESP_ERR_INVALID_ARG;
   config_ = config; return ESP_OK;
 }
 size_t EspUsbAudioFunction::eventCapacity() const { return events_.capacity(); }

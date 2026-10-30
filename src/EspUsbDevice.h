@@ -1704,6 +1704,13 @@ private:
   std::atomic<uint32_t> underrunBytes_{0};
 };
 
+// Which PCM a full playback ring keeps when a received packet does not fit.
+enum class EspUsbAudioOverflowPolicy : uint8_t
+{
+  DropNewest, // keep the unread PCM, drop the part of the packet that does not fit
+  DropOldest, // push out the oldest unread PCM, keep the newest complete frames
+};
+
 struct EspUsbAudioConfig {
   size_t eventCapacity = 8;
   size_t playbackBufferFrames = 256;
@@ -1714,6 +1721,8 @@ struct EspUsbAudioConfig {
   // Must cover bufferFrames * largest registered PCM frame. Null uses 0.
   size_t playbackBufferBytes = 0;
   size_t captureBufferBytes = 0;
+  EspUsbAudioOverflowPolicy playbackOverflowPolicy =
+      EspUsbAudioOverflowPolicy::DropOldest;
 };
 
 class EspUsbAudioFunction : public EspUsbDeviceClass

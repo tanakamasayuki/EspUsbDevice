@@ -157,3 +157,16 @@ flushも送信中のDMAと必要な終端ZLPまで期限付きで待つ。既定
 読出しのStream::setTimeoutとは独立する。DTR必須化や共通bulk/Vendor/MIDIへの待ち追加は行わない。
 worker callbackからは待たず、ISRでは送信を受理しない。通常の宣言/begin/printの基本例は変更不要。
 [CDCの期限・停止とflush](V3_CDC_API.ja.md#cdc送信の期限とflush)を参照。
+
+Audio playbackのringがあふれた場合の既定を、古い未読を捨てて最新の完全なframeを残すDropOldestへ変えた。
+以前と同じく未読を保持し、入らない新着を捨てる動作が必要ならDropNewestを明示する。
+
+```cpp
+EspUsbAudioConfig config;
+config.playbackOverflowPolicy = EspUsbAudioOverflowPolicy::DropNewest; // 以前の保持順
+audio.configure(config);
+```
+
+configure→beginの手順と、あふれない場合の動作は変わらない。overrunBytesには、新着の破棄に加えて
+DropOldestで追い出した過去のPCMも数える。Captureのpartial writeは変更しない。
+[保持方針と統計](V3_AUDIO_API.ja.md#playback保持方針のapi仕様案)を参照。

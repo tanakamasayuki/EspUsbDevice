@@ -32,6 +32,7 @@ struct Ring {
     memcpy(p, data + head, first); memcpy(p + first, data, n - first);
     head = (head + n) % capacity; used -= n; return n;
   }
+  size_t drop(size_t n) { n = std::min(n, used); head = capacity ? (head + n) % capacity : 0; used -= n; return n; }
   void clear() { head = used = 0; }
   ~Ring() { if (owned) espusb::internal::freeUsbMemory(data); }
 };
@@ -280,11 +281,18 @@ struct EspUsbAudioState {
       auto &stream = s->playback;
       if (result == ESPUSB_TRANSFER_SUCCESS && bytes <= stream.packetSize) {
         const size_t framed = bytes - bytes % stream.frameBytes;
-        const size_t space = (stream.ring.capacity - stream.ring.used) / stream.frameBytes * stream.frameBytes;
-        const size_t copied = stream.ring.push(stream.packet, std::min(framed, space));
-        if (copied < bytes) {
+        const size_t usable = stream.ring.capacity / stream.frameBytes * stream.frameBytes;
+        size_t dropped = bytes;
+        if (s->owner.config_.playbackOverflowPolicy == EspUsbAudioOverflowPolicy::DropOldest) {
+          const size_t kept = std::min(framed, usable);
+          dropped += stream.ring.drop(stream.ring.used + kept > usable ? stream.ring.used + kept - usable : 0);
+          dropped -= stream.ring.push(stream.packet + framed - kept, kept);
+        } else {
+          dropped -= stream.ring.push(stream.packet, std::min(framed, usable > stream.ring.used ? usable - stream.ring.used : 0));
+        }
+        if (dropped) {
           s->owner.playback_.overrunCount_.fetch_add(1, std::memory_order_relaxed);
-          s->owner.playback_.overrunBytes_.fetch_add(bytes - copied, std::memory_order_relaxed);
+          s->owner.playback_.overrunBytes_.fetch_add(dropped, std::memory_order_relaxed);
         }
         s->owner.handlePlaybackTransfer(uint16_t(bytes), 1);
       }

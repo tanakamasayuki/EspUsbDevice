@@ -467,10 +467,10 @@ Playbackの既定を変える議論だけで、Captureのpartial契約まで変�
 ### Playback保持方針のAPI仕様案
 
 2026-10-30の仕様案に対し、CH32RV側からAPIを実装しX035C8実機試験を通したとの返答を受領。
-**命名とDropOldest既定は合意済み。ESP側は未実装**。先方の試験結果は先方報告であり、ESPの検証結果ではない。
+命名とDropOldest既定は合意済み。**ESP側も同日に実装し、S3–S3で内容照合試験を行った**（下記）。
+先方の試験結果は先方報告であり、ESPの検証結果ではない。
 
 ```cpp
-// 提案。現在のheaderにはまだ存在しない。
 enum class EspUsbAudioOverflowPolicy : uint8_t {
   DropNewest, // 古い未読を保持し、新着の入らない末尾を捨てる
   DropOldest, // 古い未読を捨て、最新の完全なframeを保持する
@@ -519,6 +519,27 @@ policyの設定値と受信時の分岐はAudio固有の費用とし、未使用
 - 不正enum、開始中configure、end→再開始、alternate/形式変更時のqueue初期化を確認する。
 - Captureのpartial契約と、追加buffer/taskを持たないことを確認する。
 
-DropOldest既定と上記の型・field名は合意済み。保持範囲とstatsを含むこの仕様を基準に、
-次はESP側の実装と関連試験を行う。CH32RVの成功をESP側の合格条件の代替にしない。
+DropOldest既定と上記の型・field名は合意済み。保持範囲とstatsを含むこの仕様で実装した。
+CH32RVの成功をESP側の合格条件の代替にしない。
+
+### ESPでの実装と実測（2026-10-30）
+
+受信完了の処理だけを方針で分岐し、追加ring・断片buffer・taskは持たない。policyはconfigの1 byte。
+`validation/s3/audio_overflow`は、raw SDK Hostが長さと個数を決めたOUT packetへframe番号入りPCMを送り、
+Deviceが読み出した番号列とstatsを、Python側で上記の式を実装したmodelと比較する。
+
+| 条件 | 内容 |
+| --- | --- |
+| 両方針 | ring 520 byteへ10 frame読出し後にwrap・満杯・末尾2 byteの不完全frame。DropNewestは10-139、DropOldestは94-223を保持 |
+| ringがpacketより小さい | 32 byte（8 frame）、40 byte（F=8で5 frame）。読出し後の追加で、DropNewestは2-4,48-49、DropOldestは68-72 |
+| F=6と非倍数容量 | 物理520 byteを516 byte（86 frame）として扱う |
+| 容量0 | 全量をoverrunへ数え、読出しは0 |
+| 設定 | 既定DropOldest、未知の値はINVALID_ARGで設定保持、開始中のconfigureはINVALID_STATE |
+| alternate解除 | 未読を破棄し、available 0 |
+
+各条件でoverrunCount/overrunBytes/transferredBytesもmodelと一致した。DropNewest/DropOldest各5条件と
+既定値1条件の計11開始で**1 passed、31.49秒**。記録`validation/.pytest-results/audio-overflow*`。
+受信のlost 0を前提にしており、ISO packetの欠落があれば失敗として扱う。
+既定変更後のAudio関連回帰（S3 audio_* 6 probe＋P4 Audio、計12件）も**12 passed、690.49秒**、panic/停止失敗なし。記録`audio-overflow-related*`。
+
 [調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)、[残作業](../TODO.ja.md#優先する残作業)を参照。

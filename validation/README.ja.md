@@ -20,6 +20,11 @@ S2 CDC基本例のcompile/29 source依存/未使用class除去も確認した。
 基準80e8676の全S3 47件と、以前のP4各probe30件の記録は後段へ保持する。
 原本はvalidation/.pytest-resultsのvideo-submission-initial*、cdc-tx-related*、cdc-tx-s2*。
 
+## Audio overflow（2026-10-30）
+
+playbackOverflowPolicy追加に伴い`s3/audio_overflow`を新設。両方針の保持内容/statsをmodelと照合し1 passed（31.49秒）。
+関連Audio 12件も690.49秒で成功。標準all収集はS3 51＋P4 30＝81件。[詳細](../docs/V3_AUDIO_API.ja.md#espでの実装と実測2026-10-30)。
+
 ## P4実機の追加確認
 
 追加のPSRAM2件82.35秒、Audio duplex4件33.95秒も成功した。
