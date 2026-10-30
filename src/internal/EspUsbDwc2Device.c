@@ -404,7 +404,9 @@ static void edpt_schedule_packets(uint8_t rhport, const uint8_t epnum, const uin
 
   const bool is_dma = dma_device_enabled(dwc2);
   if(is_dma) {
-    if (dir == ESPUSB_DIR_IN && total_bytes != 0) {
+    // OUT too: a dirty line written back during the DMA would overwrite
+    // received data, e.g. a borrowed buffer the application just filled.
+    if (xfer->buffer && total_bytes != 0) {
       espusb_controller_dcache_clean(xfer->buffer, total_bytes);
     }
     dep->diepdma = (uintptr_t) xfer->buffer;
