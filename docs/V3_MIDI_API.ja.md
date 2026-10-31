@@ -1,20 +1,19 @@
-# v3 MIDIのpacket設定と転送
+# EspUsbDeviceMidi API（v3）
 
-2026-10-26。USB-MIDI 1.0のクラス処理を共通bulk転送へ移し、TinyUSB MIDI classと固定FIFOを無効化した。
-単一global instanceはなく、Functionごとに容量・cable数・通知方式を持つ。
-通常のreadPacket/writePacket、noteOn/noteOff/controlChange等の呼出し方は維持する。
+USB-MIDI 1.0 の Function です。MIDI の1イベント（4 byte の USB-MIDI packet）単位で送受信します。
+内部では共通の bulk 転送層を使い、TinyUSB の MIDI class と固定 FIFO は使いません。
+容量・cable 数・受信の通知方法は Function ごとに設定でき、再ビルドは要りません。
+
+## 基本の使い方
 
 ```cpp
+#include <EspUsbDevice.h>
+
 EspUsbDevice device;
-EspUsbDeviceMidi midi(device);
+EspUsbDeviceMidi midi(device);  // cable 1本（送受信とも）
 
 void setup() {
-  EspUsbMidiConfig config;
-  config.inCables = 16;
-  config.outCables = 1;
-  config.rxPackets = 1;
-  config.txPackets = 4;
-  config.transferPackets = 1;
+  EspUsbMidiConfig config = midi.configuration();  // constructor の cable 数を引き継ぐ
   config.name = "MIDI Interface";
   if (midi.configure(config) != ESP_OK) return;
   device.begin();
@@ -22,98 +21,147 @@ void setup() {
 
 void loop() {
   EspUsbDeviceMidiPacket packet;
-  if (midi.readPacket(packet)) {
-    // Consume one complete event. Copy it if another task needs it.
+  while (midi.readPacket(packet)) {
+    // 受け取った1イベントを処理する。別 task へ渡すなら 4 byte をコピーする。
   }
+  midi.noteOn(0, 60, 100);  // channel 0（0〜15）, note 60, velocity 100, cable 0
 }
 ```
 
-設定変更はDevice.end→configure→Device.beginで行い、再ビルドしない。
-configure/onPacketは停止中だけ成功し、拒否時は既存設定を保つ。
-constructorの一つのcable数、またはIN/OUT二つのcable数を指定する形式も残す。
-configureは全設定値を置換するので、constructorの値を引き継ぐ場合は`auto config = midi.configuration()`から変更する。
+### 主な設定
 
-## 設定と容量
+`EspUsbMidiConfig` の項目です。方向は USB の慣例どおり Host から見た名前です（IN＝Device→Host＝このデバイスが送る、OUT＝Host→Device＝このデバイスが受ける）。
+MIDI class の規格書は embedded jack を Device 側から見て名付けているので、逆向きになる点に注意してください。
 
-| 設定 | 意味 |
+| 項目 | 既定値 | 意味 | FS/HSでの違い |
+| --- | --- | --- | --- |
+| `inCables` / `outCables` | 1 / 1 | 送信側・受信側の仮想 cable 数。各 1〜16 | なし |
+| `name` | `nullptr` | Function 名（UTF-8）。begin 時に文字列 descriptor へコピー | なし |
+| `rxPackets` | 128 | 受信 ring の容量（イベント数。1イベント＝4 byte） | なし |
+| `txPackets` | 128 | 送信 ring の容量（イベント数） | なし |
+| `transferPackets` | 0（自動） | 1回の送信転送に載せる最大イベント数。0 は bus packet 1個分 | 自動の値は FS 16イベント（64 byte）、HS 128イベント（512 byte） |
+| `rxMode` | `Queue` | 受信方法。`Queue`、`Callback`、`Disabled` | なし |
+| `autoFlush` | `true` | false にすると `flush()` を呼ぶまで送信を始めない | なし |
+| `streamTermination` | `FunctionDefault` | 送信の区切り方。MIDI の既定は短い packet で区切り、ring の末尾が MPS の倍数なら長さ0の packet（ZLP）も送る | なし |
+| `rxBuffer` / `txBuffer` | `nullptr` | 利用者が用意する ring 用配列。nullptr なら begin で確保 | なし |
+
+MPS は bulk endpoint の最大 packet 長です（FS 64 byte、HS 512 byte）。
+`transferPackets` を明示した場合は MPS より小さくても受け付けます。
+
+## 設定の変え方
+
+- `configure()` と `onPacket()` は停止中だけ成功します。動作中は `ESP_ERR_INVALID_STATE` を返し、それまでの設定を保ちます。
+- 設定を変えるときは `device.end()` → `configure()` → `device.begin()` の順に呼びます。
+- `configure()` はすべての項目を置き換えます。constructor で指定した cable 数を残したいときは、`midi.configuration()` の値をコピーしてから変更します。
+- constructor は cable 数を1つ（送受信共通）指定する形と、送信・受信を別々に指定する形があります。
+- `configuration()` は要求した値をそのまま返します。`transferPackets = 0` のような自動指定も 0 のまま返ります。
+
+`configure()` の戻り値：
+
+| 戻り値 | 条件 |
 | --- | --- |
-| inCables / outCables | device→host / host→deviceのvirtual cable数。各1〜16、packet headerのcableは0始まり |
-| name | 任意のUTF-8 Function名。beginで文字列descriptorへcopyする |
-| rxPackets / txPackets | event単位のring容量。1 eventはEspUsbDeviceMidiPacketの4 byte |
-| transferPackets | copy TX一回の最大event数。0は選択controllerの1 bus packet、1なら4 byte投稿 |
-| rxBuffer / txBuffer | 任意の外部event配列。指定ring容量分をbeginからendまで保持する |
-| rxMode | Queue、Callback、Disabled。Callback/DisabledはrxPackets=0、rxBuffer=nullptr |
-| autoFlush | 既定true。falseなら明示flushで送出を開始する |
-| streamTermination | FunctionDefaultはEndWithShortPacket。ringの末尾がMPS倍数ならZLPも送る |
+| `ESP_OK` | 受け付けた |
+| `ESP_ERR_INVALID_STATE` | 動作中 |
+| `ESP_ERR_INVALID_ARG` | cable 数が 0 または 17 以上、`rxMode` が範囲外、`Callback`/`Disabled` なのに `rxPackets` か `rxBuffer` を指定、容量が大きすぎる、`rxBuffer` と `txBuffer` の領域が重なる など |
+| `ESP_ERR_INVALID_SIZE` | `transferPackets` が 16383 を超える（1回の転送長が 16 bit に収まらない） |
 
-cable数はclampせず、範囲外を拒否する。旧コードで0/17以上を指定していた場合は修正が必要。
-16という上限はUSB-MIDI 1.0の4 bit cable fieldによるもので、TinyUSB instance数の定数ではない。
-native coreへの一回の転送投稿長はuint16_tなので、transferPacketsの明示指定は16383以下。使用可能RAM、endpoint数、Host実装も別の制約になる。
+cable 数は丸めずに拒否します。上限の 16 は、USB-MIDI 1.0 の packet header で cable 番号が 4 bit だからです。
 
-`availablePackets()`と`availableForWritePackets()`は、今読める/書ける完全event数を返す。
-receiveCapacity/sendCapacityは確保したringのevent数、transferCapacityは実効TX staging容量をevent数で返す。
-開始前/終了後は0。configurationは要求値なので、自動選択のtransferPackets=0も保持する。
-nameの入力寿命とUTF-8制限は[文字列ガイド](V3_TEXT_DESCRIPTORS.ja.md)に従う。
+`device.begin()` の後で MIDI が動いていないときは `midi.startError()` で理由を確認できます。`rxMode = Callback` なのに `onPacket()` を登録していない場合は `ESP_ERR_INVALID_ARG`、メモリ不足は `ESP_ERR_NO_MEM` です。
 
-RX ringより大きなUSB packetは、一つのDMA packet領域に残りを保持する。
-readPacketでringを空けると残りを移し、全部読み終えるまで次のpacketをarmしない。
-そのためring容量1でもMPS分のeventを失わず受けられ、availablePacketsはring容量を超える場合がある。
-総受信保持量には、このDMA packet分も含まれる。外部ringをfreeすることや、ringを黙って拡張することはしない。
+## 送信
 
-TX ringは4 byte単位で受理し、空きがなければwritePacketはfalseを返す。
-複数taskが同時に送っても、一つのeventのbyteを混ぜたり一部だけ受理したりしない。
-復帰後は元packetを再利用できる。成功はcopy受理であり、Hostの受信完了ではない。
-txPackets=0ならTX ring/stagingを確保せず、writePacketは受理しない。
+| 関数 | 戻り値 |
+| --- | --- |
+| `writePacket(packet)` | イベントを送信 ring へコピーできたら true |
+| `noteOn` / `noteOff` / `controlChange` / `programChange` / `polyPressure` / `channelPressure` / `pitchBend` | 同上。最後の引数 `cable` は 0 始まりで既定 0 |
+| `availableForWritePackets()` | 今すぐ書けるイベント数 |
+| `sendCapacity()` | 確保した送信 ring のイベント数（停止中は 0） |
+| `transferCapacity()` | 1回の送信転送の実際の容量（イベント数、停止中は 0） |
 
-## callbackと省略する方向
+- 送信は 4 byte 単位で受け付けます。ring に空きがなければ false を返し、イベントの一部だけを受け付けることはありません。
+- 複数の task から同時に送っても、イベント同士の byte が混ざることはありません。
+- true は「ring へコピーした」という意味で、Host が受け取ったことは意味しません。戻った後は元の packet を再利用できます。
+- 送信先 cable が `inCables` 以上のとき、または CIN（Code Index Number、header の下位 4 bit）が予約値の 0 か 1 のときは false を返し、ring へ入れません。Host に知らせていない cable へ黙って送ることはありません。
+- 便利関数（`noteOn` など）は channel を 15 まで、note や値を 7 bit の範囲へ丸めます。
+- `txPackets = 0` にすると送信 ring と送信用 DMA 領域を確保せず、送信は常に false になります。
 
-callback受信は、停止中にonPacketを登録し、rxMode=CallbackとrxPackets=0を設定する。
-callbackには完全なeventのconst参照を渡し、その呼出しの間だけ有効。別taskへ渡すなら4 byteをcopyする。
-USB workerで実行するためblock、end、構成変更を行わない。callback内のwritePacketも非blockingで、
-空きがなければfalseとなる。確実な転送が必要なら適切なTX容量かアプリ側の保留を用意する。
+## 受信
 
-送信専用はrxMode=Disabled、rxPackets=0でRX ring/DMAを省略する。
-受信専用はtxPackets=0でTX ring/DMAを省略する。両方向を省略しても大きなbufferは確保しない。
-descriptor上のbulk pairは維持するため、endpointの予算は両方向とも必要。
-MIDIを使わなければ、独自MIDI実装とTinyUSB MIDI FIFO自体をリンクしない。
-共通stateには他のbulk Functionと共有する管理情報があり、全metadataがzero costという意味ではない。
+| 関数 | 戻り値 |
+| --- | --- |
+| `readPacket(packet)` | 1イベント読めたら true |
+| `availablePackets()` | 今読めるイベント数 |
+| `receiveCapacity()` | 確保した受信 ring のイベント数（停止中は 0） |
+| `receiveErrors()` | 捨てた不正イベントと端数の累計。begin で 0 に戻る |
+| `onPacket(callback)` | `rxMode = Callback` 用の通知先を登録。停止中だけ `ESP_OK` |
 
-## eventの検証と移行
+- 受信した USB packet のうち、cable が `outCables` 以上のもの、CIN が 0 か 1 のもの、4 byte に満たない端数は捨て、`receiveErrors()` を1ずつ増やします。同じ packet 内の正しいイベントは順番どおりに渡します。
+- これは MIDI メッセージや SysEx の中身を検査するものではありません。正しいイベントの中身は変更しません。
+- 受信 ring より大きな USB packet が届いた場合、残りは DMA 用の packet 領域に保持し、`readPacket()` で ring が空くたびに移します。全部読み終えるまで次の packet は受けません。このため ring 容量が1でもイベントを失わず、`availablePackets()` が ring 容量を超えることがあります。
 
-writePacketは送信先cableの範囲と予約CIN 0/1を検証する。無効ならfalseを返し、queueへ入れない。
-受信は無効eventと1〜3 byteの端数を取り除き、同じpacket内の有効eventは順番を保って渡す。
-receiveErrorsは無効event一つまたは端数一つごとの累積数で、beginで初期化する。
-これはMIDIメッセージ全体やSysEx sequenceのsemantic検証ではなく、有効eventのpayloadは変更しない。
-既存のchannel/valueをclampする便利helperの動作は維持する。
+### callback で受ける
 
-`CFG_TUD_MIDI_*`のFIFO/endpoint buffer指定と、CFG_TUD_MIDI（0を含む）は削除する。
-外部コードがTinyUSBのtud_midi_*を直接呼んでいた場合も、Functionのpacket APIへ移す。
-MIDI 2.0/UMPはこのFunctionの対象外。
+`rxMode = Callback`、`rxPackets = 0` にして、停止中に `onPacket()` を登録します。
 
-利点はビルド設定なしの再構成、複数Function、方向ごとの資源省略、小さいqueue、typed callback。
-不利益はbegin時の動的確保と、MPS未満のringで小分けにcopyする処理、無効cable/CINを拒否する移行負担である。
-共通bulkのcopy RX/TXもMPS未満のring・転送量を使えるようになった。
+- callback には1イベントの const 参照が渡り、その呼び出しの間だけ有効です。後で使うなら 4 byte をコピーします。
+- callback は USB worker task で動きます。block する処理、`end()`、設定変更は呼ばないでください。
+- callback の中の `writePacket()` も待たずに戻り、空きがなければ false です。確実に送りたい場合は送信容量を十分に取るか、アプリ側で保留してください。
 
-## S3–S3の確認
+### 片方向だけ使う
 
-新規validation/s3/midi_streamは容量1、37/43、外部ring、callback、片方向、2 MIDI、MIDI+CDC+Keyboardを実通信する。
-2つ目のMIDIはHostの標準MIDI APIが第一interfaceだけを扱うため、標準の明示interface bulk APIから確認する。
-Host側へ専用patchを入れず、同じS3二台だけを使う。
-全11試験は`runtime-midi-all.xml`で11 passed、0 skipped、0 unfinished、586.92秒。
-最後にTX検証をbulk lock内へ揃えた後、`midi-stream-final.xml`で関連3試験が成功した（192.03秒）。
-2 taskから計200 eventの順序・完全性、313取得点の失敗/回復、Vendorの容量/transfer 1 byteを含む。
-IN16/OUT1の非対称構成でcable15への送信も確認し、全helper、clamp、SysEx/realtimeの15 eventをbyte照合した。
-常時送信taskとendを重ね、停止中にcable数を32回変更しても終了後の送信が受理されないことも確認した。
-全11件と最終3件の全caseで両board STOPPED、panicなし。
-4最小buildのnmで未使用Function、未使用取消し、TinyUSB CDC/Vendor/HID/MIDIの不在も確認した。
-P4/S2/S31の実機、HS、各OSの音楽アプリとの相互接続は今回の結果には含まない。
+- 送信専用：`rxMode = Disabled`、`rxPackets = 0`。受信 ring と受信用 DMA 領域を確保しません。
+- 受信専用：`txPackets = 0`。送信側を確保しません。
+- descriptor には bulk endpoint の IN/OUT 両方が載るので、endpoint 数の予算は両方向分が必要です。
 
-規格参照: [USB-MIDI 1.0](https://www.usb.org/sites/default/files/midi10.pdf)。
+## FSとHSの違い
 
+| 項目 | FS（S3 など） | HS（P4/P4X の HS controller） |
+| --- | --- | --- |
+| bulk の MPS | 64 byte | 512 byte |
+| `transferPackets = 0` の実際の値 | 16イベント | 128イベント |
+| `transferPackets` に MPS 未満の値 | 受け付ける | 受け付ける |
 
-## byte I/Oとの型の分離
+自動の値は、選んだ controller が HS に対応するかで決まります。MIDI に関わるそのほかの制約は FS と HS で同じです。
 
-MIDIはPrintでもStreamでもない。従来のPrint upcastでの拒否をruntimeで返す形から、
-不適切な型変換をcompile時点で拒否する形へ変更した。共通転送層からPrintのstateも外す。
-送信余地はavailableForWritePackets()でevent単位に照会し、writePacket/noteOn等を使う。
-共有bulkを実装に使うことは、MIDIの公開操作をbyte streamにする意味ではない。
+## PSRAMとバッファ
+
+`rxBuffer` / `txBuffer` は DMA を使わない ring なので、利用者が用意した配列を渡せます。指定した容量（イベント数×4 byte）の領域を begin から end まで有効に保ってください。
+ライブラリは渡された領域を解放せず、黙って拡張もしません。USB DMA の受け渡し用領域は、ライブラリが内部 RAM に確保します。
+PSRAM 上の ring は Vendor で確認済みです（[Vendor API](V3_VENDOR_API.ja.md)）。MIDI の ring を PSRAM に置く構成は実機で試していません。
+
+## 他の制約
+
+- MIDI は `Print` でも `Stream` でもありません。byte 単位の `write()` や `read()` は公開しておらず、誤った型変換はコンパイル時に拒否されます。送信の空きは `availableForWritePackets()` でイベント単位に確かめます。
+- MIDI 2.0（UMP）は対象外です。
+- 文字列の寿命と UTF-8 の制限は[文字列ガイド](V3_TEXT_DESCRIPTORS.ja.md)に従います。
+- MIDI を使わないプログラムには、この実装も TinyUSB の MIDI FIFO もリンクされません。ただし bulk 系 Function で共有する管理情報は残ります。
+
+## 2.x からの移行
+
+- `CFG_TUD_MIDI_*`（FIFO や endpoint buffer の指定）と `CFG_TUD_MIDI`（0 を含む）は廃止しました。容量は `EspUsbMidiConfig` で指定します。
+- TinyUSB の `tud_midi_*` を直接呼んでいたコードは、`readPacket` / `writePacket` などへ移してください。
+- cable 数に 0 や 17 以上を指定していたコードは、拒否されるようになったので直す必要があります。
+- `readPacket` / `writePacket` / `noteOn` などの呼び方は 2.x と同じです。単一の global instance はなくなりました。
+
+## 設計判断の理由
+
+- 利点：ビルド設定なしで再構成できる、MIDI Function を複数持てる、方向ごとに資源を省ける、小さな queue で動く、型付きの callback が使える。
+- 不利益：begin 時に動的確保が起きる。MPS より小さい ring では小分けにコピーする。不正な cable/CIN を拒否するので移行の手間がある。
+- byte stream ではなくイベント単位の API にしたのは、1イベントが分割されないことを型で保証するためです。以前は Print へのアップキャストを実行時に拒否していましたが、コンパイル時に拒否する形へ変えました。共通 bulk 層を実装に使うことは、公開 API を byte stream にするという意味ではありません。
+
+## 実測の記録
+
+2026-10-26、S3 同士（FS）で `validation/s3/midi_stream` を実行しました。Host 側に専用の patch は入れていません。
+
+- 確認した内容：容量1、37/43 イベントの境界、外部 ring、callback、片方向、MIDI 2つ、MIDI＋CDC＋Keyboard の複合。2つ目の MIDI は Host の標準 MIDI API が最初の interface しか扱わないため、interface を明示する bulk API で確認した。
+- 全11件が成功（`runtime-midi-all.xml`、586.92 秒）。送信の検査を bulk lock の中へそろえた後、関連3件も成功（`midi-stream-final.xml`、192.03 秒）。
+- 2 task から計200イベントを送り、順序と欠けがないことを確認。313 箇所で確保失敗を起こし、失敗と回復を確認。
+- IN 16 / OUT 1 の非対称構成で cable 15 への送信、全便利関数、値の丸め、SysEx/リアルタイムの15イベントを byte 単位で照合。
+- 送信 task を動かしたまま end し、停止中に cable 数を32回変えても、終了後の送信が受け付けられないことを確認。
+- 全件で両ボードが STOPPED、panic なし。最小構成4種の nm で、未使用 Function と TinyUSB の CDC/Vendor/HID/MIDI が含まれないことも確認。
+
+2026-10-31、`midi_stream` を含む S3 の peer 試験を P4/P4X の HS 直結でも収集しました（結果は [P4/P4X と追加試験環境](V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)）。
+各 OS の音楽アプリとの相互接続は未確認です。
+
+規格：[USB-MIDI 1.0](https://www.usb.org/sites/default/files/midi10.pdf)

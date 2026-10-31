@@ -1,39 +1,104 @@
 # TODO
 
-更新日: 2026-10-31。現行v3の残作業。実装・検証状況は[引き渡し](docs/V3_HANDOFF.ja.md)を参照。
-基本方針は明示的なDevice/Function/config/begin、使う機能だけに費用を持たせること。
-旧版とのbenchmarkは優先作業にしない。以下の記録追加だけで、実装や検証を完了扱いにしない。
+更新日: 2026-10-31。v3の残作業の一覧。
+いまの状態は[引き渡し](docs/V3_HANDOFF.ja.md)、経緯は[過去の記録](docs/V3_PROGRESS_HISTORY.ja.md)を参照。
+
+- 基本方針は、明示的なDevice/Function/config/beginと、使う機能だけに費用を持たせること。
+- 旧版とのbenchmarkは優先しない。
+- ここに記録を足しただけで、実装や検証を完了扱いにしない。
 
 ## 優先する残作業
 
-- [ ] **HS直結検証**：2-3の旧P4と2-4のP4X、両方向。既存S3 peer試験39本をHS comboへ広げ、S3は51件、p4_p4x_hsは59件、p4x_p4_hsは59件が成功した（ISO OUT修正後の関連再実行を含む）。製品の不具合2件（OUT DMAのcache書戻し、ISO OUTの偶奇）を修正済み。CCIDの既定messageBytesはmax(271, MPS)の自動に変更した（CH32RVと共通）。bench P4系4台のPSRAMは32 MiB（台帳反映済み）。残り：P4X PSRAMでの保存先/ringの試験、全comboの一括再実行。[結果](docs/V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)。
-- [ ] **S2実機検証（物品調達中）**：現在はcompile確認まで。到着後、P4 FS Hostとのpeerで列挙・各class・reset/end/借用返却を確認し、S2固有のROM DFU移行も別に確認する。S3での成功を代替にしない。
-- [ ] **S31対応・実機検証（物品調達中）**：ユーザー申告でビルドにベータ版コアが必要。まず4.0.0-RC1のS31 target/FQBNとSDK・toolchainを確認し、以後も採用するbeta版のversion/commitを固定して、既存の安定版Core profileと分離してcompileから始める。port能力/driver対応を確認後、P4 HS Hostとのpeerを追加する。S31 Hostの対応は別途確認し、Device成功だけで逆向きも対応済みとしない。
-- [ ] **Arduino-ESP32 4系の互換性検証**：指定の[開発版index](https://espressif.github.io/arduino-esp32/package_esp32_dev_index.json)を使い、まず4.0.0-RC1へ固定する。S31は必須。他のS3/S2/P4/P4Xは代表probeのcompileと短い実機試験から始める。3.3.12を標準として残し、別のcore4 profile/comboを優先する。一時切替が必要なら隔離した環境と復帰手順を用意する。RC1の成功を4系全体の対応済みとせず、RC更新/正式版で差分に応じて再試験する。[版固定・試験範囲と更新方針](docs/V3_DEVELOPMENT_PLAN.ja.md#arduino-esp32-4系コアの検証方針2026-10-30)。
-- [ ] **CH32RVコアとのUSBスタック調整**：先方返答を確認済み。CDC/Video/Audio/DFU/MSCとも両側で適用済み。DFUの「受付後はend()でも取り消さない」は先方も修正しX035F8U6で確認との報告（commitは先方の単体試験後）。setDetachHandlerはESP独自。残りは先方commitの確認だけ。[現状と仕様レビュー入口](docs/V3_CH32RV_API_ALIGNMENT.ja.md#現在の調整状況と仕様レビュー入口)。
+- [ ] **HS直結の仕上げ**
+  - HS直結の試験そのものは完了した（下の「完了した作業」）。
+  - [ ] 残りは全comboの一括再実行だけ。2026-10-31時点の`pytest --combo all --collect-only`は210件、収集エラー0。
+- [ ] **S2の実機検証**（物品調達中）
+  - 現在はcompileの確認まで。
+  - 到着後、P4 FS Hostとのpeerで、列挙・各クラス・reset/end・借用bufferの返却を確かめる。
+  - S2固有のROM DFUへの移行も別に確かめる。
+  - S3での成功をS2の代わりにしない。
+- [ ] **S31の対応と実機検証**（物品調達中）
+  - ビルドにはベータ版のArduino-ESP32 4.0.0-RC1が必要（ユーザー申告）。
+  - まずRC1でのS31のtarget/FQBN、SDK、toolchainを確かめる。使うbeta版のversion/commitを固定する。
+  - 既存の安定版Coreのprofileとは分けて、compileから始める。
+  - portの能力とdriverの対応を確かめたあと、P4 HS Hostとのpeerを追加する。
+  - S31をHostにする場合の対応は別に確かめる。Deviceの成功だけで逆向きも対応済みとしない。
+- [ ] **Arduino-ESP32 4系の互換性検証**
+  - 指定の[開発版index](https://espressif.github.io/arduino-esp32/package_esp32_dev_index.json)を使い、まず4.0.0-RC1に固定する。
+  - S31は必須。S3/S2/P4/P4Xは、代表的なprobeのcompileと短い実機試験から始める。
+  - 3.3.12を標準として残し、4系は別のprofile/comboにする。一時的に切り替えるなら、隔離した環境と戻す手順を用意する。
+  - RC1の成功を4系全体の対応とはしない。RCの更新や正式版では、差分に応じて再試験する。
+  - [版の固定・試験範囲・更新の方針](docs/V3_DEVELOPMENT_PLAN.ja.md#arduino-esp32-4系コアの検証方針2026-10-30)
+- [ ] **CH32RVコアとのUSBスタック調整**
+  - CDC/Video/Audio/DFU/MSCとも、両側で適用済み。CCIDの既定messageBytesもそろえた。
+  - DFUの「受け付けたあとは`end()`でも取り消さない」は、先方も修正してX035F8U6で確認したとの報告。commitは先方の単体試験のあと。
+  - `setDetachHandler`はESP独自。
+  - 残りは先方commitの確認だけ。[現状と仕様レビューの入口](docs/V3_CH32RV_API_ALIGNMENT.ja.md#現在の調整状況と仕様レビュー入口)
 
 ## 関連Hostライブラリの未解決事項
 
-- [ ] **MSC data STALL後のCSW回収と復帰**：CH32RV側からEspUsbHost 2.10.0でCSWを読まずに終了し、後続が1件ずれreset recoveryも行われないとの報告。2.10.1での既存記録とは分け、Host現行版で再現・halt解除→CSW回収→後続command/回復を確認する。Deviceへ回避動作を加えない。ESPのMSC抜去はP4X–PCのpyusbで02/3A/00・residue・未通知UAをwire確認済み。先方のX035C8 PASSにSense確認は含まれない。[報告と範囲](docs/V3_MSC_API.ja.md#ch32rv側の確認結果とhostの制約)。
-
-- [ ] **P4同期Vendor INのcache処理**：公開EspUsbHost2.10.1での再現と隔離修正branch fix/p4-vendor-read-cache・7f25896の比較結果を、Host側で現行版と照合し、修正取込み/配布の扱いを決める。現行Device試験は公開版のqueue経路を使用。[再現記録](validation/p4/README.ja.md#hostのcache不具合の切り分け)。
-- [ ] **NCM明示close後のHost再開始**：networkClose→Device終了→Host終了で2回目の開始が失敗した経路を、Host側で切り分け・回帰試験する。通常のDevice切断→Host終了で成功した結果と区別する。[P4記録](validation/p4/README.ja.md#後半4-classの詳細)。
+- [ ] **MSCのdata STALL後のCSW回収と復帰**
+  - CH32RV側から報告：EspUsbHost 2.10.0がCSWを読まずに終わり、後続のcommandが1件ずれる。reset recoveryも行われない。
+  - 2.10.1での既存の記録とは分けて、Hostの現行版で再現する。halt解除 → CSW回収 → 後続commandと回復を確かめる。
+  - Device側に回避動作は加えない。
+  - ESPのMSC抜去は、P4XとPC（pyusb）の間で02/3A/00、residue、未通知のUAをwire上で確認済み。
+  - 先方のX035C8でのPASSには、Senseの確認は含まれない。
+  - [報告と範囲](docs/V3_MSC_API.ja.md#ch32rv側の確認結果とhostの制約)
+- [ ] **P4の同期Vendor INのcache処理**
+  - 公開EspUsbHost 2.10.1で再現した。Hostの隔離branch `fix/p4-vendor-read-cache`（`7f25896`）で直ることも比べた。
+  - Host側で現行版と照らし合わせ、修正の取込みと配布の扱いを決める。
+  - 現行のDevice試験は、公開版のqueue経路を使っている。
+  - [再現記録](validation/p4/README.ja.md#hostのcache不具合の切り分け)
+- [ ] **NCMを明示的にcloseしたあとのHost再開始**
+  - `networkClose()` → Device終了 → Host終了の順にすると、2回目のHost開始が失敗した。Host側で切り分け、回帰試験を作る。
+  - 通常のDevice切断 → Host終了では成功している。この結果と区別する。
+  - [P4記録](validation/p4/README.ja.md#後半4-classの詳細)
 
 ## 追加検証・出荷前の作業
 
-- [ ] **PC OSとの互換性**：Linuxはbench 3-3/3-4のP4X（HS直結、combo `p4x_pc`、pyusb）を使える。v3 Native stackでWindows/Linux/macOSのclass binding、CDC/HID、MSC mount/eject、UVC表示、WinUSB/libusb/WebUSB、DFU toolを確認する。旧v2のPC実測結果をv3の成功として引き継がない。
-- [ ] **実SD・Firmware/OTA helperの実通信**：RAM backendの試験と分け、実媒体・実更新先での書込み/検証/終了処理を確認する。汎用USB層の基本試験にSDやcodecを必須にしない。
-- [ ] **長時間・電源/異常系の追加確認**：特にHS/P4Xと新規機種で連続転送、再接続、休止/復帰、代表的な停止競合を確認する。既存S3の固定回数試験を全機種・任意の競合の証明としない。
-- [ ] **release候補の固定sourceでの最終回帰**：機材と合意したAPIが揃った時点で標準combo all、現行examplesの対象別build、依存/未使用機能/ライセンスを確認する。現状は80件の収集と関連試験までで、最新製品の全80件一括実行は未実施。実機なし・skip・unfinishedは機種/組ごとに区別する。
-- [ ] **v3の配布・release手順**：shared toolkitの配布範囲、対応Core/機種、beta版S31の扱い、移行資料を確定する。RELEASE_CHECKLIST/CIの旧testsや旧profile参照をvalidationと現行examplesへ見直す。legacyの古いリンク不良を一括修正する作業とは分ける。公開release/tag/pushは未実施。
+- [ ] **PC OSとの互換性**
+  - Linuxはbench 3-3/3-4のP4X（HS直結、combo `p4x_pc`、pyusb）を使える。いまはDFU DETACHとMSC媒体交換だけを確認した。
+  - v3のstackで、Windows/Linux/macOSのclass binding、CDC/HID、MSCのmount/eject、UVC表示、WinUSB/libusb/WebUSB、DFU toolを確かめる。
+  - 旧v2でのPC実測結果を、v3の成功として引き継がない。
+- [ ] **実SDとFirmware/OTA helperの実通信**
+  - RAM backendの試験とは分けて、実媒体・実際の更新先で、書込み・検証・終了処理を確かめる。
+  - 汎用USB層の基本試験に、SDやcodecを必須にしない。
+- [ ] **長時間・電源・異常系の追加確認**
+  - 特にHS/P4Xと新しい機種で、連続転送、再接続、休止/復帰、代表的な停止の競合を確かめる。
+  - S3の回数を決めた試験を、全機種・任意の競合の証明にしない。
+- [ ] **release候補の固定sourceでの最終回帰**
+  - 機材と合意したAPIがそろった時点で、標準の`--combo all`、現行examplesの対象別build、依存・未使用機能・ライセンスを確かめる。
+  - 全件を一括で通した最後の記録は、S3の47件（`80e8676`）。いまの全comboでは、各単位と関連試験の実行まで。
+  - 実機なし・skip・unfinishedは、機種や組ごとに区別する。
+- [ ] **v3の配布とrelease手順**
+  - shared toolkitの配布範囲、対応Core/機種、beta版が必要なS31の扱い、移行資料を確定する。
+  - RELEASE_CHECKLISTとCIにある旧testsや旧profileへの参照を、validationと現行examplesへ見直す。
+  - legacyの古いリンク切れをまとめて直す作業とは分ける。
+  - 公開release/tag/pushは未実施。
+
+## 完了した作業（2026-10-31）
+
+- [x] 旧P4（2-3）とP4X（2-4）のHS直結（480 Mbps）を両方向で検証した。
+  - 既存のS3 peer試験39本をHS combo（`p4_p4x_hs`、`p4x_p4_hs`）へ広げた。
+  - 結果：`s3` 51 passed、`p4_p4x_hs` 59 passed、`p4x_p4_hs` 58 passed・1 failed（ISO OUT）。
+  - ISO OUTを直したあとの関連再実行はすべて成功（HS両方向のaudio/video各17件、S3 audio 9件、P4 loopback audio 4件、audio_overflow 10回連続）。
+  - HS用のpeer probeを追加：`validation/peer/{vendor_link,msc_midi,cdc_hid,ccid,dfu}`、`validation/p4_hs/{link,psram}`、`validation/peer/psram_link`。
+  - [結果](docs/V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)
+- [x] HS試験で見つけた製品の不具合2件を修正した。
+  - `09470d6`：OUT DMAを始めるときのcache書戻し漏れ。P4Xで借用RXの65535 byteが9216 byte以降で壊れていた。
+  - `aade7e0`：ISO OUTの偶奇の不一致によるpacketの取りこぼし。ISRの中で偶奇を反転してarmし直す。
+- [x] CCIDの既定messageBytesを0（自動）にした（`57ae028`）。`begin()`で`max(271, Bulk-OUT MPS)`になる（FS 271、HS 512）。ArduinoCore-CH32RV（`7248ca0d`）と同じ。
+- [x] benchのP4系4台のPSRAMを測った。すべて32 MiB（33554432 B）。revisionは旧P4が103、P4Xが302。外部RAM全域の書込み・読出しも成功。
+- [x] HS直結でPSRAMを保存先/ringに使う試験を追加し、両comboで成功した（`validation/peer/psram_link`、`42d844d`）。Device側のMSC保存先4 MiB（8192 block）とVendor RX/TX ring（各8 KiB）をPSRAMに置き、MSCの書込み・読出しとVendor echo（1〜32768 byte）を往復。[PSRAM](docs/V3_P4_VARIANTS_AND_BENCH.ja.md#psram)
 
 ## CH32RV調整で反映済み
 
 - [x] Video submitFrameをEspUsbTransferSubmission戻り値へ統一（02c7509）。単純なsendFrameは維持。S3/P4関連12件成功。
 - [x] CDCにsetTxTimeoutMsと期限付きwrite/flushを追加（22afc15）。S3/P4関連12件とS2基本例compile成功。
-- [x] MSC媒体交換（06/28/00の1回通知、02/3A/00と抜去世代、BOT reset時のsense保持）を実装。P4X–PCのwireで抜去・挿入・READ/WRITE途中の抜去とresidueを確認（[結果](docs/V3_MSC_API.ja.md#espでの実装とwire確認2026-10-30)）。
-- [x] DFU onDetach（SETUP時bool、falseでSTALL）とsetDetachHandlerを実装。期限・取消しはP4X–PCの実測とCH32RVコアとの相談で決定（[根拠](docs/V3_DFU_API.ja.md#判断の根拠となった実測)）。
-- [x] Audio playbackOverflowPolicy（既定DropOldest）を実装。S3–S3のaudio_overflowで両方針・wrap・小ring・F=6・容量0・不完全frame・設定拒否をmodelと照合（1 passed、31.49秒）。[実測](docs/V3_AUDIO_API.ja.md#espでの実装と実測2026-10-30)。
+- [x] MSC媒体交換（06/28/00の1回通知、02/3A/00と抜去世代、BOT reset時のsense保持）を実装（c38d03a）。P4X–PCのwireで抜去・挿入・READ/WRITE途中の抜去とresidueを確認（[結果](docs/V3_MSC_API.ja.md#espでの実装とwire確認2026-10-30)）。
+- [x] DFU onDetach（SETUP時bool、falseでSTALL）とsetDetachHandlerを実装（72e0743）。期限・取消しはP4X–PCの実測とCH32RVコアとの相談で決定（[根拠](docs/V3_DFU_API.ja.md#判断の根拠となった実測)）。
+- [x] Audio playbackOverflowPolicy（既定DropOldest）を実装（2408716）。S3–S3のaudio_overflowで両方針・wrap・小ring・F=6・容量0・不完全frame・設定拒否をmodelと照合（1 passed、31.49秒）。[実測](docs/V3_AUDIO_API.ja.md#espでの実装と実測2026-10-30)。
+- [x] CCIDの既定messageBytesを自動（`max(271, Bulk-OUT MPS)`）にそろえた（57ae028、記録08373d9）。先方は7248ca0d。
 
 ## v2時点の記録
 

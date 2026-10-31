@@ -1,137 +1,100 @@
 # v3 examples / サンプル
 
-These examples use the v3 public API, with no `build_opt.h`, internal headers or
-TinyUSB calls. They are freshly written usage examples, separate from the
-[hardware validation probes](../validation/README.ja.md).
+v3の公開APIだけを使う利用例です。`build_opt.h`、内部header、TinyUSBの呼出しは使いません。
+容量は各Functionの`configure()`で、USBの開始は`device.begin()`で指定します。
+実機試験用のprobeは[validation](../validation/README.ja.md)にあり、これらの例とは別物です。
 
-v3の公開APIだけを使う新規サンプルです。旧examplesの互換性を基準にせず、独立した
-validation probeとも分けています。容量はconfigure、USB開始はDeviceのbeginで指定します。
+These examples use only the v3 public API: no `build_opt.h`, internal headers or
+TinyUSB calls. Capacities are set with each Function's `configure()`, and USB
+starts with `device.begin()`. Hardware validation probes live separately in
+[validation](../validation/README.ja.md).
 
-| Example | What it demonstrates / 内容 |
-| --- | --- |
-| [Keyboard](Keyboard/Keyboard.ino) | Debug serial input → HID key taps / debug portから入力した文字をキー送信 |
-| [CdcConsole](CdcConsole/CdcConsole.ino) | CDC passed directly to a Stream consumer / Stream参照へ渡し、TX空きを確認してecho |
-| [VendorEcho](VendorEcho/VendorEcho.ino) | Vendor bulk stream, retaining partial writes / partial writeの残りを保持 |
-| [MidiEcho](MidiEcho/MidiEcho.ino) | MIDI 1.0 packet echo, one cable each way / MIDI packet単位のecho |
-| [CompositeCdcMidi](CompositeCdcMidi/CompositeCdcMidi.ino) | CDC + MIDI with independent resources / 個別の容量を持つ複合構成 |
-| [MscCdcBlocks](MscCdcBlocks/MscCdcBlocks.ino) | Raw RAM-backed blocks + CDC callback counts / RAM block callbackとCDC、機能別の容量指定 |
-| [AudioPlayback](AudioPlayback/AudioPlayback.ino) | Runtime PCM formats/rates and currentFormat, consuming samples / PCM形状・rateと選択状態を照会して読み出す |
-| [ReconfigureVendor](ReconfigureVendor/ReconfigureVendor.ino) | `end → configure → begin` switches ring sizes in one binary / 再ビルドせず容量を切替 |
+| Example | 内容 | What it demonstrates | API guide |
+| --- | --- | --- | --- |
+| [Keyboard](Keyboard/Keyboard.ino) | debug serialから入力した文字をキーとして送る | Debug serial input → HID key taps | [HID](../docs/V3_HID_API.ja.md) |
+| [CdcConsole](CdcConsole/CdcConsole.ino) | CDCを`Stream&`として渡し、送信の空きを確かめてecho | CDC passed directly to a `Stream` consumer | [CDC](../docs/V3_CDC_API.ja.md) |
+| [VendorEcho](VendorEcho/VendorEcho.ino) | Vendor bulkのecho。一部しか書けなかった残りを保持して送る | Vendor bulk echo, retaining partial writes | [Vendor](../docs/V3_VENDOR_API.ja.md) |
+| [MidiEcho](MidiEcho/MidiEcho.ino) | MIDI 1.0 packetのecho（cable 0） | MIDI 1.0 packet echo | [MIDI](../docs/V3_MIDI_API.ja.md) |
+| [CompositeCdcMidi](CompositeCdcMidi/CompositeCdcMidi.ino) | CDCとMIDIを同時に公開。容量はFunctionごと | CDC + MIDI with independent resources | [CDC](../docs/V3_CDC_API.ja.md), [MIDI](../docs/V3_MIDI_API.ja.md) |
+| [MscCdcBlocks](MscCdcBlocks/MscCdcBlocks.ino) | RAMのraw block deviceとCDC。callbackの回数を表示 | RAM-backed raw blocks + CDC callback counts | [MSC](../docs/V3_MSC_API.ja.md), [CDC](../docs/V3_CDC_API.ja.md) |
+| [AudioPlayback](AudioPlayback/AudioPlayback.ino) | UAC2のplayback。選ばれたformatを表示し、PCMを読み出す | UAC2 playback; reports the selected format | [Audio](../docs/V3_AUDIO_API.ja.md) |
+| [ReconfigureVendor](ReconfigureVendor/ReconfigureVendor.ino) | `end → configure → begin`で、再ビルドせずringの容量を切り替える | Switches ring sizes at run time | [Vendor](../docs/V3_VENDOR_API.ja.md) |
 
-## Board and connections / 環境と結線
-
-Profiles pin Arduino-ESP32 3.3.12. `esp32s3` is the primary development profile;
-`esp32s2` and `esp32p4` are compile targets, not evidence of hardware validation.
-Each profile loads the library from this checkout. Do not enable the Core's
-USB CDC/MSC/DFU-on-boot features on the OTG controller used by this library.
-
-profileはCore 3.3.12に固定し、このcheckoutのlibraryを読み込みます。
-標準の開発実機はS3です。S2/P4 profileがあることは実機確認済みを意味しません。
-このlibraryが使うOTG controllerでCore標準USBの自動起動を有効にしないでください。
-
-Connect the board's **native USB OTG** data port to the Host. A USB-UART bridge
-is a separate programming/debug connection; it does not carry these Functions.
-Keyboard, ReconfigureVendor and AudioPlayback also use `Serial` at 115200 on that separate
-connection. Board pinout and VBUS circuitry must match the chosen controller.
-Use an editor on the Host for Keyboard; it sends keys only in response to debug
-serial input, rather than typing automatically at startup.
-
-データ用native OTGをHostへ結線します。USB-UART bridgeは書き込み・debug用で、
-ここで実装したFunctionの通信経路にはなりません。Keyboard/ReconfigureVendor/AudioPlaybackは
-別のdebug接続でSerial 115200も使います。boardごとのpinout/VBUS回路を確認してください。
-KeyboardはHostで入力先のeditorを選び、debug portへ文字を送るとキーを送信します。
+## ビルドと書込み / Build and upload
 
 ```sh
 arduino-cli compile --profile esp32s3 examples/CdcConsole
 arduino-cli upload --profile esp32s3 --port <debug-port> examples/CdcConsole
-python3 tools/build_check.py esp32s3
+python3 tools/build_check.py esp32s3   # 全exampleをまとめてbuild
 ```
 
-The build helper stores output under `build/examples/<profile>/<sketch>/`.
-The initial six examples compiled for S3/S2/P4 with Core 3.3.12 (18 builds) after the
-native CDC Stream change. This verifies build compatibility, not USB operation
-on S2/P4.
+- 各`sketch.yaml`はArduino-ESP32 3.3.12に固定し、このcheckoutのlibraryを読み込みます。profileは`esp32s3`（既定）、`esp32s2`、`esp32p4`です。
+- `tools/build_check.py`の生成物は`build/examples/<profile>/<sketch>/`に置かれます。
+- このlibraryが使うOTG controllerでは、CoreのUSB CDC/MSC/DFU on bootを有効にしないでください。
 
-ビルドhelperの生成物は`build/examples/<profile>/<sketch>/`へ保存します。
-CDCのStream化後、Core 3.3.12で最初の6例×S3/S2/P4の全18ビルドを確認しました。
-S2/P4のUSB実機動作を確認した意味ではありません。
+Each `sketch.yaml` pins Arduino-ESP32 3.3.12 and loads the library from this
+checkout. Profiles: `esp32s3` (default), `esp32s2`, `esp32p4`. Do not enable the
+Core's USB CDC/MSC/DFU-on-boot features on the OTG controller this library uses.
 
-AudioPlayback subsequently compiled for all three profiles after PCM alternate support.
-Its ELF architecture, FQBN and selected/unselected symbols were checked. These
-three builds are separate from the earlier 18-build baseline.
+## 結線 / Connections
 
-AudioPlaybackはPCM alternate対応後にS3/S2/P4の3 profileでビルドし、ELF/FQBNと
-未使用クラスのリンク除外を確認しました。先の18ビルドとは別の実行です。
+- boardの**native USB OTG**のdata口をHostへつなぎます。USB-UART bridgeは書込みとdebug用で、ここで作るFunctionの通信には使いません。
+- Keyboard、ReconfigureVendor、AudioPlayback、MscCdcBlocksは、別のdebug接続で`Serial`（115200）も使います。
+- pin配置とVBUS回路はboardと使うcontrollerに合わせてください。
 
-## Operation / 動作
+Connect the board's **native USB OTG** data port to the Host. A USB-UART bridge
+is only for programming and debug output. Keyboard, ReconfigureVendor,
+AudioPlayback and MscCdcBlocks also print to `Serial` at 115200 on that separate
+connection.
 
-CDC can be used with a serial terminal; turn off local echo to see the returned
-bytes. CompositeCdcMidi exposes CDC and MIDI at the same time. MIDI echoes USB
-MIDI packets and does not synthesize sound. Use a Host application that sends
-and receives MIDI on cable 0.
+## 各exampleの動作 / Behavior
 
-CDCはserial terminalで利用でき、local echoを無効にすると返ってきた文字を確認できます。
-複合例はCDCとMIDIを同時に公開します。MIDIはcable 0のpacketを返す例で、音源ではありません。
+**CdcConsole / CompositeCdcMidi**：serial terminalで開けます。local echoを切ると、返ってきた文字が見えます。
+CompositeCdcMidiはCDCとMIDIを同時に公開します。
+CDC opens in a serial terminal; turn off local echo to see the returned bytes.
 
-VendorEcho/ReconfigureVendor expose a vendor-specific bulk interface. The Host
-must discover the advertised interface/endpoints and transfer raw bytes; a
-serial terminal cannot open it. The stream does not preserve message boundaries
-or implicitly terminate MPS-multiple writes with a ZLP. Use length-framed Host
-reads. For a complete automated peer interaction, see the independent Vendor
-probe in validation.
+**MidiEcho**：cable 0で受けたUSB MIDI packetをそのまま返します。音は鳴りません。Host側でMIDIを送受信するアプリを使ってください。
+Echoes USB MIDI packets on cable 0; it does not synthesize sound.
 
-Vendorは汎用bulk interfaceなので、Host側でdescriptorからinterface/endpointを選び
-生byteを転送します。serial terminalでは開けません。streamはmessage境界や暗黙ZLPを
-保証しないので、Host側は予定byte数などで区切ります。自動ピア通信はvalidationのVendor probeを参照してください。
+**VendorEcho / ReconfigureVendor**：汎用のbulk interfaceです。serial terminalでは開けないので、Host側のアプリ（libusb、pyusbなど）でinterfaceとendpointを選んで生のbyteを送受信します。
+streamはメッセージの区切りを保たず、MPSの倍数の書込みに自動でZLPも付けません。Host側は長さを決めて読んでください。
+自動で通信する相手側の例は、validationのVendor probeを参照してください。
+A serial terminal cannot open the vendor interface; use a Host application.
+The stream does not preserve message boundaries or add ZLPs; use length-framed reads.
 
-For ReconfigureVendor, send `r` on the debug port. It alternates 128/2048-byte RX
-and TX rings, checks `end()` before changing resources, and prints effective
-capacities. The Host sees disconnect/re-enumeration, must reopen the interface,
-and should treat old stream data as discarded. It does not change descriptors
-or preserve an application session across restart.
+**ReconfigureVendor**：debug portへ`r`を送ると、RX/TX ringを128 byteと2048 byteの間で切り替えます。`end()`の成功を確かめてから設定を変え、実際の容量を表示します。
+Hostからは切断と再列挙に見えるので、interfaceを開き直してください。古いstreamのデータは捨てられます。記述子は変わらず、アプリのsessionも引き継ぎません。
+Send `r` on the debug port to alternate 128/2048-byte rings. The Host sees a
+disconnect and re-enumeration and must reopen the interface.
 
-ReconfigureVendorはdebug portの`r`でRX/TX ringを128/2048 byteへ交互に切り替えます。
-end成功後に再設定し、実際の容量を表示します。Host側は切断・再列挙後に開き直し、
-旧stream dataを破棄します。application sessionの継続を実装する例ではありません。
+**Keyboard**：Hostで入力先のeditorを選び、debug portへ文字を送るとキーを送ります。起動時に勝手に入力はしません。
+Sends keys only in response to debug serial input.
 
-AudioPlayback exposes UAC2 playback with stereo 16-bit/2-byte and 24-bit/3-byte
-PCM, each at 24/16 kHz. It consumes received PCM and reports the selected format
-and bytes read on the debug port. It does not generate audible sound: route the
-read data to your application's codec/DAC for that. Its 32-frame ring reserves
-192 bytes for the largest declared frame, and event polling is disabled.
+**AudioPlayback**：UAC2のplaybackだけを公開します。formatはstereoの16 bit/2 byteと24 bit/3 byte、rateは24 kHzと16 kHzです。
+受け取ったPCMを読み捨て、選ばれたformatと読んだ量をdebug portへ表示します。音を出すには、読んだPCMをアプリでcodec/DACへ渡してください。
+ringは最大の1 frame（6 byte）×32 frame＝192 byteで、event queueは使いません（`eventCapacity = 0`）。
+Consumes PCM and reports the selected format; route `read()` data to your codec/DAC for sound.
 
-AudioPlaybackはUAC2のPlaybackのみを選び、stereoの16 bit/2 byteと24 bit/3 byteを
-各24/16 kHzで公開します。PCMを読み捨て、選択formatと読み出し量をdebug portへ出す例です。
-音声を鳴らす場合はアプリ側で読み出したPCMをcodec/DACへ渡します。
-ringは最大6 byte/frame×32 frameの192 byteで、event queueは使いません。
+**MscCdcBlocks**：8 KiB（512 byte×16 block）のRAMを**raw block device**として公開し、CDCでread/write callbackの呼出し回数を表示します。
+初期内容は0で、filesystemはなく、resetで消えます。永続storageを使うときはcallbackを置き換えてください。
+MSCの`transferBytes`は512で、FSでもHSでも使える値です（HSでは512の倍数が必要）。RAMの保存領域とこの512 byteのstagingは別に確保します。
+CDC consoleを開くと毎秒、または`?`を送ると回数を返します。USBのpacket数ではありません。debug `Serial`はsetupエラーの表示用です。
+Exposes 8 KiB of zero-filled RAM as a raw block device without a filesystem.
+The MSC `transferBytes` of 512 is valid at both FS and HS.
 
-These are focused examples, not a catalog for every class or a replacement for
-protocol/ownership tests. Startup errors leave USB stopped. See the
-[lifecycle/migration guide](../docs/V3_MIGRATION.ja.md) for error handling and the
-[API guides](../README.md#api-documentation) for borrowed transfer ownership,
-callbacks, other classes and detailed configuration.
+これらは基本の使い方を示す例で、全クラスの一覧や、protocol・所有権の試験の代わりではありません。
+開始に失敗した場合はUSBを止めたままにします。エラー処理は[開始と移行のガイド](../docs/V3_MIGRATION.ja.md)、
+借用転送、callback、他のクラス、詳しい設定は[API guides](../README.md#api-documentation)を参照してください。
 
-基本的な利用例に絞っており、全クラスのcatalogやprotocol/所有権試験の代用ではありません。
-開始に失敗した場合はUSBを停止したままにします。借用転送、callback、他クラスの詳細は各APIガイドを参照してください。
+These are focused examples, not a catalog of every class or a substitute for the
+protocol and ownership tests. See the [API guides](../README.md#api-documentation).
 
+## 確認の範囲 / What has been checked
 
-MscCdcBlocks exposes an initially zero-filled **raw block device** and a CDC
-console. The 8 KiB RAM backing store has no filesystem, loses its contents on
-reset, and is separate from the 512-byte MSC transfer buffer. Replace the block
-callbacks to use application storage. The CDC console reports read/write
-callback counts once per second when opened, or when sent `?`; these are not
-USB packet counts. Debug `Serial` at 115200 reports setup errors separately.
+- 例そのものは**compileだけ**を確認しています。USB実機での動作確認は、例とは別のvalidation probeで行っています（S3 FS、P4/P4X FS・HSの状況は[README](../README.md#hardware-status-by-target-2026-10-31)）。
+- 最初の6例はCDCのStream化の後、Core 3.3.12でS3/S2/P4の18 buildを確認しました。
+- AudioPlaybackはPCM alternate対応の後に3 profileでbuildし、ELF、FQBN、未選択クラスがリンクされないことも確認しました。
+- MscCdcBlocksも3 profileでcompileし、ELF/FQBN/依存を確認しました。未選択のAudio/NCM/Video/CCID/keymapやFAT helperはリンクされていません。記録は`validation/.pytest-results/msc-cdc-example*`。
 
-MscCdcBlocksは8 KiBのRAM領域をraw block deviceとして公開し、CDCでread/write callbackの
-呼出し数を表示します。初期内容は0で、filesystemはなく、resetで内容が消えます。
-RAM保存領域とMSCの512 byte stagingは別の費用です。永続storageを使う場合はcallbackを置き換えます。
-CDC consoleを開くと毎秒、または`?`を送ると回数を返します。USB packet数ではありません。
-別のdebug Serial 115200はsetupエラーの表示用です。filesystem helperはこの例の必須依存にしていません。
-
-MscCdcBlocks compiled for all three profiles with Core 3.3.12; ELF/FQBN/source
-checks also passed. No unselected Audio/NCM/Video/CCID/keymap or FAT helper was
-linked. This is compile-only evidence for the example, separate from the
-independent CDC/MSC hardware probes. Records: `validation/.pytest-results/msc-cdc-example*`.
-
-MscCdcBlocksの3 profile compileとELF/FQBN/依存確認は成功し、未選択機能の混入はありません。
-この例自体のUSB実機・OSでのmount確認を表す結果ではなく、独立したCDC/MSC実機probeとは分けています。
+The examples themselves are compile-checked only. USB behavior is covered by the
+separate validation probes; see the [hardware status](../README.md#hardware-status-by-target-2026-10-31).

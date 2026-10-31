@@ -1,151 +1,122 @@
-# v3 HIDのruntime転送領域
+# HID API（v3）
 
-2026-10-26。HID class driverを独自実装へ変更した。TinyUSBのHID class、固定instance配列、
-IN/OUT/control bufferを使用しない。共通EP0/coreとDWC2も本体内部で保守する。
+Keyboard、Mouse、Gamepad、Consumer Control、System Control、Vendor（生データ用）、Custom（任意の report descriptor）の HID Function です。
+TinyUSB の HID class は使わず、ライブラリ独自の HID driver で動きます。転送領域は report descriptor から必要な大きさを求めて begin 時に確保するので、ビルド設定は要りません。
+複数の HID Function を登録すると、1つの HID interface と1つの report descriptor にまとめられ、report ID で区別されます。
 
-## 通常の利用
-
-Keyboard/Mouse/Custom/Vendor/Gamepad/ConsumerControl/SystemControlの通常の送信APIは維持する。
-Deviceを先に作り、Functionを構成してからdevice.begin()する。
+## 基本の使い方
 
 ```cpp
+#include <EspUsbDevice.h>
+
 EspUsbDevice device;
-EspUsbDeviceHidVendor pipe(device, 257);
+EspUsbDeviceHidKeyboard keyboard(device);
+EspUsbDeviceHidVendor pipe(device, 257);  // 1 report あたり 257 byte の生データ
 
 void setup() {
+  Serial.begin(115200);
   pipe.onOutputReport([](const EspUsbDeviceHidReport &report) {
-    // report.data is borrowed for this callback only; copy what is needed.
+    // report.data はこの callback の間だけ有効。必要ならコピーする。
   });
-  if (!device.begin()) handleStartError(device.lastError());
+  if (!device.begin()) {
+    Serial.println(device.lastErrorName());
+  }
+}
+
+void loop() {
+  keyboard.tapKey('a');
+  uint8_t data[257] = {1, 2, 3};
+  pipe.sendInput(data, sizeof(data));  // 送信 buffer へコピーできたら true
+  delay(1000);
 }
 ```
 
-reportSizeに応じたReport Countをdescriptorへ出力し、それを解析して必要容量を決める。
-上記ならIN/OUT/Featureはreport ID込みで258 byte。FSでは一つのreportが複数packetに分かれる。
-packetの大きさとreport全体の大きさを同じビルド定数へ結び付けない。
-複合HIDでは既存どおり一つのinterface/report descriptorへまとめ、各Functionは共通の転送領域を参照する。
+Device を先に作り、Function を作ってから `device.begin()` を呼びます。各 Function の `begin()` は Device が呼ぶので、アプリから重ねて呼ぶ必要はありません。
 
-`CFG_TUD_HID_EP_BUFSIZE`、旧`CFG_TUD_HID_BUFSIZE`、`CFG_TUD_HID`指定（0を含む）は削除する。
-古い指定を残したbuildは移行を促すエラーとなる。
-`HidVendor::maxReportSize()`は現在65534で、内部転送長uint16_tからreport IDを除いた上限を返す。
-SoCや速度のpacket上限ではなく、確保成功を保証する値でもない。使用可能メモリとHost側の対応は別の制約になる。
-HSのpacket希望値は最大1024へ収めるが、P4/S31の実機検証はまだ行っていない。
+### 主な設定
 
-HidVendorのsendInputは長すぎるpayloadを切り詰めずfalseを返すよう変更した。
-短いpayloadは従来どおり送信できる。受け手が固定長を要求する場合は、宣言したpayload長までアプリ側で用意する。
-sendの成功はコピーを保持して転送を開始したことを示す。Hostでの受信完了を待つAPIではない。
-busy時のtimeoutとcallback内でtimeout=0を使う方針も維持する。workerからの待ち付き送信は拒否する。
+HID には設定用の構造体はありません。constructor の引数と、停止中に呼ぶ設定関数で決めます。
 
-## Gamepadの中央と方向
+| 項目 | 既定値 | 意味 | FS/HSでの違い |
+| --- | --- | --- | --- |
+| `EspUsbDeviceHidVendor(device, reportSize)` | 63 | 1 report の payload の byte 数（report ID を除く）。上限 `maxReportSize()` = 65534 | interrupt endpoint の packet 長は FS で最大 64 byte。HS では `reportSize + 1` が 64 を超えると、その値（最大 1024）を HS 用 descriptor に載せる |
+| `EspUsbDeviceHidCustom(device, desc, len, inputReportSize)` | 64 | `inputReportSize` は packet 長の希望。転送領域の大きさは descriptor から求める | 同上の packet 上限（FS 64、HS 1024） |
+| `keyboard.enableNkro(true)` | 無効（6キー同時押し） | NKRO（全キー同時押し、bitmap 形式）。停止中に呼ぶ | なし |
+| `keyboard.setLayout(layout)` | `ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US` | 文字→キーの変換表 | なし |
+| 送信関数の `timeoutMs` | 100 | IN endpoint が使用中のときに待つ時間（ms） | なし |
 
-Gamepadのhatは公開定数を維持する。中央0はNull、方向1～8は上から時計回りに0～315度へ対応する。
-8 bitのwire値や入力容量は変えず、logical rangeを1～8、InputをNull対応にする。
-hatの後のbuttonsも物理範囲0～1へ戻す。以前のlogical range0～8では、中央0が方向として扱われ、
-上1/右3も約39/118度に対応していた。
-根拠は[HID 1.11](https://www.usb.org/sites/default/files/hid1_11.pdf) §6.2.2.5のhat/nullの説明。
+1つの report が packet 長より大きい場合は、複数の packet に分けて1回の転送で送ります（例：FS で 258 byte の report は 64 byte の packet 5個）。
 
-統合したHIDでは各Functionのreport descriptor全体をglobal Push/Popで区切る。
-独自Functionの単位・物理範囲を次のFunctionへ引き継がない。各Function内のPush/Popはその内側で維持する。
-統合descriptorにFunctionごと2 byteが加わり、開始時の解析は実際の最大push深さだけ一時stackを使う。
-解析後にstackを解放し、通常転送中に確保しない。単独Functionはこの統合処理を行わない。
-Gamepad自身のdescriptorもbuttonsのPhysical Maximum指定の2 byteが増えるが、入力容量やmemberは増えない。
+## 送信の共通ルール
+
+- 送信関数（`sendReport`、`sendInput`、`tapKey`、`move` など）の true は「内部 buffer へコピーして転送を始めた」という意味です。Host が受け取ったことは意味しません。
+- endpoint が使用中なら最大 `timeoutMs` 待ちます。callback の中から送るときは `timeoutMs = 0` にしてください。USB worker の中から待ち時間付きで送ろうとすると拒否されます。
+- `EspUsbDeviceHidVendor::sendInput()` は、`reportSize` より長い payload を切り詰めずに false を返します。短い payload はそのまま送れます。受け手が固定長を求める場合は、アプリ側で長さをそろえてください。
+- bus が休止（suspend）している間は新しい Input を拒否します。
+- 同じ値でも、明示的に呼んだ送信は必ず送ります（idle 設定で間引くことはしません）。
+
+## Keyboard
+
+- `sendReport(EspUsbDeviceBootKeyboardReport)`：6キーの boot 形式（8 byte）を送る。
+- `sendReport(EspUsbDeviceNkroKeyboardReport)`：全キーの状態を1つの report で送る。`enableNkro()` を begin 前に呼んでいないと false。Host が boot protocol を選んでいる間は、6キーの boot 形式に変換して送る。
+- `pressUsage` / `releaseUsage` / `tapUsage` / `pressKey` / `tapKey` / `write(text)` / `releaseAll`：usage ID や文字で操作する。
+- `ledState()`：Host から届いた LED 状態（Num/Caps/Scroll Lock など）。callback を登録していなくても更新され、bus reset や抜去で消える。
+- `onOutputReport(callback)` / `onProtocol(callback)` / `enableNkro()`：停止中だけ `ESP_OK`。動作中は `ESP_ERR_INVALID_STATE` を返し、設定は変わらない。
+- `protocol()`：現在の protocol（0＝boot、1＝report）。
+- `heldState()`：NKRO で最後に Host へ伝えた状態。NKRO 無効のときは空のまま。
+
+report 長は boot 形式 8 byte、NKRO 29 byte です。
+
+## Mouse
+
+`move` / `wheel` / `press` / `release` / `click` / `releaseAll` / `sendReport` / `sendState` で操作します。
+report protocol では 4 byte（ボタン、X、Y、ホイール）、boot protocol では 3 byte に変換して送ります。
+X/Y/ホイールのような相対値は、送信が成功したら内部の状態を 0 に戻します。idle 再送で同じ移動が繰り返されないようにするためです。
+
+## Gamepad
+
+`sendReport(EspUsbDeviceGamepadReport)` または `send(x, y, z, rz, rx, ry, hat, buttons)` で送ります。
+hat（方向キー）は `ESP_USB_DEVICE_GAMEPAD_HAT_CENTER`（0＝中央、何も押していない）と、`HAT_UP`（1）から時計回りに `HAT_UP_LEFT`（8）までの定数で指定します。1〜8 は 0〜315 度に対応します。
+
+## Consumer Control
+
+`press` / `release` / `click` / `sendUsage` に Consumer ページの usage ID（16 bit）を渡します。
+`ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_UP` などの定数があります。
 
 ## System Controlのusage指定
 
-System Controlのpress/sendUsage/clickはGeneric Desktopの標準usage IDを受け取る。
-POWER_OFF=0x81、STANDBY=0x82、WAKE_HOST=0x83、0は解放。usage()もこの値を返す。
-名前付き定数を使う既存の呼出しはそのままで、整数1/2/3の直書きは標準usageか定数へ移行する。
-それ以外の値はfalseで拒否し、保持値と転送中/GET_REPORTの内容を変更しない。
+`press` / `sendUsage` / `click` には Generic Desktop ページの標準 usage ID を渡します。`usage()` も同じ値を返します。
+
+| 定数 | 値 |
+| --- | --- |
+| `ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF` | 0x81 |
+| `ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY` | 0x82 |
+| `ESP_USB_DEVICE_SYSTEM_CONTROL_WAKE_HOST` | 0x83 |
+| （解放） | 0 |
 
 ```cpp
 systemControl.press(ESP_USB_DEVICE_SYSTEM_CONTROL_STANDBY);
 systemControl.release();
 ```
 
-wireのarray selectorは1/2/3のまま、descriptorはそれをusage0x81/0x82/0x83へ対応させる。
-selector 0は押されている要素がないことを示す。以前のusage0..3の広告は電源操作の意味になっていなかった。
-Consumer Controlと同じくAPIではusageを指定できる利点があり、数値直書きとusage()の数値比較は変更が必要になる。
-メソッドの型、report容量、descriptor長、Functionのmember/heap取得点は増やさない。
-WAKE_HOSTは通常のHID入力であり、busが休止している時の[remote wakeup](V3_REMOTE_WAKEUP.ja.md)を暗黙に実行しない。
+- それ以外の値は false で拒否し、保持している値、送信中の内容、GET_REPORT で返す内容は変えません。
+- 定数名で呼んでいたコードはそのまま動きます。整数 1/2/3 を直接書いていたコードは、標準 usage か定数へ直してください。`usage()` の戻り値を数値で比べているコードも同様です。
+- wire 上では従来どおり 1/2/3 の選択値（0＝何も押していない）を送り、descriptor でそれを 0x81/0x82/0x83 に対応させています。以前の descriptor は usage 0〜3 を広告していて、電源操作の意味になっていませんでした。
+- `WAKE_HOST` は普通の HID 入力です。bus が休止しているときに [remote wakeup](V3_REMOTE_WAKEUP.ja.md) を自動で行うものではありません。
+- この変更でメソッドの型、report の大きさ、descriptor 長、確保するメモリは増えていません。
 
-根拠は[HID Usage Tables 1.7](https://usb.org/sites/default/files/hut1_7.pdf)のGeneric Desktop表と§4.5.1、
-[HID 1.11](https://www.usb.org/sites/default/files/hid1_11.pdf) §6.2.2.5のarray推奨（logical minimum=1、0=未押下）。
-arrayのInputではData/Array/Absolute以外の属性を意味の証明に使わない。
+根拠：[HID Usage Tables 1.7](https://usb.org/sites/default/files/hut1_7.pdf) の Generic Desktop の表と §4.5.1、[HID 1.11](https://www.usb.org/sites/default/files/hid1_11.pdf) §6.2.2.5 の array の推奨（logical minimum＝1、0＝未押下）。
 
-## 独自HIDと容量
+## Vendor（生データ）
 
-独自HIDは`EspUsbHidFunction`を基底にする。これは`EspUsbDeviceClass`を継承し、
-共通のbegin/end、転送、確保エラー、停止を実装する。独自beginでは検証後に基底beginを呼び、結果を返す。
-既存の`EspUsbDeviceHidCustom`を使うアプリ側に基底の変更は不要。
-EspUsbDeviceClassから直接独自HIDを作っていた拡張は、新しい基底へ移行する必要がある。
-独自beginで一部開始後に失敗した場合も、Deviceがendを呼んで基底の参照を戻す。
-通常はDeviceがFunctionのbeginを呼ぶ。アプリからHID.beginを重ねて呼ぶ必要はなく、
-未登録/開始済みFunctionのbeginはInvalidStateになる。稼働中のFunction.endはDevice全体を停止する。
-独自派生クラスがcallbackや応答データを持つ場合、派生destructorの先頭でendを呼び、
-workerが止まってからメンバーを破棄する。標準の各HIDクラスはこの終了順序を持つ。
-
-`inputReportCapacity()` / `outputReportCapacity()` / `featureReportCapacity()`は、
-その構成の共有interfaceに必要な最大byte数を返す。report IDを宣言したreportはIDの1 byteも含む。
-開始前/終了後は0。構成変更は停止中に行い、次のbeginで再解析・再確保する。
-HidCustomへ渡すreport descriptorは、稼働中も有効で変更されない配列として保持する。
-既存のinputReportSize引数はpacketの選択に使われるが、転送領域の上限はdescriptorから求める。
-
-解析はReport Size/Count/IDとglobal Push/Popを扱い、Main itemのbit数を同じID/typeごとに合算する。
-使うIDだけの表を確保する。Push/Pop用の一時stackは実際の深さだけ作り、解析終了時に解放する。
-切れたitem、stack不整合、Report ID 0の明示指定、番号付き/番号なしの混在、転送長超過等は開始時に拒否する。
-これはHID usageや全semantic条件の検証器ではない。
-
-| 領域 | 確保する条件 |
+| 関数 | 戻り値・制約 |
 | --- | --- |
-| 共有state / report表 | HIDを開始する場合に一度。使用ID数分のmetadata |
-| IN DMA | Input reportがある場合だけ。最大Input report長 |
-| OUT DMA packet | Output reportとinterrupt OUT endpointがある場合だけ。選択する速度の最大packet |
-| OUT report組立 | 同上。最大Output report長 |
-| 状態保存 | 定義したID/typeのreport長の合計。GET_REPORTとidle再送で使う |
-| control staging | 定義したInput/Output/Featureの最大長。応答中の更新による混在を防ぐ |
-| relative mask | relative Input項目のあるreportだけ。状態保存と同じ一括領域に含める |
+| `sendInput(data, length, timeoutMs)` | 送信を始めたら true。`length` が 0 または `reportSize()` を超えると false |
+| `onOutputReport(callback)` / `onFeatureReport(callback)` | 停止中だけ `ESP_OK`、動作中は `ESP_ERR_INVALID_STATE` |
+| `reportSize()` | constructor で指定した payload 長 |
+| `maxReportSize()` | 65534。内部の転送長が 16 bit で、report ID の 1 byte を除いた値 |
 
-INだけのHIDにはOUT DMA/組立とFeature保存を確保しない。GET_REPORT用のInput保存とcontrol応答領域は必要になる。
-保存領域は全ID/typeとrelative maskを一括確保し、転送経路ではheapを使わない。
-HIDを使わなければstate/driver/buffer自体をリンクしない。
-確保失敗はbeginのNoMemoryで返し、共有HIDの参照・driver登録・全領域を回収する。
-endはUSB workerとDMAを停止してから解放する。
-
-## controlと受信
-
-HID/report descriptor照会、Input/Output/Feature GET_REPORT、Output/Feature SET_REPORT、report ID別GET/SET_IDLE、
-boot interfaceのGET/SET_PROTOCOLを独自driverで処理する。bus resetではreport protocolへ戻す。
-SET_REPORTは方向/recipient/interface、ID/type、長さ、データ実受信量を検証し、
-ID付き形式のprefix不一致はstatusを成功にする前に拒否する。
-control経由の番号付きreportは、ID付き全長形式と、wValueだけでIDを指定するpayload形式を受け付ける。
-
-interrupt OUTは一packetずつ受け、IDごとの宣言長またはshort packetでreportを組み立てる。
-これにより、最大reportより短い別IDのreportがちょうどMPS倍数でも、余分なZLPを要求しない。
-callbackへはIDを分離したpayloadと長さを渡す。受信領域の参照はcallbackの間だけ有効。
-callbackからend・Function破棄・構成変更を行わない。
-
-GET_REPORTはID/typeごとに保存した状態を返す。初期値はIDとzero payload、Inputは送信受理時、
-Output/FeatureはSET_REPORTの完了時に更新する。短いpayloadは保存長も短くなり、黙ってpaddingしない。
-制御応答開始時に専用領域へcopyするため、途中でアプリが状態を変更しても一つの応答内で混ざらない。
-未知のID/typeや方向・interfaceの不一致はSTALLする。
-
-Inputのrelative項目は送信成功後にzeroへ戻し、absolute項目は保持する。
-MouseのX/Y/ホイールをidle周期で繰り返し適用しないための処理で、descriptorのbit位置からmaskを作る。
-boot mouseは3 byte、通常のMouseは4 byte。Keyboardもboot 8 byte/NKRO 29 byteへ切り替える。
-protocol変更時のInput保存はneutralへ戻す。独自boot拡張は番号なしreportと必要な長さを持つものに限定し、
-不整合な短いboot descriptorは開始時に拒否する。
-
-SET_PROTOCOLで形式が変わる場合は、未完了の旧INをhardwareで停止してからstatusを返す。
-旧完了eventをcoreのFIFO fenceで排出するまで、明示送信とidle再送の両方を保留する。
-固定時間のdelayやendpointのSTALL/clear-haltでDATA PIDを初期化する方法は使わない。
-fence予約がqueue満杯なら、既存のidle用worker jobで再試行し、bufferを早期再利用しない。
-protocol変更時に追加heapや専用taskを確保しない。
-
-boot-capableな番号なしInputは、現在の形式の正確な長さを要求する。
-例えばNKRO有効時のreport protocolへ8 byteのboot配列を直接送る呼出しはInvalidSizeになる。
-通常のKeyboard helperは形式を自動選択する。形式選択と送信の間にHostが切り替えた場合は、
-不一致のpacketを送らず拒否するため、アプリ側で再試行できる。Mouseの4→3 byte変換は維持する。
-
+`maxReportSize()` は確保が成功することを保証する値ではありません。使えるメモリ量と Host 側の対応も制約になります。`reportSize` が上限を超えると begin が `ESP_ERR_INVALID_SIZE` で失敗します。
 
 ## Feature値の更新
 
@@ -154,138 +125,206 @@ uint8_t value[] = {1, 2, 3};
 esp_err_t error = pipe.setFeatureReport(value, sizeof(value));
 ```
 
-begin成功後に使う。payloadにreport IDを含めず、復帰後は元配列を再利用できる。
-省略ID=0は複合ならそのFunctionの割当ID、単体なら番号なしまたは一意なFeature IDを選ぶ。
-複数のFeature IDがあるcustom HIDはIDを明示する。複合構成で別FunctionのIDを指定することは拒否する。
-未開始/停止処理中はInvalidState、FeatureなしはNotSupported、長さ超過はInvalidSize。
-Hostへのinterrupt送信やonFeatureReport通知は発生せず、次のGET_REPORTに反映する。
-アプリtaskとUSB workerから呼べ、読出しとの間で一つの値を整合して保持する。
+Feature report の現在値を設定します。Host への interrupt 送信や `onFeatureReport` の通知は起きず、次に Host が GET_REPORT したときに返ります。
 
-bus reset/unconfigureではInput/Outputをneutralへ戻し、idleを無効化する。
-FeatureはDeviceの現在の設定として保持し、endまたは次のbeginで初期化する。
-そのため、Hostが接続する前にsetFeatureReportした値も、列挙時のresetで失われない。
+- begin 成功後に使えます。Host が接続する前に設定した値も、列挙時の reset で消えません。
+- payload に report ID は含めません。戻った後は元の配列を再利用できます。
+- `reportId` を省略（0）すると、複合構成ではその Function に割り当てた ID、単独なら番号なしまたは唯一の Feature ID を選びます。Feature ID が複数ある Custom HID では ID を明示します。
+- アプリ task からも USB worker からも呼べ、読み出しと同時に呼んでも値が混ざりません。
+
+| 戻り値 | 条件 |
+| --- | --- |
+| `ESP_OK` | 設定した |
+| `ESP_ERR_INVALID_ARG` | `data` が null か `length` が 0、別 Function の ID を指定、ID が一意に決まらない |
+| `ESP_ERR_INVALID_STATE` | 開始前、または停止処理中 |
+| `ESP_ERR_NOT_SUPPORTED` | その ID に Feature report がない |
+| `ESP_ERR_INVALID_SIZE` | 宣言した長さを超える |
+
+## 独自HIDと容量
+
+独自の HID は `EspUsbHidFunction` を基底クラスにします（既存の `EspUsbDeviceHidCustom` を使うだけなら変更は要りません）。
+
+- `EspUsbHidFunction` は `EspUsbDeviceClass` を継承し、begin/end、転送、確保エラー、停止を共通で実装します。独自の `begin()` では検証の後に基底の `begin()` を呼び、その結果を返します。
+- 2.x で `EspUsbDeviceClass` から直接 HID を作っていた拡張は、この基底へ移す必要があります。
+- 独自 begin が途中で失敗しても、Device が end を呼んで基底の状態を元に戻します。登録していない、または開始済みの Function の begin は `ESP_ERR_INVALID_STATE` になります。動作中に Function の end を呼ぶと Device 全体が止まります。
+- 派生クラスが callback や応答データを持つ場合は、派生 destructor の先頭で `end()` を呼び、worker が止まってからメンバーを破棄してください。標準の HID クラスはそうなっています。
+- `EspUsbDeviceHidCustom` に渡す report descriptor の配列は、動作中も有効で変更しないまま保ってください。
+
+### 容量の照会
+
+`inputReportCapacity()` / `outputReportCapacity()` / `featureReportCapacity()` は、共有 interface に必要な最大 byte 数を返します。report ID を宣言した report は ID の 1 byte も含みます。開始前と終了後は 0 です。
+上の例（`reportSize` 257）なら、Input/Output/Feature とも report ID 込みで 258 byte です。
+
+### descriptor の解析
+
+begin 時に report descriptor を解析し、Report Size / Count / ID と global の Push/Pop を見て、ID と種類（Input/Output/Feature）ごとの bit 数を合計します。
+次のものは begin で拒否します：途中で切れた item、Push/Pop の不整合、Report ID 0 の明示指定、番号付きと番号なしの report の混在、転送長の上限超過。
+これは HID の usage や意味を全部検査する仕組みではありません。
+
+### 確保する領域
+
+| 領域 | 確保する条件と大きさ |
+| --- | --- |
+| 共有の状態・report 表 | HID を開始するとき1回。使う ID の数だけ |
+| IN の DMA 領域 | Input report があるときだけ。最大 Input report 長 |
+| OUT の DMA packet 領域 | Output report と interrupt OUT endpoint があるときだけ。選んだ速度の最大 packet 長 |
+| OUT report の組み立て領域 | 同上。最大 Output report 長 |
+| 状態の保存領域 | 定義した ID/種類ごとの report 長の合計。GET_REPORT と idle 再送で使う |
+| control 応答用の領域 | 定義した Input/Output/Feature の最大長 |
+| 相対値の mask | 相対値の Input 項目がある report だけ。保存領域と一緒に確保 |
+
+- Input だけの HID では OUT 側と Feature の保存領域を確保しません。GET_REPORT 用の Input 保存と control 応答用の領域は必要です。
+- 転送中に heap は使いません。HID を使わないプログラムには、これらの状態・driver・buffer はリンクされません。
+- 確保に失敗すると begin が `ESP_ERR_NO_MEM` で失敗し、確保済みの領域と driver 登録をすべて戻します。
+- end は USB worker と DMA を止めてから解放します。
+
+## controlと受信
+
+### Host からの要求
+
+独自 driver で次を処理します：HID descriptor と report descriptor の照会、Input/Output/Feature の GET_REPORT、Output/Feature の SET_REPORT、report ID ごとの GET_IDLE/SET_IDLE、boot interface の GET_PROTOCOL/SET_PROTOCOL。bus reset で report protocol に戻ります。
+
+- SET_REPORT は、方向・宛先・interface、ID と種類、長さ、実際に受けたデータ量を検査し、ID 付き形式で先頭の ID が合わないものは成功を返す前に拒否します。
+- control 経由の番号付き report は、「ID 付きの全長」と「wValue だけで ID を指定する payload」の両方の形を受け付けます。
+- 知らない ID/種類や、方向・interface が合わない要求には STALL を返します。
+
+### interrupt OUT の受信
+
+- 1 packet ずつ受け、ID ごとの宣言長に達するか、短い packet が来た時点で1つの report とします。最大 report より短い別 ID の report がちょうど packet 長の倍数でも、余分な長さ0の packet（ZLP）は要りません。
+- callback へは ID を分けた payload と長さを渡します。データはその callback の間だけ有効です。
+- callback の中で end、Function の破棄、設定変更をしないでください。
+
+### GET_REPORT で返す値
+
+- ID と種類ごとに保存した状態を返します。初期値は ID と 0 埋めの payload です。
+- Input は送信を受け付けたとき、Output/Feature は SET_REPORT が完了したときに更新します。
+- 短い payload を送ると、保存する長さも短くなります。黙って 0 埋めはしません。
+- 応答の開始時に専用領域へコピーするので、応答の途中でアプリが値を変えても1つの応答の中で混ざりません。
+- Input の相対値（Mouse の X/Y/ホイールなど）は送信成功後に 0 へ戻し、絶対値は保持します。descriptor の bit 位置から mask を作っています。
+
+### protocol の切り替え（boot ⇔ report）
+
+- Keyboard は boot 8 byte ⇔ NKRO 29 byte、Mouse は boot 3 byte ⇔ report 4 byte に切り替わります。切り替えると保存している Input は中立の値に戻ります。
+- SET_PROTOCOL で形式が変わるときは、送信中の古い IN をハードウェアで止めてから応答します。古い完了通知を core の FIFO fence（それより前の通知をすべて処理し終えるまで待つ仕組み）で流し終えるまで、明示送信と idle 再送の両方を保留します。
+- 固定時間の delay や、endpoint の STALL/clear-halt で DATA PID（DATA0/DATA1 の交互の印）を初期化する方法は使いません。
+- boot に対応した番号なし Input は、現在の形式の正確な長さを求めます。たとえば NKRO が有効な report protocol へ 8 byte の boot 配列を直接送ると `ESP_ERR_INVALID_SIZE` で拒否されます。通常の Keyboard の関数は形式を自動で選びます。形式を選んでから送るまでに Host が切り替えた場合は、合わない packet を送らずに拒否するので、アプリ側で再試行できます。
+- 独自の boot 対応 descriptor は、番号なし report で必要な長さを持つものだけを受け付けます。短すぎる boot descriptor は begin で拒否します。
+- protocol 切り替えのために heap や専用 task を追加で確保することはありません。
 
 ## idleと設定変更
 
-HostのSET_IDLEの値×4 msで、対象Input reportの状態を自動再送する。0は自動再送なし、ID 0は全Input IDへの指定。
-GET_IDLEはID別の設定値を返す。既定は0を維持し、明示的なsendInput/sendReportは同じ値でも送信する。
-idle設定は自動再送を制御し、アプリからの送信を暗黙に捨てるfilterにはしない。
-期限は前回の転送完了を基準にし、INが使用中なら完了後に送る。複数IDは期限の古い方を選ぶ。
-期限直前の周期変更は次のreport後に反映する。既に投稿したINは、idleを0にしても完了まで保持する。
+Host が SET_IDLE で指定した値×4 ms ごとに、その Input report の保存状態を自動で再送します。
 
-再送jobはHostが有効にした間だけworkerへ再投稿し、タイマー/メッセージ用のheapを追加しない。
-reset/endで停止する。suspend中は新規Inputを拒否し、idle再送はresume後に再開する。
-S3 FSのVendor HID 2 IDで実bus休止・再開を確認した。試験範囲は後述。
+- 0 は自動再送なし（既定）、ID 0 はすべての Input ID への指定です。GET_IDLE は ID ごとの設定値を返します。
+- 期限は前回の転送完了から数えます。IN が使用中なら完了後に送ります。複数の ID があるときは期限の古い方を先に送ります。
+- 期限直前に周期を変えると、次の report の後から反映されます。送信済みの IN は、idle を 0 にしても完了まで保持します。
+- 再送は Host が有効にしている間だけ worker に再投入し、タイマーやメッセージ用の heap は追加しません。
+- reset と end で止まります。suspend 中は止まり、resume 後に再開します。
 
-KeyboardのonOutputReport/onProtocol/enableNkroとHidVendorのonOutputReport/onFeatureReportは、
-CDCと同じesp_err_t返却・停止中設定に揃えた。開始中はInvalidStateとして既存設定を保つ。
-戻り値を無視する既存呼出しの形は維持できる。void戻り値のmember function pointerを使う拡張は型の変更が必要。
-protocol()はatomicな値のsnapshotを返し、workerからの更新と競合しない。
+bus reset と unconfigure（SET_CONFIGURATION 0）では Input/Output を中立の値に戻し、idle を無効にします。Feature は Device の設定値として保持し、end か次の begin で初期化します。
 
-## 実験と移行判断
-
-利点はビルド設定なしの大きなreport、不要なOUT/Feature資源の省略、未使用HID class全体のリンク除外、
-構成ごとの確保量と失敗結果の明示化。不利益は開始時のdescriptor解析/確保、
-独自HID基底の移行、および不正descriptor・長すぎるsendの明示的拒否である。
-通常のKeyboard/Mouse送信を変更する必要はない。
-
-S3–S3の初期3試験は139.25秒で成功。新規`hid_transport`のfocused試験も1 passed、95.25秒。
-payload 1/63/64/65/127/128/129/255/256/257/511/1023 byteのIN、interrupt OUT、
-control Output（prefixあり/なし）・Feature、無効要求後の復帰、idle値、boot/NKRO切替とLEDを確認した。
-descriptor-onlyでは最大65535 byteの領域と反復heap回復を確認した。最大長そのもののwire転送は行っていない。
-Host probeは複数packetを明示的に連結して照合しており、任意のOSアプリのread APIの挙動を証明するものではない。
-
-標準の`--combo all`は`runtime-hid-all.xml`、9 passed、0 skipped、0 unfinished、474.47秒。
-この時点では176取得点の確保失敗/回復を含む。全caseで両board STOPPED、panicなし。
-その後の終了順序の補強と解析stackの故障注入は、追加のfocused試験で確認する。
-
-終了順序とstack故障注入を加えた`hid-transport-final.xml`は2 passed、91.43秒。
-稼働中Vendor HID/Keyboard破棄、callbackを有効に保った停止、194取得点の失敗/回復を確認した。
-開始成功時のstartError=ESP_OKも、続く`hid-transport-errors.xml`で1 passed、53.04秒を確認した。
-未登録HIDのbegin拒否と既存7 HIDの通信継続も、`hid-registration-final.xml`の1 passed、44.01秒で確認した。
-
-GET_REPORT/idle追加後の`hid-report-state.xml`は2 passed、127.44秒。
-2 IDのInput/Output/Feature、初期値、Featureのreset越し保持、並行更新中の200読出しの整合性を確認した。
-20/100 ms指定は、このS3 FS接続で平均20.873/108.002 msだった。大きいreportの複数packet転送時間も含む観測値で、
-全環境での精度保証や性能benchmarkではない。ID単位/全体の再送停止を確認した。
-relative maskとMouseのboot/report形式を加えた`hid-state-relative.xml`は3 passed、123.33秒。
-この時点で200取得点の失敗/回復、Feature更新の追加確保なし、相対値をzeroへ戻したidle再送も確認した。
-最大長のdescriptor-only確認は、追加保存領域を考慮しINのみの65535 byte構成で行う。
-
-GET_REPORTの状態保存と独立した応答用copyに、定義したreportの長さ分とcontrol staging分のRAMが追加で必要になる。
-全OS、P4/S2/S31、休止中のprotocol変更・切断等の全組合せ、期限近傍の詳細精度、
-未完INを伴うprotocol変更の競合は追加検証が必要。
-
-最終の標準`--combo all`実行`hid-report-idle-all.xml`は**10 passed、0 skipped、0 unfinished、520.13秒**。
-200取得点の失敗/回復とFeature setterの追加確保なし、短いboot定義の拒否、設定の停止中契約も含む。
-全caseで両board STOPPED、panicなし。3最小build/nmはHID未使用時のdriver/状態保存/idle処理のリンク除外を維持した。
-
-規格参照: [USB HID 1.11](https://www.usb.org/sites/default/files/documents/hid1_11.pdf)。
-
-新規`validation/s3/hid_protocol`は公開IDF Host APIでINを手動投稿し、旧reportをDevice DMAに保留する。
-Keyboard29↔8 byte、Mouse4↔3 byteを各4回切替。二つ目の送信の拒否、切替後30 msの未受信、
-新markerの全byteと長さ、誤形式のInvalidSizeを実通信で確認した。
-初回はCoreで有効な列挙filterのcallback省略によりHost未準備で失敗した。
-診断のINSTALL/CLIENT成功・OPEN未発生とIDFのenum.cを照合し、標準enum_filter_cbで対象VID/PIDを許可して修正した。
-この試験だけmanual Hostを使い、Host libraryへのpatchやpytestの独自fixture/hookは追加していない。
-
-`hid-protocol-related.xml`は**4 passed、0 skipped、0 unfinished、171.86秒**。
-新規probe、既存HID transport/report state、313取得点の確保失敗/回復を含み、全caseで両board STOPPED、panicなし。
-serial原本は`/tmp/pytest-embedded/2026-10-26_14-27-21-836610/`、JUnit/transcript/serialコピーは`.pytest-results/hid-protocol-related*`。
-通常の`--combo all`の対象は12件になったが、今回実行したのは関連4件で、全12件実行済みとはしない。
-人工的な旧完了eventとqueue満杯の組合せ、protocol切替とreset/endの同時実行、他SoC/OSは未検証。
+callback 登録関数（Keyboard の `onOutputReport` / `onProtocol` / `enableNkro`、Vendor の `onOutputReport` / `onFeatureReport`）は、CDC と同じく `esp_err_t` を返し、停止中だけ設定できます。戻り値を無視する書き方はそのまま使えます。戻り値が void のメンバー関数ポインタを使っていた拡張は型の変更が必要です。
+`protocol()` は atomic な値の snapshot を返すので、worker からの更新と競合しません。
 
 ## 標準interface/endpoint要求による回復
 
-SET_INTERFACE alt 0では、そのHID interfaceのIN/OUT DMAを停止し、旧完了eventのfence後に
-送信中フラグと受信途中の組立て状態を解放し、両endpointをDATA0へ戻す。
-SET_FEATURE ENDPOINT_HALTでは指定方向を停止し、CLEAR_FEATUREではその方向をDATA0へ戻して再開する。
-もう一方のendpointの転送・DATA PIDは維持する。OUTは内部で再投稿する。
+Host が送る標準要求で、HID の転送状態を初期化します。
 
-HID sendInput/sendReportは内部bufferへのcopyの受理を返すため、受理済みでも未完了のレポートは
-これらの初期化で破棄され得る。HALT中とfence待ちは新しいINを受理しない。
-受信途中のOUTを新しいレポートへ連結せず、未完成のレポートのcallbackも発生させない。
-GET_REPORT用の保存値、protocol、idle設定は保持する。idle有効時は保存値の通常の再送を再開する。
-これらの標準要求はbus resetとは異なり、protocolをreportへ戻す操作ではない。
-SET_PROTOCOLによるformat変更では従来どおりINだけを止め、PIDを維持する。
+- **SET_INTERFACE（alt 0）**：その HID interface の IN/OUT の DMA を止め、古い完了通知を fence で流してから、送信中の印と受信途中の組み立て状態を捨て、両 endpoint を DATA0 に戻します。
+- **SET_FEATURE(ENDPOINT_HALT)**：指定した方向を止めます。**CLEAR_FEATURE** でその方向を DATA0 に戻して再開します。もう一方の endpoint の転送と DATA PID はそのままです。OUT は内部で受信を再開します。
 
-新たな専用task・転送時heap確保を追加せず、既存idle jobを方向別fence予約にも使う。
-追加費用はHIDを使う場合の方向別drain/PID-reset状態と回復コード。
-公開send/callback APIの形は変えない。確実な配送確認が必要な用途ではHostとアプリで確認・再送を行う。
+注意点：
 
+- 送信関数はコピーを受け付けた時点で true を返すので、受け付け済みでも未完了の report はこれらの初期化で捨てられることがあります。確実な配送確認が必要なら、Host とアプリの間で確認・再送を行ってください。
+- HALT 中と fence 待ちの間は新しい IN を受け付けません。
+- 受信途中の OUT を新しい report につなげることはなく、未完成の report で callback を呼ぶこともありません。
+- GET_REPORT 用の保存値、protocol、idle 設定は保持します。idle が有効なら通常の再送を再開します。
+- これらは bus reset とは違い、protocol を report に戻しません。SET_PROTOCOL による形式変更では、従来どおり IN だけを止めて DATA PID を保ちます。
+- 専用 task や転送時の heap 確保は追加していません。既存の idle 用 job を方向別の fence 予約にも使います。
 
-## HID標準要求の回復
+## 複合HIDのdescriptorの扱い
 
-2026-10-27。HIDのSET_INTERFACE alt 0とHALT/CLEAR_FEATUREに方向別DMA停止・fence回復を追加した。
-新規hid_standardは129 byteレポートの部分IN/OUTを3回再初期化し、未完成OUTの通知なしと再通信を確認する。
-HALT有無のCLEAR_FEATUREを両方向で行い、反対方向のDATA1から残り65 byteを継続する。
-両方向とも部分転送後にHALT/解除した条件ではHost pipeだけを再生成し、余分なSET_INTERFACEで回復を隠さない。
-公開HID APIはcopy受理のまま。Hostの初期化で受理済みの未完レポートが破棄され得ることを明記した。
+複数の HID Function をまとめた descriptor では、各 Function の report descriptor 全体を global の Push/Pop で囲みます。ある Function の単位や物理範囲が、次の Function へ引き継がれないようにするためです。
 
-`hid-standard-related.xml`はhid_standard、hid_protocol、hid_transport、hid_report_stateの
-**4 passed、0 skipped、0 unfinished、636.88秒**。8 serial log全てSTOPPED、panicなし。
-原本`/tmp/pytest-embedded/2026-10-27_07-45-09-725494/`、コピー/JUnit/transcriptは
-`validation/.pytest-results/hid-standard-related*`。
-Vendor copy最小buildのnmではHID本体・方向別drain処理のsymbol不在を確認した
-（`hid-standard-vendor-copy-build.txt`、`hid-standard-vendor-copy-nm.txt`）。
+- Function の中の Push/Pop はそのまま有効です。
+- まとめた descriptor は Function ごとに 2 byte 長くなります。begin 時の解析では、実際の Push の深さだけ一時的な stack を使い、解析後に解放します。
+- 単独の Function ではこの処理をしません。
 
-plugin repoは1.10.0、commit `698bb29`で、combo/profileの最新ローカルガイドを再確認した。
-新試験もconftestや独自hookなし。標準combo allで29件を収集したが、現在の全29件一括実行は未完了。
-SET_INTERFACEとidleの同時条件、人工的な旧完了/queue満杯/reset/endの全競合順序、他SoC/OSは未検証。
-残るDWC2/ABI/header依存と他クラスの回復検証も継続する。
+## FSとHSの違い
 
+| 項目 | FS（S3 など） | HS（P4/P4X の HS controller） |
+| --- | --- | --- |
+| interrupt endpoint の最大 packet 長 | 64 byte | 1024 byte |
+| HidVendor の packet 長 | `reportSize + 1` と 64 の小さい方（大きい report は複数 packet） | `reportSize + 1` が 64 を超えると、その値（最大 1024） |
+| 複合 HID の packet 長 | 各 Function の希望の最大。64 を超えると begin が `ESP_ERR_INVALID_SIZE` | 同。1024 を超えると `ESP_ERR_INVALID_SIZE` |
+| 非 control IN endpoint の数の上限（全 Function 合計） | S3 は 4 | P4 の HS は 7 |
 
-## 実bus休止中のidleと再開
+HS で 512 byte を超える interrupt OUT packet を使う場合、Host 側の周期転送用 OUT FIFO が既定（512 byte）では足りないことがあります。
+EspUsbHost を Host に使う試験では、P4 で `config.fifo = ESP_USB_HOST_FIFO_LARGE_PERIODIC_OUT` を指定しています（`validation/s3/hid_transport`）。
 
-`hid_report_state`を拡張し、HostのLLから実際のroot portを3回休止・再開した。
-Inputのwire長8/130 byteの2 IDをそれぞれidle値5/25（20/100 ms）に設定し、
-休止中のHost受信数が150 ms間変わらないことと、Deviceの明示Input拒否を確認した。
-各resume後は350 msに短いreport18件・大きいreport4件を受信し、GET_IDLEとGET_REPORTの値も維持。
-再送停止後の静止、200回のFeature読出し整合性、最後のbus resetでの状態も通過した。
+## 2.x からの移行
 
-製品`512edb6`のまま**1 passed、0 skipped/error/failure/unfinished、80.33秒**。
-2 serial全てSTOPPED、STOP_FAILED/panicなし。原本
-`/tmp/pytest-embedded/2026-10-28_16-07-53-418156/`、結果は`.pytest-results/hid-suspend*`。
-S3 FSのHost起点休止の結果で、Host側の未完periodic Inputがある構成を含む。
-未完reportの全packet位置やboot mouse/keyboardの全状態、remote wakeup、OS省電力の検証ではない。
-製品コードの追加変更や新しいtask/bufferはない。
+- `CFG_TUD_HID_EP_BUFSIZE`、旧 `CFG_TUD_HID_BUFSIZE`、`CFG_TUD_HID`（0 を含む）の指定は廃止しました。残っているとビルドが移行を促すエラーになります。
+- report の大きさと packet の大きさを同じビルド定数で決める仕組みはなくなりました。
+- 通常の Keyboard/Mouse の送信コードは変更不要です。
+- 変更が必要なもの：`EspUsbDeviceClass` から直接作った独自 HID、System Control の数値直書き、`HidVendor::sendInput()` に長すぎる payload を渡していたコード、callback 登録関数の戻り値型に依存するコード。
+- Gamepad の hat 定数は変わっていません。
+
+## 設計判断の理由
+
+- **runtime 確保にした理由**：ビルド設定なしで大きな report を使える、不要な OUT/Feature 資源を省ける、HID を使わないときは HID class 全体がリンクされない、構成ごとの確保量と失敗理由が明確になる。代わりに、begin 時の解析と確保、独自 HID 基底への移行、不正な descriptor や長すぎる送信の明示的な拒否が増えた。
+- **GET_REPORT の保存領域**：状態の保存と応答用のコピーのため、定義した report の長さ分と control 応答用の RAM が追加で要る。
+- **Gamepad の hat**：以前は logical range が 0〜8 で、中央 0 が方向として扱われ、上（1）や右（3）も約 39/118 度に対応していた。logical range を 1〜8 にし、Input を Null 状態対応にして、中央 0 を「入力なし」にした。hat の後の buttons も物理範囲 0〜1 に戻した（Physical Maximum の指定で descriptor が 2 byte 増えるが、report の大きさや member は増えない）。8 bit の wire 値は変えていない。根拠は [HID 1.11](https://www.usb.org/sites/default/files/hid1_11.pdf) §6.2.2.5 の hat と null の説明。
+- **System Control**：Consumer Control と同じく API で usage を指定できるようにした。array の Input では Data/Array/Absolute 以外の属性を意味の根拠にしない。
+
+## 実測の記録
+
+S3 同士（FS）の結果です。HS 直結の結果は最後にまとめました。
+
+### 転送と容量（2026-10-26）
+
+- 初期3試験が成功（139.25 秒）。`hid_transport` の個別試験も成功（95.25 秒）。
+- payload 1/63/64/65/127/128/129/255/256/257/511/1023 byte の IN、interrupt OUT、control の Output（ID あり/なし）と Feature、無効な要求の後の復帰、idle 値、boot/NKRO の切り替えと LED を確認。
+- descriptor だけの確認で、最大 65535 byte の領域確保と、繰り返しでの heap 回復を確認。最大長の wire 転送そのものは行っていない。Host 側の probe は複数 packet を明示的に連結して照合しており、任意の OS アプリの read の挙動を示すものではない。
+- 標準の `--combo all`（`runtime-hid-all.xml`）は9件成功、474.47 秒。176 箇所の確保失敗と回復を含み、全件で両ボード STOPPED、panic なし。
+- 終了順序と解析 stack の故障注入を加えた `hid-transport-final.xml` は2件成功、91.43 秒。動作中の Vendor HID/Keyboard の破棄、callback を有効にしたままの停止、194 箇所の失敗と回復を確認。
+- 開始成功時の `startError() == ESP_OK` を `hid-transport-errors.xml`（1件、53.04 秒）、未登録 HID の begin 拒否と既存7 HID の通信継続を `hid-registration-final.xml`（1件、44.01 秒）で確認。
+
+### GET_REPORT と idle
+
+- `hid-report-state.xml` は2件成功、127.44 秒。2 ID の Input/Output/Feature、初期値、Feature の reset 越しの保持、並行更新中の200回の読み出しの整合を確認。
+- idle 20/100 ms の指定は、この S3 FS 接続で平均 20.873/108.002 ms だった。大きい report の複数 packet 転送時間を含む観測値で、精度保証や性能測定ではない。ID 単位と全体の再送停止も確認。
+- 相対値の mask と Mouse の boot/report 形式を加えた `hid-state-relative.xml` は3件成功、123.33 秒。200 箇所の失敗と回復、Feature 更新で追加確保がないこと、相対値を 0 に戻した idle 再送を確認。最大長の descriptor だけの確認は、保存領域を考慮して Input だけの 65535 byte 構成で行った。
+- 最終の `--combo all`（`hid-report-idle-all.xml`）は10件成功、520.13 秒。200 箇所の失敗と回復、Feature 設定で追加確保なし、短い boot 定義の拒否、停止中だけ設定できることを含む。全件で両ボード STOPPED、panic なし。最小構成3種の nm で、HID 未使用時に driver・保存領域・idle 処理がリンクされないことを確認。
+
+### protocol 切り替え（`validation/s3/hid_protocol`）
+
+- 公開の IDF Host API で IN を手動で投入し、古い report を Device の DMA に保留させた状態で、Keyboard 29⇔8 byte、Mouse 4⇔3 byte を各4回切り替えた。2つ目の送信の拒否、切り替え後 30 ms は受信しないこと、新しい印の全 byte と長さ、誤った形式の `ESP_ERR_INVALID_SIZE` を確認。
+- 初回は Core で有効な列挙 filter の callback を省いていたため Host が準備できず失敗した。標準の `enum_filter_cb` で対象 VID/PID を許可して直した。この試験だけ manual Host を使い、Host library の patch や pytest の独自 fixture は追加していない。
+- `hid-protocol-related.xml` は4件成功、171.86 秒（313 箇所の失敗と回復を含む）。全件で両ボード STOPPED、panic なし。記録は `.pytest-results/hid-protocol-related*`。
+- この時点の `--combo all` の対象は12件だったが、実行したのは関連4件だけ。
+
+### 標準要求による回復（2026-10-27、`validation/s3/hid_standard`）
+
+- 129 byte の report の部分的な IN/OUT を3回初期化し、未完成の OUT が通知されないことと、その後の通信を確認。HALT ありなしの CLEAR_FEATURE を両方向で行い、反対方向が DATA1 のまま残り 65 byte を続けることを確認。両方向とも部分転送後に HALT/解除した条件では Host の pipe だけを作り直し、余分な SET_INTERFACE で回復を隠していない。
+- `hid-standard-related.xml`（hid_standard、hid_protocol、hid_transport、hid_report_state）は4件成功、636.88 秒。8つの serial log すべて STOPPED、panic なし。記録は `validation/.pytest-results/hid-standard-related*`。
+- Vendor コピー方式の最小構成の nm で、HID 本体と方向別の停止処理が含まれないことを確認（`hid-standard-vendor-copy-build.txt`、`hid-standard-vendor-copy-nm.txt`）。
+- 試験 plugin は 1.10.0（commit `698bb29`）。
+
+### bus 休止中の idle と再開（`hid_report_state` の拡張）
+
+- Host から実際の root port を3回休止・再開した。wire 長 8/130 byte の2 ID に idle 値 5/25（20/100 ms）を設定し、休止中 150 ms の間 Host の受信数が変わらないことと、Device の明示 Input が拒否されることを確認。
+- 再開後は 350 ms の間に短い report を18件、大きい report を4件受信し、GET_IDLE と GET_REPORT の値も保たれた。再送停止後の静止、200回の Feature 読み出しの整合、最後の bus reset 後の状態も確認。
+- 製品 `512edb6` のまま1件成功、80.33 秒。STOP_FAILED/panic なし。記録は `.pytest-results/hid-suspend*`。
+- Host 起点の休止の結果で、remote wakeup や OS の省電力の確認ではない。
+
+### HS 直結（2026-10-31）
+
+- S3 の peer 試験（`hid_transport` などを含む）を P4/P4X の HS 直結でも収集した。HS では interrupt OUT の packet が 1024 byte に達するため、Host 側（P4）の周期 OUT FIFO を大きくして実行した。結果は [P4/P4X と追加試験環境](V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31) を参照。
+- `validation/peer/cdc_hid` は CDC と boot keyboard の複合を HS で確認する probe。
+
+### 未確認の範囲
+
+すべての OS、S2/S31、休止中の protocol 変更や切断などの全組み合わせ、idle 期限付近の細かい精度、未完了の IN を伴う protocol 変更の競合、SET_INTERFACE と idle の同時条件、人工的な古い完了通知・queue 満杯・reset/end の全順序。
+
+規格：[USB HID 1.11](https://www.usb.org/sites/default/files/documents/hid1_11.pdf)

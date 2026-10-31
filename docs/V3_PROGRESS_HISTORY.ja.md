@@ -1,7 +1,7 @@
 # v3実装の過去記録
 
-2026-10-28時点の旧引き渡し文書を保管したもの。各節は記載時点の状態であり、
-暫定依存・未完了の記述を現在の状態として読まない。[現在の引き渡し](V3_HANDOFF.ja.md)を入口にする。
+旧引き渡し文書などを、整理した時点ごとに原文のまま保管したもの（古い順、末尾が最新）。
+各節は記載時点の状態であり、暫定依存・未完了の記述を現在の状態として読まない。[現在の引き渡し](V3_HANDOFF.ja.md)を入口にする。
 
 # v3 独立試験とAPI整理の引き渡し
 
@@ -1586,3 +1586,212 @@ Remoteは能力広告・Host許可・非同期要求を実装した。古い「�
 新規試験はS3–S3のclock gate/ungateを伴う手動Hostで実wake status/SOF/payloadを確認。
 worker保留→要求queue→reset→再列挙と、停止中17回/停止後32回の要求・照会拒否も成功。
 S2/P4実機・PC OSのremoteは未確認。全体は47件収集となり、直前の全44件と追加関連実行を混同しない。
+
+## 2026-10-30時点の引き渡し原文（2026-10-31に整理）
+
+HS直結の試験を始める前の`V3_HANDOFF.ja.md`全文。「HS sketchはまだ追加せず」「P4Xは未検証」などは当時の状態であり、現在の状態は[引き渡し](V3_HANDOFF.ja.md)を参照する。
+
+# v3開発の引き渡し
+
+更新: 2026-10-30。worktree `/home/mt/dev/EspUsbDevice-v3`、branch `v3`。
+2026-10-30後半：CH32RV調整の残りAudio（2408716）・DFU（72e0743）・MSCを実装し、各関連試験に成功。
+DFU/MSCはbench 3-3/3-4のP4XをLinux PCへHS直結したcombo `p4x_pc`で、数値とwireを根拠に仕様を決めた。
+[Audio](V3_AUDIO_API.ja.md#espでの実装と実測2026-10-30)、[DFU](V3_DFU_API.ja.md#判断の根拠となった実測)、[MSC](V3_MSC_API.ja.md#espでの実装とwire確認2026-10-30)。標準all収集83件、全件一括は未実施。
+最新製品は`22afc15`。Video投稿型統一は`02c7509`、CDC期限付きTX待ちは`22afc15`。
+Video関連12件179.81秒、CDC関連12件374.48秒がそれぞれ一括成功。S2 CdcConsole compileも成功。
+最新収集80件（S3 50＋P4 30）。全80件一括実行の結果ではない。
+[今回のAPI変更と移行](V3_MIGRATION.ja.md#ch32rvとの調整によるv3開発途中の変更2026-10-30)、
+[CH32RVとの判断・残るAudio/DFU/MSC](V3_CH32RV_API_ALIGNMENT.ja.md)。
+
+直前の基準製品`80e8676`、registry試験修正`0144bfb`では、
+**標準combo allの全47件が1917.29秒で成功**。skip/error/failure/unfinishedは0、
+94 serial全STOPPED/panicなし。実測817開始＋14設定失敗回復、heap一致も監査した。
+初回はregistryの旧descriptor長161の固定期待で停止（実長175、19成功・1失敗）。
+試験をDevice申告とHost実取得長の照合へ直し、製品を変えずに全47件を再実行して成功した。
+初回の40 logs全停止/panicなしの記録は`remote-all-initial*`へ保存した。
+
+P4追加: probe f5c69dd、6件67.84秒成功。両controllerのFS loopback、18開始/24停止、
+Vendor/CDC/HIDと65537 byteまでのDMAを確認。[P4記録](../validation/p4/README.ja.md)。
+公開Host同期INのcache欠落を再現し、Host隔離branch 7f25896で比較成功。
+通常P4試験は公開Host2.10.1のqueue経路で成功し、未公開版には依存しない。
+
+P4次段: 0bf46ddでMSC/MIDI追加4件31.85秒成功、4 logs正常停止/panicなし。
+両実機はv1.3。P4Xはpostv3 compile/ELF/29依存まで確認し、HW検証は未実施。
+[機種差・必要環境と次の試験](V3_P4_VARIANTS_AND_BENCH.ja.md)。PSRAMは53bcfebで2件成功、32 MiBと外部保存先/ringの実通信を確認。
+Audio e577698のUAC1/UAC2 duplex4件も33.95秒成功。8開始、PCM両方向/feedback/formatを確認。
+PSRAM/Audioのpostv3 compile・29依存/native出所も監査済み。
+CCID ee12cc1の4件、Video 2a7c4b0の4件、DFU 2eb53b0の2件、NCM 9059f36の4件も成功。
+P4は各単位で計30件成功、全10 classの基本wire通信/両controller FSを確認。製品変更なし。
+追加4 classのnative ELF/29依存/未選択class除去も監査。このP4追加時点のall収集77件（S3 47＋P4 30）。
+全77一括成功という記録ではない。
+ユーザーからP4X（esp32-series-80f1b2d71d86、HWCDC/JTAG）と旧P4
+（esp32-p4-80f1b2d0b261、CH340 UART）のHS直結を確認した。
+.envへp4_hs_host/p4_hs_device/p4x_hs_host/p4x_hs_deviceのport割当を予約。
+通常peer＋p4_p4x_hs/p4x_p4_hsのcombo案を[P4 bench計画](V3_P4_VARIANTS_AND_BENCH.ja.md)へ記録。
+HS sketch/profile/combo自体はまだ追加せず、flashもしていない。現行all収集80件は維持する。
+次は480 Mbps HS link、P4X実機、PC OS binding。NCM明示close併用時のHost再開始は別の未解決経路。
+
+## 方針と入口
+
+Device/Function/config/beginの明示的な構成を維持し、使用する機能だけに費用を持たせる。
+旧互換性より一貫した最終形を優先するが、利点のない改名や互換shimは作らない。
+CH32RVはAPI調整の設計事例、OEPは利用者の一例であり、移植・特化の対象ではない。
+確認不要で進められる単位を実装・実測し、区切りごとにlocal commitする。pushしない。
+
+- [開始停止・移行](V3_MIGRATION.ja.md)、[API判断](V3_API_DECISIONS.ja.md)、[所有権](V3_ARCHITECTURE.ja.md)
+- [独立試験](../validation/README.ja.md)、[全体計画](V3_DEVELOPMENT_PLAN.ja.md)
+- [HID](V3_HID_API.ja.md)、[Audio](V3_AUDIO_API.ja.md)、[Remote wakeup](V3_REMOTE_WAKEUP.ja.md)
+- [CH32RV比較](V3_CH32RV_API_ALIGNMENT.ja.md)、[DWC2の由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)
+
+## 現在の実装
+
+Vendor/CDC/HID/MIDI/MSC/Audio/DFU/NCM/CCID/Video、descriptor registry、EP0/core、
+runtime、controller/IRQ/cache、保守DWC2 forkまで本体内部で維持する。
+旧TinyUSB API・vendor build snapshot/configやSDK同名headerへのfallbackはない。
+MIT/ST BSDの出所表示は保持。構造検査だけでなく、compiler依存・nmと実機を合わせて確認する。
+
+資源はinstance設定に応じて開始時確保し、end/rollbackで回収する。
+通常転送中の反復heap取得を避け、未選択Functionのstateやkeymapを共通表で引き込まない。
+`started`は資源所有、`ready`はHost構成、`suspended`はbus休止。DescriptorsOnlyはworker/PHYなし。
+CDCはArduino Stream、VendorはPrint、MIDIはpacket API。worker設定も開始configへ移した。
+
+## 検証済みの範囲
+
+| 対象 | 証拠・結果 |
+| --- | --- |
+| 最新全体80e8676/0144bfb | **47 passed、1917.29秒、skip/error/failure/unfinished 0**。94 logs全停止/panicなし。817開始＋14設定失敗回復、heap346768一致。typed HID/helper/remote含む。`remote-all*` |
+| 全体の直前基準052bcbb | 全44件3745.31秒成功、88 serial全STOPPED/panicなし。816開始＋14設定失敗回復、heap一致。`archive-all*` |
+| examples 80e8676 | 新8例×S3/S2/P4＝24 compile、全成功。各ELF/FQBN/機械種別/archive/29依存/native出所・未選択class除外を監査。`final-examples-audit.json`。052bcbbの旧結果は`archive-examples-*` |
+| typed HID | System標準usage/array解放、Gamepad角度/中央Null、複合global分離。44照合/52 input、4組のdescriptor意味検査、28不正要求と無信号。新規1件と関連6項目成功。`hid-globals-*` |
+| 失敗注入の更新 | 47構成で実測した817取得点全て失敗/回復、14設定失敗、heap346768一致。固定取得数の期待を撤去。`hid-globals-faults*` |
+| RAM/FAT helper | raw/FAT各4実往復、8開始/guard、RAMのみ。`msc-helpers*` |
+| Remote wakeup 80e8676 | 新規1件45.25秒成功、2 logs全停止/panicなし。3実wake/7無信号/10往復、queued reset/重複拒否。停止中17回＋停止後32回の要求拒否/許可false。`remote-wakeup-stop-after*` |
+| P4実機 | FS/HS controllerを各FS linkで確認。Vendor132 copy往復/1536 direct完了、48 RX＋48 TX返却、CDC24往復/HID18 press/release。6 logs正常停止。`p4-final-audit.json` |
+| S2/P4 compile 80e8676 | remote probeのcompile/ELF機械種別/archive/29依存/native pulse・IO・delay出所と未選択class除外成功。`remote-final-cross-audit.json` |
+| 最小構成80e8676 | includeのみ259465 Flash/21584 globals、追加0/0。Device宣言のみ261957/21840、object196 byte。wake/worker/PHY開始symbolなし。`remote-final-unused-audit.json` |
+
+成果物は`validation/.pytest-results/`（git対象外）。最小Device構成は旧archive基準より
+Flash+44/global+16。objectサイズ増ではなく、共通生存確認lockのリンク等による差分。
+HID修正中にdescriptor長/取得点の古い固定期待が2件失敗した事実と、修正後の成功を区別する。
+関連6項目は複数実行で確認したもので、一括6件成功のJUnitではない。
+
+## 最新全体監査
+
+製品/probeを固定し、標準combo allで47件全てを同一実行で確認した。
+JUnitは`validation/.pytest-results/remote-all.xml`、集計`remote-all-audit.txt`、
+原本`/tmp/pytest-embedded/2026-10-29_11-06-05-103463/`。
+同prefixのserial/transcriptと、監査script`remote-all-audit.py`も成果物へ保存した。
+
+Audio 32 ISO交換/28旧buffer poison/36 guard、4 Audio Fnの10順次交換、
+CDC＋Audio/MSCの同時往復、NCM/CCID/VideoのHALT回復、reset/cancel/休止を確認。
+Vendor 1000 frame/713000 byte×2・39再接続・80 reset、heap356392一致。
+registryは申告/EP0取得長175一致、7 report IDを確認した。
+remoteは実wake3回/無信号7回/10往復、停止中17回・停止後32回の拒否/照会false。
+S3 VendorとS2/P4 Vendor＋remoteの29依存/archive/native出所・未選択class除外も監査した。
+
+## 試験の運用
+
+`validation/`だけを開発試験の入口とする。旧tests/examplesを合否基準やhelperとして使わない。
+plugin1.10.0（local `698bb29`）、Core3.3.12、EspUsbHost2.10.1（必要probeのみ）。
+標準combo `s3: primary=s3_host,device=s3_device`、`--noconftest --maxfail=1`。
+独自conftest/pluginへhookを移さない。不足機能はplugin側の拡張相談を優先する。
+
+```sh
+cd /home/mt/dev/EspUsbDevice-v3/validation
+uv sync --locked
+uv run --locked --env-file .env pytest --combo all --collect-only -q
+uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-results/v3-all.xml
+```
+
+実機pytestは一つずつ。対応するbuild/test中は製品とprobeを変更しない。
+別probe/exampleのcompileも出力先を分離する。共有`/tmp/pytest-embedded`の最新directoryを
+根拠にせず、JUnit timestampから当該serial原本を特定する。
+
+## 今回の依頼との照合
+
+S3–S3を初期環境として、確認不要で進められる実装と検証を行った。
+公開releaseや未入手機材の実機認定を完了したという意味ではない。
+
+| 要求 | 現在の証拠 |
+| --- | --- |
+| 基本方針を維持し、CH32RV移植/OEP特化にしない | Device/Function/config/beginの公開API、新8例、API_DECISIONS/CH32RV比較。CH32RV/OEP側は変更しない |
+| build時設定をAPI/構成へ移す | Device/各Functionのconfigure、旧flagの明示拒否、開始/終了・容量・複数instance・失敗回復を全47件で確認 |
+| TinyUSB依存を最後まで除く | 10 class/core/runtime/保守DWC2、構造検査・29 source依存・native symbol出所・license記録。SDK同名headerへのfallbackなし |
+| 使う機能だけの費用 | include追加0/0、Deviceのみの差分説明、24例とprobeの未選択state除外、817取得失敗回復とheap一致 |
+| 自然な基本利用と、破壊変更の利点/不利益 | Vendor自動送出、CDC Stream、copy/borrowed所有権、HID usage、Audio format等の移行表/各API判断。現在版8例×3機種compile成功 |
+| 旧test/sampleと独立し標準comboを使う | validationの新probe、plugin1.10.0、noconftest。combo allで47実行/47成功/未完0、94 logs正常停止 |
+| S2/P4/S31への拡張余地 | port能力表とcontroller境界、S2/P4の29 source・8例compile。S31は新SDK/port対象と明示。五台benchの逐次役割案を全体計画へ記録 |
+| mainとの整合・適度なcommit | mainの3fed50dを含む独立v3 worktree。各実装・試験・監査結果をlocal commitし、pushしない |
+
+文書の相対link検査は現行README/V3 guides/examples/validationで不良0。
+リポジトリ全体のcheckは旧版履歴・legacy移動に伴う399件を報告して失敗する。
+旧資産をv3合否の制約にせず、原本は`validation/.pytest-results/doc-links-final.txt`へ保存した。
+
+## 未完了と次の判断
+
+残作業の入口は[TODO](../TODO.ja.md#優先する残作業)。HS直結peerの実装/実測、調達中のS2/S31、
+CH32RVとの仕様調整、関連Hostの既知問題、PC/実媒体/長時間/配布判断を記録した。
+S31は4系コア必須。ユーザー指定のdev indexでまず4.0.0-RC1へ固定し、安定版profileと分離する。
+S3/S2/P4/P4Xはcompileと代表的なsmokeから始める。RC更新/正式版では差分に応じ再確認し、
+RC1の成功を4系全体の保証にしない。[4系の検証方針](V3_DEVELOPMENT_PLAN.ja.md#arduino-esp32-4系コアの検証方針2026-10-30)。
+CH32RV側の返答を確認し、Audio/DFU/MSCの具体的なAPI仕様案を各ガイドへ追加した。
+[仕様レビュー入口](V3_CH32RV_API_ALIGNMENT.ja.md#現在の調整状況と仕様レビュー入口)から参照する。
+AudioのDropOldest既定とAPIは合意。3案は先方で実装・X035C8試験成功との報告。
+MSCは02/3A/00と抜去世代比較を採用。DFUの期限/停止競合はESP側の宿題。
+CH32RVのDFU実装はonDetachの受付判定のみで、setDetachHandlerはESP独自。ESPのコード変更は未実施。
+
+基準80e8676の全47件と最新変更の関連試験は完了。現行80件の全件一括実行は未実施。
+同じ試験を無条件で繰り返さず、HS追加やAPI合意後、固定sourceの最終回帰を行う。
+S3 peerの成功を未検証機種の代替にせず、remote wakeupの成功をSoC sleep/PC電源管理の保証にしない。
+
+[過去の実装・実測記録](V3_PROGRESS_HISTORY.ja.md)に整理前の引き渡し全文を保存した。
+途中段階の「未実装」「次」を現在の未完と混同しない。詳細は各APIガイドとvalidation READMEへ置く。
+
+## 2026-10-30時点の開発計画の冒頭と照合表（2026-10-31に整理）
+
+`V3_DEVELOPMENT_PLAN.ja.md`の冒頭にあった追記と照合表の原文。「480 Mbps HSは未確認」などは当時の状態。
+
+2026-10-30追記：最新製品22afc15でCDCの期限付きwrite/flush、02c7509でVideoのSubmission戻り値を適用。
+関連12件ずつが一括成功、S2 CDC基本例もcompile成功。最新の収集80件を全件再実行した結果ではない。
+下記の80e8676/全47件・24 examples等はそれぞれの時点の検証記録として保持する。
+残るCH32RV調整はAudio overflowの仕様策定、DFU受付、MSC媒体交換。
+先方返答を確認し、3項目の具体的なAPI仕様案を作成。現在は仕様レビュー段階で、実装は未変更。
+AudioのDropOldest既定とAPIは合意済み。3案のCH32RV実装はX035C8試験成功との報告。
+MSCは02/3A/00と抜去世代比較を採用。DFUの期限/停止競合はESP側の宿題として確定する。
+CH32RVのDFU実装はonDetachのみで、setDetachHandlerはESP独自。
+S2/S31は物品調達中。S31はベータ版コアが必要で、利用version/commitを確定してprofileを分ける。
+[現在のTODO](../TODO.ja.md)、[判断と検査計画](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
+
+作成日: 2026-10-25。調査基準: EspUsbDevice 2.6.1、commit `b1094cd`。
+
+2026-10-26更新: 開発用試験は既存test/sampleから独立した`validation/`へ変更した。
+初期実機はS3–S3だけ。conftestによる独自制御は行わない。
+Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在の契約は[Vendor API](V3_VENDOR_API.ja.md)。
+[引き渡し](V3_HANDOFF.ja.md)、[API変更の判断](V3_API_DECISIONS.ja.md)、
+[所有権の出発案](V3_ARCHITECTURE.ja.md)、[実験台帳](V3_EXPERIMENTS.ja.md)を参照。
+
+2026-10-29の実装・証拠の照合: 製品80e8676でNative class/core/DWC2、typed HID、remote wakeupまで実装。
+最新の標準combo allは全47件1917.29秒で成功、94 serial全停止/panicなし。
+registry試験0144bfbで旧descriptor長の固定期待を実取得照合へ直してから再実行した。古い段階名や初期case数を現在の合否として扱わない。
+
+| 要件 | 現状と証拠 | 残る確認 |
+| --- | --- | --- |
+| 明示構成・実行時設定・移行 | srcの各configure、V3_MIGRATION/API_DECISIONSと独立probe。build_opt/TinyUSB設定不要 | 全体としての出荷判断は継続 |
+| 未使用コスト | Vendor/Audio等のnmで他class state不在。最新の取得点試験は実測817開始＋14設定失敗回復、100 begin/endも確認 | archive化で最小include差分0。80e8676でも同値。Device宣言のみは旧archive基準からFlash+44/global+16、共通lock等のリンク差分。現在版80e8676の全24 examplesと全47件の回帰は成功 |
+| class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Systemの標準usage/array解放は新規1＋関連6件とS2/P4 compile成功。Gamepad hat/複合global分離は新規1件・関連6項目とS2/P4 compile成功。RAM/FAT helperの8開始/実通信は成功。SD/Firmware helperの実通信は不足 |
+| core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 internal DMA、PSRAM保存先/ringとAudio duplexをFS linkで確認。480 Mbps HSは未確認 |
+| 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupの能力/許可/要求を実装し、S3の実wake・復帰/取消し/停止を確認。全47件回帰も成功、実wake/停止拒否のwire指標を監査済み |
+| 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
+| 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 80e8676の全47件・24 examplesとS2/P4 remote probeを監査。各29依存/archive/native出所を確認済み |
+| 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | HS直結benchは申告済みでprobe/combo追加待ち。S2/S31は調達中。typed HID/MSC helper/remoteを含め全47件一括成功、skip/error/failure/unfinished 0 |
+| 機種・OS・配布 | S3–S3実機、P4両controller FSの全10 class基本通信/PSRAM実機30 case、S2 compile、8つの新examplesと移行ガイド | S2実機、P4の480 Mbps HS link/全機能、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
+
+archive化・typed HID・RAM/FAT helper・remote wakeupの個別確認は済んだ。
+80e8676の全47件を固定ソースで実行し、停止・回収とwire指標の監査まで完了した。
+S2/P4/S31の実機やPCへの結線変更を必要とする項目を、S3 peer成功で代替しない。
+
+## 2026-10-31時点のTODO「HS直結検証」原文（2026-10-31に整理）
+
+注：この原文の「p4x_p4_hsは59件が成功」は、初回の58件成功・1件失敗（ISO OUT）と、修正後の関連再実行の成功を合わせた表現。初回の内訳は[HS直結の結果](V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)を参照。
+
+- [ ] **HS直結検証**：2-3の旧P4と2-4のP4X、両方向。既存S3 peer試験39本をHS comboへ広げ、S3は51件、p4_p4x_hsは59件、p4x_p4_hsは59件が成功した（ISO OUT修正後の関連再実行を含む）。製品の不具合2件（OUT DMAのcache書戻し、ISO OUTの偶奇）を修正済み。CCIDの既定messageBytesはmax(271, MPS)の自動に変更した（CH32RVと共通）。bench P4系4台のPSRAMは32 MiB（台帳反映済み）。残り：P4X PSRAMでの保存先/ringの試験、全comboの一括再実行。[結果](V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)。

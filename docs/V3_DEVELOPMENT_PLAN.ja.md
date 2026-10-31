@@ -1,43 +1,28 @@
 # EspUsbDevice v3 開発計画
 
-2026-10-30追記：最新製品22afc15でCDCの期限付きwrite/flush、02c7509でVideoのSubmission戻り値を適用。
-関連12件ずつが一括成功、S2 CDC基本例もcompile成功。最新の収集80件を全件再実行した結果ではない。
-下記の80e8676/全47件・24 examples等はそれぞれの時点の検証記録として保持する。
-残るCH32RV調整はAudio overflowの仕様策定、DFU受付、MSC媒体交換。
-先方返答を確認し、3項目の具体的なAPI仕様案を作成。現在は仕様レビュー段階で、実装は未変更。
-AudioのDropOldest既定とAPIは合意済み。3案のCH32RV実装はX035C8試験成功との報告。
-MSCは02/3A/00と抜去世代比較を採用。DFUの期限/停止競合はESP側の宿題として確定する。
-CH32RVのDFU実装はonDetachのみで、setDetachHandlerはESP独自。
-S2/S31は物品調達中。S31はベータ版コアが必要で、利用version/commitを確定してprofileを分ける。
-[現在のTODO](../TODO.ja.md)、[判断と検査計画](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
+作成日: 2026-10-25（調査基準: EspUsbDevice 2.6.1、commit `b1094cd`）。状況表の更新: 2026-10-31。
 
-作成日: 2026-10-25。調査基準: EspUsbDevice 2.6.1、commit `b1094cd`。
+この文書はv3の方針、進め方、完了条件を定める計画である。
+日々の状態は[引き渡し](V3_HANDOFF.ja.md)、残作業は[TODO](../TODO.ja.md)にある。
+以前の状況表と追記の原文は[過去の記録](V3_PROGRESS_HISTORY.ja.md#2026-10-30時点の開発計画の冒頭と照合表2026-10-31に整理)へ移した。
 
-2026-10-26更新: 開発用試験は既存test/sampleから独立した`validation/`へ変更した。
-初期実機はS3–S3だけ。conftestによる独自制御は行わない。
-Vendorのinstance資源と借用TXを実装し、S3–S3で検証した。現在の契約は[Vendor API](V3_VENDOR_API.ja.md)。
-[引き渡し](V3_HANDOFF.ja.md)、[API変更の判断](V3_API_DECISIONS.ja.md)、
-[所有権の出発案](V3_ARCHITECTURE.ja.md)、[実験台帳](V3_EXPERIMENTS.ja.md)を参照。
+## 現在の状況（2026-10-31）
 
-2026-10-29の実装・証拠の照合: 製品80e8676でNative class/core/DWC2、typed HID、remote wakeupまで実装。
-最新の標準combo allは全47件1917.29秒で成功、94 serial全停止/panicなし。
-registry試験0144bfbで旧descriptor長の固定期待を実取得照合へ直してから再実行した。古い段階名や初期case数を現在の合否として扱わない。
-
-| 要件 | 現状と証拠 | 残る確認 |
+| 要件 | 現状 | 残る確認 |
 | --- | --- | --- |
-| 明示構成・実行時設定・移行 | srcの各configure、V3_MIGRATION/API_DECISIONSと独立probe。build_opt/TinyUSB設定不要 | 全体としての出荷判断は継続 |
-| 未使用コスト | Vendor/Audio等のnmで他class state不在。最新の取得点試験は実測817開始＋14設定失敗回復、100 begin/endも確認 | archive化で最小include差分0。80e8676でも同値。Device宣言のみは旧archive基準からFlash+44/global+16、共通lock等のリンク差分。現在版80e8676の全24 examplesと全47件の回帰は成功 |
-| class処理と代表複合 | CDC/Vendor/HID/MIDI/MSC/Audio/DFU/NCM/CCID/VideoのNative実機probe。Audio＋CDC、CDC＋MSC、4 Audio Fn構成も確認 | Systemの標準usage/array解放は新規1＋関連6件とS2/P4 compile成功。Gamepad hat/複合global分離は新規1件・関連6項目とS2/P4 compile成功。RAM/FAT helperの8開始/実通信は成功。SD/Firmware helperの実通信は不足 |
-| core/所有権/DMA | f5d1571の全40件、以後能力表/Audio予約幅の関連試験、callback/loan/取消し/reset/HALT/休止を確認 | 任意の全競合順序は未証明。P4 internal DMA、PSRAM保存先/ringとAudio duplexをFS linkで確認。480 Mbps HSは未確認 |
-| 状態・電源 | started/ready/suspended、S3の実bus suspend/resume、Host許可なしremote-wakeup要求拒否 | remote wakeupの能力/許可/要求を実装し、S3の実wake・復帰/取消し/停止を確認。全47件回帰も成功、実wake/停止拒否のwire指標を監査済み |
-| 反復運転 | 既存の100 begin/end回収試験に加え、vendor_soakで1000フレーム/39再接続/80 reset観測、heap一致 | soakは固定回数の試験。長期連続、転送途中の全異常注入を網羅した結果ではない |
-| 依存・ライセンス | verify_usb_backend、29 source依存/nm、ORIGIN/ライセンス保持 | 80e8676の全47件・24 examplesとS2/P4 remote probeを監査。各29依存/archive/native出所を確認済み |
-| 試験の入口 | plugin1.10.0、combo all、noconftest、独立validation。既存tests/examplesを合否基準にしない | HS直結benchは申告済みでprobe/combo追加待ち。S2/S31は調達中。typed HID/MSC helper/remoteを含め全47件一括成功、skip/error/failure/unfinished 0 |
-| 機種・OS・配布 | S3–S3実機、P4両controller FSの全10 class基本通信/PSRAM実機30 case、S2 compile、8つの新examplesと移行ガイド | S2実機、P4の480 Mbps HS link/全機能、S31 port、PC OS結線、OTA/SD実機、shared toolkitの配布範囲とreleaseは未完 |
+| 明示構成・実行時設定・移行 | 各Functionの`configure`、[移行ガイド](V3_MIGRATION.ja.md)、[API判断](V3_API_DECISIONS.ja.md)。`build_opt.h`やTinyUSBの設定は不要 | 全体としての出荷判断 |
+| 使わない機能の費用 | includeだけなら追加0。Device宣言のみは旧archive基準からFlash+44/global+16（共通lockのリンク分）。未選択クラスが残らないことをnmで確認（`80e8676`） | release候補で再確認 |
+| クラス処理と代表的な複合 | 10クラスすべてを実機で確認：S3（FS）、P4一台loopback（FS）、旧P4–P4XのHS直結。Audio＋CDC、CDC＋MSC、4 Audio Functionも確認 | SDとFirmware helperの実通信 |
+| core・所有権・DMA | 取消し、借用bufferの返却、reset、HALT、休止を確認。P4/P4Xで65537 byteまでの借用DMA。HS試験でcache書戻し漏れ（`09470d6`）とISO OUT取りこぼし（`aade7e0`）を修正。PSRAM上の保存先/ringはFS loopbackとHS直結で確認 | 任意の競合順序は未証明 |
+| 状態・電源 | `started`/`ready`/`suspended`、S3での実際のbus休止と復帰、remote wakeup | SoCのsleep、PCの電源管理 |
+| 反復運転 | 100回のbegin/end、vendor_soak（1000 frame、39回の再接続、80回のreset）でheapが一致 | 長時間の連続運転 |
+| 依存・ライセンス | `verify_usb_backend`、29 sourceの依存とnm、出所とライセンスの保持 | release候補で再確認 |
+| 試験の入口 | plugin 1.10.0、`--combo all`（6組、2026-10-31時点で210件を収集）、`--noconftest`、独立した`validation/` | 全comboの一括再実行 |
+| 機種・OS・配布 | S3（FS）、P4/P4X（HSとFS）、P4XとLinux PC（DFU/MSC）、S2はcompileのみ | S2/S31の実機、Arduino-ESP32 4系、PC OS互換、OTA/SDの実機、配布とrelease |
 
-archive化・typed HID・RAM/FAT helper・remote wakeupの個別確認は済んだ。
-80e8676の全47件を固定ソースで実行し、停止・回収とwire指標の監査まで完了した。
-S2/P4/S31の実機やPCへの結線変更を必要とする項目を、S3 peer成功で代替しない。
+S2/S31の実機や、PCへの結線が必要な項目を、S3やP4の成功で代わりにしない。
+
+## 計画の概要
 
 v3は、現在の明示的な構成と基本的な使い勝手を軸に、使う機能だけにコード・メモリ・実行コストを
 持たせるmajor releaseとする。公開APIを整理し、ビルド時の容量・転送方式設定を実行時の設定へ移す。
@@ -211,10 +196,11 @@ uv run --locked --env-file .env pytest --combo all --collect-only -q
 uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-results/v3-all.xml
 ```
 
-初期profileはS3 HostとS3 Deviceに一つずつ。P4やlocal複製を増やしてskipする仕組みは作らない。
+最初のprofileはS3 HostとS3 Deviceに一つずつだった。P4やlocal複製を増やしてskipする仕組みは作らない。
 plugin 1.10.0の`arduino_combos`に結線済みの組を列挙し、`--combo all`を標準入口とする。
-現時点は`s3: primary=s3_host,device=s3_device`だけ。単独選択は`--combo s3`。
-将来は対応sketchのprofileと成立する結線のcomboを増やす。USB結線を直積や独自skip hookで表現しない。
+2026-10-31時点の組は`s3`、`p4`、`p4_psram`、`p4_p4x_hs`、`p4x_p4_hs`、`p4x_pc`の6つ。
+一つだけ選ぶときは`--combo s3`のように指定する。組の中身は[validationのREADME](../validation/README.ja.md)を参照。
+機材を足すときは、対応sketchのprofileと成立する結線のcomboを増やす。USB結線を直積や独自skip hookで表現しない。
 必要な機能が不足するなら、再現例・必要な結果・受入条件をまとめてplugin側への追加依頼を優先する。
 conftestは標準化できない必要性が実証された場合の最後の手段とし、別ファイルへ移した独自hookで代替しない。
 
@@ -229,6 +215,10 @@ port未設定によるskipは未検証、設定済みportへの接続やbuild/up
 
 開発初期は既存S3二台peerを基準とする。P4はDMA/cacheとFS/HS差分の確認時に追加する。
 P4一台loopbackは両コントローラを試せるが実linkはFSであり、HS合格の代用にはしない。
+
+2026-10-31時点の実際のbenchは、S3二台、P4一台loopback、旧P4とP4XのHS直結、P4XとLinux PCのHS直結である。
+HS（480 Mbps）は旧P4–P4Xの直結で確認した。構成は[引き渡しのbench表](V3_HANDOFF.ja.md#試験bench)と
+[P4/P4Xと試験環境](V3_P4_VARIANTS_AND_BENCH.ja.md)にある。以下のS31/S2を含む結線と五台案は、当初の計画として残す。
 S2は現行対応の実機確認、S31はCore/PHY/能力表を含む新規対応として扱う。
 
 ### 三台を共有する結線候補
@@ -295,11 +285,9 @@ Host役割交代時のVBUS source競合を防ぐ構成にする。USB-Cのrole�
 
 ## 次に着手する作業
 
-当初優先したVendorの短い送信と容量・modeは実装・試験済み。現在の次作業は冒頭の照合表と
-[引き渡し](V3_HANDOFF.ja.md)を参照する。
-[引き渡し](V3_HANDOFF.ja.md)の独立S3–S3 probeから着手し、APIごとに影響と実験結果を記録する。
-旧test/sampleへの追従や、汎用registryの先行完成を目的にしない。
-
+当初優先したVendorの短い送信と容量・modeは実装・試験済み。
+現在の次作業は[TODO](../TODO.ja.md#優先する残作業)と[引き渡し](V3_HANDOFF.ja.md#次にやること)を参照する。
+APIごとに影響と実験結果を記録する進め方は変えない。旧test/sampleへの追従や、汎用registryの先行完成を目的にしない。
 
 ## Arduino-ESP32 4系コアの検証方針（2026-10-30）
 

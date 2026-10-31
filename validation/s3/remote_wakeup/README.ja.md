@@ -1,5 +1,8 @@
 # Remote wakeupのS3–S3実験
 
+2026-10-31からは、同じprobeをP4/P4XのHS直結（combo `p4_p4x_hs`/`p4x_p4_hs`）でも実行する。
+HSでの結果は[P4/P4Xと試験環境](../../../docs/V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)を参照。以下の記録はS3–S3での結果。
+
 標準plugin combo/peersを使い、Hostの実wake statusを検出してからresumeする。
 ピン留めしたIDF5.5.5のHCDはremote event未対応のため、probe内で無転送時だけUSB IRQを保留し、
 clock gate/ungateを含めてroot portを復帰させ、pending wakeをclear後に元のIRQ policyを戻す。

@@ -1,214 +1,224 @@
-# v3 Video: 実行時設定と借用frame
+# EspUsbDeviceVideo API（v3）
 
-Videoのクラス処理は`EspUsbVideoTransport`が持ち、共通EP0/coreとDevice専用DWC2も本体内部で保守する。
-明示的なDevice/Function/config/beginという基本方針を維持する。
+USB Video Class（UVC 1.5）のカメラを作るクラスです。Device→Host の一方向だけで、アプリが用意した frame（MJPEG または YUY2）を Host へ送ります。
+frame は送信が終わるまでライブラリが借用し、終了理由ごとに callback で返します。TinyUSB の Video class は使わず、本体内部の独自 driver で動きます。
+
+## 基本の使い方
 
 ```cpp
+#include <EspUsbDevice.h>
+
 EspUsbDevice device;
-EspUsbDeviceVideo camera(device, "Camera");
-EspUsbVideoConfig config;
-config.transport = EspUsbVideoTransport::Bulk; // default: Isochronous
-config.payloadBytes = 512; // 2-byte UVC headerを含む
-camera.configure(config);
-camera.setFrameSize(320, 240);
-camera.setMaxFrameSize(32000);
-camera.onFrameResult([](const EspUsbTransferResult &result) {
-  // 全ての終了理由で、ここからresult.bufferを再利用できる。
-});
-device.begin();
-// hostのcommitと、ISOの場合はstreaming alternate選択を待つ。
-// const auto submission = camera.submitFrame(encodedFrame, encodedBytes);
-// if (submission) camera.cancelFrame(submission.id); // 非同期。返却通知までframeを保持する。
+EspUsbDeviceVideo camera(device, "Camera"); // 名前は Host に表示される
+
+void setup() {
+  EspUsbVideoConfig config;                     // 既定は Isochronous、payload 512 byte
+  // config.transport = EspUsbVideoTransport::Bulk; // 可変長の MJPEG なら Bulk も選べる
+  if (camera.configure(config) != ESP_OK) return;
+  camera.setFormat(EspUsbDeviceVideoFormat::Mjpeg);
+  camera.setFrameSize(320, 240);
+  camera.setFrameRate(15);
+  camera.setMaxFrameSize(32000);                // MJPEG 1 枚の上限（byte）
+  camera.onFrameResult([](const EspUsbTransferResult &result) {
+    // どの終了理由でも、ここから result.buffer を再利用してよい
+  });
+  if (!device.begin()) { /* device.lastError() を確認 */ }
+}
+
+void loop() {
+  // Host が Commit し（ISO なら streaming の alternate も選んで）から送る
+  if (camera.streaming() && !camera.frameInFlight()) {
+    // const auto submission = camera.submitFrame(jpeg, jpegBytes);
+    // if (!submission) { /* submission.error を確認。frame は借用されていない */ }
+  }
+}
 ```
 
-## 設定と費用
+設定（`configure()`、format・サイズ・fps・最大 frame、callback の登録）はすべて停止中に行い、`device.begin()` で反映します。稼働中は拒否するので、変えるときは `device.end()` してから設定し直します。
 
-`EspUsbVideoConfig`はFunctionごとに指定する。`payloadBytes`は3..65535 byte、ISOでは最大1024。
-ISO packetは省略時にpayload容量から導出し、FS1023/HS1024を上限とする。
-`isochronousPacketBytes`を明示する場合も3..1024。ISOの実payloadはstaging容量とpacketの小さい方。
-BulkのUSB packetはFS64/HS512で、payloadは複数packetに分割できる。
+### 主な設定
 
-既定transportはIsochronous、既定payloadBytesは512。FSでもISO packetは既定512であり、
-bulkのFS MPS64による約62 KB/s制限をISOへ当てはめない。毎1 msに512 byteを1 packet送る仮定では、
-2-byte UVC headerを除く理論値は510000 byte/s。実測帯域・持続fpsの保証ではない。
-ISOは帯域を予約して周期的に送る用途に向き、転送量が不足する場合も再送で埋め合わせない。
-可変サイズのMJPEGや、帯域予約より転送量を優先する用途にはBulkを勧める。
-BulkはUSBの再送を使える一方、帯域と遅延は他のtrafficの影響を受ける。
-どちらもSoCのFIFO、複合Function、frameの大きさとfpsを合わせて選び、必要な方式をconfigureで明示する。
-controllerのFIFO/endpoint能力が足りない構成は開始に失敗する。APIの数値上限は全てのSoCでの成功保証ではない。
+`EspUsbVideoConfig` の項目です。
 
-begin時に選択Functionの状態と一つのDMA staging bufferだけを確保し、通常frame転送中には確保しない。
-frame自体は借用してpayloadごとにstagingへコピーする。複数Videoも各Functionの状態で扱い、単一global ownerを廃止した。
-未使用Videoの大きなstatic bufferは持たない。core/task/driver registry等の共通費用は別に残る。
+| 項目 | 既定値 | 意味 | FS/HSでの違い |
+| --- | --- | --- | --- |
+| `transport` | `Isochronous` | 転送方式（`Isochronous` または `Bulk`） | なし |
+| `payloadBytes` | 512 | 1 回の payload の大きさ（UVC header 2 byte を含む）。3〜65535、Isochronous では 1024 まで | Bulk では FS 64 byte／HS 512 byte の packet に分けて送る |
+| `isochronousPacketBytes` | 0 | ISO endpoint の 1 packet の大きさ。0 なら `payloadBytes` から決める。明示時は 3〜1024 | 上限は FS 1023、HS 1024 |
+| `payloadBuffer` | `nullptr` | payload の staging に使う外部領域（DMA 可能な内部 RAM、64 byte 境界）。`nullptr` なら begin 時に自動確保 | なし |
+| `payloadBufferBytes` | 0 | 外部領域の長さ | なし |
 
-外部stagingは`payloadBuffer`と`payloadBufferBytes`で指定できる。
-内部DMA RAM、64-byte alignment、容量を64-byte単位へ切り上げたspanが必要。
-利用者がbeginからendまで保持し、driverによる書換え中に触らない。
-`payloadBufferSize()`は確保中の論理容量を返し、begin前/end後は0。設定値は`configuration()`で読む。
-configure、format/size/fps/最大frame、callback登録は開始後の変更を拒否し、end後に再設定する。
+format などは関数で設定します。
+
+| 関数 | 既定値 | 範囲・意味 |
+| --- | --- | --- |
+| `setFormat(EspUsbDeviceVideoFormat)` | `Mjpeg` | `Mjpeg` または `Yuy2` |
+| `setFrameSize(width, height)` | 320×240 | 1〜4096。YUY2 は幅が偶数 |
+| `setFrameRate(fps)` | 15 | 1〜255 |
+| `setMaxFrameSize(bytes)` | 0（自動） | 1 frame の上限。0 なら YUY2 は `幅×高さ×2`、MJPEG はその 1/8 |
+
+## 設定と転送方式
+
+### configure の検証
+
+`esp_err_t configure(const EspUsbVideoConfig &config)` の戻り値：
+
+| 戻り値 | 条件 |
+| --- | --- |
+| `ESP_OK` | 受け付けた |
+| `ESP_ERR_INVALID_STATE` | 稼働中 |
+| `ESP_ERR_INVALID_ARG` | 未知の `transport` |
+| `ESP_ERR_INVALID_SIZE` | `payloadBytes` が 3〜65535 の外、Isochronous で 1024 超、`isochronousPacketBytes` が 0 以外で 3〜1024 の外 |
+
+外部 staging の条件は `begin()` で確かめます。足りなければ `begin()` が失敗し、`startError()` が `ESP_ERR_INVALID_ARG` になります（[PSRAMとバッファ](#psramとバッファ)）。
+
+### Isochronous と Bulk の選び方
+
+- **Isochronous（既定）**：帯域を予約して周期的に送ります。足りなくても再送はしません。
+- **Bulk**：USB の再送が使えます。帯域と遅延は他の通信の影響を受けます。可変サイズの MJPEG や、帯域の予約より確実な転送を優先する用途に向きます。
+
+どちらも SoC の FIFO、他の Function との組合せ、frame の大きさと fps から選び、`configure()` で明示してください。controller の FIFO や endpoint が足りない構成は開始に失敗します。API の数値の上限は、すべての SoC での成功を保証するものではありません。
+
+既定の ISO packet 512 byte は FS でも使えます。FS の bulk（64 byte packet）の制限を ISO に当てはめる必要はありません。理論上の上限は [FSとHSの違い](#fsとhsの違い) を参照してください。
+
+### 形式と交渉
+
+- 一つの形式・一つの解像度・一つの固定 frame 間隔だけを Host に示します。
+- YUY2 は幅が偶数で、frame は必ず `幅×高さ×2` byte です。`setMaxFrameSize()` に別の値は指定できません。
+- MJPEG の最大 frame の既定（非圧縮サイズの 1/8）は encoder の出力サイズの保証ではありません。実際の frame がこれを超えるなら、`setMaxFrameSize()` で上げてください。小さすぎると Host 側で画像が欠けます。
+- `setFormat()`／`setFrameSize()`／`setFrameRate()`／`setMaxFrameSize()` は、稼働中や不正な値のとき false を返し、元の設定を保ちます。不正な値とは、未知の format、0 や 4096 超の寸法、fps 0、bit rate（最大 frame × 8 × fps）が 32 bit を超える設定などです。
+- 検証は他の項目の現在値との組合せで行います。たとえば `setMaxFrameSize()` で YUY2 の実サイズと違う値を入れたままだと、`setFormat(Yuy2)` は false になります。YUY2 に切り替える前に `setMaxFrameSize(0)` で既定に戻してください。
+- UVC 1.5 の 48 byte の Probe／Commit と、26／34 byte の短い SET を受け付けます。Probe は対応する形式・間隔と payload 上限に合わせて返し、Commit は対応しない値を拒否します。
+- Isochronous は alternate 0 で停止、1 で送信します。Bulk は alternate 0 のまま送信します。
+- Bulk で payload の途中終端が packet 長の倍数になるときは、ZLP（長さ 0 の packet）を送ります。
+- `commit()` で Host が Commit した値を読めます（Commit 前は 0）。`onCommit()` で Commit の通知を受けられます。
 
 ## frameの所有権と通知
 
-`sendFrame()`の通常操作は維持する。詳細な結果が必要な場合は`submitFrame(frame, length)`と`onFrameResult()`を使う。
-戻り値はVendor/CDCのwriteDirectと同じ`EspUsbTransferSubmission`。成功時はbool変換がtrueでidが非0。
-拒否はid=0、借用なし、返却callbackなし。errorは次のように区別する。
+### 送る
+
+| 関数 | 戻り値 |
+| --- | --- |
+| `bool sendFrame(const void *frame, size_t length)` | 受け付けたら true |
+| `EspUsbTransferSubmission submitFrame(const void *frame, size_t length)` | 受け付けたら bool 変換が true、`id` が 0 以外 |
+| `esp_err_t cancelFrame(uint64_t id)` | 取消しの依頼結果 |
+| `bool streaming() const` | 送れる状態か（Commit 済み、ISO なら alternate 1 選択済み） |
+| `bool frameInFlight() const` | frame を借用中か（取消し処理中も含む） |
+
+`submitFrame()` を拒否したときは `id` が 0 で、frame は借用されず、callback も呼ばれません。`error` の意味：
 
 | error | 意味 |
 | --- | --- |
-| BadArgument | NULL/空/最大frame超過、YUY2実サイズ不一致、不正なaddress span |
-| NotMounted | 未開始/未commit、ISO alternate未選択、停止・再構成fence・HALT等でstreaming不可 |
-| Busy | 受理済みのframeがまだ借用中 |
-| TransferFailed | 内部投稿を受理できない、またはidを発行できない |
+| `BadArgument` | NULL、長さ 0、最大 frame 超え、YUY2 の長さ不一致、アドレス範囲の overflow |
+| `NotMounted` | 未開始、未 Commit、ISO の alternate 未選択、停止中・再構成中・HALT 中など送れない状態 |
+| `Busy` | 前の frame をまだ借用中 |
+| `TransferFailed` | 内部の投稿を受け付けられない、または id を発行できない |
 
-Videoのframe自体にはDMA alignmentを要求しない。payload stagingのalignment条件とは別。
-従来の3引数`submitFrame(frame, length, id)`は2引数の戻り値へ移行し、旧overloadは残さない。
-`cancelFrame(submission.id)`は従来どおりesp_err_tを返す。
+- 一つの Function で借用できる frame は一つだけです。同時に呼ばれても順に処理し、2 つ目は `Busy` です。
+- frame 自体に DMA の alignment や置き場所の条件はありません（payload ごとに staging へコピーして送ります）。
+- 返却の通知が来るまで、frame の領域を解放したり書き換えたりしないでください。
 
-一つのFunctionで一つのframeを借用する。frameは非NULL・非空、MJPEGは最大frame以下、YUY2はwidth×height×2と一致が必要。
-成功、Cancelled、BusReset、TransferError、Stoppedの各終了で一度返却する。
-`actualBytes`はUVC headerを除く確認済みframe byte数で、abort中など送信量を確定できない場合は`actualBytesKnown=false`。
-成功専用の`onFrameComplete()`も維持する。両方を登録するとresult→success callbackの順になる。
+### 返却を受け取る
 
-`cancelFrame(id)`はworkerへ取消しを依頼する。戻り値が成功でも返却完了ではない。
-古いid/0はNotFound。USB転送を止め、古い完了eventを排出してから返却する。
-alternate変更と再commitでも旧frameの返却を待つ。onCommitは所有権返却の通知ではない。
-callbackはUSB worker上で実行し、軽い処理と次frame投稿にとどめる。
-Deviceのend、Functionの破棄、callback差し替えなどのlifecycle操作をcallbackから行わない。
-同時投稿は直列化され、既存frameがある場合はSubmissionのBusy。frame返却通知前の解放・変更は禁止。
+`onFrameResult(callback)` に `EspUsbTransferResult` を受け取る関数を登録します。frame は次のどの終わり方でも一度だけ返ります：`Success`、`Cancelled`、`BusReset`、`TransferError`、`Stopped`。
 
-稼働中Functionの外側からの破棄はDeviceを停止し、worker/DMA停止後に状態を解放する。
-未登録/二重begin/別runtimeの稼働中beginはInvalidState、startErrorで理由を返す。
+- `actualBytes` は UVC header を除いた、送ったと確認できた frame の byte 数です。中断などで確定できないときは `actualBytesKnown` が false です。
+- 成功時だけ呼ばれる `onFrameComplete()` もあります。両方登録すると、result → complete の順に呼びます。
+- callback は USB worker の上で動きます。軽い処理と次の frame の投稿だけにしてください。`device.end()`、Function の破棄、callback の差替えを callback の中で行わないでください。
+- callback の登録（`onFrameResult`／`onFrameComplete`／`onCommit`）は稼働中だと `ESP_ERR_INVALID_STATE` です。
 
-## 形式と交渉
+### 取り消す
 
-一形式・一解像度・一固定frame intervalをadvertiseする。MJPEGまたはYUY2、寸法1..4096、fps1..255。
-YUY2は偶数幅かつ固定frame実サイズが必要。未知format、空frame、32-bit bit rate overflowを拒否し、失敗時は旧設定を保持する。
-MJPEGの最大frame省略値は非圧縮サイズの1/8。これはencoderの出力サイズ保証ではなく、必要なら明示する。
+- `cancelFrame(id)` は worker に取消しを依頼するだけです。`ESP_OK` でも、その時点ではまだ返却されていません。返却は `onFrameResult` で届きます。
+- 古い id や 0 は `ESP_ERR_NOT_FOUND`、停止処理中などで依頼できないときは `ESP_ERR_INVALID_STATE` です。
+- USB 転送を止め、古い完了 event を排出してから返します。alternate の変更や再 Commit でも、古い frame の返却を待ちます。`onCommit` は所有権の返却の通知ではありません。
 
-UVC 1.5の48-byte Probe/Commitと、26/34-byteの短いSETを受け付ける。
-Probeは対応する固定形式・intervalとpayload上限へ正規化し、Commitは非対応値を拒否する。
-ISOはalternate 0で停止、1で送信。Bulkはalternate 0で送信する。
-Bulkの途中payload終端にshort packetが必要な場合はZLPを送る。
+### 停止と破棄
 
-## 移行の利点と影響
-
-`CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE`と`CFG_TUD_VIDEO_STREAMING_BULK`は廃止し、同一binaryのFunction設定で選べる。
-TinyUSB Videoを有効化する旧build flagはcompile errorにして二重driverを防ぐ。
-容量/方式照会はstaticからinstanceへ変わり、callback登録もesp_err_tを返す。
-既存の単純なsendFrameと成功通知の操作感は維持するが、中断でもframeを回収する利用側はonFrameResultへ移る。
-代償としてbegin時の資源不足と外部DMA領域の契約を扱う必要がある。
-
-## 検証範囲
-
-独自driver初回の`video-driver-initial.xml`は関連2件成功（161.26秒）。
-従来のVideo設定/metadata heap回復、257/511/512/1021 byteのISO転送と成功通知、
-未登録Functionの拒否、64 KiB frame送信中の破棄、descriptor構築を確認した。
-
-2026-10-27の独自Video driver最終関連試験: `video-driver-cancel.xml`、
-**7 passed、0 skipped、0 unfinished、212.48秒**。
-ISO/Bulk各64/65/512-byte payloadの6構成を同一binaryの実行時APIで選び、
-各構成で4 frameの全byte一致、成功結果のpointer/id/byte数、64 KiB frameの取消しと古いticket拒否、
-取消し直後の再投稿、送信中破棄によるStopped一度だけの返却を確認した。
-65-byte構成は64-byte alignment・128-byte以上の外部DMA領域を利用する。
-既存の独立descriptor probeを含む。14 serial log全てSTOPPED、panicなし。
-serial原本は`/tmp/pytest-embedded/2026-10-27_01-53-40-022879/`、コピー/JUnit/transcriptは`validation/.pytest-results/video-driver-cancel*`。
-VideoOnlyとDeviceOnlyの最小buildも成功し、nmでTinyUSB Video symbol不在、
-DeviceOnlyには独自Video実装もリンクされないことを確認した（`*-video-nm.txt`）。
-通常収集は25件。全体の直近成功はNCM時点の19件で、今回の関連7件と区別する。
-Videoの追加検証結果は末尾を参照。
-共通EP0/core/DCDと他SoC/HSは未完了であり、v3全体の完成ではない。
-
-PC/OS、JPEG decode、他SoC/HS、cancel/reset/recommit競合の網羅は未確認。
-
-## Videoの確保失敗・複数Function・制御要求
-
-2026-10-27。`video-driver-extended.xml`は**9 passed、0 skipped、0 unfinished、175.58秒**。
-Video ISO/Bulkの内部/外部staging、2 Function、65535-byte stagingを含む670取得点を
-一つずつ失敗させ、全点でNoMem、全資源回収、再開始とheap回復を確認した。
-`video_control`は2 Functionを同時に列挙し、MJPEGの65-byte payloadとYUY2の128-byte payloadを実通信した。
-26/34/48-byte Probe/Commit、GET_LEN/INFO/MIN/MAX/RES/DEF、22件の不正要求のSTALLと復帰、
-不正frame/NULL/busy/別Functionのticket拒否、片方のalt/recommit/cancel中に他方のframeを保持・完了できることを確認。
-62-byte frameのBulk ZLP終端、両方の送信中endとStopped一度だけの返却、外部DMA領域前後のcanaryも含む。
-ProbeのGET_MIN payloadを3、GET_RESを1に直し、受け付ける範囲と一致させた。
-この関連9件には既存のISO/Bulk各3構成と独立descriptor試験も含む。
-18 serial log全てSTOPPED、panicなし。原本は`/tmp/pytest-embedded/2026-10-27_02-07-12-940635/`、
-コピー/JUnit/transcriptは`validation/.pytest-results/video-driver-extended*`。
-通常収集26件。全体の直近成功19件とは区別する。
-実USB bus resetと取消し/recommitの競合全順序、PC/OS、HS/他SoCは引き続き未確認。
-
-
-## Videoとlegacy classソース除去後の全体試験
-
-2026-10-27。TinyUSBの無効化済みclass実装10本と関連headerを削除した。
-残るvendor選択は27 file / 5 compiled sources。共通EP0/core/DCDとAudio/CDC/HID/MIDIのprotocol定義は残る。
-検証scriptと更新scriptのmanifestも揃え、削除したNCMのlocal patchを現manifestから外した。
-出所とMIT表示は維持する。既に無効だったソースの削除なのでFlash/速度の改善を主張しない。
-
-標準`--combo all`の`runtime-video-all.xml`は**26 passed、0 skipped、0 unfinished、1703.91秒**。
-670取得点の確保失敗/回復、全独自classの既存経路、複数Video制御、ISO/Bulk各3構成を一括実行した。
-52 serial log全てSTOPPED、panicなし。Video deviceのnmでもlegacy class driver symbol不在を確認した。
-serial原本は`/tmp/pytest-embedded/2026-10-27_02-12-17-085198/`、コピー/JUnit/transcriptは
-`validation/.pytest-results/runtime-video-all*`。symbolは`video-control-cleanup-nm.txt`。
-Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3のみ。conftestや独自pytest hookは使わない。
-
-次は共通EP0/core/DCDを独自実装へ置き換える。reset/新SETUP/STALL/status、
-標準要求、event順序とDMA停止、suspend/remote wakeupを分けて検証する。
-他SoC/HS、PC/OS、長時間試験、出荷exampleと最終API整理は未完了。
-
+- 稼働中の Function を外から破棄すると、Device を止め、worker と DMA が止まってから状態を解放します。
+- Device に登録していない Function の `begin()`、二重の `begin()`、他の runtime が稼働中の `begin()` は `ESP_ERR_INVALID_STATE`（`startError()`）です。
 
 ## bulk endpointのHALTとCLEAR
 
-bulk endpointへのSET_FEATURE ENDPOINT_HALTでは、DMAと古い完了eventを退役させ、
-借用中frameを`TransferError`で一度だけ返却する。送信中の量を確定できなければ
-`actualBytesKnown=false`とし、確認済み部分だけを`actualBytes`へ入れる。
-HALT中は`streaming()`がfalse、`submitFrame()`はNotMountedでid=0、
-単純な`sendFrame()`はfalseになる。拒否した投稿の所有権を受け取らず、返却callbackも発行しない。
+Bulk で Host が SET_FEATURE ENDPOINT_HALT を送ったとき：
 
-CLEAR_FEATUREでは対象endpointだけDATA0へ戻し、既存のCommit設定のまま再開する。
-HALTなしのCLEAR中にframeがあればCancelledで返却する。HALTによる退役がまだ続いている場合、
-後から届いたCLEARでTransferErrorをCancelledへ上書きしない。
-繰り返しSET/CLEARで返却が重複したり、別VideoのframeやPIDを初期化したりしない。
-再開後は新しいframeを投稿する。中断したframeの途中からの継続は保証しない。
+- DMA と古い完了 event を片付け、借用中の frame を `TransferError` で一度だけ返します。送った量が確定できなければ `actualBytesKnown` は false で、確認できた分だけを `actualBytes` に入れます。
+- HALT 中は `streaming()` が false、`submitFrame()` は `NotMounted`（id 0）、`sendFrame()` は false です。
 
-既存のfence/job/stateを利用し、追加のqueueやbufferは確保しない。
-利用側の通常の呼出し方は変わらず、HALT時の受付拒否と借用frameの回収が明確になる。
-代わりに、エラー返却後はHostの回復を待って再投稿する必要がある。
-ISOのalternate制御は従来どおりで、このbulk回復経路の対象にはしない。
+CLEAR_FEATURE のとき：
 
-試験は2 Videoを別Functionとして使う。Hostの対象PIDをDATA0へそろえた準備後、
-新しいSET_INTERFACEや再Commitに頼らずHALT/CLEARで復帰させる。
-privateなendpoint busy照会はDMAへの登録後を狙う試験専用であり、公開利用例には含めない。
-途中payloadを2 FS packetだけ読んだ条件も確認し、Hostの古いPIDを引き継ぐSDKの制約と分ける。
+- 対象 endpoint だけ DATA0 に戻し、今の Commit のまま再開します。HALT なしの CLEAR で frame を借用中なら `Cancelled` で返します。
+- HALT による返却がまだ続いている間に CLEAR が届いても、`TransferError` を `Cancelled` で上書きしません。
+- SET／CLEAR を繰り返しても返却は重複せず、別の Video の frame や PID には影響しません。
+- 再開後は新しい frame を投稿してください。中断した frame の続きからは送りません。
 
+ISO の alternate 制御はこれまでどおりで、この回復経路の対象外です。追加の queue や buffer は確保しません。
 
-## Video bulk HALTの実測
+## FSとHSの違い
 
-2026-10-28。修正前はSET_FEATURE成功後も借用frameが返らず、`HALTED 0`となった
-（`video-halt-baseline.xml`、41.34秒）。修正後の境界単独は31.29秒で成功。
-関連control 2件、ISO/bulkの6 runtime構成、allocation_failure、control_coreの
-**10 passed、0 skipped/failed/error/unfinished、154.16秒**を確認した。
+ESP32-S3 は FS（Full Speed、12 Mbps）、ESP32-P4／P4X の HS 側 controller は HS（High Speed、480 Mbps）でつながります。
 
-2 Videoで16回のSET/CLEAR、途中payload読出し2回、復帰後/別Functionの正常frame 10回を確認。
-各Videoのloan返却は計8件（Success 5、Cancelled 1、TransferError 2）、重複/誤id/残留loanなし。
-送信中HALTの4件はactualBytesKnown=false。HALT中の投稿は拒否し、CLEAR後は再Commitなしで再開した。
-774取得点の失敗/回復、heap 346564→346564 byte、20 serial全てSTOPPED、panicなし。
-S2/P4はcompile-only成功。全体の収集は32件で、今回の製品変更後は関連10件を実行した。
+| 項目 | FS | HS |
+| --- | --- | --- |
+| ISO の送信間隔 | 1 ms ごと（bInterval 1） | 125 µs ごと（bInterval 1） |
+| ISO の 1 packet の上限 | 1023 byte | 1024 byte |
+| ISO の packet（既定 512 byte のとき） | 512 byte | 512 byte |
+| ISO の理論上限（既定 512 byte、header 2 byte を除く） | 510,000 byte/s | 4,080,000 byte/s |
+| ISO の理論上限（1023／1024 byte のとき） | 約 1 MB/s | 約 8 MB/s |
+| Bulk の packet の大きさ | 64 byte | 512 byte |
 
-標準pluginは同じsketchを複数のtest関数で再利用するため、試験sketchの通常のstartで
-カウンタを初期化する。stopで旧loanを退役してから次を開始し、conftestによるresetは使わない。
-この初期化不足で一括実行が一度失敗した記録も残した。
+- `isochronousPacketSize(highSpeed)` で、それぞれの速度で descriptor に出す packet の大きさを確認できます。
+- HS の ISO は 1 microframe に 1 packet だけです（1 microframe に複数 packet を送る high-bandwidth 方式は使いません）。
+- ISO の 1 payload の大きさは、`payloadBytes` と packet の小さい方です。
+- 理論上限は計算値です。実測の帯域や、その fps を保てることの保証ではありません。
 
-原本は`/tmp/pytest-embedded/2026-10-27_20-05-52-165319/`。
-JUnit/transcript/serialコピーは`validation/.pytest-results/video-halt-final*`、集計は`video-halt-audit.txt`。
-全EP0順序、SET/CLEARの全競合とbus reset/end、OSや他SoC/HS実通信は別の未検証範囲として残す。
+## PSRAMとバッファ
 
+- payload の staging は DMA 可能な内部 RAM です。自動確保では `payloadBytes` を 64 byte 単位に切り上げた大きさを確保します。
+- 外部 staging（`payloadBuffer`）は次をすべて満たす必要があります。満たさないと `begin()` が失敗します（`ESP_ERR_INVALID_ARG`）。
+  - 64 byte 境界のアドレス
+  - `payloadBytes` を 64 byte 単位に切り上げた長さ以上（`payloadBufferBytes`）
+  - 領域の先頭から末尾まで、DMA 可能な内部 RAM（PSRAM は不可）
+- 外部 staging は `begin()` から `end()` まで有効に保ち、driver が使っている間は触らないでください。
+- `payloadBufferSize()` は確保中の容量（`payloadBytes`）を返し、begin 前と end 後は 0 です。設定値は `configuration()` で読めます。
+- frame 本体は CPU で staging にコピーするので、置き場所に DMA の条件はありません。ただし frame を PSRAM に置いた構成は、実機ではまだ確認していません。
+- begin で確保するのは Function の状態と staging 一つだけで、通常の frame 送信中には確保しません。使わない Video のための大きな static buffer はありません。
 
-## CH32RV調整後の投稿API（2026-10-30）
+## 設計判断の理由
 
-submitFrameをEspUsbTransferSubmission戻り値へ統一した。sendFrameのboolは維持する。
-不正な引数はBadArgument、streaming不可はNotMounted、既存loanはBusy、内部投稿失敗はTransferFailed。
-S3制御/HALT回復2件＋ISO/Bulkの借用寿命6件＋P4両controller/両transport4件の
-計12件を標準combo allの一回の実行で成功（179.81秒、skip/error/failure/unfinished 0）。
-不正frame/NULL/空の拒否とid=0、未開始、Busy、cancel/end/recommit返却、guard/heapを確認した。
-P4は実link FS。HS帯域・P4X・PC OSの認定は含まない。
-記録はvalidation/.pytest-results/video-submission-initial*。
+- **実行時に方式を選ぶ**：2.x の `CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE` と `CFG_TUD_VIDEO_STREAMING_BULK` を廃止し、同じ binary で Function ごとに選べるようにしました。TinyUSB Video を有効にする旧 build flag は、二重 driver を防ぐため compile error にしています。
+- **frame は借用、payload はコピー**：frame に DMA の条件を課さずに済みます。代わりに staging 一つ分の内部 RAM と、コピーの費用がかかります。
+- **全終了理由での返却**：中断（取消し、bus reset、HALT、停止）でも frame を一度だけ返すので、アプリは返却後に安全に再利用できます。中断を扱うアプリは `onFrameResult` を使ってください。
+- **単一 global owner の廃止**：複数の Video を Function ごとの状態で扱います。
+- **submitFrame の戻り値**：Vendor／CDC の `writeDirect` と同じ `EspUsbTransferSubmission` にそろえました（2026-10-30、ArduinoCore-CH32RV との調整）。旧 3 引数の `submitFrame(frame, length, id)` は残していません。
+- 2.x からの影響：容量や方式の照会は static から instance へ、callback の登録は `esp_err_t` を返すように変わりました。begin 時の資源不足と、外部 DMA 領域の条件を扱う必要があります。
+
+## 実測の記録
+
+ここから下は実装の各段階での試験の記録です。commit hash、所要時間、件数は当時の値です。serial の原本は `/tmp/pytest-embedded/…`、JUnit／transcript のコピーは `validation/.pytest-results/` にあります。特記がない限り S3–S3（FS）での結果です。
+
+### HS 直結（2026-10-31）
+
+既存の S3 peer 試験の sketch に P4／P4X の profile を加え、HS 直結でも収集しました。aade7e0（ISO OUT の偶奇の再 arm。Video は送信のみなので直接の対象ではない）の後に、HS 両方向の audio／video 各 17 件が成功しています。詳細は [P4/P4X と追加試験環境](V3_P4_VARIANTS_AND_BENCH.ja.md) を参照してください。PC の OS での認定は含みません。
+
+### CH32RV調整後の投稿API（2026-10-30）
+
+`submitFrame` を `EspUsbTransferSubmission` の戻り値に統一しました（02c7509）。S3 の制御／HALT 回復 2 件、ISO／Bulk の借用寿命 6 件、P4 両 controller × 両方式 4 件の計 12 件が、標準 combo all の 1 回の実行で成功しました（179.81 秒）。不正 frame／NULL／空の拒否と id 0、未開始、Busy、cancel／end／再 Commit での返却、guard と heap を確認。P4 は FS の実 link で、HS の帯域・P4X・PC OS の認定は含みません。記録 `video-submission-initial*`。
+
+### Video bulk HALTの実測
+
+2026-10-28。修正前は SET_FEATURE が成功しても借用 frame が返りませんでした（`video-halt-baseline.xml`、41.34 秒）。修正後は関連 10 件が 10 passed、154.16 秒。2 つの Video で 16 回の SET／CLEAR、途中 payload の読出し 2 回、復帰後と別 Function の正常 frame 10 回を確認。各 Video の返却は計 8 件（Success 5、Cancelled 1、TransferError 2）、重複・誤 id・残留なし。送信中 HALT の 4 件は `actualBytesKnown=false`。774 取得点の確保失敗回復、heap 346564→346564。試験 sketch のカウンタ初期化不足で一括実行が一度失敗した記録も残しています。記録 `video-halt-final*`、`video-halt-audit.txt`。未確認：全 EP0 順序、SET／CLEAR と bus reset／end のすべての競合、OS や他 SoC／HS の実通信（当時）。
+
+### legacy class ソース除去後の全体試験
+
+2026-10-27。無効化済みの TinyUSB class 実装 10 本と関連 header を削除しました。標準 `--combo all` で 26 passed、1703.91 秒（670 取得点の確保失敗回復、ISO／Bulk 各 3 構成、複数 Video の制御を含む）。nm で legacy class driver の symbol がないことを確認。Core 3.3.12 / Host 2.10.1 / plugin 1.10.0、S3–S3。記録 `runtime-video-all*`、`video-control-cleanup-nm.txt`。
+
+### 確保失敗・複数 Function・制御要求
+
+2026-10-27。`video-driver-extended.xml` は 9 passed、175.58 秒。ISO／Bulk の内部・外部 staging、2 Function、65535 byte の staging を含む 670 取得点を一つずつ失敗させ、すべて NoMem、資源の回収、再開始、heap の回復を確認しました。`video_control` は 2 Function を同時に列挙し、MJPEG の 65 byte payload と YUY2 の 128 byte payload を実通信。26／34／48 byte の Probe／Commit、GET_LEN／INFO／MIN／MAX／RES／DEF、22 件の不正要求の STALL と復帰、片方の alt／再 Commit／取消し中に他方の frame を保持・完了できることを確認。Probe の GET_MIN の payload を 3、GET_RES を 1 に直し、受け付ける範囲と一致させました。62 byte frame の Bulk ZLP 終端、外部 DMA 領域前後の canary も含みます。記録 `video-driver-extended*`。
+
+### 独自 driver の初回と取消し
+
+独自 driver 初回の `video-driver-initial.xml` は関連 2 件成功（161.26 秒）。257／511／512／1021 byte の ISO 転送、未登録 Function の拒否、64 KiB frame 送信中の破棄を確認。最終関連試験 `video-driver-cancel.xml` は 7 passed、212.48 秒。ISO／Bulk 各 64／65／512 byte payload の 6 構成を同じ binary の実行時 API で選び、各構成で 4 frame の全 byte 一致、64 KiB frame の取消しと古い id の拒否、取消し直後の再投稿、送信中破棄で Stopped が一度だけ返ることを確認しました。65 byte 構成は 64 byte 境界・128 byte 以上の外部 DMA 領域を使います。VideoOnly／DeviceOnly の最小 build と nm で、TinyUSB Video の symbol がないこと、DeviceOnly に独自 Video がリンクされないことも確認しました（`*-video-nm.txt`）。記録 `video-driver-cancel*`。
+
+未確認：PC／OS、JPEG の decode、取消し・reset・再 Commit の競合の網羅。

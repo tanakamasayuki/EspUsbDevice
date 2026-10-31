@@ -1,301 +1,284 @@
-# v3 MSCのruntime構成
+# EspUsbDeviceMsc API（v3）
 
-2026-10-27。MSC classと固定4096 byte bufferを独自BOT driverへ置き換えた。
-共通EP0/coreとDWC2も本体内部で保守する。CFG_TUD_MSC等の旧flagは0指定も含めcompile errorとなる。
+USB Mass Storage（MSC）の Function です。BOT（Bulk-Only Transport）と SCSI のコマンドをライブラリ独自の driver で処理し、ブロックの読み書きはアプリの callback に任せます。
+RAM disk、FAT の RAM disk、SD カード用の補助クラスもあります。TinyUSB の MSC class と固定 4096 byte の buffer は使いません。
+
+## 基本の使い方
 
 ```cpp
+#include <EspUsbDevice.h>
+
 EspUsbDevice device;
 EspUsbDeviceMsc msc(device);
-uint8_t storage[32 * 512];
-EspUsbDeviceMscRamDisk volume(storage, 32);
+uint8_t storage[32 * 512];                   // 512 byte × 32 block
+EspUsbDeviceMscRamDisk volume(storage, 32);  // block 長の既定は 512
 
 void setup() {
-  EspUsbMscConfig config;
-  config.transferBytes = 64;
+  EspUsbMscConfig config;                    // transferBytes の既定 512 は FS/HS どちらでも使える
+  config.name = "RAM Disk";
   if (msc.configure(config) != ESP_OK) return;
-  if (!volume.attach(msc)) return;
-  msc.mediaPresent(true);
+  if (!volume.attach(msc)) return;           // read/write callback と容量を設定する
+  msc.mediaPresent(true);                    // 媒体を「挿入済み」にする
   device.begin();
 }
+
+void loop() {}
 ```
 
-通常のDevice/MSC/helperの利用手順は維持する。begin(count,size)は停止中のgeometry設定で、
-転送資源はDevice.beginから呼ばれる引数なしbeginで確保する。
-設定変更はDevice.end→configure/geometry/callback設定→Device.beginとし、再ビルドしない。
+自分で callback を書く場合は、`msc.onRead()`（必須）と `msc.onWrite()`（省略すると読み取り専用）を登録し、`msc.begin(blockCount, blockSize)` で容量を設定します。この `begin(count, size)` は容量の設定だけで、転送用の領域は `device.begin()` が呼ぶ引数なしの `begin()` で確保します。
+callback の書き方は [MscCdcBlocks](../examples/MscCdcBlocks/MscCdcBlocks.ino) の例を参照してください。
+
+### 主な設定
+
+`EspUsbMscConfig` の項目です。
+
+| 項目 | 既定値 | 意味 | FS/HSでの違い |
+| --- | --- | --- | --- |
+| `transferBytes` | 512 | 転送用の DMA 領域（staging）の byte 数。64 の倍数で最大 65472 | HS では 512 の倍数が必要（最大 65024）。512 未満や 512 の倍数でない値は `begin()` が `ESP_ERR_INVALID_SIZE` |
+| `transferBuffer` | `nullptr` | 利用者が用意する DMA 領域。nullptr なら begin で確保 | なし |
+| `name` | `nullptr` | Function 名（UTF-8）。begin 時にコピー | なし |
+
+停止中に設定する項目：
+
+| 関数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `vendorID()` / `productID()` / `productRevision()` | "ESP32" / "MSC" / "1.0" | INQUIRY で返す文字列（8 / 16 / 4 文字まで） |
+| `begin(blockCount, blockSize)` | 未設定 | 容量。`attach()` を使う補助クラスはこれを呼ぶ |
+| `onRead` / `onWrite` / `onStartStop` | 未登録 | storage の callback |
+
+動作中にも変えられるもの：`mediaPresent(bool)`（既定 false＝媒体なし）、`isWritable(bool)`（既定 true）。
+
+## 設定の変え方
+
+- 設定を変えるときは `device.end()` → `configure()`・容量・callback の設定 → `device.begin()` の順に呼びます。再ビルドは要りません。
+- `configure()`、`onRead` / `onWrite` / `onStartStop`、`vendorID` / `productID` / `productRevision` は停止中だけ `ESP_OK` を返します。動作中は `ESP_ERR_INVALID_STATE` で、それまでの設定を保ちます。
+- `transferCapacity()` は開始前と終了後は 0、開始後は実際の容量を返します。
+
+`configure()` の戻り値：
+
+| 戻り値 | 条件 |
+| --- | --- |
+| `ESP_OK` | 受け付けた |
+| `ESP_ERR_INVALID_STATE` | 動作中 |
+| `ESP_ERR_INVALID_SIZE` | `transferBytes` が 0、65535 超、64 の倍数でない |
+| `ESP_ERR_INVALID_ARG` | `transferBuffer` が 64 byte 境界でない、内部 RAM でない、DMA に使えない |
+
+`device.begin()` の後で `msc.startError()` を見ると、MSC の開始に失敗した理由がわかります。
+
+| `startError()` | 条件 |
+| --- | --- |
+| `ESP_ERR_INVALID_ARG` | 容量が未設定、または read callback が未登録 |
+| `ESP_ERR_INVALID_SIZE` | HS を使う構成で `transferBytes` が 512 の倍数でない |
+| `ESP_ERR_NO_MEM` | 転送領域や driver 登録の確保に失敗 |
+| `ESP_ERR_INVALID_STATE` | 登録されていない、または開始済み |
 
 ## bufferと費用
 
-EspUsbMscConfig.transferBytesの既定は512 byte。一つのBOT commandでIN/OUTが同時に走らないため、
-一つのDMA領域をCBW、SCSI応答・データ、CSWへ順番に使う。Functionごとのstateと必要なbufferだけを確保する。
-64 byteからの小さい転送でも512 byte sectorをoffset付きで処理できる。sector長とbuffer容量は独立する。
-
-現在はtransferBytesが64の倍数、最大65472 byte。選択controllerでHSを使う場合は512の倍数を要求する。
-native coreのuint16_t投稿長による上限である。
-transferBufferを指定すれば内部DMA buffer確保を省略する。64 byte境界のinternal DMA対応領域を
-指定容量分用意し、beginからendまで保持する。外部bufferはfreeしない。
-transferCapacityは開始前/終了後0、開始後は実効容量を返す。nameは任意のFunction名で、
-共通のUTF-8文字列snapshot契約に従う。名前を指定しなければその文字列領域は不要。
-
-一つのFunctionはLUN 0を公開する。複数Functionは独立したgeometry/callback/bufferとbulk pairを持ち、
-controllerのendpoint予算内で併用する。未使用MSCの固有処理を共通coreから参照しない。
-他の未移行classの固定資源がなくなったという意味ではない。
+- 1つの BOT コマンドでは IN と OUT が同時に動かないので、1つの DMA 領域を CBW（コマンド）、SCSI の応答とデータ、CSW（状態）に順番に使います。Function ごとの状態と必要な buffer だけを確保します。
+- sector 長と `transferBytes` は独立しています。64 byte のような小さな転送でも、512 byte の sector を offset 付きで分けて callback に渡します。そのぶん callback の呼び出し回数は増えます。
+- `transferBuffer` を指定すると内部の確保を省きます。64 byte 境界の、DMA に使える内部 RAM を `transferBytes` 分用意し、begin から end まで保持してください。ライブラリは解放しません。
+- 1つの Function が公開するのは LUN 0 だけです。MSC Function を複数登録すると、それぞれが独立した容量・callback・buffer と bulk endpoint の組を持ちます（controller の endpoint 数の範囲内）。
+- MSC を使わないプログラムには MSC 固有の処理はリンクされません。
 
 ## callbackと状態変更
 
-onRead/onWrite/onStartStop、vendorID/productID/productRevisionはesp_err_t返却の停止中APIになった。
-稼働中はInvalidStateで拒否し、既存設定を保つ。戻り値を無視する通常の呼出しは維持できるが、
-void型のmember pointerは型の変更が必要になる。
-
-read callbackは必須、write callbackは省略できる。write callbackなしならread-onlyとして扱う。
-mediaPresent/isWritableはatomicな稼働中変更を許可する。SCSI要求の処理時に状態を確認する。
-稼働中のFunction破棄はDeviceを停止し、worker/DMAが止まってからstateを解放する。
-未登録MSCの手動beginや破棄で、既存Functionの通信を壊さない。
-
-callbackはUSB worker上でlibraryのspinlockを持たずに呼ぶ。end・構成変更・Function破棄を行わない。
-read/writeは指定した全byte数を返して完了する同期API。負値、0、指定数と異なる戻り値はI/O失敗となる。
-TinyUSBのasync完了関数やBUSY=0による保留へ依存したコードは移行が必要。
-書込みcallbackは復帰までに自身が必要とする書込みを完了する。SYNCHRONIZE CACHEはその同期契約を前提とし、
-任意のアプリ側cacheを暗黙にflushする機能ではない。
-
-## BOTとSCSI
-
-BOTの13ケースを扱い、不正CBWは両endpointをhaltしてreset recoveryを要求する。
-class resetはhardwareを停止し、旧完了eventのFIFO fenceと両endpointのCLEAR_FEATUREが済むまでCBWを再投稿しない。
-reset自体ではDATA PID/haltを初期化せず、HostのCLEAR_FEATUREへ従う。
-
-INQUIRY、REQUEST SENSE、TEST UNIT READY、READ CAPACITY(10)、READ FORMAT CAPACITIES、
-MODE SENSE(6/10)のheader、START STOP、PREVENT/ALLOW、SYNCHRONIZE CACHE、
-比較なしVERIFY、READ/WRITE(10)を処理する。MODE SENSEのoptional pageは実装しない。
-不明opcode、存在しないLUN、範囲外LBA等は失敗として返す。read-onlyはData Protect、
-mediaなしはNot Ready、callback失敗はMedium ErrorのSenseを設定する。
-CFG_TUD_MSC_EP_BUFSIZEとCFG_TUD_MSC指定（0を含む）、tud_msc_*直接呼出しは削除する。
-
-## 実験と残る条件
-
-msc_storageは64/128/512/4096 byteと外部192 byte、write callbackなし、CDC併用を実通信する。
-MSC二つの分離はmsc_botの手動Hostが各interfaceを明示取得し、容量と異なるpayloadを照合する。
-BOTの13ケース、不正CBWの6条件、reset前のhalt保持、繰返しreset、Sense取得とclear、
-read callback失敗/書込み保護後の正確なCSW・Senseと読出し復帰も手動Hostで確認する。
-
-EspUsbHost 2.10.1はデータ転送のSTALLで直ちにresetし、endpoint clear後のPID同期にも制約があった。
-そのため通常API probeではデータ拒否を最後に確認し、通信を明示停止する。
-専用手動Hostは公開IDF APIでinterfaceを再取得してHost側DATA0へ揃え、Deviceの規格動作を検証する。
-Host libraryやpytestへのpatch/conftestは追加しない。
-
-関連4試験はmsc-driver-related.xmlで4 passed、0 skipped、0 unfinished、148.36秒。
-362取得点の確保失敗/回復と、未登録MSCの拒否後の既存HID通信も含む。
-全caseで両board STOPPED、panicなし。serial原本は/tmp/pytest-embedded/2026-10-26_14-59-54-646464/、コピーとJUnit/transcriptはvalidation/.pytest-results/。
-初回BOT matrixは512 byte sectorで確認し、下記で511 byte sectorのpacket境界も補強した。
-その他のsector長、
-queue満杯と人工的な旧完了eventの注入、OSの実disk/mount、SD/OTA媒体、P4/S2/S31とHSは未検証。
-
-利点は再ビルドなしの容量変更、複数MSC、read-onlyの自然な構成と未使用固有処理のリンク除外。
-不利益はbegin時の動的確保、小さいbufferでのcallback増加、同期callbackと停止中setterへの移行である。
-
-規格参照: [USB MSC BOT 1.0](https://www.usb.org/sites/default/files/usbmassbulk_10.pdf)、
-[SCSI command field参考のUSB UFI 1.0](https://www.usb.org/sites/default/files/usbmass-ufi10.pdf)。
-
-
-## USB packet境界とsector境界
-
-最終OUTのhardware armはbus packet分の領域を確保し、storage callbackへはSCSIで要求された分だけ渡す。
-Hostの過剰な最終packetの残りを次sectorへ書かず、CSW residueにも処理済みstorage byteだけを数える。
-512の倍数ではないsectorにも対応するための処理であり、sector長をUSB MPSへ暗黙に切り上げない。
-511 byte sectorを加えたBOT13ケースと、既存512 byte sectorを実通信で確認した。
-msc-packet-boundaries.xmlは2 passed、0 skipped、0 unfinished、93.48秒。
-最終の過剰byteを隣のsectorへ書かないことも、全14件の実行で直接確認した。
-
-5最小build（Deviceのみ/Vendor/CDC/MIDI/MSC）とnm確認も成功した。
-MSC未使用の4件にEspUsbDeviceMsc/EspUsbMscStateはなく、全5件にTinyUSB CDC/Vendor/HID/MIDI/MSCはない。
-MSCのみのbuildには他の独自Functionや共通bulk streamを含まず、未使用の借用取消しもリンクしない。
-MSC自身のBOT resetに必要なhardware abortはMSC使用時だけリンクする。
-
-
-最終の標準`--combo all`はruntime-msc-all.xmlで**14 passed、0 skipped、0 unfinished、772.40秒**。
-362取得点の失敗/回復、511/512 byte sectorの各BOT13ケースと隣接sectorのguard、
-独立2 MSCと既存CDC/Vendor/HID/MIDIの回帰を含む。全caseで両board STOPPED、panicなし。
-serial原本は/tmp/pytest-embedded/2026-10-26_17-57-02-044220/、コピーとJUnit/transcriptはvalidation/.pytest-results/runtime-msc-all*。
-
-
-## interfaceの再初期化とBOT回復
-
-SET_INTERFACE alt 0で対象MSCの両DMAを停止し、旧完了eventのfence後にDATA0へ戻す。
-通常のCommand/Data/Statusの途中なら未完のBOT transactionを破棄し、新しいCBWを待つ。
-保存済みのSCSI senseやmedia設定は維持する。storage callbackで処理済みの書込みはロールバックしない。
-Hostは中断したコマンドの成功や書込み全体の原子性を仮定できず、必要な範囲を確認・再送する。
-
-不正CBW後や、Phase Errorを返した後のReset Recovery要求は維持する。
-SET_INTERFACEや単なるHALT解除をBOT resetの代用として扱わない。
-BOT reset途中のSET_INTERFACEでも、未完のCLEAR_FEATURE手順を完了扱いにしない。
-[USB-IF BOT 1.0](https://www.usb.org/sites/default/files/usbmassbulk_10.pdf)の§3.1、§5.3.4、§6.6.1を基準に、
-class resetでのHALT/PID保持、両endpointの解除、不正CBWからの回復を区別する。
-
-再初期化にも既存recovery jobとepoch付きfenceを使い、新たなtaskや転送時heap確保は増やさない。
-公開APIの形は維持する。MSCを選んだ場合に状態フラグと回復コードが追加される。
-任意のタイミングのHost起因HALT/CLEARだけで進行中SCSI commandを継続する条件、
-SET_INTERFACEとbus reset/endの全到着順、実media/OSの検証は残る。
-
-
-## MSC interface再選択とBOT回復
-
-2026-10-27。SET_INTERFACE alt 0をMSCのepoch付きDMA停止/fenceへ接続した。
-通常のCommand待ち・CSW待ち・部分READ/WRITEを破棄して新しいCBWを受ける。
-不正CBW後のBOT reset要求と、BOT reset途中の未完CLEAR_FEATUREは維持する。
-WRITEは処理済み64 byteが残り、残りのsectorは変更されないことを実測した。
-2つのMSCそれぞれで再初期化と容量/readbackを確認した。他instanceの同時進行コマンドの維持は未検証。
-
-`msc-interface-verified.xml`はmsc_bot、msc_storage、allocation_failureの
-**3 passed、0 skipped、0 unfinished、252.88秒**。6 serial log全てSTOPPED、panicなし。
-712取得点で失敗/回復、heap before/after一致。原本は
-`/tmp/pytest-embedded/2026-10-27_08-04-42-101108/`、コピー/JUnit/transcriptは
-`validation/.pytest-results/msc-interface-verified*`。
-既存BOT 13ケース、不正CBW 6条件、511 byte sector、media/sense、複数MSCも継続成功した。
-最初の試験ではBOT reset中のSET_INTERFACEがHALTを早期解除する条件を検出し、未完の解除手順を保持した。
-次の失敗はHost試験が前回の511 byte geometryを保持したためで、Host開始時に既定512 byteへ戻した。
-各失敗transcriptも`.pytest-results/msc-interface-before-halt-preserve*`と`msc-interface-host-geometry*`に残す。
-
-TinyUSB manifestは24 file / 2 compiled sourcesで一致。旧tests/examplesはmainと同じ。
-全29件の一括再試験、任意Host HALTからの進行中SCSI継続、bus reset/endとの全競合順序、OS/実mediaは未完了。
-
-
-## CDCとの同時通信
-
-2026-10-29、製品`e329ef6`のまま独立MSC probeに同時通信の試験を追加した。
-CDCはRX97/TX131 byteのring、64 byteのcopy転送で1/63/64/65/129 byteを連続往復し、
-別のHost taskとmainからCDC・MSCを同時に使う。Deviceには専用taskを追加せず、loopでCDCをechoする。
-MSCは64/4096 byte stagingそれぞれで1/2/7/8 blockを読み書きし、payload・offset・guardを比較した。
-
-1 passed、59.01秒、2 logs STOPPED/panicなし。CDCは112/105往復、7148/6762 byteを送り、
-Host受信とDevice送受信の総byte数は一致した。MSC呼出し中のCDC完了は29/14回で、
-逐次で両方を成功させただけの試験ではない。MSCのmediaPresent(false)でNot Ready/Medium Not Presentを
-返す間もCDCは5往復以上進み、メディア復帰後に再度MSC payloadを照合した。
-回数や転送量は合否の最小進行量を確認するための値で、性能指標ではない。
-
-共有probeの既存storage/raw BOT 2件も2 passed、81.69秒、4 logs STOPPED/panicなし。
-製品・公開API変更は不要だった。標準comboとnoconftestを維持し、全体収集は39件。
-serial原本は`/tmp/pytest-embedded/2026-10-28_23-44-07-209913/`（同時通信）、
-`/tmp/pytest-embedded/2026-10-28_23-45-20-737310/`（既存2件）。
-JUnit/transcript/serialと監査は`.pytest-results/msc-cdc-concurrent*`、`msc-cdc-regression*`。
-39件の一括実行や、OS・HS実機・MSC HALT中のCDC継続まで確認した結果ではない。
-
-
-## 公開APIのblock callback例
-
-新規[MscCdcBlocks](../examples/MscCdcBlocks/MscCdcBlocks.ino)は、8 KiB RAM backing、
-512 byte stagingとCDCを明示的に構成する。filesystemを含まないraw block例で、
-callbackのoffset/size処理と、USB workerで更新する呼出し数をCDC側で読む流れを示す。
-追加のDevice taskは作らない。S3/S2/P4でcompile/ELF/FQBN/全29 source依存の確認に成功し、
-未選択Audio/NCM/Video/CCID/keymap/FAT helperのリンク除外も確認した。
-記録は`.pytest-results/msc-cdc-example*`。例自体のUSB実機・OS検証済みとはしない。
-
-
-## 媒体変更通知のAPI仕様案
-
-2026-10-30に**ESPでも実装し、P4X–PCのwireで確認した**（本節末尾）。以下は当初の仕様案の記述を残す。
-CH32RV側の追加対応f80b4451を確認。抜去時Senseと抜去世代の扱いは下記を共通仕様として採用する。
-X035C8のusb-peer-classes PASSは先方報告として記録する。**ESP側は未実装・未検証**。
+callback の型：
 
 ```cpp
-// 現在の呼出し方を維持する。新しい明示通知APIは今回追加しない。
-msc.mediaPresent(false);
-// 媒体の準備。進行中I/Oや保存先の寿命は以下の契約に従う。
-msc.mediaPresent(true);
+int32_t onRead(uint32_t lba, uint32_t offset, void *buffer, uint32_t size);
+int32_t onWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size);
+bool onStartStop(uint8_t powerCondition, bool start, bool loadEject);
 ```
 
-- Host構成済みの間のfalse→trueで、そのMSCのLUN 0に媒体変更のpendingを立てる。
-- true→true、false→falseは変更通知を作らない。true→falseは不在を表し、単独では交換通知を作らない。
-- 開始前や未構成中の変更は通知を予約しない。初回列挙でpresent=trueでも交換扱いにしない。
-- pending中の次の有効なLUN 0のSCSI commandをUNIT ATTENTION（sense key 06、ASC/ASCQ 28/00）で失敗させ、pendingを消費する。
-  INQUIRYとREQUEST SENSEは除外し、先に来てもpendingを消費しない。不正CBWや存在しないLUNでも消費しない。
-- 通知失敗後のREQUEST SENSEは06/28/00を返し、通常のsense消費規則でclearする。
-  REQUEST SENSE自体をUNIT ATTENTIONで失敗させない。次の通常commandは最新のpresentを調べる。
-- 通知前に複数回挿入されてもpendingは1件にまとめる。再び不在になっていても保留した変更は1回通知し、その後はNot Ready/Medium Not Present（02/3A/00）を返す。
-- USB reset、構成解除、endでpendingとsenseを初期化する。BOT reset recoveryでは未通知pendingを維持し、回復だけを新しい媒体変更と扱わない。
+- read/write は同期で処理し、指定された `size` をそのまま返して完了します。負の値、0、`size` と違う値は I/O 失敗（Medium Error）になります。
+- write callback がなければ読み取り専用として扱います。
+- 書き込み callback は、戻る前に必要な書き込みを済ませてください。SYNCHRONIZE CACHE はこの前提で成功を返すだけで、アプリ側の cache を flush する機能ではありません。
+- callback は USB worker task の上で、ライブラリの spinlock を持たずに呼ばれます。中で end、設定変更、Function の破棄をしないでください。
+- `mediaPresent()` と `isWritable()` は動作中に atomic に変えられ、次の SCSI 要求の処理で反映されます。
+- 動作中に Function を破棄すると Device が止まり、worker と DMA が止まってから状態を解放します。登録していない MSC を手動で begin・破棄しても、他の Function の通信は壊れません。
 
-ASC/ASCQの意味は[T10の割当表](https://www.t10.org/lists/asc-num.htm)に従う。
-上記の通知時期・消費条件は本ライブラリの提案契約であり、OSのfilesystem cache再読や
-任意のOSでの自動再mountを保証するものではない。
+## 媒体の取り外しと交換
+
+`mediaPresent()` で媒体の抜き差しを表します。void のままで、新しい通知 API は追加していません。
+
+```cpp
+msc.mediaPresent(false);  // 抜いた
+// 媒体を準備する
+msc.mediaPresent(true);   // 挿した
+```
+
+| 操作 | Host から見える動き |
+| --- | --- |
+| true → false（抜去） | 以後のコマンドは Not Ready / Medium Not Present（sense 02/3A/00）で失敗する。実行中の READ/WRITE も、残りは 02/3A/00 で失敗し、それ以上 callback は呼ばない |
+| false → true（挿入、Host が構成済みの間） | 次のコマンド（INQUIRY と REQUEST SENSE を除く）を UNIT ATTENTION（06/28/00）で1回だけ失敗させる |
+| 同じ値の再設定 | 変化なし |
+| 開始前・未構成中の変更、初回列挙時の true | 通知しない |
+
+- 通知前に何度挿し直しても、通知は1回にまとめます。通知前に再び抜くと、06/28/00 を1回返した後は 02/3A/00 を返します。
+- 通知で失敗した後の REQUEST SENSE は 06/28/00 を返します。REQUEST SENSE 自体は失敗させません。
+- 不正な CBW や存在しない LUN へのコマンドでは、未通知の挿入を消費しません。
+- USB reset、構成解除（SET_CONFIGURATION）、end で未通知の挿入と sense を消します。BOT reset recovery では、未通知の挿入と直前の失敗の sense を両方残します。
+- 抜去で 02/3A/00 を返しても、未通知の挿入（UNIT ATTENTION）は消費しません。
 
 ### I/Oと所有権の境界
 
-mediaPresentは同期的なI/O停止APIではなく、voidの呼出し方を維持する。
-当初案の「開始済みcommandを最後まで続ける」という保証は取り下げる。
-抜去を検出した場合、開始済みでも残りのread/writeをNot Ready / Medium Not Present
-（02/3A/00）で失敗させる。mediaPresent(false)を後続backendアクセスの停止契機とする。
-true→falseごとに抜去世代を進め、command開始時の世代を保持する。次のbackend呼出し前に、
-presentであることと開始時から抜去世代が変わっていないことの両方を確認する。
-false→trueが短時間に起きても旧commandを再開せず、新媒体へ未処理データを書き込まない。
-同値のfalse再設定は世代を進めない。世代比較とpresence更新の同期方法はESP実装で詰める。
+- `mediaPresent()` は I/O を同期的に止める API ではありません。すでに実行中の callback は中断せず、その呼び出しが戻るのを待ちます。sector を完成させるために追加の callback を呼ぶことはしません。
+- 抜去の後に短時間で挿し直しても、抜去の前に始まったコマンドは再開しません。新しい媒体へ古いコマンドのデータを書くことはありません。
+- 成功済みの書き込みは巻き戻しません。残りがあるコマンドは成功として返しません。
+- 失敗した READ の residue（CSW で返す未転送量）には、Host へ実際に送った量だけを反映します。WRITE も実際に処理した量で残量と CSW を決めます。
+- 媒体が変わらない一般の backend 失敗は Medium Error のままで、02/3A/00 には置き換えません。
+- `mediaPresent(false)` を呼んだだけで保存先の pointer を破棄・交換してはいけません。callback とその参照先は `device.end()` が成功するまで有効に保ってください。callback と容量の交換は停止中だけです。
+- 容量や sector 長が変わる交換は、end → 再設定 → begin で行います。
+- 物理的に抜ける backend（SD カードなど）は、callback の中で安全にアクセス失敗を返す必要があります。
+- アプリと Host が同じ filesystem を同時に更新する問題は、この仕組みでは解決しません。OS の filesystem cache の再読み込みや自動の再 mount も保証しません。
 
-既に実行中の同期callbackは強制中断せず、いま扱っている処理単位の復帰を待つ。
-CH32RV側の表現は「いま扱っている1ブロックを最後まで」であり、ESPではsectorより小さい
-offset付きcallbackもあるため、抜去後に追加callbackを呼んでsectorを完成させる保証にはしない。
-以降のread/write callbackは呼ばない。既に成功した書込みは巻き戻さず、残りがあるcommandは
-成功として返さない。物理抜去をbackendが先に検出する場合も、アクセス不能を安全に返す必要がある。
-存在が変わらない一般のbackend失敗は既存の媒体エラーと区別し、すべてを02/3A/00へ置き換えない。
+sense の意味は [T10 の割当表](https://www.t10.org/lists/asc-num.htm)に従います。
 
-失敗したREADのresidueには、失敗までにHostへ転送済みの量を反映する。
-callbackで読み出したがUSBではまだ送っていないbyteを、送信済みと数えない。
-WRITEも実際の処理済み量とBOTの規則に基づいて残転送・residue・CSWを扱う。
-pendingの媒体変更通知と進行中commandの失敗は別の状態とし、
-抜去による02/3A/00を返しても未通知のUNIT ATTENTIONを消費しない。
+## BOTとSCSI
 
-このsetterだけで保存先pointerを破棄・交換してよいとはしない。callbackとその参照先は
-Device.end成功まで有効に保つ。callback/geometryの交換は引き続き停止中だけとする。
-稼働中に物理媒体を抜けるbackendは、callback内で安全にアクセス失敗を返す責任を持つ。
-安全なI/O静止・flush・保存先交換の完了通知を行う新APIは今回の範囲外。
-容量やsector長を変える交換はend→再設定→beginとし、同一geometryの論理的な再挿入から扱う。
-アプリとHostが同じfilesystemを同時更新する権限管理も、このflagでは解決しない。
+対応する SCSI コマンド：INQUIRY、REQUEST SENSE、TEST UNIT READY、READ CAPACITY(10)、READ FORMAT CAPACITIES、MODE SENSE(6/10)（header のみ、optional page なし）、START STOP UNIT、PREVENT/ALLOW MEDIUM REMOVAL、SYNCHRONIZE CACHE、VERIFY（比較なし）、READ(10)、WRITE(10)。
 
-利点は既存の挿抜操作のままHostへ変更を知らせられること。不利益は次のcommandが意図的に
-一度失敗することと、I/O停止・保存先解放まで行うAPIと誤解しない配慮が必要なこと。
-追加費用はMSC固有のpending状態とcommand境界の判定に限定し、監視taskや媒体copyを加えない。
+| 状況 | sense |
+| --- | --- |
+| 読み取り専用への書き込み | Data Protect |
+| 媒体なし | Not Ready / Medium Not Present（02/3A/00） |
+| callback の失敗 | Medium Error |
+| 不明なコマンド、存在しない LUN、範囲外の LBA など | 失敗として返す |
 
-合格条件はfalse→true→TUR失敗→REQUEST SENSE→TUR成功、同値設定、初回present、
-INQUIRY/REQUEST SENSE先行、不在、複数変更の集約、通知前の再抜去、reset/end/BOT回復、
-read/write途中の抜去による残りの処理の失敗、同一command中の再挿入で旧I/Oを継続しないこと、
-処理済み部分の非rollback、後続callbackの抑止と正確なBOT residue/CSW。OSでのmount/ejectは別試験にする。
-[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
+- BOT 規格の13の場合分け（Host と Device の転送方向・長さの食い違い）を扱います。
+- 不正な CBW を受けると両 endpoint を halt し、Host に reset recovery を求めます。
+- class reset（Bulk-Only Mass Storage Reset）ではハードウェアを止め、古い完了通知を FIFO fence（それまでの通知を処理し終えるまで待つ仕組み）で流し、両 endpoint の CLEAR_FEATURE が済むまで次の CBW を受けません。reset そのものでは DATA PID や halt を初期化せず、Host の CLEAR_FEATURE に従います。
 
+## USB packet境界とsector境界
+
+- 最後の OUT では bus packet 1個分の領域で受けますが、storage callback へは SCSI で要求された分だけ渡します。Host が最後の packet で余分に送った byte を次の sector へ書くことはなく、CSW の residue にも処理した storage の byte だけを数えます。
+- そのため 512 の倍数でない sector 長（例：511 byte）にも対応します。sector 長を MPS に合わせて黙って切り上げることはしません。
+
+## interfaceの再初期化とBOT回復
+
+Host が SET_INTERFACE（alt 0）を送ると、その MSC の両方向の DMA を止め、古い完了通知を fence で流してから DATA0 に戻します。
+
+- コマンド・データ・状態のどの段階の途中でも、未完了の BOT のやり取りを捨てて新しい CBW を待ちます。
+- 保存済みの sense と媒体の設定は保持します。callback で処理済みの書き込みは巻き戻しません。Host は中断したコマンドの成功や書き込み全体の原子性を前提にできないので、必要な範囲を確認・再送してください。
+- 不正な CBW や Phase Error の後の reset recovery 要求は維持します。SET_INTERFACE や単なる HALT 解除を BOT reset の代わりにはしません。BOT reset の途中で SET_INTERFACE が来ても、未完了の CLEAR_FEATURE の手順を完了扱いにしません。
+- 基準は [USB-IF BOT 1.0](https://www.usb.org/sites/default/files/usbmassbulk_10.pdf) の §3.1、§5.3.4、§6.6.1 です。
+- 既存の回復 job と世代付きの fence を使い、task や転送時の heap 確保は増やしていません。
+
+## FSとHSの違い
+
+| 項目 | FS（S3、P4 の FS controller） | HS（P4/P4X の HS controller） |
+| --- | --- | --- |
+| bulk の MPS | 64 byte | 512 byte |
+| `transferBytes` の条件 | 64 の倍数（最小 64、最大 65472） | 512 の倍数（最小 512、最大 65024）。満たさないと `begin()` が `ESP_ERR_INVALID_SIZE` |
+| 既定の `transferBytes`（512） | 使える | 使える |
+
+P4 では `EspUsbDeviceConfig::controller` が `FullSpeed` 以外（既定の `Auto` を含む）のとき HS の条件になります。両方で動かすスケッチは `transferBytes` を 512 の倍数にしてください。
+SCSI と BOT の動きは FS と HS で同じです。
+
+## PSRAMとバッファ
+
+| 領域 | PSRAM | 備考 |
+| --- | --- | --- |
+| RAM disk の保存先（`EspUsbDeviceMscRamDisk` に渡す `storage`、自作 callback の参照先） | 使える | callback で memcpy するだけなので DMA を通らない。P4 の FS loopback（64 block）と HS 直結（4 MiB、8192 block、`validation/peer/psram_link`、42d844d）の両方で確認済み |
+| `transferBuffer`（DMA の staging） | 使えない | 内部 RAM で DMA 可能、64 byte 境界が必要。満たさないと `configure()` が `ESP_ERR_INVALID_ARG` |
+
+`transferBuffer` を指定しない場合、ライブラリが DMA 可能な内部 RAM に確保します。
+
+## 補助クラス
+
+| クラス | 用途 |
+| --- | --- |
+| `EspUsbDeviceMscRamDisk(storage, blockCount, blockSize = 512)` | RAM 上の raw block。`attach(msc)` で callback と容量を設定（媒体と書込み可否の設定は変えない） |
+| `EspUsbDeviceMscFatRamDisk(storage, size)` | `format()` で FAT を作り、`addFile` / `addTextFile` でファイルを置く。`onEject` で取り出しを受ける |
+| `EspUsbDeviceMscSdCard(sd)` | Arduino の SD ライブラリがあるときだけ。`begin()` で SD を開き、`attach(msc)` |
+| `EspUsbDeviceMscFirmwareDisk` | ファイルを書き込むとファームウェアを更新するディスク。[OTA over USB](ota-over-usb.ja.md) を参照 |
+
+`RamDisk` と `FatRamDisk` の `attach()` は `mediaPresent(true)` を呼ばないので、`device.begin()` の前に自分で呼んでください。
+
+## 2.x からの移行
+
+- `CFG_TUD_MSC_EP_BUFSIZE` と `CFG_TUD_MSC`（0 を含む）は廃止しました。残っているとコンパイルエラーになります。容量は `EspUsbMscConfig` で指定します。
+- `tud_msc_*` の直接呼び出しは使えません。
+- callback 登録と `vendorID` などは `esp_err_t` を返す停止中の API になりました。戻り値を無視する書き方はそのまま使えますが、void のメンバー関数ポインタを使っていたコードは型の変更が必要です。
+- TinyUSB の非同期完了関数や、BUSY（0 を返して保留）に頼っていた callback は、同期で全量を返す形へ直してください。
+- 媒体の再挿入の直後は、最初のコマンドが 06/28/00 で1回失敗します。挿入直後の TEST UNIT READY が成功する前提のコードは直してください。
+
+## 設計判断の理由
+
+- **runtime 構成にした理由**：再ビルドなしで容量を変えられる、MSC を複数持てる、読み取り専用を自然に作れる、使わない処理がリンクされない。代わりに begin 時の動的確保、小さい buffer での callback 増加、同期 callback と停止中 setter への移行が必要になった。
+- **媒体変更の通知**：今の挿抜の呼び方のまま Host へ変更を知らせられる。代わりに次のコマンドが意図的に1回失敗する。I/O 停止や保存先の解放まで行う API と誤解されないよう、`mediaPresent()` の役割を状態の表明に限った。追加の費用は MSC 固有の状態2語と比較だけで、監視 task や lock、媒体のコピーは加えていない。
+- **抜去の仕組み**：内部では「存在 bit＋抜去回数」を1語（`media_`）で、挿入を回数（`insertions_`）で持つ。コマンドは開始時の値を覚え、各 callback の前に同じ値か（存在し、抜去がないか）を確かめる。違えば残りを 02/3A/00 で失敗させる。
+- **当初案からの変更**：当初は「開始済みのコマンドは最後まで続ける」としていたが取り下げた。ArduinoCore-CH32RV 側の「いま扱っている1ブロックを最後まで」という表現に対し、ESP では sector より小さい offset 付き callback があるため、抜去後に callback を追加して sector を完成させる保証はしない。
+- **BOT reset 時の sense 保持**：SCSI の状態として扱い、CH32RV コアと同じ判断にした。調整の経緯は [CH32RV との API 調整](V3_CH32RV_API_ALIGNMENT.ja.md)を参照。
+- **Host の不具合への対応**：Device を Host の不具合に合わせる回避は入れない。
+
+規格：[USB MSC BOT 1.0](https://www.usb.org/sites/default/files/usbmassbulk_10.pdf)、SCSI コマンドの参考として [USB UFI 1.0](https://www.usb.org/sites/default/files/usbmass-ufi10.pdf)
+
+## 実測の記録
+
+特に書かない限り S3 同士（FS）の結果です。
+
+### driver の置き換え（2026-10-26）
+
+- `msc_storage` は staging 64/128/512/4096 byte と外部の 192 byte、write callback なし、CDC との併用を実通信で確認。MSC 2つの分離は `msc_bot` の手動 Host が各 interface を明示的に取得し、容量と別々の payload を照合。
+- BOT の13の場合分け、不正 CBW の6条件、reset 前の halt 保持、繰り返し reset、sense の取得と消去、read callback 失敗と書込み保護の後の正しい CSW・sense と読み出しの復帰も手動 Host で確認。
+- EspUsbHost 2.10.1 はデータ転送の STALL ですぐ reset し、endpoint clear 後の PID 同期にも制約があった。そのため通常 API の probe ではデータの拒否を最後に確かめて通信を止める。専用の手動 Host は公開 IDF API で interface を取り直して Host 側を DATA0 にそろえ、Device の規格どおりの動きを検証する。Host library や pytest への patch・conftest は追加していない。
+- 関連4試験（`msc-driver-related.xml`）は4件成功、148.36 秒。362 箇所の確保失敗と回復、未登録 MSC の拒否後の既存 HID 通信を含む。全件で両ボード STOPPED、panic なし。
+- 511 byte sector で BOT の13の場合分けと、最後の余分な byte を隣の sector へ書かないことを確認（`msc-packet-boundaries.xml`、2件成功、93.48 秒）。
+- 最小構成5種（Device のみ/Vendor/CDC/MIDI/MSC）の nm で、MSC 未使用の4種に MSC の実装がなく、全5種に TinyUSB の CDC/Vendor/HID/MIDI/MSC がないことを確認。MSC のみの構成には他の Function や共通 bulk stream が含まれない。BOT reset に要るハードウェアの中断処理は MSC 使用時だけリンクされる。
+- 標準の `--combo all`（`runtime-msc-all.xml`）は14件成功、772.40 秒。362 箇所の失敗と回復、511/512 byte sector の各13の場合分けと隣の sector の guard、独立した2つの MSC、既存 CDC/Vendor/HID/MIDI の回帰を含む。全件で両ボード STOPPED、panic なし。記録は `validation/.pytest-results/runtime-msc-all*`。
+
+### interface 再選択（2026-10-27）
+
+- 通常のコマンド待ち・CSW 待ち・部分的な READ/WRITE を破棄して新しい CBW を受けることを確認。WRITE では処理済みの 64 byte が残り、残りの sector は変わらないことを実測。2つの MSC それぞれで再初期化と容量・読み戻しを確認。
+- `msc-interface-verified.xml`（msc_bot、msc_storage、allocation_failure）は3件成功、252.88 秒。6つの serial log すべて STOPPED、panic なし。712 箇所の失敗と回復、heap の前後一致。
+- 最初の試験で、BOT reset 中の SET_INTERFACE が HALT を早く解除する条件を見つけ、未完了の解除手順を保持するよう直した。次の失敗は Host 試験が前回の 511 byte の geometry を残していたためで、Host 開始時に 512 byte へ戻した。失敗時の記録は `.pytest-results/msc-interface-before-halt-preserve*` と `msc-interface-host-geometry*`。
+
+### CDCとの同時通信
+
+2026-10-29、製品 `e329ef6` のまま、独立した MSC probe に同時通信の試験を加えました。
+
+- CDC は受信 97 / 送信 131 byte の ring、64 byte のコピー転送で 1/63/64/65/129 byte を連続で往復させ、別の Host task と main から CDC と MSC を同時に使う。Device には専用 task を足さず、loop で CDC を echo する。
+- MSC は staging 64/4096 byte のそれぞれで 1/2/7/8 block を読み書きし、payload・offset・guard を比較。
+- 1件成功、59.01 秒。CDC は 112/105 往復、7148/6762 byte を送り、Host の受信と Device の送受信の総 byte 数が一致。MSC の呼び出し中に CDC が完了した回数は 29/14 回で、両方を順番に成功させただけの試験ではない。
+- `mediaPresent(false)` で 02/3A/00 を返している間も CDC は5往復以上進み、媒体を戻した後に MSC の payload を再照合した。回数や量は最低限の進行を確かめるための値で、性能の指標ではない。
+- 既存の storage/raw BOT の2件も成功（81.69 秒）。記録は `.pytest-results/msc-cdc-concurrent*`、`msc-cdc-regression*`。
+
+### 公開 API の例
+
+[MscCdcBlocks](../examples/MscCdcBlocks/MscCdcBlocks.ino) は 8 KiB の RAM backing、512 byte の staging、CDC を明示的に構成する、filesystem なしの raw block の例です。S3/S2/P4 でコンパイルと依存の確認に成功し、使わない Audio/NCM/Video/CCID/keymap/FAT 補助がリンクされないことも確認しました（`.pytest-results/msc-cdc-example*`）。例そのものの実機・OS での検証はしていません。
 
 ### ESPでの実装とwire確認（2026-10-30）
 
-media_は「存在bit＋抜去回数」の1語、挿入はinsertions_の回数で表す。commandはdecode時のmedia_を保持し、
-各read/write callbackの前に同じ値か（存在し、抜去がないか）を確かめる。違えば02/3A/00で残りを失敗させる。
-未通知の挿入はINQUIRY/REQUEST SENSE以外の次のcommandで06/28/00を1回返す。SET_CONFIGURATIONとUSB resetでは
-それ以前の挿入を捨て、BOT reset recoveryでは未通知の挿入と直前の失敗のsenseを両方残す（SCSIの状態として扱う。
-CH32RVコアと同じ判断）。追加の費用はMSC固有の2語と比較だけで、taskやlockは足していない。
+`validation/p4x_pc/msc_media` は P4X を HS で Linux PC へ直結し、pyusb で CBW/CSW を直接扱います（usb-storage は切り離す）。EspUsbHost の CSW 回収の問題を通らずに sense と residue を確かめられます。
 
-`validation/p4x_pc/msc_media`はP4X HSをLinux PCへ直結し、pyusbでCBW/CSWを直接扱う（usb-storageはdetach）。
-EspUsbHostのCSW回収の問題を経由せずにSense/residueを確かめられる。
-
-| 条件 | wireの結果 |
+| 条件 | wire での結果 |
 | --- | --- |
-| 抜去、同値false | TUR失敗、sense 02/3A/00。同値で変化なし |
-| 挿入 | INQUIRY成功・REQUEST SENSE 00/00/00で消費なし。次のTURだけ失敗・06/28/00、その次は成功 |
+| 抜去、同じ値で false | TEST UNIT READY 失敗、sense 02/3A/00。同じ値では変化なし |
+| 挿入 | INQUIRY 成功、REQUEST SENSE は 00/00/00 で消費なし。次の TEST UNIT READY だけ失敗して 06/28/00、その次は成功 |
 | 0→1→0→1 | 通知は1件 |
-| 0→1→0 | 06/28/00の後に02/3A/00 |
-| BOT reset recovery | 未通知の挿入、直前の02/3A/00とも残る |
-| READ(10) 4 block、1 block目のcallback内で抜去 | 512 byte後にIN STALL、CSW status 1・residue 1536、以後のread callback 0、02/3A/00 |
-| 同上で即座に再挿入 | 同じく失敗し旧commandは続かない。後続TURで06/28/00を1回 |
-| 4 block目のcallbackで抜去 | 2048 byte、status 0 |
-| WRITE(10) 4 block、1 block目の後に抜去 | OUT STALL、status 1・residue 1536。1 block目は書込済み、2 block目は元のまま |
+| 0→1→0 | 06/28/00 の後に 02/3A/00 |
+| BOT reset recovery | 未通知の挿入、直前の 02/3A/00 とも残る |
+| READ(10) 4 block、1 block 目の callback 内で抜去 | 512 byte の後に IN STALL、CSW status 1・residue 1536、以後の read callback 0回、02/3A/00 |
+| 同上ですぐ再挿入 | 同じく失敗し、古いコマンドは続かない。後の TEST UNIT READY で 06/28/00 を1回 |
+| 4 block 目の callback で抜去 | 2048 byte、status 0 |
+| WRITE(10) 4 block、1 block 目の後に抜去 | OUT STALL、status 1・residue 1536。1 block 目は書き込み済み、2 block 目は元のまま |
 
-1回目の実行で**1 passed、72.90秒**、BOT reset時のsense保持を加えた再実行も成功。S3のmsc_storageは
-再挿入直後のTURが成功する前提だったため、06/28を1回確かめてからready確認する形へ直した。
-MSCを使うS3/P4の既存probe（classes、psram、allocation_failure等）も全て成功（12件769秒＋5件151秒）。
+- 1回目の実行で1件成功（72.90 秒）。BOT reset 時の sense 保持を加えた再実行も成功。
+- S3 の `msc_storage` は再挿入直後の TEST UNIT READY が成功する前提だったので、06/28 を1回確かめてから準備完了を見る形へ直した。
+- MSC を使う S3/P4 の既存 probe（classes、psram、allocation_failure など）もすべて成功（12件 769 秒＋5件 151 秒）。
 
 ### CH32RV側の確認結果とHostの制約
 
-f80b4451の差分では、抜去回数の比較、02/3A/00、失敗READのresidue修正を確認した。
-先方報告のX035C8 usb-peer-classesでは、2ブロックREAD(10)の1ブロック目で抜去し、
-command失敗と2ブロック目のread callbackが呼ばれないことを確認した。
-02/3A/00のwire取得、途中再挿入、WRITEの全条件まで実機確認済みとは扱わない。
+- ArduinoCore-CH32RV の f80b4451 の差分で、抜去回数の比較、02/3A/00、失敗した READ の residue の修正を確認した。先方の X035C8 での usb-peer-classes では、2 block の READ(10) の1 block 目で抜去し、コマンドの失敗と2 block 目の read callback が呼ばれないことを確認したとの報告。02/3A/00 の wire での取得、途中の再挿入、WRITE の全条件まで実機で確認済みとは扱わない。
+- 先方の EspUsbHost 2.10.0 では、データの STALL の後に CSW を取らずに終わり、後の CSW が1件ずれ、reset recovery もしないため、再接続まで通信できないという報告がある。そのため先方の抜去検査は Device を作り直す直前の最後に置かれ、sense は取れていない。先方はこれを BOT 6.7.2 に反する Host の動きとして報告しており、Device 側に互換の回避は入れていない。
+- この報告と、上の ESP 側の EspUsbHost 2.10.1 での記録は、版と回復経路が違うので混同しない。標準 Host の改修は別の作業。
 
-先方のEspUsbHost 2.10.0では、data STALL後にCSWを取得せず終了し、後続CSWが1件ずれ、
-reset recoveryも行われないため再接続まで通信できないとの報告がある。
-そのため抜去検査はDevice再生成直前の最後に置かれ、Senseは取得できていない。
-先方はBOT 6.7.2に反するHost動作として報告しており、Device側の互換回避は行っていない。
-この報告と上記のESP側2.10.1での記録は、版と回復経路が異なるため混同しない。
-ESPでの実装試験では、既存の手動Host経路などでhalt解除後のCSW・REQUEST SENSE・次commandまで
-検査する。標準Hostの改修は別作業とし、DeviceをHostの不具合へ合わせない。
+### HS 直結（2026-10-31）
+
+- 上の `p4x_pc/msc_media` は P4X の HS で行った。
+- `validation/peer/msc_midi` で MSC と MIDI の複合を P4/P4X の HS 直結で確認する probe を追加し、S3 の peer 試験（`msc_storage` などを含む）も HS 直結で収集した。結果は [P4/P4X と追加試験環境](V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31) を参照。
+
+### 未確認の範囲
+
+511/512 以外の sector 長、queue 満杯と人工的な古い完了通知の注入、OS での実ディスクの mount、SD・OTA の媒体、S2/S31、任意の Host の HALT/CLEAR だけで実行中の SCSI コマンドを続ける条件、SET_INTERFACE と bus reset/end の全到着順、他の MSC instance で同時に進むコマンドの維持、MSC の HALT 中の CDC の継続。

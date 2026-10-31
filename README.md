@@ -62,26 +62,36 @@ HID keyboard/mouse/gamepad/consumer/system/custom reports, CDC ACM, MIDI 1.0,
 Vendor bulk/control, MSC, UAC1/UAC2 Audio, UVC Video, CDC-NCM, CCID and DFU are
 implemented. Combine Functions within the selected controller's endpoint budget;
 there is no library-wide four-Function limit. Implementation coverage and
-hardware qualification are separate: consult the validation record below.
+hardware qualification are tracked separately; see the hardware status below.
 
 ## Build and validation
 
-The current development baseline is **Arduino-ESP32 3.3.12**. Examples pin that
-version in `sketch.yaml`; older-core compatibility reports describe earlier
-library versions, not qualification of v3.
+The development baseline is **Arduino-ESP32 3.3.12**. Examples pin that version
+in `sketch.yaml`. Older-core compatibility reports describe earlier library
+versions; they do not qualify v3.
 
-| Target | Current v3 evidence |
-| --- | --- |
-| ESP32-S3 | Two-board FS peer suite: enumeration, class transfers, ownership, reset/recovery and failure injection |
-| ESP32-S2 | Controller/resource compile probe; hardware validation pending |
-| ESP32-P4 | Both Device controllers on a one-board FS loopback: basic traffic for all 10 classes, Audio duplex, borrowed DMA and PSRAM-backed storage/rings; 480 Mbps HS hardware validation pending |
-| ESP32-S31 | Future SDK/controller port; not currently supported |
+### Hardware status by target (2026-10-31)
 
-Use two separate programming/log connections and connect the native OTG ports
-for the S3 peer tests. Run the clean [validation environment](validation/README.ja.md)
-with the plugin's standard `--combo all`. It uses `--noconftest` and is independent
-of the archived 2.x tests. Results there identify the tested commit and scope;
-they do not certify every OS, control sequence or SoC.
+| Target | On hardware | Main coverage |
+| --- | --- | --- |
+| ESP32-S3 | Yes (FS) | Two-board S3 peer suite: enumeration, class transfers, ownership, reset/recovery and failure injection |
+| ESP32-P4 (v1.3) and P4X (v3.2) | Yes (HS 480 Mbps and FS) | A P4 and a P4X linked at HS run the 39 S3 peer tests and HS-specific probes, including PSRAM-backed storage and rings, in both directions. A one-board FS loopback covers both controllers, all 10 classes, Audio, borrowed DMA and PSRAM. A P4X linked at HS to a Linux PC also covers DFU and MSC |
+| ESP32-S2 | Compile only | Hardware is being procured |
+| ESP32-S31 | Not supported | Hardware is being procured; building requires Arduino-ESP32 4.0.0-RC1 |
+
+Not yet covered: S2/S31 hardware, Arduino-ESP32 4.x, and PC OS compatibility
+including Windows and macOS. Remaining work is tracked in
+[TODO](TODO.ja.md) and the current state in the [handoff](docs/V3_HANDOFF.ja.md)
+(both in Japanese).
+
+### Running the tests
+
+Run the separate [validation environment](validation/README.ja.md) with the
+plugin's standard `--combo all`. It runs each registered, physically wired
+combination in turn: the S3 pair, the P4 loopback, the P4/P4X HS link and the
+P4X-to-PC link. It uses `--noconftest` and is independent of the archived 2.x
+tests. Each result names the tested commit and scope; it does not certify every
+OS, control sequence or SoC.
 
 The [example index](examples/README.md) covers basic use, composite devices and
 resource changes in one binary. To compile, for example:

@@ -1,255 +1,109 @@
-# v3 Audio: PCM転送とevent通知のruntime構成
+# EspUsbAudioFunction API（v3）
 
-2026-10-27。Audio classを独自driverへ移し、TinyUSB Audio class/FIFOと単一global instanceを撤去した。
-通知とPCM ringの容量を停止中APIで指定する。Function、control/model、queueの管理情報は残る。
-共通EP0/coreとDWC2も本体内部で保守する。
+USB Audio Class（UAC1 または UAC2）のスピーカー（Playback：Host→Device）とマイク（Capture：Device→Host）を作るクラスです。
+PCM はリングバッファ（ring）を通して `read()`／`write()` し、Host からの音量・ミュート・sample rate の変更は event として受け取れます。
+TinyUSB の Audio class は使わず、本体内部の独自 driver で動きます。
+
+## 基本の使い方
 
 ```cpp
+#include <EspUsbDevice.h>
+
 EspUsbDevice device;
-EspUsbAudioFunction audio(device, EspUsbAudioProtocol::Uac2);
+EspUsbAudioFunction audio(device, EspUsbAudioProtocol::Uac2); // 省略時は Uac1
+EspUsbAudioPlaybackStream &playback = audio.addPlaybackStream();
+uint8_t pcm[192];
 
 void setup() {
-  auto &playback = audio.addPlaybackStream();
-  if (!playback.addFormat({48000, 2, 2, 16})) return;
+  // {sampleRate, channels, bytesPerSample, bitsPerSample}
+  if (!playback.addFormat({48000, 2, 2, 16})) return; // 失敗理由は device.lastError()
+
   EspUsbAudioConfig config;
-  config.eventCapacity = 0; // No event polling in this application.
-  config.playbackBufferFrames = 256; // 1024 bytes for stereo 16-bit PCM.
+  config.eventCapacity = 0;          // event を使わないなら 0
+  config.playbackBufferFrames = 256; // 256 frame × 4 byte = 1024 byte
   if (audio.configure(config) != ESP_OK) return;
-  device.begin();
+
+  if (!device.begin()) { /* device.lastError() を確認 */ }
+}
+
+void loop() {
+  size_t n = playback.read(pcm, sizeof(pcm)); // frame 単位に切り下げた byte 数
+  // n byte の PCM を DAC などへ渡す
 }
 ```
 
-DeviceとFunctionを作り、stream/formatを設定してDevice.beginする通常の手順は維持する。
-Function.beginを手動で先に呼ぶ構成にはせず、開始/終了はDeviceへ揃える。
-Device.end→audio.configure→Device.beginで通知容量を変更でき、再ビルドは不要。
-既定容量は8件。eventCapacity()は開始前/終了後0、開始後は確保した件数を返す。
-configuration().eventCapacityは要求値を保持する。byte数のoverflowはconfigureでInvalidSize、
-開始時の確保失敗はstartError/Device.lastErrorのNoMemoryへ伝え、回復時は全領域を回収する。
+手順は「Device と Function を作る → stream と format を登録 → `configure()` → `device.begin()`」です。
+Function の `begin()` を自分で先に呼ぶ必要はありません。開始と終了は Device の `begin()`／`end()` でそろえます。
+設定を変えるときは `device.end()` → `configure()`／`clearFormats()`／`addFormat()` → `device.begin()` の順です。再ビルドは要りません。
 
-容量0なら通知を生成せず、pendingEvents/droppedEventsとも0となる。
-有効なqueueが満杯なら新しいeventを捨て、既に保存した順序を保ってdroppedEventsを増やす。
-pollEventは一件ずつ返す。clearEventsは未読とdrop数を消す。空のqueueはfalseを返す。
-容量分の配列をbegin時に一度だけ確保し、push/popでheapを使わない。
-queueは短いcritical sectionで保護し、USB workerとアプリのevent追加が競合してもslotを共有しない。
+### 主な設定
 
-稼働中のconfigure、addFormat、新しい方向のaddPlaybackStream/addCaptureStreamは拒否する。
-configureはInvalidState、addFormatはfalseを返す。streamを返す従来APIは既存参照を返して
-構成を保ち、Device.lastErrorにInvalidStateを設定する。raw descriptor writerも稼働中の再構築を拒否する。
-停止後のformat入替えはclearFormatsで行う。PCM形状ごとのalternateと共有clockの複数rateに対応する。
+`EspUsbAudioConfig` の項目です。`configure()` は停止中だけ受け付けます。
 
-未登録Audioの手動beginはInvalidStateで拒否し、そのstreamから既存Audioのbufferへアクセスしない。
-稼働中のFunction破棄はDeviceを停止し、USB worker/DMAが止まってからevent領域を解放する。
-Audio全体の制御状態とsetMute/setVolumeの同時更新、endとPCM read/writeの同時操作まで
-安全性を証明した変更ではない。これらの所有権は独自の転送/control stateで再整理する。
+| 項目 | 既定値 | 意味 | FS/HSでの違い |
+| --- | --- | --- | --- |
+| `eventCapacity` | 8 | event queue の件数。0 なら event を作らない | なし |
+| `playbackBufferFrames` | 256 | Playback ring の容量（sample frame 数） | なし |
+| `captureBufferFrames` | 256 | Capture ring の容量（sample frame 数） | なし |
+| `playbackBuffer` / `captureBuffer` | `nullptr` | ring に使う外部領域。`nullptr` なら begin 時に自動確保 | なし |
+| `playbackBufferBytes` / `captureBufferBytes` | 0 | 外部領域の長さ（byte）。外部領域を渡すときは必須 | なし |
+| `playbackOverflowPolicy` | `DropOldest` | Playback ring があふれたときにどちらを捨てるか | なし |
 
-## 実測と移行
+- コンストラクタの第2引数 `EspUsbAudioProtocol` の既定は `Uac1` です。UAC2 を使うときは明示します。
+- `EspUsbAudioFormat` の既定値は `{48000, 2, 2, 16}`（48 kHz、ステレオ、1 sample 2 byte、有効 16 bit）です。
+- 「sample frame」は全 channel の 1 時刻分です。1 frame の byte 数は `channels × bytesPerSample` です（有効 bit 数 `bitsPerSample` からは計算しません）。
+- ring の byte 数は「その方向に登録した format のうち最大の frame byte 数 × bufferFrames」です。
+- USB の packet の大きさは FS と HS で変わります（[FSとHSの違い](#fsとhsの違い)）。設定項目自体に速度による違いはありません。
 
-新規validation/s3/audio_eventsはS3–S3だけを使い、conftest/独自fixture/hookを追加しない。
-0/1/17/257件のmetadata反復とheap回復、2 taskから計200件の各task内順序を確認する。
-実USBはUAC2 Playback 48 kHz/stereo/16 bitの構成で、0/1/8/17件に20回のMute変更を行い、
-保存件数、overflow数、payload順序、HostのGET_CURとの一致を確認する。
-未登録Audioを生成・破棄した後も制御要求が動くこと、稼働中破棄後の停止も確認する。
+## stream と format
 
-最初のaudio-events.xmlは1 passed（83.46秒）。
-eventのみの段階のaudio-events-related.xmlは**2 passed、0 skipped、0 unfinished、77.39秒**。
-Audio Playback/Capture/両方向、容量0を含む413取得点の確保失敗/回復も確認した。
-全caseで両board STOPPED、panicなし。serial原本は/tmp/pytest-embedded/2026-10-26_18-22-12-899869/、
-JUnit/transcript/serialコピーはvalidation/.pytest-results/audio-events-related*。
+### stream を選ぶ
 
-利点は通知不要時の配列省略、通知量に合った容量、開始失敗の明示化、稼働中の構成破壊の防止。
-不利益は通知有効時の動的確保・管理情報と、queue操作の短いlockである。
-既存の通常のpollEvent呼出し方を維持するが、稼働中のformat追加やFunctionの先行手動beginに依存するコードは移行が必要。
+- `addPlaybackStream()`／`addCaptureStream()` で使う方向を選びます。両方選ぶと双方向（duplex）になります。
+- 稼働中に新しい方向を追加しようとすると、既存の stream 参照を返して構成は変えず、`device.lastError()` を `ESP_ERR_INVALID_STATE` にします。
+- `hasPlaybackStream()`／`hasCaptureStream()` で選択済みかを確認できます。
 
-PCM bufferはsample frame数で指定する。1 frameは全channelの1 sampleで、確保するbyte数は
-登録format中の最大値(channels × subslotBytes) × bufferFrames。単一formatならそのframe幅を使う。
-read/writeと利用可能容量は、選択中のPCMのframe境界へ切り下げる。
-選択した方向だけにringと最大packet分のDMA bufferを確保し、UAC2 Playbackだけに4 byte feedbackを加える。
-既定は各256 frame。playbackBuffer/captureBufferに外部byte配列を渡す場合は、
-playbackBufferBytes/captureBufferBytesへ提供する領域長も指定する。必要長は上記byte数で、
-Device.endまで有効に保ちアプリが直接書き換えない。ringはCPU copy用なのでDMA alignmentは不要。
-両方向の実使用領域が重なる指定、pointer/size overflow、外部buffer付きの容量0を拒否する。
-pointer/byte長の片方だけを指定した場合はconfigureがInvalidArg、必要量に足りない場合はbeginがInvalidSize。
-提供長が必要量より大きくてもringは要求したframe数分だけを使い、末尾を追加容量として扱わない。
+### format を登録する（`addFormat`）
 
-容量0ならringを確保しない。Playbackは受信を捨てoverrunへ記録する。
-CaptureはDMA packetを無音で埋めunderrunへ記録する。USB転送に必要なDMA buffer自体は残る。
-capacity()は選択中のframe境界へ切り下げたring byte数、packetCapacity()は全登録formatのFS最大packetを入れる容量を返す。
-どちらもbegin前/終了後は0。HSで必要なpacketが小さくても、FS fallback用のDMA容量は確保する。
+`bool addFormat(const EspUsbAudioFormat &format)` は stream ごとに呼びます。失敗すると false を返し、理由を `device.lastError()` に入れます（成功時は `ESP_OK` に戻します）。
 
-read/writeはframe境界まで切り下げたbyte数を処理し、戻り値もbyte数。
-Playbackは満杯なら新しいPCMを捨て、未読データを保持する。
-Captureは入る分だけcopyして実数を返す。旧TinyUSB FIFOの上書きに依存したアプリは戻り値を確認する。
-availableForWrite()で空きを確認できる。容量の小さいqueueでも部分frameを保存しない。
-clearBufferはqueueだけを消し、既にarmしたpacketは取り消さない。
-Captureはalt=0で事前充填でき、最初のalt=1で保持する。停止や稼働中のalt再設定ではqueueを消す。
+| 失敗理由 | `device.lastError()` |
+| --- | --- |
+| 稼働中に呼んだ | `ESP_ERR_INVALID_STATE` |
+| 保存領域を確保できない | `ESP_ERR_NO_MEM` |
+| 1 packet が FS の上限（1023 byte）を超える | `ESP_ERR_INVALID_SIZE` |
+| channels・bytesPerSample・bitsPerSample が範囲外、rate が 0 | `ESP_ERR_INVALID_ARG` |
 
-captureの端数sample rateは各USB intervalへ分配し、不足を無音補完する。
-UAC2 feedbackはUSB由来の公称clockをQ16.16で返す。外部codecのclock driftへ追従する
-消費量/clock APIはまだない。この段階のdriverを非同期codecの適応feedback対応とは扱わない。
-periodic転送の完了と再armはUSB workerで行う。アプリのread/writeとは短いcritical sectionで共有する。
-alt変更はまずhardwareをabortし、旧完了eventをFIFO fenceで排出してからbufferを再利用する。
-Device.endはworker/DMA停止後にring、packet、feedback、event配列を解放する。
+受け付ける値は次のとおりです。
 
-利点は使う方向と選択formatに応じた確保、build flagなしの容量変更、Functionごとの独立性、
-captureの明示的な部分書込み。不利益はbegin時の確保失敗と、copy/lockの費用、capture戻り値確認が必要な点。
-Device + Function + addStream/addFormat + begin、read/write/pollEventという通常の流れは維持する。
-旧CFG_TUD_AUDIOの有効化と固定buffer flagは拒否する。形式はaddFormatで、queueはconfigureで指定する。
+- channels：1 または 2
+- bytesPerSample：2、3、4
+- bitsPerSample：16、24、32 のいずれかで、`bytesPerSample × 8` 以下
+- 1 packet（1 ms 分＋1 frame）が FS の上限 1023 byte 以下に収まること。HS でつながる場合も、FS で表せる format だけを受け付けます。
 
-未完の範囲は方向内のchannel数変更、PCM形状ごとに異なるrate集合、外部clock feedback、
-callback/borrowed PCMの所有権API、OS音声アプリ、P4/S2/S31/HSである。
-方向ごとにchannel数を固定し、subslot/有効bit数をalternateで切り替える。同じFunctionではclockを共有する。
+format は登録した個数分だけ保存します（1 個 8 byte。固定長の配列は持ちません）。設定は `end()` 後も残り、Function の破棄で解放します。
 
+### 同じPCM形状での複数sample rate
 
-独自PCM driverの関連試験audio-pcm-related.xmlは**3 passed、0 skipped、0 unfinished、145.99秒**。
-PCM・event制御・438取得点の失敗/回復を含み、両board STOPPED、panicなし。
-serial原本は/tmp/pytest-embedded/2026-10-26_18-51-19-326855/、コピーとJUnit/transcriptはvalidation/.pytest-results/audio-pcm-related*。
-Audioのみ/Deviceのみの最小buildとnmも成功し、旧TinyUSB Audioと未使用独自Audioの不在を確認した。
-通常収集は16件。この関連3件の後に実行した全16件の結果は下記を参照。
-
-
-## Audio置換後の全体確認
-
-2026-10-27。標準の`--combo all`で**16 passed、0 skipped、0 unfinished、823.56秒**。
-全16 caseで両board STOPPED、32本のserialにpanicなし。438取得点の確保失敗/回復、
-UAC1/UAC2 PCMとevent、CDC/Vendor/HID/MIDI/MSC、descriptor/registryと取消し・転送境界を含む。
-serial原本は`/tmp/pytest-embedded/2026-10-26_18-54-11-801467/`、コピーとJUnit/transcriptは`validation/.pytest-results/runtime-audio-all*`。
-Audioのみ/Deviceのみの最小build/nmも成功。TinyUSB treeは51 file / 15 compiled sourcesで一致し、
-旧tests/examplesはmainと同一、mainはv3の祖先。残るclass/core/DCDと他SoC/HSの置換・検証は未完である。
-
-
-## Audio ISOの実bus休止
-
-`audio_stream`でalternate settingとHostのISO pipeを維持したまま、root portを実際に休止・再開した。
-UAC2双方向48 kHz、UAC1双方向44.1 kHz、UAC2 playback-onlyの1-frame外部ring、
-UAC2 capture-onlyのringなしの4構成を確認。休止中はDeviceの転送counterが変わらず、
-構成・sample rateを維持する。resume後は有効な各方向の転送量が増え、HostでPCMを照合し、
-UAC2のfeedback受信とreject=0、captureのfill/無音も確認した。
-新たなSET_INTERFACEやstream再開始は行わない。既存10回のrun/pauseとunderrun確認も維持。
-
-最終版は**1 passed、0 skipped/error/failure/unfinished、69.35秒**。2 serial全てSTOPPED、panic/watchdog resetなし。
-製品コードは512edb6から変更していない。初回は4構成の通信を通過した後、二度目のHost停止で失敗。
-追加したprobeが停止済みcontrollerのLL registerへ触れていたため、Host.ready()でguardした。
-初回失敗も隠さず`.pytest-results/audio-suspend-initial-stop-error*`へ保持している。
-最終原本`/tmp/pytest-embedded/2026-10-28_16-13-58-163956/`、結果は`.pytest-results/audio-suspend*`。
-全35件の一括結果ではない。S3 FSのHost起点L2休止であり、OS/HS・remote wakeup・
-任意のpacket位置/clock drift・全停止競合を網羅したものではない。
-
-## format保存領域とrate照会の容量整理
-
-formatを両方向8個ずつ保持する固定配列を撤去し、addFormatで指定された個数分だけ保存する。
-未設定の方向には配列を確保しない。追加時だけ新しい領域を取得し、失敗時は旧領域と件数を保つ。
-有効なformatなら1個8 byteのpayloadを保持する（allocatorの管理費は別）。追加中は旧領域と
-新領域が一時的に共存し、既存要素をcopyする。通常転送中には確保・拡張しない。
-設定はend後も保持し、Function破棄時に解放する。PCM/DMA/event等の開始時資源はendで回収する。
-
-addFormatのbool返却は維持。失敗理由はDevice.lastErrorへNoMemory/InvalidArg/InvalidSizeを設定し、
-成功時はESP_OKに戻す。利用側はaddFormatの結果も確認する必要がある。
-同一のsample rateを別のPCM表現で指定しても、clockのrate一覧へ重複登録しない。
-rate用の8要素copyも撤去し、active中は不変なFunction内のmodelを参照する。
-重複除去の探索は設定・control照会時に行い、PCM経路へ新しい処理やtaskを加えない。
-
-S3の同じtarget compilerで測ったsizeof:
-
-| 型 | 変更前 | 変更後 |
-| --- | ---: | ---: |
-| EspUsbAudioFunction | 444 | 296 |
-| AudioStreamModel | 76 | 16 |
-| AudioControlState | 80 | 52 |
-
-これは本体の型サイズで、formatのheap領域とallocator管理費を含まない。
-測定は`.pytest-results/audio-storage-layout-{before,after}.json`。
-内部model/controlでは13 format・12 rate、設定追加14箇所の確保失敗とrollback・再試行を確認。
-公開APIでも、追加失敗後のsingle-format beginが成功することを確認した。
-この節の保存領域変更の時点では、descriptor/beginの一方向一形式制限を残していた。
-formatの入替えAPI、alternate選択、range応答領域等は続けて整理する。
-
-設定・確保失敗・Audio event/control・PCMの関連3件は**3 passed、0 skipped/error/failure/unfinished、242.85秒**。
-774開始取得点の失敗/回復、heap346704→346704 byte、実ISO休止4構成も成功。
-6 serial全てSTOPPED、panic/watchdog resetなし。S2/P4 compile成功。
-全29 sourceの依存/nmに旧stack/SDK fallbackなし、S2/P4の未選択Audioもリンクされない。
-原本`/tmp/pytest-embedded/2026-10-28_21-22-05-002801/`、結果は`.pytest-results/audio-storage*`。
-これは関連3件の実行で、全35件を再実行した結果ではない。
-
-## 停止後のformat入替え
-
-Playback/Captureの両streamに`esp_err_t clearFormats()`を追加した。
-停止中にformat設定領域を解放し、同じFunctionとstream参照でformatを登録し直せる。
-空でもESP_OKで、追加の確保を行わない。稼働中（DescriptorsOnlyを含む）はInvalidStateで、
-設定・control・領域を変更しない。Device.lastErrorも戻り値へ合わせる。
-
-```cpp
-device.end();
-if (playback.clearFormats() != ESP_OK) return;
-if (!playback.addFormat({44100, 2, 2, 16})) return;
-if (!device.begin()) return;
-```
-
-`clearBuffer()`はPCMデータ、`clearFormats()`はformat設定を消す別の操作。
-clearFormatsは方向の選択を解除しない。選択済みの各streamへformatを登録してからbeginする。
-空設定のbeginは拒否される（現descriptor検証ではInvalidSize）。clear後は旧control metadataも無効化する。
-もう一方のstreamのformatとAudioConfig、Function登録自体は保持する。
-通常のaddFormat→configure→beginの利用と、end後に設定を保持する既定動作は変えない。
-利点はオブジェクトを再生成せず設定を入れ替え、不要な設定領域を解放できること。
-不利益はclearと再追加の間に空の設定となり、再追加の確保失敗を処理する必要があること。
-複数formatのalternate対応を追加した変更ではない。
-
-clearの反復解放、空設定beginの拒否、metadata modeの変更拒否、再追加後の開始を検証した。
-UAC2/UAC1で同じFunction/stream参照の48 kHz→44.1 kHz→48 kHzを各1系列、計6回wireで確認。
-各構成のPCMとrateを照合し、10構成で稼働中のclear拒否を確認した。
-既存のISO休止4構成、event/control、設定追加14箇所と開始774箇所の確保失敗回復も成功。
-関連4件は**4 passed、0 skipped/error/failure/unfinished、200.04秒**。8 serial全てSTOPPED、panicなし。
-heap346704→346704 byte、S2/P4 compile成功、全29 sourceの依存/nmに旧stack/SDK fallbackなし。
-原本`/tmp/pytest-embedded/2026-10-28_21-30-54-318752/`、結果は`.pytest-results/audio-reconfigure*`。
-初回のprobe期待値誤りは`audio-reconfigure-initial-expectation-error*`へ記録した。
-標準combo/allの収集は36件。この結果は関連4件の実行で、全36件の一括実行ではない。
-
-## 同じPCM形状での複数sample rate
-
-同じstreamへ、channel数・subslot byte数・有効bit数が同じformatをrate違いで登録できる。
+同じ PCM 形状（channel 数・byte 数・有効 bit 数が同じ）を、rate だけ変えて複数登録できます。Host が登録済みの rate から選びます。
 
 ```cpp
 if (!playback.addFormat({48000, 2, 2, 16})) return;
 if (!playback.addFormat({44100, 2, 2, 16})) return;
-// With both directions selected, register the same rate set for capture.
-if (!device.begin()) return;
 ```
 
-一つのFunctionのclockは共有するため、両方向を使う場合はrate集合を一致させる。
-開始時は最初のPlayback format（PlaybackなしならCapture）のrateを使い、Hostが登録済みrateを選ぶ。
-UAC1はType I descriptorへ離散rate一覧を出し、endpointのSET_CUR/GET_CURも実clockへ合わせる。
-UAC2はClock SourceのCUR/RANGEへ一覧を出す。未登録rateは拒否し、現在のrateを変更しない。
-PCM形状が変わらないrate変更なので、streaming alternateは従来どおり0/1。
-この複数rate対応の時点では、異なるPCM形状のalternate切替を残していた。
+- 一つの Function の clock は共有です。両方向を使うときは、Playback と Capture の rate の集合を同じにします。
+- 開始時は、最初に登録した Playback format（Playback がなければ Capture）の rate を使います。
+- UAC1 は format descriptor に rate の一覧を載せ、endpoint の SET_CUR／GET_CUR も実際の clock に合わせます。UAC2 は Clock Source の CUR／RANGE 要求で一覧を返します。未登録の rate は拒否し、現在の rate を変えません。
+- rate の上限数：UAC1 は 1 一覧 82 rate まで（descriptor 長が 1 byte のため）、UAC2 は 5461 subrange まで（control 長が 16 bit のため）。超える設定は拒否します。
+- UAC2 で rate が 2 個以上あるときだけ、RANGE 応答用に `2 + 12 × rate数` byte を begin 時に確保し、end で解放します。
+- rate 変更時の無音期間や、外部 codec の clock への追従は保証しません。
 
-endpointのpacketサイズとDMA容量は、登録rateの最大packet要求に合わせて確保する。
-UAC2の複数rate時だけ、`2 + 12 × rate数` byteのRANGE応答領域を開始時に確保し、endで回収する。
-単一rateとUAC1は追加のRANGE領域を持たない。選択済みAudio stateに管理pointerを一つ追加したが、
-Function本体の296 byteは変わらない。control要求・PCM転送時に新規確保しない。
-rate一覧が重複しないactive modelでは直接indexを使い、RANGEの生成をrate数に比例させる。
+参考：[USB Audio 1.0](https://www.usb.org/sites/default/files/audio10.pdf)、[Microsoft の UAC2 clock/range 要件](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/usb-2-0-audio-drivers)
 
-残る上限は保存用の8要素配列ではない。UAC1の1 byte descriptor長から1一覧82 rateまで、
-UAC2の16 bit control長から5461 subrangeまでとし、超える設定を拒否する。実際のheap・FIFO・FS packet上限も適用する。
-rate変更の無音期間や外部codec clockへの追従を保証するものではない。
-規格とdriver上の参照は[USB Audio 1.0](https://www.usb.org/sites/default/files/audio10.pdf)と
-[MicrosoftのUAC2 clock/range要件](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/usb-2-0-audio-drivers)。
+### PCM形状のalternate選択
 
-S3の関連5件は**5 passed、0 skipped/error/failure/unfinished、175.61秒**。
-13 rateを登録したUAC1/UAC2で、再構成せず48→44.1→48 kHzを各1系列転送し、実clockとPCMを照合。
-未登録22050 Hzは拒否し、clockを維持。158 byteのUAC2 RANGEを2/3/13/14/15/64/65/127/158/200 byte要求で
-内容・実長・guardまで確認した。794開始取得点の失敗/回復、設定追加14箇所、heap346704→346704、
-既存の停止後format入替え・ISO休止4構成・event/controlも成功。10 serial全てSTOPPED、panicなし。
-S2/P4 compileと全29 sourceの依存/nmも成功し、未選択Audioの除外を維持した。
-原本`/tmp/pytest-embedded/2026-10-28_21-46-07-520296/`、`.pytest-results/audio-rates*`。
-rate一覧の直接参照へ整理する前の関連5件（268.82秒）も別名で保持する。
-収集は37件。この5件の結果を、全37件の一括試験や異なるPCM形状のalternate対応とは扱わない。
-
-## PCM形状のalternate選択
-
-同じstreamへsubslot byte数・有効bit数が異なるformatを登録できる。
-同じPCM形状は一つのalternateへまとまり、各形状を最初に宣言した順に1～255を割り当てる。
-同じ形状のrate追加はalternateを増やさない。0はstream停止。
-現在の共有clockでは、各PCM形状と両方向が同じrate集合を持つ必要がある。
-不足した組合せや方向内でchannel数が変わる設定はbegin前に拒否する。
+byte 数や有効 bit 数が違う format も同じ stream に登録できます。
 
 ```cpp
 for (uint32_t rate : {24000u, 16000u}) {
@@ -259,287 +113,301 @@ for (uint32_t rate : {24000u, 16000u}) {
 }
 ```
 
-両streamの`bool currentFormat(EspUsbAudioFormat &format) const`で、選択されたPCM形状と現在のrateをcopyできる。
-未選択・停止・切替のdrain中はfalseで、引数を変更しない。snapshotなので次のread/writeまで形式を固定する意味ではない。
-アプリはeventや照会結果に応じてPCMの処理形式を合わせる。codec/I2Sの自動設定は行わない。
+- 同じ PCM 形状は一つの alternate setting にまとまります。形状を最初に登録した順に 1〜255 を割り当てます。0 は stream 停止です。
+- 同じ形状に rate を足しても alternate は増えません。
+- すべての形状と両方向が同じ rate の集合を持つ必要があります。足りない組合せや、同じ方向で channel 数が変わる設定は `device.begin()` で拒否します（実測では `ESP_ERR_INVALID_SIZE`）。登録順が違っても、集合が同じなら受け付けます。
+- Host が alternate を切り替えると、古い DMA を止め、古い完了 event を排出してから endpoint を有効にし直します。前の形式の PCM が残った ring は捨てます。切替中の `read()`／`write()` は 0 を返します。
+- `bool currentFormat(EspUsbAudioFormat &format) const` で、選ばれている形状と現在の rate を取得できます。未選択・停止・切替中は false で、引数を変えません。取得した値はその時点の写しで、次の `read()`／`write()` まで形式が固定される意味ではありません。
+- アプリは event や `currentFormat()` に合わせて PCM の処理形式を変えてください。codec や I2S の自動設定は行いません。
 
-ringは`bufferFrames × 登録format中の最大frame byte数`を開始時に確保する。
-外部ringにもこの長さが必要。capacity/availableForWriteは現在のframe境界へ切り下げたbyte数で、
-65 frame×最大8 byteの520 byte領域なら、6 byte/frame時のcapacityは516となる。
-packetCapacityは全formatのFS最大packetを入れる領域の容量。実転送のMPSは選択alternateに合わせる。
-FIFOも物理endpointごとの最大packetで一度だけ予約し、alternateの数だけ積み増さない。
+### 停止後のformat入替え
 
-切替時は旧DMAを停止し、完了eventをfenceで排出した後にendpointを再activateする。
-同じsubslotでも有効bit数が異なる形式は別として扱い、旧PCMのringを捨てる。
-最初に選んだ形式と同じ形式での事前充填は維持する。切替中のread/writeは0。
-alternateごとのpacket/ring配列、新しいtask/queue、切替時のheap取得は追加しない。
+両 stream の `esp_err_t clearFormats()` で、登録した format を消せます。
 
-S3の関連7件は**7 passed、0 skipped/error/failure/unfinished、358.65秒**。
-UAC1/UAC2それぞれで16-bit/2-byte、24-bit/3-byte、32-bit/4-byte、24-bit/4-byteを選び、計16回の実ISO往復を確認。
-14回、旧ringへ0xa5を事前配置し、新形式へ混入しないことを確認した。
-16回の状態/境界照会、32個の不正alternate要求、2 clock rateとfeedback、816開始取得点＋14設定取得点の
-失敗回復、heap346704→346704、既存のISO休止・再構成・control/coreも成功。14 logs STOPPED/panicなし。
-S2/P4 compileと依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_22-26-28-639054/`、
-`.pytest-results/audio-alternates-related*`。収集は38件で、この結果は関連7件のもの。
+```cpp
+device.end();
+if (playback.clearFormats() != ESP_OK) return;
+if (!playback.addFormat({44100, 2, 2, 16})) return;
+if (!device.begin()) return;
+```
 
-EspUsbHost 2.10.1は列挙時にclaimしたalternateしか開始対象にしないため、新probeはSDKのclaim/releaseとISO転送を使う。
-pluginの標準combo/allとnoconftestは維持する。Hostの既定FIFO限界と初期probeの誤りも別名で記録した。
-間欠OUTで最初のpacketだけ受信する問題も再現し、DWC2のincomplete OUT回復を4480513で修正した。
-Hostが送る全packetの連続性やOS/HS/任意の全切替競合を保証した結果とは扱わない。
+- 停止中だけ使えます。稼働中は `ESP_ERR_INVALID_STATE` を返し、何も変えません。空でも `ESP_OK` です。
+- 方向の選択は解除しません。format が空のままでは `begin()` が失敗するので、再登録してから開始します。
+- もう一方の stream の format、`EspUsbAudioConfig`、Function の登録は残ります。
+- `clearBuffer()`（PCM データを消す）とは別の操作です。
+- clear と再登録の間は設定が空になるので、再登録の失敗（確保失敗など）を処理してください。
 
-新規[AudioPlayback例](../examples/AudioPlayback/AudioPlayback.ino)は公開APIだけでPlaybackを選び、
-2 PCM形状×2 rate、192 byteのring、event容量0、currentFormatを示す。受信PCMを消費・表示する例で、DACは要求しない。
-Core3.3.12のS3/S2/P4で3ビルド成功、各ELF/FQBNと未使用クラスの除外を確認した。
-記録は`.pytest-results/audio-playback-example*`。sketch自体の実機試験やOS認定ではなくcompile確認である。
+## PCM の読み書き
 
+### Playback（Host→Device）
 
-製品/probe `033f2d8`を固定した全体試験も、**38 passed、0 skipped/error/failure/unfinished、2544.60秒**で成功。
-76 serial全てSTOPPED/panicなし、816開始取得点と14設定取得点の失敗回復、heap346704→346704を確認した。
-実機はS3–S3で、S2/P4はcompile/依存/nm確認まで。記録は`.pytest-results/audio-alternates-all*`、
-[全体の検証記録](../validation/README.ja.md)を参照。
+| 関数 | 戻り値 |
+| --- | --- |
+| `size_t read(void *data, size_t length)` | 読んだ byte 数。frame 境界に切り下げ |
+| `int available() const` | 未読 byte 数 |
+| `size_t capacity() const` | 現在の format の frame 境界に切り下げた ring 容量。begin 前と end 後は 0 |
+| `size_t packetCapacity() const` | packet 用 DMA 領域の容量（全 format の FS 最大 packet）。begin 前と end 後は 0 |
+| `bool clearBuffer()` | 未読の PCM を消す |
+| `EspUsbAudioStreamStats stats() const` / `void resetStats()` | 統計の取得と初期化 |
 
+ring があふれたときの動きは [Playbackのあふれ方針](#playbackのあふれ方針playbackoverflowpolicy) を参照してください。
 
-## 外部ringと不完全なformat設定の確認
+### Capture（Device→Host）
 
-2026-10-29、製品は`033f2d8`のまま、独立probeの確認範囲を拡大した。
-UAC1/UAC2で内蔵・外部ringそれぞれ4 PCM alternateを切り替え、計32回のISO交換を確認。
-外部ringは非整列pointerから520 byteを使い、各切替後とend後に前後のguardを検査した。
-6 byte/frame時のcapacity=516、8 byte/frame時のcapacity=520と実payloadを照合し、
-外部18回・内蔵18回の照会は全て成功。関連2件は2 passed、124.49秒、4 logs STOPPED/panicなし。
-`.pytest-results/audio-external-ring*`、原本`/tmp/pytest-embedded/2026-10-28_23-22-08-817368/`。
+| 関数 | 戻り値 |
+| --- | --- |
+| `size_t write(const void *data, size_t length)` | ring に入った byte 数。入りきらない分は書かない |
+| `size_t availableForWrite() const` | 空き byte 数（frame 境界に切り下げ） |
+| `capacity()`／`packetCapacity()`／`clearBuffer()`／`stats()`／`resetStats()` | Playback と同じ |
 
-共有clockを満たさない設定は、保存時ではなくDevice.beginのdescriptor検証で拒否する。
-PCM alternateのrate不足、件数は同じだがrateが異なる集合、Playback/Capture間の不一致、
-方向内channel数変更はESP_ERR_INVALID_SIZE。修正後は同じFunctionを開始・終了できる。
-rate集合が同じなら登録順序が異なっても受け付け、Playbackの最初のrateで開始する。
-これらと、最大frame幅での外部ring重複拒否・隣接領域での成功・書込上限とguardを、
-UAC1/UAC2計12条件×2回で確認した。1 passed、31.33秒、2 logs STOPPED/panicなし、
-heap357280→357280。`.pytest-results/audio-capability-settings*`、
-原本`/tmp/pytest-embedded/2026-10-28_23-24-48-191778/`。
+- `write()` は入る分だけコピーし、実際の byte 数を返します。古いデータを上書きしません。入りきらなかった分は `overrunCount`／`overrunBytes` に数えます。戻り値を必ず確認してください。
+- Host が読みに来たときに ring の PCM が足りなければ、足りない分を無音で埋め、`underrunCount`／`underrunBytes` に数えます。
+- sample rate が USB の 1 区間（FS 1 ms、HS 125 µs）で割り切れないとき（例：44.1 kHz）、端数を区間ごとに振り分けます。
+- alternate 0 の間に `write()` で先に貯めておけます。最初に alternate 1 が選ばれたとき、その PCM を保持します。停止や稼働中の alternate 再設定では ring を消します。
 
-今回の拡張は試験のみ。外部配列の実際の確保長をライブラリが検出するAPIを追加した結果ではない。
-呼出側には引き続き最大frame幅×bufferFrames以上の有効な領域を渡す責任がある。
+### 共通の注意
 
-共有probeを使う既存のstream/sample-rate/reconfigure 3件も3 passed、88.15秒。
-4構成の実bus休止、13 rateと158 byte RANGE、停止後のrate入替えを維持し、6 logs STOPPED/panicなし。
-`.pytest-results/audio-external-shared-probe*`、原本`/tmp/pytest-embedded/2026-10-28_23-25-39-968972/`。
-この追加試験後に全38件を再実行した結果とは扱わず、全38件の基準は前節の033f2d8を参照する。
+- 長さは常に現在の frame 境界へ切り下げます。frame の途中で区切った PCM は保存も返却もしません。
+- `clearBuffer()` は ring だけを消します。すでに USB 側に出した（arm した）packet は取り消さないので、その後の完了で PCM が再び入ることがあります。
+- ring 容量を 0 にすると ring を確保しません。Playback は受信をすべて捨てて overrun に数え、Capture は無音を送って underrun に数えます。USB 転送用の DMA 領域は残ります。
+- `stats()` の `transferredBytes` は USB で正常に送受信した byte 数です。アプリが `read()` した量や ring に入った量とは別です。
+- カウンタは `uint32_t` なので、長時間の集計では一周（wrap）を考慮してください。統計は `begin()` で 0 に戻ります。
 
+## Playbackのあふれ方針（playbackOverflowPolicy）
+
+Playback ring が満杯のとき、新しく届いた PCM と未読の PCM のどちらを捨てるかを選びます。Capture の `write()` には関係しません。
+
+```cpp
+enum class EspUsbAudioOverflowPolicy : uint8_t {
+  DropNewest, // 古い未読を残し、新着のうち入らない部分を捨てる
+  DropOldest, // 古い未読を押し出し、最新の完全な frame を残す（既定）
+};
+```
+
+- 既定は `DropOldest` です。ライブ再生で、読み出しが遅れた後に古い音を流し続けにくくするためです。
+- v3 の当初の動作（未読を残す）が必要なら `DropNewest` を指定します。どちらも欠落のない録音は保証しません。
+- `configure()` で停止中だけ指定できます。稼働中は `ESP_ERR_INVALID_STATE`、未知の値は `ESP_ERR_INVALID_ARG` で、どちらも既存の設定を保ちます。`configuration()` で現在の値を読めます。
+
+例（文字は sample frame）：
+
+| 状態 | 新着 | DropNewest の結果 | DropOldest の結果 |
+| --- | --- | --- | --- |
+| 容量4、未読 A/B/C | D/E/F | A/B/C/D | C/D/E/F |
+| 容量4、満杯 A/B/C/D | E/F | A/B/C/D | C/D/E/F |
+| 容量2、空 | A/B/C | A/B | B/C |
+| 容量0 | A/B | 空 | 空 |
+
+正確な規則は次のとおりです。F＝1 frame の byte 数、B＝受信 byte 数、C＝ring の実効容量（物理容量を F の倍数へ切り下げた値）、U＝未読 byte 数、A＝`floor(B/F)×F`（新着のうち完全な frame の部分）とします。
+
+| 方針 | 処理後の ring | その packet で数える破棄 byte 数 |
+| --- | --- | --- |
+| DropNewest | 古い U byte＋新着の先頭 K byte（K＝min(A, C−U)） | B−K |
+| DropOldest | R＝min(A, C)、D＝max(0, U+R−C)。古い ring の先頭 D byte を捨て、新着の完全 frame 部分の末尾 R byte を足す | D＋B−R |
+
+- 破棄があった packet ごとに `overrunCount` を 1 増やし、`overrunBytes` に上の値を足します。DropOldest では押し出した過去の PCM も数えます。packet 末尾の不完全な frame の破棄も含みます。
+- 末尾の不完全な frame は両方とも捨てます。次の packet と結合する隠れ buffer はありません。
+- この計算は内部 lock の中で 1 回にまとめて行います。アプリが `capacity()` と `available()` を別々に読んでも、同じ時点の値になるとは限りません。
+- 追加の ring・断片 buffer・監視 task・破棄ごとの callback はありません。
+
+照合先：[AudioTransport の受信処理](../src/internal/EspUsbAudioTransport.cpp)
 
 ## 外部ringのbyte長指定
 
+ring に自分で用意した領域を使えます。内部確保の既定のままなら、この指定は要りません。
+
 ```cpp
-uint8_t storage[520]; // Keep alive until device.end().
+uint8_t storage[520]; // device.end() まで有効にしておく
 EspUsbAudioConfig config;
 config.playbackBufferFrames = 65;
 config.playbackBuffer = storage;
 config.playbackBufferBytes = sizeof(storage);
-esp_err_t error = audio.configure(config);
-if (error != ESP_OK) return;
-if (!device.begin()) { /* Inspect device.lastError(). */ return; }
+if (audio.configure(config) != ESP_OK) return;
+if (!device.begin()) { /* device.lastError() を確認 */ return; }
 ```
 
-外部storageには、その方向の登録済み最大frame幅×bufferFrames以上が必要。
-例えばstereo 16-bitと32-bitを登録した65 frameは520 byteで、先頭の16-bitだけから計算した260 byteでは不足する。
-formatを後から追加できるため、最終的な必要量の検証はbegin時に行う。拒否時は外部領域へ書き込まず、
-byte長を直してconfigure→beginを再試行できる。内部確保の既定利用では追加の指定は不要。
-サイズ指定を含む外部領域が本当に有効かは呼出側の責任である。
+- 必要な長さは「その方向に登録した最大の frame byte 数 × bufferFrames」です。例：ステレオ 16 bit（4 byte）と 32 bit（8 byte）を登録して 65 frame なら 520 byte。16 bit だけで計算した 260 byte では足りません。
+- format は後から足せるので、長さの最終確認は `begin()` で行います。足りなければ `begin()` が失敗し（`ESP_ERR_INVALID_SIZE`）、外部領域には書き込みません。直して `configure()` → `begin()` をやり直せます。
+- pointer と長さの片方だけを指定する、frame 数 0 で外部領域を渡す、などは `configure()` が `ESP_ERR_INVALID_ARG` を返します。
+- 両方向の外部領域が重なる指定、pointer と長さの overflow も拒否します。
+- 渡した長さが必要量より大きくても、使うのは要求した frame 数分だけです。
+- `device.end()` まで有効に保ち、その間アプリから直接書き換えないでください。領域が本当に有効かどうかはライブラリでは確かめられません。
+- ring は CPU がコピーするだけなので、DMA 用の alignment は要りません。
 
-configureのesp_err_tをその場で確認し、Device.beginの失敗はDevice.lastErrorで確認する。
-これは他クラスのconfigureと同じ流れで、configure失敗時にDevice.lastErrorが更新される前提にはしない。
+`configure()` の失敗は戻り値で、`device.begin()` の失敗は `device.lastError()` で確認します。`configure()` の失敗で `device.lastError()` が更新されることは前提にしないでください。
 
+## 音量・ミュートと event
 
-提供長を含む製品変更後の関連6件は**6 passed、0 skipped/error/failure/unfinished、369.22秒**。
-12 logs全てSTOPPED/panicなし。両規格・両方向の長さ32/63 byte不足を計16回、pointer/長さの
-不正な組を計16回拒否し、外部storageのguardを維持した。32 ISO交換・36 guard照会、
-4構成の実bus休止・rate変更・停止後の再構成も成功。816開始取得点＋14設定取得点の失敗から回復し、
-heap346704→346704。Function本体は296→304 byte（提供長2項目）、model16/control52は不変で、
-heap取得点は増えていない。S2/P4 AudioPlayback compileと、S3/S2/P4各29 sourceの依存/nmも成功した。
-この6件は全38件の再実行ではなく、外部長追加に対応する関連試験である。
-記録は`.pytest-results/audio-buffer-extents*`、原本`/tmp/pytest-embedded/2026-10-28_23-29-42-188475/`。
+### 音量とミュート
 
+| 関数 | 説明 |
+| --- | --- |
+| `hasMute(direction, channel)` / `hasVolume(direction, channel)` | その control があるか |
+| `getMute` / `setMute` | ミュートの取得・設定 |
+| `getVolume` / `setVolume` | 音量の取得・設定（`int16_t`、1/256 dB 単位） |
+| `getVolumeRange(range, direction, channel)` | 音量の範囲 |
+| `currentSampleRate()` | 現在の sample rate |
 
-## Audio＋CDCの同時通信とTX FIFO割当て
+- `direction` の既定は Playback、`channel` の既定は 0（master）です。1 以上は各 channel です。
+- 音量の範囲は −90 dB〜0 dB、1 dB 刻みです（値では −23040〜0、256 刻み）。範囲外や刻みに合わない値は false を返します。
+- 値が変わると event を作ります（アプリからの変更でも作ります）。
 
-新しい`validation/s3/audio_cdc`は、UAC1/UAC2、24/48 kHz、Audio先/CDC先の4構成で
-再生・録音・feedbackとCDCを同時に動かす。CDC RX97/TX131 byte、Audio各65 frameを使い、
-CDCの1/63/64/65/129 byteを比較しながらline codingも230400 baudへ変更する。
-PCMが進んだCDC往復を数え、単なる列挙や逐次の転送成功とは区別する。
+### event
 
-修正前のAudio先UAC2では、DeviceはCDCを1 byte受信・送信したと報告するがHostは受信せず、
-Audioだけが進行した。DWC2がendpoint 5へFIFO 5を割り当てていたため、選択IN endpointの順位から
-FIFOを詰めて割り当てるよう修正した。USBのendpointアドレスは変えず、割当て・activate・flushを合わせた。
-管理配列やheap取得点は増やさない。専用TX FIFOとUSB endpoint番号を同じものとして扱わない。
+| 関数 | 説明 |
+| --- | --- |
+| `bool pollEvent(EspUsbAudioEvent &event)` | 1 件取り出す。空なら false |
+| `size_t pendingEvents() const` | 未読の件数 |
+| `uint32_t droppedEvents() const` | queue 満杯で捨てた件数 |
+| `void clearEvents()` | 未読と破棄数を消す |
+| `size_t eventCapacity() const` | 確保した件数。begin 前と end 後は 0（要求値は `configuration().eventCapacity`） |
 
-修正後は**1 passed、36.60秒**、2 logs STOPPED/panicなし。
-4構成それぞれで752/752/938/924回のCDC往復と187回のPCM進行の重なりを確認し、
-全payload・CDC byte総数・line coding・UAC2 feedbackが一致した。
-実registerでもendpoint 5→FIFO 4を含む14割当てを確認した。回数は進行確認の実測値で、性能指標ではない。
-S2/P4 Vendor＋CCID compileも成功。製品f5d1571を固定した全40件も40 passed、1997.81秒で成功し、
-80 logs STOPPED/panicなし、816開始＋14設定失敗回復/heap一致、FIFO対応と複合進行を監査した。
-全体記録は`.pytest-results/tx-fifo-all*`と[validation README](../validation/README.ja.md)を参照。
-原本`/tmp/pytest-embedded/2026-10-29_02-44-45-563887/`、記録`.pytest-results/audio-cdc*`。
-初回probeのbuild誤りと、修正前のwire失敗・診断結果も別名で保存した。
+event の種類（`EspUsbAudioEventType`）は `SampleRateChanged`、`MuteChanged`、`VolumeChanged`、`StreamStateChanged` です。`EspUsbAudioEvent` の `volumeDb256` は 1/256 dB 単位です。
 
+- 容量 0 なら event を作らず、`pendingEvents()`／`droppedEvents()` とも 0 です。
+- queue が満杯なら新しい event を捨て、`droppedEvents()` を増やします。保存済みの順序は保ちます。
+- 配列は begin 時に一度だけ確保し、取り出しや追加で heap を使いません。queue は短い critical section で守ります。
+- 確保に失敗すると `begin()` が失敗し、`startError()`／`device.lastError()` が `ESP_ERR_NO_MEM` になります。確保済みの領域はすべて回収します。
+- byte 数が overflow する容量は、`configure()` が `ESP_ERR_INVALID_SIZE` を返します。
 
-## Functionのendpoint番号予約幅
+## 状態と制約
 
-endpointCountは方向付きアドレスの合計ではなく、次のFunctionへ進めるendpoint番号の幅を返す。
-AudioのDescriptorLayoutはIN/OUTを独立に割り当て、反対方向なら番号を共有するため、
-予約幅もIN必要数とOUT必要数の最大値に合わせる。
+- 稼働中は `configure()`（`ESP_ERR_INVALID_STATE`）、`addFormat()`（false）、`clearFormats()`（`ESP_ERR_INVALID_STATE`）を拒否します。
+- Device に登録していない Function の手動 `begin()` は `ESP_ERR_INVALID_STATE` で拒否します。
+- 稼働中に Function を破棄すると Device を止め、USB worker と DMA が止まってから領域を解放します。
+- 未対応：同じ方向での channel 数の切替、PCM 形状ごとに違う rate 集合、外部 codec の clock に合わせた feedback、callback／借用方式の PCM API。
+- 安全性を確かめていない組合せ：`setMute`／`setVolume` と Host の要求の同時更新、`end()` と `read()`／`write()` の同時実行。
+- 2.x の `CFG_TUD_AUDIO` 系の build flag は使えません（有効にすると compile error）。format は `addFormat()`、容量は `configure()` で指定します。
 
-| 構成 | 旧予約幅 | 新予約幅 |
+## FSとHSの違い
+
+ESP32-S3 は FS（Full Speed、12 Mbps）、ESP32-P4／P4X の HS 側 controller は HS（High Speed、480 Mbps）でつながります。packet の大きさと間隔は、つながった速度に合わせて descriptor が変わります。
+
+| 項目 | FS | HS |
 | --- | --- | --- |
-| UAC1 Playbackのみ/Captureのみ | 1 | 1 |
-| UAC1 duplex | 2 | 1 |
-| UAC2 Playback＋feedback | 2 | 1 |
-| UAC2 Captureのみ | 1 | 1 |
-| UAC2 duplex＋feedback | 3 | 2 |
+| データの送受信間隔 | 1 ms ごと（bInterval 1） | 125 µs ごと（bInterval 1） |
+| 1 packet の大きさ | `ceil(rate × frame byte ÷ 1000)` ＋ 1 frame | `ceil(rate × frame byte ÷ 8000)` ＋ 1 frame |
+| 例：48 kHz ステレオ 16 bit | 196 byte | 28 byte |
+| 例：44.1 kHz ステレオ 16 bit | 181 byte | 27 byte |
+| packet の上限 | 1023 byte | 1024 byte（ただし format は FS の上限 1023 で検証） |
+| UAC2 の feedback endpoint | 4 byte、1 ms ごと（bInterval 1） | 4 byte、1 ms ごと（bInterval 4＝8 microframe） |
+| feedback の値 | rate × 65536 ÷ 1000（1 ms あたりの sample 数、16.16 固定小数点） | rate × 65536 ÷ 8000（125 µs あたりの sample 数） |
 
-単一Functionの操作やPCM APIは変わらない。後続Functionのendpoint番号は詰まるため、
-Hostはdescriptorからアドレスを取得し、旧アドレスを固定しない。
-Functionや転送stateのfield、map配列、heap取得点は増やさず、IN個数やFIFOの物理上限も変えない。
+- packet 用の DMA 領域（`packetCapacity()`）は、HS でつながっても FS の最大 packet で確保します。begin の時点では速度が決まっていないためです。
+- format は FS の上限で検証するので、FS で表せない format（例：192 kHz ステレオ 32 bit）は HS でも登録できません。
+- UAC2 の Playback は非同期（asynchronous）endpoint と feedback endpoint の組です。feedback は USB の公称 clock から計算した値で、外部 codec の clock のずれには追従しません。UAC1 は feedback endpoint を持ちません。
+- HS で Host が 1 区間あけて送ってきたとき、以前は次の packet まで取りこぼしていました。aade7e0 で直しています（[記録](#hs直結での-iso-out-の取りこぼし修正2026-10-31)）。
 
-独立audio_functionsは4 UAC1 duplexを24 kHz/stereo 16 bitで同時に構成する。
-修正前はspan=2のため番号1/3/5/7を必要とし、ESP_ERR_INVALID_SIZEで開始できなかった。
-修正後はspan=1で開始でき、各組を0→3→1→2→0の順に選び、Functionごとに異なるPCM値を照合する。
-全4組の8 endpointを同時に転送した試験ではなく、構成を維持したまま各組を順に転送する確認である。
+## PSRAMとバッファ
 
-開始/終了2回を含む**1 passed、67.36秒**。10 ISO交換と40状態照会に成功し、
-未選択Functionは初回選択まで転送量0、全payloadの経路が一致。2 logs STOPPED/panicなし。
-原本`/tmp/pytest-embedded/2026-10-29_04-00-18-485270/`、記録`.pytest-results/audio-function-span*`。
-初回probeのStream型名衝突と、修正前の開始拒否も別名で保存した。
+- packet 用の DMA 領域と UAC2 の feedback 領域は、DMA 可能な内部 RAM（64 byte 境界）に確保します。
+- 自動確保の ring は通常の `malloc` で確保します。外部 ring の置き場所（内部 RAM か PSRAM か）は検査しません。
+- Audio の ring を PSRAM に置いた構成は、実機ではまだ確認していません。
 
-関連6件も**6 passed、441.14秒**。12 logs STOPPED/panicなし、816開始＋14設定失敗回復、
-heap346704→346704、Audio本体304/model16/control52を維持した。
-既存Audio＋CDCの4構成、32 PCM alternate交換、36 guard、4休止構成、rate/RANGEと停止後再構成も成功。
-S2/P4 AudioPlayback compile、S3/S2/P4各29 source依存/nmと未使用機能除外も成功した。
-原本`/tmp/pytest-embedded/2026-10-29_04-01-47-457798/`、記録`.pytest-results/audio-function-span-related*`。
-全体収集は43件。この1＋6件を全43件一括実行やOS/S2/P4実機の結果とは扱わない。
+## 設計判断の理由
 
+- **容量を実行時に指定する**：2.x は build flag で固定長の FIFO と単一の global instance を持っていました。v3 は Function ごとに `configure()` で容量を決め、使う方向と format の分だけ begin 時に確保します。利点は、通知不要なら配列を省ける・再ビルドなしで容量を変えられる・開始失敗が明示される・稼働中の構成破壊を防げることです。代わりに begin 時の確保失敗、コピーと lock の費用、Capture の戻り値確認が必要になります。
+- **Capture は部分書込み**：旧 TinyUSB FIFO のように上書きせず、入る分だけ受け取って実数を返します。上書きに頼っていたアプリは戻り値の確認が必要です。
+- **Playback の既定を DropOldest にした**：ArduinoCore-CH32RV と合意した仕様です（[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)）。v3 の当初の実装は DropNewest 相当でした。移行時は既定の変更に注意してください（[移行ガイド](V3_MIGRATION.ja.md)）。
+- **packet 用 DMA 領域は FS の最大で確保**：速度が決まる前に確保するため、どちらの速度でも足りる大きさにしています。
+- **alternate ごとの配列を持たない**：packet と ring は最大の形状で一つだけ確保し、FIFO も物理 endpoint ごとの最大 packet で一度だけ予約します。alternate を足しても積み増さず、切替時の heap 取得もありません。
+- **endpoint 番号の予約幅**：Audio は IN と OUT を独立に割り当て、反対方向なら番号を共有します。予約幅は IN の必要数と OUT の必要数の大きい方です（下の記録を参照）。後続 Function の endpoint 番号は詰まるので、Host は descriptor からアドレスを読んでください。
 
-## CH32RV調整向け：Playbackあふれ仕様の初稿（2026-10-30）
+## 実測の記録
 
-CH32RV側がESPの仕様を確認するための文書。以下は製品22afc15の現行実装を基準とする。
-以下は現行挙動の記録であり、後述する合意済みの新仕様と区別する。文書整理によるコード変更・追加実機試験はない。
-対象はHost→DeviceのPlayback。Captureのwriteへ同じ上書き方針を適用しない。
+ここから下は、実装の各段階で行った試験の記録です。commit hash、所要時間、件数は当時の値です。serial の原本は `/tmp/pytest-embedded/…`、JUnit／transcript のコピーは `validation/.pytest-results/` にあります。特記がない限り S3–S3（FS）での結果です。
 
-### 現行ESP：未読を保持し、新着の入らない末尾を捨てる
+### HS直結での ISO OUT の取りこぼし修正（2026-10-31）
 
-sample frameは全channelの1時刻分で、byte数F=channels×bytesPerSample（subslot幅）。
-有効bit数bitsPerSampleだけからbyte数を計算しない。順序はFIFOで、readは最も古い未読frameから返す。
-正常完了し、streamがactiveかつ切替処理中でない受信packetについて、次の規則で処理する。
+- 症状：P4X Host → 旧 P4 Device の HS 直結で、audio_overflow が 5 回中 2 回失敗しました。Host が 1 区間あけて送ると、届いた packet が 1 つおきに欠けました。
+- 原因：DWC2 の ISO OUT は、arm するときに次の (micro)frame の偶奇を指定します。Host が 1 区間あけると偶奇が合わず、incomplete ISO OUT になります。以前は endpoint を止めて失敗を返し、worker が arm し直していましたが、HS の 125 µs には間に合わず次の packet も失っていました。
+- 修正（aade7e0）：割り込み処理（ISR）の中で、同じ DMA 領域のまま偶奇を反転して arm し直します。OUT には古いデータを送る問題がないので、回数の上限は設けません。
+- 結果：audio_overflow は 10 回連続で成功。HS 両方向の audio／video 各 17 件、S3 の audio 9 件、旧 P4 loopback の audio 4 件が成功しました。連続 200 packet の受信率（`test_iso_out_rate`）は修正前から両方向・S3 とも 200/200 で、欠けるのは Host が間をあけたときだけでした。
+- 前段の修正：FS の間欠 OUT で最初の packet しか受信できない問題を 4480513 で直していました（incomplete OUT 割り込みを ISO OUT endpoint を開いたときだけ有効にし、失敗を返す前に DMA を止める）。
+- 詳細：[P4/P4X と追加試験環境](V3_P4_VARIANTS_AND_BENCH.ja.md)、[共通 core](V3_CORE_API.ja.md) の「ISO OUTの欠落frame回復」。
 
-- Bを受信byte数、Cを現在の形式に対する実効ring容量、Uを現在の未読byte数とする。
-- 新着の完全なframeはA=floor(B/F)×F byte。空きもframe単位に切り下げ、K=min(A,C-U) byteを受理する。
-- 既存の未読U byteを残し、新着packetの先頭K byteを末尾へ追加する。残りB-K byteを破棄する。
-- 古い未読frameを追い出したり、受信packet全体の受理まで待ったりしない。次のUSB受信を継続する。
-- packet末尾に不完全なframeがあれば保存しない。次packetと結合する隠れbufferも持たない。
+### P4 loopback での Audio ISO（e577698）
 
-式は内部lockで直列化された1回の処理を表す。利用側がcapacityとavailableを別々に読んで、
-その間の受信/読出しまで含めた予約や同一時点のsnapshotを得られるわけではない。
-実装の照合先は[AudioTransportの受信処理](../src/internal/EspUsbAudioTransport.cpp)。
-
-| 状態（文字はsample frame） | 新着 | 処理後の未読 | 破棄 |
-| --- | --- | --- | --- |
-| 容量4、未読A/B/C | D/E/F | A/B/C/D | E/F |
-| 容量4、満杯A/B/C/D | E/F | A/B/C/D | E/F |
-| 容量2、空 | A/B/C | A/B | C |
-| 容量0 | A/B | 空 | A/B |
-
-従って、読出しが止まっていると古いPCMが残る。保存byte数には上限があるが、音の鮮度や
-実時間での遅延上限を保証しない。live再生の追従性と、先に受けた未読の保持は別の要求として扱う。
-readの要求長はframe単位へ切り下げ、受理済みのframeだけを返す。
-ringのwrapや外部bufferでもこの順序を変えず、sample frameの途中から読出し位置をずらさない。
-
-### statsと明示的な破棄
-
-- B-K>0なら、そのpacketに対してoverrunCountを1増やし、overrunBytesへB-Kを加算する。
-  現行のoverrunBytesにはring満杯だけでなく、packet末尾の不完全frameの破棄も含まれる。
-- transferredBytesはUSBで正常受信したBを数える。アプリがreadした量やringへ入ったKとは区別する。
-- 容量0でも有効なpacketを受信すれば、全量の破棄をoverrunへ記録する。
-- clearBufferは未読queueを消す。既にarmしたpacketを取り消す操作ではなく、後続完了で再びPCMが入ることがある。
-- resetStatsは統計の初期化で、queueの破棄とは別。counterはuint32_tで、長時間集計ではwrapも扱う。
-
-Captureはアプリのwriteで入る分だけcopyし、実際の受理byte数を返す。未受理分は呼出側で扱う。
-Playbackの既定を変える議論だけで、Captureのpartial契約まで変えない。
-
-### Playback保持方針のAPI仕様案
-
-2026-10-30の仕様案に対し、CH32RV側からAPIを実装しX035C8実機試験を通したとの返答を受領。
-命名とDropOldest既定は合意済み。**ESP側も同日に実装し、S3–S3で内容照合試験を行った**（下記）。
-先方の試験結果は先方報告であり、ESPの検証結果ではない。
-
-```cpp
-enum class EspUsbAudioOverflowPolicy : uint8_t {
-  DropNewest, // 古い未読を保持し、新着の入らない末尾を捨てる
-  DropOldest, // 古い未読を捨て、最新の完全なframeを保持する
-};
-// EspUsbAudioConfigへ追加するfield:
-// EspUsbAudioOverflowPolicy playbackOverflowPolicy =
-//     EspUsbAudioOverflowPolicy::DropOldest;
-```
-
-合意した仕様ではDropOldestを既定とし、ライブ再生で読出し再開後に古い音を流し続けにくくする。
-現行ESPと同じ保持順が必要な用途はDropNewestを明示する。いずれも欠落のない録音は保証しない。
-単純なconfigure→beginの手順は変わらないが、あふれた際の保持内容は変わるため、
-既定値の変更を移行時に明示する。CH32RVでは型prefixを読み替え、field名と値名を合わせる。
-
-configureで停止中だけ指定する。稼働中はESP_ERR_INVALID_STATE、未知のenum値は
-ESP_ERR_INVALID_ARGで拒否し、失敗時は既存設定を保持する。configuration()は選択値を返す。
-実行中の切替setterは設けず、end→configure→beginで変更する。
-
-### 提案する保持範囲と統計
-
-F、B、A、C、Uは上の現行仕様と同じ。Cは物理容量をFの倍数へ切り下げた実効容量とする。
-readと受信によるqueue更新は直列化し、途中のframeや並び替えを公開しない。
-
-| 方針 | 処理後のqueue | そのpacketで数える破棄byte数 |
-| --- | --- | --- |
-| DropNewest | 古いU byte＋新着の先頭K byte。K=min(A,C-U) | B-K |
-| DropOldest | R=min(A,C)、D=max(0,U+R-C)。古いqueueの先頭D byteを捨て、新着の完全frame部分の末尾R byteを追加 | D+B-R |
-
-DropOldestは「古いqueue＋新着の完全frame列」の末尾C byteを残す操作に相当する。
-容量4、未読A/B/C、新着D/E/FならDropNewestはA/B/C/D、DropOldestはC/D/E/F。
-容量2の空queueへA/B/Cが来た場合は、それぞれA/BとB/Cになる。
-末尾の不完全frameは両方で破棄し、次packetへ持ち越さない。容量0は全量破棄し受信を続ける。
-
-破棄があった受信packetごとにoverrunCountを1増やす。overrunBytesは上表の値を加算する。
-DropOldestでは今回packetからの破棄だけでなく、過去に受理したPCMの追い出しも数える。
-transferredBytesはUSBで正常受信した量のまま維持する。read量や保持量のcounterへ変えない。
-clearBuffer/resetStatsの意味、Captureのpartial write契約は現行どおりとする。
-追加ring、packet間の断片buffer、監視task、破棄ごとのcallbackは設けない。
-policyの設定値と受信時の分岐はAudio固有の費用とし、未使用Functionへ持ち込まない。
-
-### 実装時の合格条件と未決事項
-
-- 内容の異なるPCMで両方の順序、満杯、wrap、packetより小さいring、容量0を照合する。
-- F=6/8、Fの倍数でない物理容量、不完全な末尾を含め、常に完全frameだけを返す。
-- 古いPCMの追い出し、新着破棄、断片破棄についてcount/bytesを照合する。
-- 不正enum、開始中configure、end→再開始、alternate/形式変更時のqueue初期化を確認する。
-- Captureのpartial契約と、追加buffer/taskを持たないことを確認する。
-
-DropOldest既定と上記の型・field名は合意済み。保持範囲とstatsを含むこの仕様で実装した。
-CH32RVの成功をESP側の合格条件の代替にしない。
+UAC1／UAC2 × 両 controller の 4 件、33.95 秒で成功。16 kHz／mono／16 bit で双方向に PCM を流し、開始後 100 ms を warmup として約 350 ms を照合しました。8 測定で playback 89600 byte、capture 88064 byte、不一致なし、overrun／underrun 0。UAC2 は feedback 更新あり・reject 0。初回は UAC1 にも feedback を要求した試験条件の誤りで失敗し、試験を直しました（製品の変更なし）。記録 `p4-audio-{initial,after,duplex}*`。
 
 ### ESPでの実装と実測（2026-10-30）
 
-受信完了の処理だけを方針で分岐し、追加ring・断片buffer・taskは持たない。policyはconfigの1 byte。
-`validation/s3/audio_overflow`は、raw SDK Hostが長さと個数を決めたOUT packetへframe番号入りPCMを送り、
-Deviceが読み出した番号列とstatsを、Python側で上記の式を実装したmodelと比較する。
+playbackOverflowPolicy の実装（2408716）。受信完了の処理だけを方針で分岐し、policy は config の 1 byte です。`validation/s3/audio_overflow` は、raw SDK Host が長さと個数を決めた OUT packet に frame 番号入りの PCM を送り、Device が読んだ番号列と統計を、Python で上の式を実装した model と比べます。
 
 | 条件 | 内容 |
 | --- | --- |
-| 両方針 | ring 520 byteへ10 frame読出し後にwrap・満杯・末尾2 byteの不完全frame。DropNewestは10-139、DropOldestは94-223を保持 |
-| ringがpacketより小さい | 32 byte（8 frame）、40 byte（F=8で5 frame）。読出し後の追加で、DropNewestは2-4,48-49、DropOldestは68-72 |
-| F=6と非倍数容量 | 物理520 byteを516 byte（86 frame）として扱う |
-| 容量0 | 全量をoverrunへ数え、読出しは0 |
-| 設定 | 既定DropOldest、未知の値はINVALID_ARGで設定保持、開始中のconfigureはINVALID_STATE |
-| alternate解除 | 未読を破棄し、available 0 |
+| 両方針 | 520 byte の ring で 10 frame 読んだ後に wrap・満杯・末尾 2 byte の不完全 frame。DropNewest は 10〜139、DropOldest は 94〜223 を保持 |
+| ring が packet より小さい | 32 byte（8 frame）、40 byte（F=8 で 5 frame）。DropNewest は 2〜4, 48〜49、DropOldest は 68〜72 |
+| F=6 と非倍数容量 | 物理 520 byte を 516 byte（86 frame）として扱う |
+| 容量0 | 全量を overrun に数え、読出しは 0 |
+| 設定 | 既定 DropOldest、未知の値は INVALID_ARG で設定を保持、開始中の configure は INVALID_STATE |
+| alternate 解除 | 未読を破棄し available 0 |
 
-各条件でoverrunCount/overrunBytes/transferredBytesもmodelと一致した。DropNewest/DropOldest各5条件と
-既定値1条件の計11開始で**1 passed、31.49秒**。記録`validation/.pytest-results/audio-overflow*`。
-受信のlost 0を前提にしており、ISO packetの欠落があれば失敗として扱う。
-既定変更後のAudio関連回帰（S3 audio_* 6 probe＋P4 Audio、計12件）も**12 passed、690.49秒**、panic/停止失敗なし。記録`audio-overflow-related*`。
+各条件で overrunCount／overrunBytes／transferredBytes も model と一致。計 11 開始で 1 passed、31.49 秒。受信の欠落 0 が前提で、ISO packet が欠ければ失敗とします。既定変更後の Audio 関連回帰（S3 audio_* 6 probe＋P4 Audio、計 12 件）も 12 passed、690.49 秒。記録 `audio-overflow*`、`audio-overflow-related*`。
 
-[調整状況](V3_CH32RV_API_ALIGNMENT.ja.md)、[残作業](../TODO.ja.md#優先する残作業)を参照。
+### Playback保持方針のAPI仕様案
+
+2026-10-30 に ArduinoCore-CH32RV と調整した案です。命名と DropOldest 既定で合意し、CH32RV 側は X035C8 実機で試験済みと報告を受けました（先方の結果で、ESP の検証ではありません）。合意した仕様は [Playbackのあふれ方針](#playbackのあふれ方針playbackoverflowpolicy) のとおりです。
+
+### CH32RV調整向け：Playbackあふれ仕様の初稿（2026-10-30）
+
+調整前の ESP 実装（22afc15）は、今の DropNewest と同じ動作でした（未読を保持し、入らない新着を捨てる）。overrunBytes に packet 末尾の不完全 frame の破棄も含むこと、`clearBuffer`／`resetStats` の意味、Capture の部分書込みは、調整後も変わっていません。
+
+### Functionのendpoint番号予約幅
+
+`endpointCount()` は、次の Function へ進める endpoint 番号の幅を返します。
+
+| 構成 | 旧予約幅 | 新予約幅 |
+| --- | --- | --- |
+| UAC1 Playback のみ／Capture のみ | 1 | 1 |
+| UAC1 duplex | 2 | 1 |
+| UAC2 Playback＋feedback | 2 | 1 |
+| UAC2 Capture のみ | 1 | 1 |
+| UAC2 duplex＋feedback | 3 | 2 |
+
+修正前は 4 つの UAC1 duplex（24 kHz／ステレオ 16 bit）が番号 1/3/5/7 を必要とし、`ESP_ERR_INVALID_SIZE` で開始できませんでした。修正後は開始でき、各組を 0→3→1→2→0 の順に選んで Function ごとに異なる PCM を照合しました（全 8 endpoint の同時転送ではなく、構成を保ったまま順に転送）。1 passed、67.36 秒。関連 6 件も 6 passed、441.14 秒、816 開始＋14 設定の確保失敗から回復、heap 346704→346704。記録 `audio-function-span*`、`audio-function-span-related*`。
+
+### Audio＋CDCの同時通信とTX FIFO割当て
+
+`validation/s3/audio_cdc` は UAC1／UAC2、24／48 kHz、Audio 先／CDC 先の 4 構成で、再生・録音・feedback と CDC を同時に動かします。修正前の Audio 先 UAC2 では、DWC2 が endpoint 5 に FIFO 5 を割り当てていたため、CDC の送信が Host に届きませんでした。選んだ IN endpoint の順に FIFO を詰めて割り当てるよう直しました（endpoint アドレスは変えません）。修正後は 1 passed、36.60 秒。4 構成で 752／752／938／924 回の CDC 往復と 187 回の PCM 進行の重なりを確認しました（進行の確認値で、性能指標ではありません）。製品 f5d1571 を固定した全 40 件も 40 passed、1997.81 秒。記録 `audio-cdc*`、`tx-fifo-all*`。
+
+### 外部ringと不完全なformat設定の確認
+
+製品 033f2d8 のまま、UAC1／UAC2 で内蔵・外部 ring それぞれ 4 PCM alternate を切り替え、計 32 回の ISO 交換を確認しました。外部 ring は非整列 pointer から 520 byte を使い、切替後と end 後に前後の guard を検査。6 byte/frame で capacity 516、8 byte/frame で 520。2 passed、124.49 秒。共有 clock を満たさない設定（rate 不足、集合違い、方向間の不一致、方向内の channel 数変更）は `ESP_ERR_INVALID_SIZE` で拒否し、その後も同じ Function を開始・終了できることを 12 条件 × 2 回で確認（1 passed、31.33 秒）。記録 `audio-external-ring*`、`audio-capability-settings*`。
+
+外部 ring の長さ指定を加えた後の関連 6 件は 6 passed、369.22 秒。長さ 32／63 byte 不足を計 16 回、pointer と長さの不正な組を計 16 回拒否し、guard を維持。Function 本体は 296→304 byte（長さ 2 項目）。記録 `audio-buffer-extents*`。
+
+### PCM形状の alternate 選択の実測
+
+S3 の関連 7 件は 7 passed、358.65 秒。UAC1／UAC2 それぞれで 16-bit/2-byte、24-bit/3-byte、32-bit/4-byte、24-bit/4-byte を選び、計 16 回の ISO 往復。14 回は旧 ring に 0xa5 を置き、新形式へ混入しないことを確認。32 個の不正 alternate 要求、816 開始＋14 設定の確保失敗回復、heap 346704→346704。製品 033f2d8 固定の全体試験も 38 passed、2544.60 秒。記録 `audio-alternates-related*`、`audio-alternates-all*`。EspUsbHost 2.10.1 は列挙時に claim した alternate しか開始しないため、probe は SDK の claim／release と ISO 転送を使います。
+
+[AudioPlayback 例](../examples/AudioPlayback/AudioPlayback.ino) は 2 PCM 形状 × 2 rate、192 byte の ring、event 容量 0、`currentFormat` を示します。Core 3.3.12 の S3／S2／P4 で compile を確認しました（sketch 自体の実機試験ではありません）。記録 `audio-playback-example*`。
+
+### 複数 sample rate の実測
+
+S3 の関連 5 件は 5 passed、175.61 秒。13 rate を登録した UAC1／UAC2 で、再構成せずに 48→44.1→48 kHz を転送し、clock と PCM を照合。未登録の 22050 Hz は拒否し、clock を維持。158 byte の UAC2 RANGE を 2〜200 byte の各要求長で、内容・実長・guard まで確認しました。記録 `audio-rates*`。
+
+### 停止後の format 入替えの実測
+
+UAC2／UAC1 で同じ Function／stream 参照のまま 48→44.1→48 kHz を各 1 系列、計 6 回 wire で確認。10 構成で稼働中の clear 拒否を確認。関連 4 件は 4 passed、200.04 秒。初回の probe 期待値の誤りは `audio-reconfigure-initial-expectation-error*` に残しています。記録 `audio-reconfigure*`。
+
+### format保存領域とrate照会の容量整理
+
+format を両方向 8 個ずつ持つ固定配列をやめ、登録数分だけ保存するようにしました。S3 で測った sizeof：
+
+| 型 | 変更前 | 変更後 |
+| --- | ---: | ---: |
+| EspUsbAudioFunction | 444 | 296 |
+| AudioStreamModel | 76 | 16 |
+| AudioControlState | 80 | 52 |
+
+その後、外部 ring の長さ 2 項目で Function は 304 byte になりました（format の heap 領域は含みません）。関連 3 件は 3 passed、242.85 秒、774 開始取得点の失敗回復、heap 346704→346704。記録 `audio-storage*`、`audio-storage-layout-{before,after}.json`。
+
+### Audio ISOの実bus休止
+
+`audio_stream` で alternate と Host の ISO pipe を保ったまま、root port を休止・再開しました。UAC2 双方向 48 kHz、UAC1 双方向 44.1 kHz、UAC2 playback のみ（1 frame の外部 ring）、UAC2 capture のみ（ring なし）の 4 構成です。休止中は転送カウンタが止まり、再開後に PCM と UAC2 feedback を確認しました。新たな SET_INTERFACE は行いません。1 passed、69.35 秒（製品 512edb6）。初回の失敗（probe が停止済み controller の register に触れた）は `audio-suspend-initial-stop-error*` に残しています。S3 FS の Host 起点の休止で、OS／HS／remote wakeup は含みません。
+
+### 独自 driver への置換（2026-10-27）
+
+TinyUSB の Audio class／FIFO と単一 global instance を撤去しました。event のみの段階で 2 passed（77.39 秒、413 取得点の確保失敗回復）、独自 PCM driver の関連 3 件で 3 passed（145.99 秒、438 取得点）、標準 `--combo all` で 16 passed（823.56 秒）。記録 `audio-events-related*`、`audio-pcm-related*`、`runtime-audio-all*`。全体の記録は [validation README](../validation/README.ja.md) を参照してください。
+
+残作業は [TODO](../TODO.ja.md#優先する残作業) を参照してください。

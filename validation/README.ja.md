@@ -1,11 +1,85 @@
-# v3の独立したS3–S3試験
+# v3の独立した試験（validation）
 
-このディレクトリだけをv3開発の試験入口とする。旧testsは`legacy/v2/tests/`へ保管した。
-v2資産から読み込み・収集・helperのimport・sketchの流用をせず、その互換性を新APIの制約にしない。
-利用者向けexamplesと試験probeも分ける。
-前回作成した独自matrix/結果gateは撤去した。ここにはconftestも独自pytest pluginもない。
-`--noconftest`によりconftest読込みを無効にしている。
-`--maxfail=1`で本文・USB停止を含む最初の失敗後は、次の実機caseを実行しない。
+v3開発の試験は、このディレクトリだけを入口にする。
+
+- 旧2.xのtestsは`legacy/v2/tests/`へ保管した。v2の資産を読み込まず、helperやsketchも流用しない。
+- 利用者向けのexamplesと、試験用のprobeは分ける。
+- conftestも独自のpytest pluginも置かない。`--noconftest`でconftestの読込みを止めている。
+- `--maxfail=1`なので、最初の失敗（本文やUSB停止を含む）のあとは次の実機caseを実行しない。
+
+いまの全体の状態は[引き渡し](../docs/V3_HANDOFF.ja.md)、HS直結の詳しい結果は
+[P4/P4Xと試験環境](../docs/V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)にある。
+
+## ディレクトリ
+
+| 場所 | 内容 | 使うcombo |
+| --- | --- | --- |
+| `s3/` | S3二台peerの試験39本（共通headerの`common/`を除く）。どれもP4/P4XのHS直結でも動く | `s3`、`p4_p4x_hs`、`p4x_p4_hs` |
+| `p4/` | P4一台のloopback（FS）。全10クラス、Audio、PSRAM。[P4の記録](p4/README.ja.md) | `p4`、`p4_psram` |
+| `p4_hs/link` | HS直結の列挙とVBUSの確認 | `p4_p4x_hs`、`p4x_p4_hs` |
+| `p4_hs/psram` | benchのP4系boardのPSRAM容量の確認 | P4系の各combo |
+| `peer/` | HS直結のために足したpeer試験：`vendor_link`、`msc_midi`、`cdc_hid`、`ccid`、`dfu`、`psram_link`（PSRAM上の保存先/ring） | `p4_p4x_hs`、`p4x_p4_hs` |
+| `p4x_pc/` | P4XとLinux PC（pyusb）：`dfu_detach`、`msc_media` | `p4x_pc` |
+| `build_probes/` | build専用のsketch。未使用機能がリンクされないことをnmで確かめる | pytestの対象外 |
+
+## combo（結線の組）
+
+`pyproject.toml`の`arduino_combos`に、実際に結線した組だけを登録している。
+`--combo all`は、各sketchが対応するprofileを持つ組だけを順に実行する。
+
+| combo | Host → Device | link | bench（位置`N-M`はハブNのport M） |
+| --- | --- | --- | --- |
+| `s3` | S3 → S3 | FS | S3二台のnative OTGどうし |
+| `p4` | 同じP4の中（HS口 ↔ FS口） | FS | 2-1の旧P4（v1.3） |
+| `p4_psram` | `p4`と同じ（PSRAMを使うfirmware） | FS | 2-1 |
+| `p4_p4x_hs` | 旧P4 → P4X | HS | 2-3の旧P4（CH340 UART）と2-4のP4X（USB-Serial/JTAG）のHS口どうし |
+| `p4x_p4_hs` | P4X → 旧P4 | HS | 同上（役割が逆） |
+| `p4x_pc` | Linux PC → P4X | HS | 3-3/3-4のP4X（1枚）。3-4のHS口をPCへ |
+
+- 書込み・log用のportは、試験用のUSB結線とは別に用意する。
+- `.env.example`を`.env`へコピーし、各profileのportを設定する。
+- 同じ物理boardを使う組（`p4`と`p4_psram`、HS直結の2方向）は、同時に動かさない。
+- S2/S31の組はまだない（機材の調達中）。
+
+## 実行
+
+```sh
+cd /home/mt/dev/EspUsbDevice-v3/validation
+uv sync --locked
+uv run --locked --env-file .env pytest --combo all --collect-only -q
+uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-results/v3-all.xml
+```
+
+- 収集件数は試験の追加で変わるので、`--collect-only`で確かめる（2026-10-31時点で210件、エラー0）。
+- 一つの組だけを選ぶときは`--combo s3`、一つのprobeだけなら`pytest peer/vendor_link --combo p4_p4x_hs`のように指定する。
+- 実機のpytestは一つずつ実行する。build確認だけなら`--run-mode=build`を使う。
+- 成果物は`.pytest-results/`（git対象外）に置く。共有の`/tmp/pytest-embedded`は最新directoryを根拠にせず、JUnitの時刻から該当のserial原本を探す。
+- 結果は件数だけで判断せず、収集数・JUnit・未完了数・serialの停止を確かめる。終了値0だけを合格としない。
+
+`--combo all`では、対応profileのない組は展開されない。どの組にも合わないtestは`combo=none`でskipされる。
+portが未設定の場合や、同じ実機に二役を割り当てた場合も、build前にskipされる。
+skipは未検証という意味であり、合格ではない。設定済みportへの接続失敗や通信の不一致は失敗として扱う。
+直積の`--profiles=all --peer-profiles=all`は、USB benchの標準の入口にしない。
+
+参照: [plugin 1.10.0の組合せと適用条件](https://github.com/tanakamasayuki/pytest-embedded-arduino-cli/blob/v1.10.0/TESTING_ADVANCED.ja.md#profile-の組合せと適用条件)。
+local pluginは`698bb29`（v1.10.0）。`uv.lock`は配布版1.10.0。plugin側の作業ツリーは変更していない。
+
+## plugin側で解決する候補
+
+必要になったときの追加依頼の候補。依頼も実装もまだしていない。conftestを別のhelperやpluginに隠して持ち込まない。
+
+- 指定した実機試験が全件skipや未実行のとき、失敗で終わる標準option。
+  いまは終了値0だけを合格にせず、実行ごとにpassedの件数を確かめている。
+- 必要になれば、serial logの監査とartifact保存の標準機能。nodeidに依存する許可リストは先に作らない。
+
+pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
+API判断は[変更方針](../docs/V3_API_DECISIONS.ja.md)を参照。
+
+## 実行記録
+
+ここから下は、各時点の実行記録。前半は新しいものが上だが、後半は古い記録が書いた順に並ぶ。
+「最新」「現在の収集は○件」などの書き方は、その記録を書いた時点のもの。
+2026-10-31のHS直結の結果は、上に挙げた[P4/P4Xと試験環境](../docs/V3_P4_VARIANTS_AND_BENCH.ja.md)にある。
 
 ## CH32RV調整後の関連試験（2026-10-30）
 
@@ -73,7 +147,7 @@ uv run --locked --env-file .env pytest p4 --combo p4 -q -rs
 uv run --locked --env-file .env pytest --combo all --collect-only -q
 ```
 
-## 最新の全47件
+## S3の全47件（80e8676、2026-10-29）
 
 製品80e8676、registry試験0144bfbで標準combo allの**47 passed、1917.29秒**。
 skip/error/failure/unfinishedは0。94 logs全STOPPED/panicなし。
@@ -271,7 +345,7 @@ rate組合せ不足・同件数の異なる集合・方向間の不一致・chan
 対象ディレクトリ名を誤った収集エラー（0件、実行なし）も`audio-external-shared-probe-selection-error.txt`へ保存した。
 今回の範囲で製品修正は不要だった。以下の全38件は追加probe以前の基準結果である。
 
-## PCM alternate対応後の全38件（最新）
+## PCM alternate対応後の全38件
 
 2026-10-29、製品/probeを`033f2d8`に固定。標準`pytest --combo all`は
 **38 passed、0 skipped/failed/error/unfinished、2544.60秒**。
@@ -511,7 +585,9 @@ S2/P4 compile・依存/nmも成功。原本`/tmp/pytest-embedded/2026-10-28_22-2
 `.pytest-results/audio-alternates-related*`。Host probeの初期誤りと、DWC2 OUT停止のbaselineも別名保存。
 契約と限界は[Audio API](../docs/V3_AUDIO_API.ja.md#pcm形状のalternate選択)。収集は38件、一括結果は別に記録する。
 
-## 実行
+## 初期のS3 probeと当時の実行方法
+
+以下は2026-10-27ごろの記録。現在の実行方法は冒頭の「実行」を参照。
 
 S3 HostとS3 DeviceのOTGを結線し、それぞれ独立した書き込み・ログportを使う。
 `.env.example`を`.env`へコピーして実際のportを設定する。P4は別のloopback comboで追加した。S2/S31は未登録。
@@ -588,19 +664,6 @@ boot/reportを切り替える。Keyboard/Mouse各4回の旧packet排出と新pac
 `s3/audio_events`は任意容量/無効化、overflow、並列producerとUAC2の実Mute制御、稼働中破棄を確認する。
 手順・移行・PCMの対応範囲は[Audioガイド](../docs/V3_AUDIO_API.ja.md)を参照。
 通常実行は20 testsであり、各caseで同じS3–S3を順次使い、finallyで両boardを明示停止する。
-
-## plugin側で解決する候補
-
-以下は必要性が出た時の追加依頼候補で、依頼や実装はまだ行っていない。
-conftestを別helperや別pluginへ隠して持ち込まない。
-
-- 指定した実機試験が全件skipまたは未実行の場合に失敗終了する標準option。
-  現在はpytest終了値0だけを合格にせず、今回の通常全実行が`20 passed`であることを確認する。
-- 必要になればserialログの監査とartifact保存の標準機能。nodeid依存の許可リストは先に作らない。
-
-pluginのprofile/port解決、device lock、dut/peers、compile/upload、JUnitをそのまま使う。
-機材不足のskipは未検証であり、通信不一致・接続失敗をskipへ変えない。
-API判断は[変更方針](../docs/V3_API_DECISIONS.ja.md)、次の作業は[引き渡し](../docs/V3_HANDOFF.ja.md)を参照。
 
 ## リンク確認
 

@@ -100,7 +100,7 @@ v3.xにはIDF 5.5.3以降（または6.0以降）でrebuildが必要。PCNはv1.
 
 ## HSで変わる値
 
-- **MPSに縛られるもの**：HSのbulk MPSは512。MSCのstaging（transferBytes）とCCIDのmessageBytesは、MPS未満だと`begin()`がESP_ERR_INVALID_SIZEを返す（設計どおり）。HS対応controllerでは、linkがFSでもMPS 512を広告できるようにstagingを予約する。借用RXの容量もMPSの倍数が必要。CDC/Vendor/MIDIのtransferBytesは、MPS未満でも受け付ける。
+- **MPSに縛られるもの**：HSのbulk MPSは512。MSCのstaging（transferBytes）はMPSの倍数でないと、CCIDのmessageBytesはMPS未満だと、`begin()`がESP_ERR_INVALID_SIZEを返す（設計どおり。HSではMSCの768も拒否）。HS対応controllerでは、linkがFSでもMPS 512を広告できるようにstagingを予約する。借用RXの容量もMPSの倍数が必要。CDC/Vendor/MIDIのtransferBytesは、MPS未満でも受け付ける。
 - **endpoint数と周期転送**：非control IN endpointの上限は、S3が4、P4 HSが7。HIDのinterrupt endpointはHSで1024 byteまで使える。そのためHost側では、周期OUT FIFOの既定（512 B）が足りない場合がある。
 - **Host側（ESP-IDF）の制約**：bulk INのnum_bytesはMPSの倍数が必要。`usb_host_endpoint_clear`はhost側のdata toggleを戻さないので、halt試験はclear前のpacket数が偶数になるように組む。P4のHCDはhostのdata bufferを自分でcache同期する。
 

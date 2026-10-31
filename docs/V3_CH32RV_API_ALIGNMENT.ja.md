@@ -1,9 +1,55 @@
 # CH32RVとの利用者API調整メモ
 
+EspUsbDevice v3と、ArduinoCore-CH32RVのUSB Device library（CH32RVUsbDevice）の間で、
+利用者APIの意味をそろえるための記録。コードの移植ではない。
+他機種の制約を共通APIの定数へ持ち込まず、名前が同じだけで互換とは判断しない。
+
 ## 現在の調整状況と仕様レビュー入口
 
-2026-10-30。今回はAPI仕様の整理だけを行い、製品コード・試験構成は変更しない。
-ESPの現行製品は22afc15。CH32RV側の返答は
+更新：2026-10-31。CH32RV側の返答は`/home/mt/dev_wch/ArduinoCore-CH32RV/docs/usb-espusbdevice-v3.ja.md`の3章。
+CH32RV側の実装・試験の結果は先方の報告として記録する。公開版での対応の保証や、ESP側の実機検証の代わりにはしない。
+
+### 決定済み
+
+| 項目 | 決定 | ESPのcommit | 詳細 |
+| --- | --- | --- | --- |
+| CDC | `write`/`print`はTX timeout（既定1000 ms）まで空きを待つ。`flush`はDMAと終端ZLPまで期限付きで待つ。`setTxTimeoutMs(0)`で即時partial | `22afc15` | [CDC](V3_CDC_API.ja.md#cdc送信の期限とflush) |
+| Video | `submitFrame(frame, length)`は`EspUsbTransferSubmission`を返す。`sendFrame`はbool。既定transportはESPがISO、CH32RVがBulkのまま | `02c7509` | [Video](V3_VIDEO_API.ja.md) |
+| Audio | `playbackOverflowPolicy`を両側に追加。既定は`DropOldest` | `2408716` | [Audio](V3_AUDIO_API.ja.md) |
+| DFU | 両側とも、SETUPの時点でbool `onDetach`が受付可否を返す。受け付けた後は`end()`/resetでも取り消さない（CH32RVコアと合意。先方は修正予定）。`setDetachHandler`はESP独自 | `72e0743` | [DFU](V3_DFU_API.ja.md#detachの受付と移行2026-10-30-実装) |
+| MSC | 両側とも、挿入を06/28/00で一度通知、抜去は02/3A/00と抜去回数の比較で失敗させる。BOT reset時もsenseを保持する。ESPはP4X–PCのwireで確認 | `c38d03a` | [MSC](V3_MSC_API.ja.md#espでの実装とwire確認2026-10-30) |
+| CCID | `messageBytes = 0`を自動とし、`begin()`で`max(271, Bulk-OUT MPS)`に決める（2026-10-31） | `57ae028` | [下記](#2026-10-31ccidの既定messagebytes) |
+
+### 差を残すもの
+
+| 項目 | ESP | CH32RV | 扱い |
+| --- | --- | --- | --- |
+| CDCのDTR | DTRを要求しない | DTRがなければ捨てる | 差として明示して残す |
+| `begin()`の再呼出し | 成功後の再`begin()`は`ESP_ERR_INVALID_STATE` | 成功扱い | ESPの拒否を維持。再設定は`end()`→`configure()`→`begin()` |
+| `end()` | `esp_err_t`を返す | void | 戻り値の型より「停止が成功した後だけbufferを破棄できる」をそろえる |
+| System Controlの値 | 標準usage 0x81/0x82/0x83 | 1/2/3 | 共有アプリは各libraryの名前付き定数を使う（[下記](#system-controlのusage値)） |
+| bufferの確保 | `begin()`で確保 | 系列の最大packetで静的に確保 | 各platformの方式のまま |
+
+### 未決の事項
+
+- MSCのsenseのwire確認（CH32RV側）：EspUsbHost 2.10.0がdata STALLの後にCSWを取らないため、まだできていない
+  （[詳細と試験範囲](V3_MSC_API.ja.md#ch32rv側の確認結果とhostの制約)）。
+
+### 進め方
+
+- 変更は小さな単位に分け、変更ごとに関連試験とcommitを行う。
+- 試験は独立したS3–S3 validationから始め、conftestへ特殊な操作を加えない。
+- 使わない機能へ費用を持たせない。Device/Function/config/beginを基本にする方針は変えない。
+- 単純な利用手順を保ち、曖昧な契約を残すための互換overloadは追加しない。
+
+## 過去の比較・判断記録
+
+### 2026-10-30時点の調整状況（仕様レビューの段階）
+
+仕様レビューの段階で書き始め、進捗に合わせて更新した表。最新の状況は[上の表](#現在の調整状況と仕様レビュー入口)。
+
+2026-10-30。この時点ではAPI仕様の整理だけを行い、製品コード・試験構成は変更しなかった。
+当時のESPの製品は22afc15。CH32RV側の返答は
 `/home/mt/dev_wch/ArduinoCore-CH32RV/docs/usb-espusbdevice-v3.ja.md`の3章を参照した。
 追加返答ではAudio/DFU/MSCの3案を実装し、X035C8実機試験を通したとのこと。
 これは先方報告として記録し、公開版の対応保証やESP側の実機検証の代替にしない。
@@ -21,25 +67,19 @@ ESPの現行製品は22afc15。CH32RV側の返答は
 EspUsbHost 2.10.0のdata STALL後のCSW未取得により、Senseのwire確認はできていない。
 [詳細と試験範囲](V3_MSC_API.ja.md#ch32rv側の確認結果とhostの制約)を参照。
 
-### 進め方と確定前の論点
+#### 当時の進め方と論点
 
 1. 各案のAPI名、既定値、状態遷移、callback context、buffer寿命をレビューする。
 2. AudioのAPIとDropOldest既定は合意済み。MSCの02/3A/00と抜去世代は採用。DFUの期限・再起動予約の取消しはESP側だけで確定する。MSCの同期・BOT処理はESP実装時に照合する。
 3. 合意後にAudio→DFU→MSCの単位で実装し、変更ごとに関連試験とcommitを行う。
 
-今回の文書はレビュー可能な提案であり、API追加や動作変更の完了ではない。
-最初の合格条件は各APIガイドへ記載した。実装時は独立したS3–S3 validationから始め、
-conftestへ特殊操作を加えない。今回の整理では実機・全件回帰・benchmarkを実行しない。
-使わない機能への費用を避け、Device/Function/config/beginを基本にする方針は維持する。
-単純な利用手順は保ち、曖昧な契約を残すための互換overloadは追加しない。
+当時の文書はレビュー用の提案で、API追加や動作変更の完了ではなかった（その後の実装は上の表）。
 
-## 過去の比較・判断記録
+### 2026-10-28の公開header比較
 
-以下は当時の根拠を保存した記録。現在の未対応一覧は上の表を正とする。
-
-2026-10-30追記：末尾にCH32RV側からの6点の再検討を記録した。
-以下の10月28日比較は当時のsnapshotであり、現在のCH32RV側の未対応一覧ではない。
-再検討は80e8676を基準とする判断案。実装の進捗は末尾の適用記録を参照。
+当時のsnapshotで、現在のCH32RV側の未対応一覧ではない。
+特に「copy write」と「CDCの型」の行のESPの判断（partialを維持、flushは送出開始のまま）は、
+2026-10-30にCDCだけ期限付きの待ちへ変えた（[6点の再検討](#1-cdcarduinoの入口と転送エンジンを分ける)）。
 
 2026-10-28、ローカル`ArduinoCore-CH32RV/libraries/CH32RVUsbDevice/src/`の公開headerを比較。
 当該libraryの直近commitは`d99f8979`。これは移植計画でも、CH32RV側を変更した記録でもない。
@@ -76,12 +116,12 @@ CH32RVの現行定数1/2/3と数値の意味は異なるので、共有アプリ
 CH32RV側の変更はこの作業で行わない。両者を合わせる場合の調整点として残す。
 [HIDの判断と移行影響](V3_HID_API.ja.md#system-controlのusage指定)を参照。
 
-
 ## 2026-10-30：CH32RV側からの6点の再検討
 
 入力資料は`ArduinoCore-CH32RV/docs/usb-espusbdevice-v3.ja.md`の3章。
 資料とESP製品80e8676、CH32RV作業treeの関係箇所を照合した（確認時CH32RV HEAD `97bf0695`）。
-この節は判断案と試験計画であり、製品の実装変更・追加実機試験の結果ではない。CH32RV側は変更しない。
+この節は当時の判断案と試験計画で、製品の実装変更や実機試験の結果ではない。CH32RV側は変更しない。
+表の「判断案」は当時のもの。たとえばAudioの既定は、その後`DropOldest`に決まった。現在の決定は[上の表](#現在の調整状況と仕様レビュー入口)。
 
 | 項目 | 判断案 | 主な影響 |
 | --- | --- | --- |
@@ -181,7 +221,6 @@ S3–S3の独立validationを基準にし、conftestを追加しない。P4の�
 未使用Functionへtimeout state、追加ring、媒体監視task等を一律追加しない。
 既存の77件の収集/各実行結果は現行製品の証拠であり、上記変更案の検証済み扱いにはしない。
 
-
 ### 適用記録
 
 - Video submitFrameのSubmission戻り値を適用。sendFrameは維持し、旧3引数overloadは撤去。
@@ -190,7 +229,10 @@ S3–S3の独立validationを基準にし、conftestを追加しない。P4の�
 - CDCのwrite/flushへ期限付き待ちを適用。setTxTimeoutMs、timeout0、worker/停止の扱いは[CDCガイド](V3_CDC_API.ja.md#cdc送信の期限とflush)を参照。新規3件＋既存S3 3件＋P4 6件の関連12件が一括成功（374.48秒）。S2基本例もcompile成功。
 - Audioは[ESP現行仕様のレビュー用初稿](V3_AUDIO_API.ja.md#ch32rv調整向けplaybackあふれ仕様の初稿2026-10-30)を用意した。
   その後、先方から選択APIの命名待ちとの返答を確認。現在の具体案と合意事項は冒頭から各APIガイドを参照。
-- Audio/DFU/MSCの実装変更は未適用。現在の残作業は[TODO](../TODO.ja.md#優先する残作業)を参照。
+- Audioの`playbackOverflowPolicy`（既定DropOldest）を実装（`2408716`）。S3–S3で内容照合に成功。
+- DFUのbool `onDetach`と`setDetachHandler`を実装（`72e0743`）。P4X–Linux PCの実測で、受付後は取り消さない方針に決めた。
+- MSCの挿入通知（06/28/00）と抜去時の失敗（02/3A/00）を実装（`c38d03a`）。P4X–Linux PCのwireで確認。
+- 残作業は[TODO](../TODO.ja.md#優先する残作業)を参照。
 
 ## 2026-10-31：CCIDの既定messageBytes
 

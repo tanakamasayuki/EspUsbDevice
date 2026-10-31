@@ -1,10 +1,29 @@
 # v3 実験台帳
 
-2026-10-26。実施済みの準備試験は[V3_HANDOFF.ja.md](V3_HANDOFF.ja.md)に記録する。
-本書E1以降は新実装を使って判断する実験仕様である。実施済み・未実施は現在の引き渡しと
-開発計画の照合表、各API/validationの記録を参照し、本書だけから合否を推定しない。
-v2との網羅的な速度比較は不要。新実装の設計判断に必要な小さい比較だけ行う。
-数値は初回の試験条件であり、根拠があれば測定後に変えて判断理由を残す。
+2026-10-26に作った、新実装の設計を判断するための実験の仕様（E0〜E9）。
+数値は初回の試験条件で、根拠があれば測定後に変え、その理由を残す。
+v2との網羅的な速度比較はしない。設計の判断に必要な小さい比較だけを行う。
+
+この文書は「何を確かめるか」の仕様で、合否の記録ではない。
+実施の結果は[引き渡し](V3_HANDOFF.ja.md)、[開発計画](V3_DEVELOPMENT_PLAN.ja.md)、各APIガイド、
+[validationの記録](../validation/README.ja.md)を正とする。
+
+## 状況の概要（2026-10-31）
+
+記録から確かめられる範囲だけを書く。「記録なし」は、未実施か、別の形で実施して記録の対応が取れていないかのどちらか。
+
+| 実験 | 内容 | 状況 |
+| --- | --- | --- |
+| E0 | 独立したS3–S3環境 | 実施済み。現在はS3、P4 loopback、P4/P4X HS直結、P4X–Linux PCのcomboがある |
+| E1 | 未使用費用、registry、確保失敗 | 実施済み。archiveリンクでinclude追加0、全取得点（817）の失敗と回復（[下記](#2026-10-29-e1e2の追加観測cface78)） |
+| E2 | 完了通知、競合、停止 | S3で取消し・reset・endの競合とvendor_soak（1000 frame、39再接続）を実施。fake DCDによる列挙と、P4の別core producerは記録なし |
+| E3 | byte stream、packet終端、借用RX/TX | S3 FSで実施。P4/P4X HSでVendorの境界長（511/512/513、4095〜4097、借用65535〜65537）を実施 |
+| E4 | DMA、cache、転送分割 | P4のFS loopbackとHS直結で実施。HSでOUT DMAのcache不具合を見つけて修正（`09470d6`） |
+| E5 | Audio/Videoの周期転送 | S3と、P4/P4X HSのaudio/videoで実施。HSでISO OUTの取りこぼしを修正（`aade7e0`）。10分の連続試験は記録なし |
+| E6 | controller能力とEP0 | controller_capacity、endpoint_number、control_coreを実施。PC Linuxでのcontrol取得はDFU/MSCのみ |
+| E7 | 設定の移行漏れ | 旧build flagはcompile errorで拒否。各classの設定はconfigureへ移した |
+| E8 | 五台ベンチ | 旧P4↔P4XのHS直結を両方向で実施。S2/S31は未実施（調達中） |
+| E9 | 出荷判断（OS互換） | 未実施。Linux PCはDFU/MSCのwireのみ |
 
 ## 記録の共通形
 
@@ -31,7 +50,7 @@ profile / 実機 / negotiated speed:
 - `validation/`でconftestなし、旧test/helperなし、新規Host/Device sketchのみを収集する。
 - S3–S3のVendor往復を1/63/64/65/127/128/129 byteで確認する。開始・停止はtest本文で明示する。
 - plugin 1.10.0の標準`arduino_combos`・port・lock・dut/peersを使用し、`--combo all`で実行する。
-  現在はS3–S3一組だけ。通信assertionをretry/skipで隠さない。
+  当時はS3–S3一組だけ（現在のcomboは[状況の概要](#状況の概要2026-10-31)）。通信assertionをretry/skipで隠さない。
 - 初期は15ケースだった。現在の収集数・成否は各実行のJUnitと引き渡しで確認する。終了値0だけでは全件skipを区別できない。
 - pluginは組合せ単位のログ・結果とcleanup失敗後の中断を提供する。
   必須case監査・serial監査など不足が必要になったらpluginへの追加候補として整理する。
@@ -190,7 +209,7 @@ UAC1/UAC2、UVC、NCM、DFU、WebUSB/MS OS identityはEspUsbHostだけの成功�
 新APIの出荷用exampleを作ってbuildし、移行表の未移行項目、残存TinyUSB参照、未確認SoC/OSを明記する。
 v2比較値がないことはリリースを止める理由にしない。
 
-## Solが判断を進めるルール
+## 判断を進めるルール（作業開始時に決めたもの）
 
 各作業は「仮説→最小実装→上記実験→採用理由」の単位にする。
 既定値の選択やAPI名の整理で確認待ちにしない。失敗したら実装と観測を保存し、最小の再現へ縮めて再実行する。
@@ -248,4 +267,4 @@ ELF/map/nm/build.optionsは`.pytest-results/unused-after-archive/`、
 29 source依存、native controller symbolとaddr2line、未選択Net/Video/CCIDの除外を確認した。
 集計`.pytest-results/archive-examples-audit.json`、各transcriptも同prefixへ保存。
 製品は052bcbbで固定し、実行中の追加作業は別probeと文書のみ。
-全classのリンク・override hook・実通信を含む全44件は実行中。
+その後、全classのリンク・override hook・実通信を含む全44件が`052bcbb`で3745.31秒で成功した（[引き渡し](V3_HANDOFF.ja.md)）。

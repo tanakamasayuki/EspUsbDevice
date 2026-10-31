@@ -1,239 +1,267 @@
-# v3 Vendor APIの実装と移行
+# Vendor API（v3）
 
-Vendor/CDCは共通の独自bulk driverを使う。共通EP0/coreとDWC2も本体内部で保守し、TinyUSB build設定は使わない。
-実機確認はS3–S3、他SoC/HSは未検証。[開始modeと移行](V3_MIGRATION.ja.md)も参照。
-共通設定型とCDC固有の契約は[CDCガイド](V3_CDC_API.ja.md)を参照。
+`EspUsbDeviceVendor` は、独自形式のデータをbulk転送でやり取りするためのFunctionです。
+Host側は専用アプリ（libusb、pyusb、WinUSBなど）でinterfaceを開きます。serial terminalからは開けません。
+送受信の仕組み（ring、DMA、借用転送、取消し）はCDCと共通です。CDC固有の動作は[CDC API](V3_CDC_API.ja.md)を参照してください。
 
-## 設定して開始する
+用語：
+
+- **MPS**（Max Packet Size）：1 packetの最大長。bulkではFSが64 byte、HSが512 byte。
+- **ring**：送受信データを一時的にためる環状buffer。DMAは直接使わない。
+- **借用転送**：アプリのbufferをコピーせず、そのままDMAに渡す送受信（`writeDirect`/`readDirect`）。
+- **ZLP**（Zero Length Packet）：長さ0のpacket。MPSの倍数で終わる転送の終わりをHostへ知らせる。
+
+## 基本の使い方
 
 ```cpp
+#include <EspUsbDevice.h>
+
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 
 void setup() {
-  EspUsbVendorConfig config;
+  EspUsbVendorConfig config;      // EspUsbBulkStreamConfig の別名
   config.rxCapacity = 2048;
   config.txCapacity = 4096;
-  config.transferBytes = 256;
-  // Check errors in application-specific handling.
-  if (vendor.configure(config) != ESP_OK) return;
-  if (!device.begin()) return;
+  if (vendor.configure(config) != ESP_OK) return;  // 停止中だけ成功する
+  if (!device.begin()) {
+    // 失敗理由は device.lastError() / device.lastErrorName() で分かる
+    return;
+  }
+}
+
+void loop() {
+  uint8_t buffer[64];
+  const size_t n = vendor.read(buffer, sizeof(buffer)); // 届いている分だけ返す
+  if (n) vendor.write(buffer, n);  // 受け付けたbyte数を返す（全部とは限らない）
 }
 ```
 
-設定はinstance単位。`configure()`は停止中だけ成功し、引数不正や稼働中の拒否では元設定を保持する。
-`begin()`で必要なring・DMA packet bufferを確保し、失敗時は戻す。`end()`がESP_OKで戻れば解放済みで、USB callbackからの呼出しはInvalidStateで拒否する。
-再設定はend→configure→beginで行い、再ビルドしない。稼働中に再度beginするとInvalidStateになる。
-callback設定も停止中に行い、各`on*()`の戻り値を確認する。
+### 主な設定
 
-| 設定 | 意味 |
+`EspUsbVendorConfig`（= `EspUsbBulkStreamConfig`）の項目です。
+
+| 項目 | 既定値 | 意味 | FS/HSでの違い |
+| --- | --- | --- | --- |
+| `rxCapacity` | 512 | 受信ringの容量（byte）。`rxMode=Stream`では1以上、それ以外では0にする | なし |
+| `txCapacity` | 512 | 送信ringの容量（byte）。0なら`write()`は使えず、借用送信だけになる | なし |
+| `rxBuffer` / `txBuffer` | `nullptr` | ringに使う領域を自分で渡すときに指定。`nullptr`なら`begin()`で自動確保 | なし |
+| `transferBytes` | 512 | コピー送信で1回にDMAへ渡す最大byte数（1〜65535）。`txCapacity`が1以上なら0は不可 | MPS未満でも受け付ける（FS・HSとも） |
+| `autoFlush` | `true` | `true`なら`write()`のたびに送信を始める。`false`なら`flush()`まで溜める | なし |
+| `streamTermination` | `FunctionDefault` | コピー送信の終わりにZLPを付けるか。VendorのFunctionDefaultは`Continue`（付けない） | ZLPが付く長さがMPSで変わる |
+| `rxMode` | `Stream` | 受信の方式。`Stream`/`Callback`/`Borrowed`/`Disabled`（[受信の方式](#受信の方式)） | なし |
+
+コンストラクタの第2引数 `endpointSize`（既定64）は、FS接続のときのbulk MPSです。HS接続では常に512になります。
+
+## 設定と開始・停止
+
+- `configure()`は停止中だけ成功します。稼働中は`ESP_ERR_INVALID_STATE`、値の不正は`ESP_ERR_INVALID_ARG`を返し、どちらも元の設定を保ちます。
+- `begin()`の時点でringとDMA用bufferを確保します。失敗すると確保したものを戻し、USBは開始しません。
+- 設定を変えるときは `device.end()` → `configure()` → `device.begin()` の順にします。再ビルドや`build_opt.h`は要りません。
+- `device.end()`が`ESP_OK`を返したら、確保した資源は解放済みです。USBのcallbackの中から呼ぶと`ESP_ERR_INVALID_STATE`で拒否されます。
+- callback（`onRx`、`onRxData`、`onTxComplete`、`onDirectTxComplete`、`onDirectRxComplete`、`onControlRequest`）の登録も停止中だけです。稼働中は`ESP_ERR_INVALID_STATE`を返すので、無視されたことが分かります。
+- `configuration()`は要求した設定を、`readCapacity()`/`writeCapacity()`は実際に確保した容量を返します。後者は開始前と停止後は0です。
+
+`configure()`が`ESP_ERR_INVALID_ARG`を返す主な条件：
+
+- `txCapacity`が1以上なのに`transferBytes`が0
+- `rxMode=Stream`で`rxCapacity`が0、または`Stream`以外で`rxCapacity`が0でない
+- `rxBuffer`/`txBuffer`を渡したのに対応する容量が0、またはRXとTXの領域が重なっている
+
+`begin()`の失敗理由（`device.lastError()`で読む）：
+
+| 値 | 原因 |
 | --- | --- |
-| rxCapacity / txCapacity | byte stream ringの容量。packet size、transfer sizeとは別 |
-| rxBuffer / txBuffer | 任意の外部ring領域。nullなら自動確保。非DMA・非alignment領域も可。指定領域はbeginからendまで保持 |
-| transferBytes | copy TXの一回の投稿量の上限。1 byteから指定でき、controller内部のDMA armは必要に応じて分割 |
-| autoFlush | trueが標準。短いwriteも送出を進める。falseは明示flushでdrainを開始 |
-| streamTermination | FunctionDefaultはVendorでContinue。EndWithShortPacketならcopy送出の末尾も必要に応じZLPで終端 |
-| rxMode | Streamはavailable/read、CallbackはonRxData。Callback/BorrowedではrxCapacity=0としRX ringを作らない |
+| `ESP_ERR_INVALID_ARG` | `rxMode=Callback`で`onRxData`が未登録、または`rxMode=Borrowed`で`onDirectRxComplete`が未登録 |
+| `ESP_ERR_NO_MEM` | ringやDMA用bufferを確保できなかった |
+| `ESP_ERR_INVALID_STATE` | 既に開始している |
 
-TX容量0ではcopy用ringとTX stagingを作らず、borrowed送信だけを使える。
-外部ringはライブラリでfreeしない。領域の大きさと寿命は利用者の責務で、RX/TXの重複領域は拒否する。
-`configuration()`は要求設定、`readCapacity()/writeCapacity()`は実際の確保量で開始前・終了後は0。
-無効な大きさを黙って縮めない。確保失敗は`device.lastError()`のNoMemoryで識別できる。
+指定した大きさを黙って縮めることはしません。
 
-copy RX ringもMPS未満を指定できる。入りきらない一packetの残りは既存DMA領域に保持し、
-readがringと保留分を読み出す。全部消費するまで次をarmせず、上書きしない。
-availableは保留分を含むためreadCapacityを超える場合がある。readCapacityはring自体の確保量である。
-MIDIと共通化した転送層で、RX/TX/transfer各1 byteのVendor往復も確認した。
+## コピー方式の送受信
 
-## 普通のwriteとまとめ書き
+### write と flush
 
-writeは受け入れたbyteをコピーし、そのbyte数を返す。partialを扱い、復帰後は元bufferを再利用できる。
-`autoFlush=true`なら一byteでも送出が進む。`autoFlush=false`では明示flushまでringに保持する。
-Vendorのflushは待ち処理ではなく、溜まったdataの送出開始である。
-CDCのArduino facadeには[期限付き送信待ち](V3_CDC_API.ja.md#cdc送信の期限とflush)があり、このVendorの契約とは異なる。空のflushは以降のwriteへ影響しない。
+- `write()`はデータをringへコピーし、受け付けたbyte数を返します。ringが足りないと一部だけ受け付けます。戻った時点で元のbufferは再利用できます。
+- 戻り値は「ringに入った量」です。Hostへ届いたことは意味しません。
+- `autoFlush=true`（既定）なら、1 byteでもすぐに送信を始めます。`false`なら`flush()`を呼ぶまでringに溜めます。
+- Vendorの`flush()`は送信を**始める**だけで、完了を待ちません。CDCの`flush()`は完了まで待つ点が違います（[CDCの期限付き送信](V3_CDC_API.ja.md#cdc送信の期限とflush)）。
+- `waitWritable(n, timeoutMs)`（既定100 ms）は、空きがn byte以上になるまで待ちます。nが`writeCapacity()`より大きいとすぐ`false`を返します。待ちは1 tickずつのpollingです。
 
-Arduinoの`Print&`へ渡した場合の`availableForWrite()`も実際のcopy送信の空きを返す。
-intへ収まらない値はINT_MAXに飽和する。size_tでの照会は`writeAvailable() const`を使える。
-停止・借用TX・HALT等の扱いは[共通Print契約](V3_CDC_API.ja.md#arduino-printからの空き容量照会)を参照。
+### 空き容量の照会
 
-`waitWritable(n, timeout)`は容量を超えるnをclampせず拒否する。現在は1 tick単位の待ちで、
-待機用同期資源を常時確保しない。後段で遅延・CPU消費を測り、通知待ちを採るか判断する。
+- `availableForWrite()`は今`write()`で受け付けられるbyte数です。`Print&`として渡しても同じ値が返ります。`int`に収まらない値は`INT_MAX`になります。
+- `writeAvailable()`は同じ値を`size_t`で返します。
+- 借用送信中、停止中、TX ringなし、IN endpointがHALT中は0です。照会しても領域は予約されないので、`write()`の戻り値も確認してください。
 
-copy streamはメッセージ境界を保証しない。フレーム長をprotocolで持たせるなどしてHost側で扱う。
-TinyUSBによる暗黙のZLP挿入を前提にしたHost readは見直しが必要。
-明示したshort/ZLP終端を含む一転送を必要とする場合はborrowed送信で指定する。
+### read
 
-## 借用送信と返却
+- `read(buffer, size)`は届いている分だけ返し、待ちません。`read()`は1 byte（なければ-1）を返します。
+- `peek()`は先頭の1 byteを消費せずに返します（空なら-1）。
+- ringが1 packetより小さくても受信データは失われません。入りきらない残りはDMA用bufferに置いたまま、読み終わるまで次の受信を止めます。そのため`available()`が`readCapacity()`を超えることがあります。
 
-`writeDirect()`はコピーしない。DMA可能な内部RAM、64 byte alignmentを要求する。
-pointerだけでなく指定領域を転送中に保持し、callbackで返却されるまで変更しない。
-callbackを事前登録しない場合、Busy、不適合buffer、長さ上限超過では受理しない。
-拒否には完了通知がなく、所有権は呼出側のままである。
+### メッセージの区切りとZLP
+
+コピー方式はbyte streamです。複数の`write()`がまとめて送られることがあり、1回の`write()`がHostの1回のreadになるとは限りません。
+Host側は長さをprotocolに含めるなどして区切ってください。
+
+`streamTermination`でコピー送信の終わり方を選べます。
+
+| 値 | 動作 |
+| --- | --- |
+| `FunctionDefault` | Vendorでは`Continue`、CDCでは`EndWithShortPacket` |
+| `Continue` | ringが空になってもZLPを送らない |
+| `EndWithShortPacket` | 送信がMPSの倍数で終わり、ringが空ならZLPも送る |
+
+「この転送をここで終える」と明示したい場合は、借用送信の`EndWithShortPacket`を使います。
+
+## 受信の方式
+
+`rxMode`で選びます。
+
+| 値 | 受信の受け取り方 | `rxCapacity` |
+| --- | --- | --- |
+| `Stream` | `available()`/`read()`で読む | 1以上 |
+| `Callback` | `onRxData(data, length)`で受け取る。dataはcallbackの間だけ有効なので、残すなら中でコピーする | 0 |
+| `Borrowed` | `readDirect()`でアプリのbufferを渡して受け取る（[借用受信](#借用受信readdirect)） | 0 |
+| `Disabled` | 受信しない。OUT endpointは記述子に残るが、受信の準備をしない | 0 |
+
+`Disabled`では`available()`/`read()`は0、`maxDirectReceive()`は0、`readDirect()`は`NotSupported`です。
+`Borrowed`でbufferを渡していない状態とは違い、受信そのものを使わない設定です。
+
+`onRx(callback)`は受信のたびに`available()`の値を通知します。
+
+## 借用転送（コピーなし）
+
+大きなデータや速度が必要なときは、アプリのbufferをそのままDMAに渡せます。
+
+bufferの条件（送信・受信とも）：
+
+- 先頭アドレスが64 byte境界
+- 全領域がDMAで使える内部RAM。PSRAMは使えません（`NotDmaCapable`）
+- 完了callbackが返るまで、bufferを変更・解放しない
+
+### 借用送信（writeDirect）
 
 ```cpp
-// Before begin; callback only records ownership and signals another task.
+// begin前に登録する。callbackはUSB workerで呼ばれるので、待ったりend()を呼んだりしない
 vendor.onDirectTxComplete([](const EspUsbTransferResult &result) {
-  returnBufferToProducer(result.buffer, result.status,
-                         result.actualBytes, result.actualBytesKnown);
+  // result.buffer がアプリへ戻ってきた。result.status と result.actualBytes を確認する
 });
-// After begin/configuration; context must be ready before the call.
-auto submission = vendor.writeDirect(buffer, length,
-    EspUsbTransferTermination::EndWithShortPacket);
-```
 
-一instanceにつき未完borrowed TXは一つ。copy TXが残る場合もBusyとなる。
-上限は`maxDirectTransfer()`で実効接続から照会する。内部の総長と進捗は32 bitで扱い、呼出し長の16 bit制約を撤去した。
-controllerの実装カウンタ幅は能力レジスタから読み、内部でDMA armを分割する。
-S3実機はpacket数7 bitで、一armの上限はMPS64で8128 byteである。利用者がこの単位に分割する必要はない。
-全体に対して一度だけ返却し、途中にshort/ZLPを挿入しない。転送全体の上限はuint32_tとPTRDIFF_MAXの小さい方。32 bit ESPでは2147483647 byteだが、これは確保可能量ではない。
-
-上限をそのまま確保量に使わず、applicationの予算と実際のbuffer容量で投稿量を決める。
-例えば128 KiBを使うならその領域を確保し、上限との比較後に投稿する。大きなbufferの確保成功を
-maxDirectTransfer()/maxDirectReceive()が保証するわけではない。RX上限はMPS/64 byteの倍数へ切り下げる。
-従来の65535/65472を前提に上限分のbufferを確保していたコードは、明示的な容量へ変更する。
-
-```cpp
-const size_t capacity = 128 * 1024; // Application budget, not the API ceiling.
-if (capacity <= vendor.maxDirectTransfer()) {
-  auto submission = vendor.writeDirect(dmaBuffer, capacity);
-  // dmaBuffer must cover capacity bytes and remain owned until completion.
+// begin後
+auto submission = vendor.writeDirect(dmaBuffer, length,
+                                     EspUsbTransferTermination::EndWithShortPacket);
+if (!submission) {
+  // 受理されなかった。submission.error に理由が入る。bufferはアプリのまま
 }
 ```
 
-`Continue`はZLPを追加しない。`EndWithShortPacket`はMPS倍数長なら末尾ZLPまで含めて返却する。
-data転送とZLPの間に次の送信が割り込まない。普通のwriteの戻り値とwire完了は区別する。
+- 1つのinstanceで同時に進められる借用送信は1つです。コピー送信のデータが残っている間も`Busy`になります。
+- `Continue`はZLPを付けません。`EndWithShortPacket`は長さがMPSの倍数ならZLPまで送ってから完了を返します。
+- 途中で短いpacketやZLPは入りません。転送全体に対して完了は1回です。
+- 長さの上限は`maxDirectTransfer()`で分かります。32 bitのESPでは2147483647 byteです。この値は「確保できる量」ではないので、bufferの大きさはアプリの予算で決めて上限と比べてください。
+- 長さに16 bitの制限はありません。controllerの1回のDMA設定に収まらない長さは、ライブラリが内部で分けます。
 
-| 完了status | 返却内容 |
-| --- | --- |
-| Success | actualBytesが有効。peerアプリが処理したことまでは保証しない |
-| BusReset | reset/unconfigure等で旧転送を破棄。送信済みprefixは不明なのでactualBytesKnown=false |
-| Stopped | endでDMAを停止してから返却。送信済みprefixは不明 |
-| TransferError | 下位転送エラー。判明している範囲だけactualBytesを有効にする |
-| Cancelled | 個別取消し後、DMA停止と旧完了eventの処理を待って返却。転送済みprefixは不明 |
-
-返却は内部lockを解放してUSB workerで一度だけ行う。endもworkerに停止を依頼し、
-DMA停止→返却→worker終了を待つ。callback内では次の準備済みbufferの送信とsignalを行えるが、
-blockやend、構成変更、Function破棄を行わない。endをcallbackから呼ぶとInvalidStateで拒否する。
-`cancelDirectTx(submission.id)` / `cancelDirectRx(submission.id)`で、その借用転送の取消しを要求できる。
-引数省略（id=0）は現在の借用を対象にする。受理時のsubmission.idは非0、拒否時は0で、
-完了result.idにも同じ値を返す。instance内でbegin/endを跨いで更新するので、古いidで新しい転送を取り消さない。
-
-取消しのESP_OKは要求の受理であり、bufferの返却ではない。対応する完了callbackまで領域を保持する。
-対象なし・id不一致はESP_ERR_INVALID_STATE、未対応adapterはESP_ERR_NOT_SUPPORTEDとなる。
-受理済みの同じ転送への再要求はESP_OK。reset/endと競合した場合はBusReset/Stoppedで返却されることもある。
-通常のcopy write/readの取消しはこのAPIの対象外である。
-
-現在のDWC2 adapterはHostのSTALLやDATA PIDを変更せずDMAを停止する。
-USB workerのFIFOへfenceを置き、それ以前の古い完了eventを処理してから返却する。
-event queue満杯では次のworker反復で再試行し、返却まで同方向の新規借用を拒否する。
-取消しごとのheap確保は行わない。callback内から次の転送を投稿できる。
-
-## 変更の影響と次の検証
-
-- build_opt.hのVendor容量・buffered/direct指定は不要。`CFG_TUD_VENDOR`を再有効化しない。
-- static容量取得はinstance呼出しへ。起動前にはconfigurationから要求値を読む。
-- 旧onTxCompleteはcopy送出通知。借用bufferの返却はstatus付きonDirectTxCompleteへ移す。
-- Device::endはesp_err_tを返す。bufferやFunctionを破棄する前にESP_OKを確認する。
-- callbackの登録/変更は開始前へ移す。稼働中設定を無言で無視しない。
-- 旧flushや暗黙ZLPへの依存はwireの終端条件を見直す。自動送出と明示batchを選べる。
-
-S3で容量変更、非power-of-twoの外部ring、callback RX、複数instance、reset/end返却、
-ZLP、100回開始終了を検証する。DeviceだけのbuildではVendor実装がリンクされないことも確認する。
-他クラスの固定資源はまだ残るため、ライブラリ全体の未使用費用が解決済みとはしない。
-P4 DMA/cache、全資源取得点の故障注入、他クラスへの展開を続ける。
-cancelとreset/endの競合は、workerを停止した専用実機試験で3条件各3回を確認した。
-取消しjob実行前の実bus reset、job実行前のend、DMA停止後・fence実行前のendが対象である。
-
-## 投稿式borrowed RXと呼出しごとの結果
-
-`rxMode=Borrowed`と`rxCapacity=0`を指定し、開始前に`onDirectRxComplete()`を登録する。
-`readDirect(buffer, capacity)`は受信領域を一つ投稿する。満杯またはshort packet/ZLPで返却され、
-次の受信は明示的に再投稿する。未投稿ではOUTをarmせずbackpressureをかける。
-callbackから別の準備済みbufferを投稿できる。reset/endでも同じ返却経路を一度だけ通る。
-
-容量は実効MPSと64の両方の倍数、開始addressは64 byte alignment、全領域がDMA可能RAMであることを要求する。
-領域をDMA専有にすることでP4等のcache invalidateが外側の変数を巻き込む条件を避ける。
-S3でcanaryを確認した段階であり、P4 cache実機合格の代用にはしない。
-`maxDirectReceive()`で現在の上限を照会し、返却のactualBytesだけを受信dataとして扱う。
-Borrowed RXでは内部packet bufferを作らず、copy TXも無効ならtransferBytes=0でよい。
-
-TX/RXの投稿は`EspUsbTransferSubmission`を返す。`if (submission)`で受理を確認し、
-`submission.error`にその呼出しの拒否理由が残る。後続のTX/RXによる診断値の上書きを避けるため、
-instanceのlastDirectErrorは廃止した。完了通知は別の`EspUsbTransferResult`である。
-TX callbackも方向を明示して`onDirectTxComplete()`へ整理した。
+### 借用受信（readDirect）
 
 ```cpp
 EspUsbVendorConfig config;
 config.rxMode = EspUsbVendorRxMode::Borrowed;
-config.rxCapacity = config.txCapacity = 0;
-config.transferBytes = 0;
+config.rxCapacity = 0;
+config.txCapacity = 0;     // コピー送信も使わないなら0
+config.transferBytes = 0;  // txCapacityが0なら0でよい
 vendor.configure(config);
 vendor.onDirectRxComplete([](const EspUsbTransferResult &done) {
-  // DMA no longer owns the buffer. Process actual bytes, or recycle on reset.
-  returnReceivedBuffer(done);
+  // done.actualBytes 分だけが受信データ。bufferはアプリへ戻った
 });
 device.begin();
-auto submission = vendor.readDirect(buffer, capacity);
-if (!submission) handleSubmissionError(submission.error);
+
+auto submission = vendor.readDirect(dmaBuffer, capacity);
 ```
 
-初期v3 APIからの変更は、bool代入を`auto`へ、lastDirectError参照を戻り値のerrorへ、
-onDirectCompleteをonDirectTxCompleteへ移す。`if (!vendor.writeDirect(...))`の形はそのまま使える。
-利点は並行操作でも因果関係が明確な診断と、内部RX資源の削減。不利益は明示投稿とbuffer寿命・alignmentの管理である。
-登録されたFunctionを誤ってcopy/moveすると所有権が壊れるため、Functionのcopy/moveも禁止した。
+- `capacity`は64の倍数で、かつ**接続中のMPSの倍数**が必要です。FSなら64の倍数、HSなら512の倍数です。合わないと`BadArgument`です。
+- bufferがいっぱいになるか、短いpacket/ZLPを受けると完了します。
+- 次の受信は、改めて`readDirect()`を呼んで投稿します。投稿していない間はOUTを受け付けず、Hostを待たせます。
+- callbackの中から、準備済みの次のbufferを投稿できます。
+- 上限は`maxDirectReceive()`で分かります（`maxDirectTransfer()`の値を、MPSと64の大きいほうの倍数へ切り下げた値）。
 
-## RXを使わない送信専用構成
+### 投稿の結果（EspUsbTransferSubmission）
 
-`rxMode=EspUsbBulkRxMode::Disabled`、`rxCapacity=0`を指定する。RX callbackは不要で、
-RX ring/packetを確保せず、OUTをarmしない。USB descriptorの必須OUT endpointは残る。
-`available/read`は0、`maxDirectReceive()`は0、`readDirect()`はNotSupportedを返す。
-TXは従来通りcopyまたはborrowedを選べる。借用TXはTX完了callbackが必要。
-これはBorrowed RXの未投稿状態とは異なり、受信操作自体を使わない明示設定である。
+`writeDirect()`/`readDirect()`は`EspUsbTransferSubmission`を返します。`if (submission)`で受理を確認し、拒否されたら`submission.error`に理由が入ります。
+拒否されたときは完了callbackは来ず、bufferはアプリのままです。
 
+| `error` | 意味 |
+| --- | --- |
+| `None` | 受理された。`id`は0でない |
+| `NotSupported` | 今の`rxMode`ではその操作を使えない |
+| `NotMounted` | USBが未接続、またはendpointがまだ開いていない |
+| `BadArgument` | bufferや長さが不正、完了callbackが未登録、受信容量がMPS/64の倍数でない |
+| `NotAligned` | 先頭アドレスが64 byte境界でない |
+| `NotDmaCapable` | DMAで使えないメモリ（PSRAMなど） |
+| `Busy` | 同じ方向で転送が進行中 |
+| `TransferFailed` | controllerが受け付けなかった |
+
+### 完了の結果（EspUsbTransferResult）
+
+完了callbackはUSB workerで1回だけ呼ばれます。`buffer`、`requestedBytes`、`actualBytes`、`status`、`actualBytesKnown`、`id`が入ります。
+
+| `status` | 意味 |
+| --- | --- |
+| `Success` | 完了。`actualBytes`が有効。Hostのアプリが処理したことまでは意味しない |
+| `BusReset` | bus resetなどで転送が破棄された。どこまで送れたかは不明（`actualBytesKnown=false`） |
+| `Stopped` | `end()`でDMAを止めてから返した。どこまで送れたかは不明 |
+| `TransferError` | 下位の転送エラー。分かっている範囲だけ`actualBytes`が有効 |
+| `Cancelled` | 取消しによって返した。どこまで送れたかは不明 |
+
+callbackの中でしてよいこと：次の準備済みbufferの投稿、他のtaskへの通知。
+してはいけないこと：待つ処理、`end()`、設定変更、Functionの破棄。
+
+### 取消し
+
+- `cancelDirectTx(id)`/`cancelDirectRx(id)`で借用転送の取消しを頼めます。`id`を省略（0）すると現在の転送が対象です。
+- `ESP_OK`は「取消しを受け付けた」という意味で、bufferが戻ったわけではありません。bufferは完了callback（`Cancelled`など）で戻ります。
+- 対象がない、または`id`が違うと`ESP_ERR_INVALID_STATE`です。古い`id`で新しい転送を取り消すことはありません。controllerが取消しに対応していなければ`ESP_ERR_NOT_SUPPORTED`です。
+- 同じ転送への2回目の要求は`ESP_OK`です。resetや`end()`と重なると、`BusReset`/`Stopped`で返ることがあります。
+- `id`は`begin`/`end`をまたいでも増え続けるので、前回の転送と取り違えません。
+- コピー方式の`write()`/`read()`は取消しの対象外です。
 
 ## 標準要求による転送の再初期化
 
-VendorとCDCのbulk transportでは、Hostの要求に応じてDMAを停止し、旧完了eventのfence後に
-借用bufferを一度だけ返す。要求のACKとcallbackの実行時点は同じとは限らない。
-返却まで同方向への新規投稿を拒否し、callbackから再投稿できる。
+Hostから次の標準要求が来ると、VendorとCDCのbulk転送は対象の転送を止めて初期化します。
+借用中のbufferは、DMAを止めて古い完了を処理し終えてから1回だけ返します。返るまで、同じ方向の新しい投稿は拒否されます。
+要求へのACKとcallbackの時点は同じとは限りません。
 
-| Host要求 | 対象 | 進行中の借用の結果 | DATA PID |
+| Host要求 | 対象 | 借用中の転送の結果 | data toggle（DATA0/1） |
 | --- | --- | --- | --- |
-| SET_INTERFACE、alt 0 | 指定data interfaceのTX/RX | Cancelled | 両方向DATA0 |
-| SET_FEATURE ENDPOINT_HALT | 指定endpointだけ | TransferError | HALTを維持 |
-| CLEAR_FEATURE ENDPOINT_HALT | 指定endpointだけ | Cancelled | DATA0 |
+| SET_INTERFACE（alt 0） | 指定したdata interfaceの送受信 | `Cancelled` | 両方向DATA0に戻す |
+| SET_FEATURE ENDPOINT_HALT | 指定したendpointだけ | `TransferError` | HALTのまま |
+| CLEAR_FEATURE ENDPOINT_HALT | 指定したendpointだけ | `Cancelled` | DATA0に戻す |
 
-既に返却待ちのTransferErrorは、続くCLEAR_FEATUREでCancelledへ上書きしない。
-reset/endが競合した場合のBusReset/Stoppedも維持する。
-他Functionと、endpoint要求で指定していない方向の転送・PIDは維持する。
-CDCのcontrol interfaceのSET_INTERFACEは通知endpointだけを初期化し、data interfaceの借用、
-DTR、line codingを維持する。現在のCDCはserial-state通知転送自体を投稿しない。
+- 既に`TransferError`で返却待ちの転送は、続くCLEAR_FEATUREで`Cancelled`に変わりません。resetや`end()`が先なら`BusReset`/`Stopped`のままです。
+- 他のFunctionや、指定されなかった方向の転送には影響しません。
+- コピー方式でも、対象方向の送信ringと受信ringは捨てられます。`write()`で受け付け済みでも未送信のデータは失われることがあります。確実に届ける必要があるなら、アプリ側で確認と再送をしてください。
+- INがHALT中、または初期化の完了待ちの間は、`write()`と`writeAvailable()`は0です。OUTは回復後に受信を再開します。
+- この処理はライブラリが内部で行います。監視したいときは`device.onAnyControlRequest()`を使ってください。Vendorのcontrol callbackで置き換えることはできません。
+- CDCでcontrol interfaceにSET_INTERFACEが来た場合は、通知endpointだけを初期化します。data転送、DTR、line codingは保たれます。
 
-copy modeも対象方向の送信queue・受信ringを破棄するため、writeで受理済みでも未送信のbyteは失われ得る。
-INがHALT中、または初期化のfence待ちならwrite/writeAvailableは0を返す。
-OUTは回復後に受信を再開する。配送保証が必要な用途はアプリケーション側で確認・再送を行う。
-標準要求の回復処理は内部で扱う。監視にはDeviceのonAnyControlRequestを使い、
-Vendorの独自control callbackでこの必須処理を置き換えることを前提にしない。
+## Vendor control要求
 
-この回復処理にはcopy専用構成でもabort/fenceのコードが必要となる。
-取消しごとのheap確保は増やさず、使わない公開cancelDirectTx/cancelDirectRxは最小buildでリンクされない。
-以前の「copy専用ではabortもリンクされない」という測定条件は、この標準要求対応で変更した。
+`onControlRequest(callback)`でVendor/Class要求を受け取ります。callbackは各段階（SETUP、DATA、ACK）で呼ばれます。
+data段階の送受信は`sendControlResponse(request, data, length)`で始めます（INなら送るデータ、OUTなら受信先）。
 
+`EspUsbDeviceVendorControlRequest::actualBytes`は、data段階で実際に転送したbyte数です。
 
-## control callbackの実byte数
-
-`EspUsbDeviceVendorControlRequest::actualBytes`でdata段階の転送実量を読む。
-SETUPでは0、DATAとACKではその要求で転送した合計を示す。IN/OUTの両方向が対象で、
-SETUP/status packetや末尾ZLPをbyte数へ加えない。wLengthはHostの要求量のまま残る。
-INの応答をHost要求長で切り詰めた場合や短い返信も、この値で区別できる。
-追加heapやbufferは不要で、既存coreの計数値をcallbackの値へコピーする。
+- SETUPでは0、DATAとACKではその要求で転送した合計です。IN/OUTの両方向で使えます。
+- SETUP packet、status packet、末尾のZLPは数えません。`wLength`はHostが要求した長さのままです。
+- 応答がHostの要求長で切り詰められた場合や、短い応答の場合も、この値で区別できます。
 
 ```cpp
 vendor.onControlRequest([&](const EspUsbDeviceVendorControlRequest &r) {
   if (r.bmRequestType != 0x40 || r.bRequest != 0x61 ||
       !r.wLength || r.wLength > sizeof(commandBuffer)) return false;
   if (r.stage == ESP_USB_DEVICE_CONTROL_STAGE_SETUP)
-    return vendor.sendControlResponse(r, commandBuffer, r.wLength);
+    return vendor.sendControlResponse(r, commandBuffer, r.wLength); // OUTの受信先を渡す
   if (r.stage == ESP_USB_DEVICE_CONTROL_STAGE_DATA)
     return r.actualBytes == r.wLength && validateCommand(commandBuffer, r.actualBytes);
   if (r.stage == ESP_USB_DEVICE_CONTROL_STAGE_ACK)
@@ -242,44 +270,115 @@ vendor.onControlRequest([&](const EspUsbDeviceVendorControlRequest &r) {
 });
 ```
 
-受理条件の検査はDATA、成功した要求の適用はACKで行う。SETUP/DATAでfalseを返すと拒否する。
-ACKは成功後の通知であり、その戻り値で完了済みの要求を取り消せない。
-従来内部の`usbd_control_received_bytes()`を使っていた利用は`r.actualBytes`へ移し、
-アプリのためだけに追加した内部headerのincludeを外せる。
-callback引数へのfield追加のため通常の登録方法は維持するが、構造体の位置指定aggregate初期化は見直す。
-rawRequestは返信用の暫定内部参照で、保存して後から返信するための寿命保証は追加していない。
+- 受け付けるかの検査はDATAで、成功した要求の反映はACKで行います。SETUP/DATAで`false`を返すと要求を拒否（STALL）します。
+- ACKは成功後の通知です。ここで`false`を返しても、完了した要求は取り消せません。
+- `rawRequest`は応答用の内部参照です。保存して後から応答する用途には使えません。
 
+## FSとHSの違い
 
-## 65535 byteを跨ぐ借用転送
+| 項目 | FS（12 Mbps） | HS（480 Mbps） |
+| --- | --- | --- |
+| bulk MPS | 64（コンストラクタの`endpointSize`で変えられる） | 512 |
+| `transferBytes` | 1〜65535。MPS未満でもよい | 同左 |
+| `readDirect()`の容量 | 64の倍数 | 512の倍数 |
+| `maxDirectReceive()` | `maxDirectTransfer()`を64の倍数へ切り下げた値 | 512の倍数へ切り下げた値 |
+| ZLPが付く長さ（`EndWithShortPacket`） | 64の倍数 | 512の倍数 |
 
-総長とDMA進捗を32 bitに広げ、Private core/controllerもuint32_tの投稿長を扱う。
-各hardware armは実装されたcounter幅とuint16_t内に収め、途中のarmはMPS倍数にする。
-中間のshort/ZLPを作らず、元pointer・requestedBytes・idに対して一度だけ返す。
-Control/ISOの従来の16 bit投稿上限は維持する。bulkの大きいloanのためにqueue/task/bufferを増やさない。
+- HSを使えるcontroller（P4のHS controllerなど）では、受信用のDMA bufferを512 byteで確保します。FSで接続した場合もこの大きさのままです。
+- 非control INのendpointは、S3が4本まで、P4のHS controllerが7本までです。VendorはINを1本使います。
 
-DWC2 recordは16→20 byte。ISOのinterval/retryとDMA進捗は同時に使うため重ねない。
-S3でのcontroller領域はEP0のみ128→128、Vendor単体192→192、CDC＋HID192→256、
-sparse構成256→256 byte。cache lineへの丸めで増分が出る構成がある。
+## PSRAMとバッファ
 
-修正前は131072 byteの領域を確保できても65536 byte投稿をBadArgumentで拒否（1 failed、56.84秒）。
-修正後のtransfer_limits/Vendor/Audio/Video関連5件は5 passed（275.46秒）。
-大きなloanのreset/endとcore/確保失敗の3件も3 passed（147.55秒）、774取得点の回復とheap前後同量。
-さらに最後のFS packetを残す131008 byteの位置でcancel/reset/endを行う試験が1 passed（48.66秒）。
-最大131072 byte、92件の返却、2種類の終端、short/ZLP、返却pointer/id、canaryと全byteを確認。
-patternはoffsetの高位bitも混ぜ、64 KiBでpointerが折り返しても一致させない。
-S2/P4はcompile成功、実機の確認はS3–S3のみ。結果はvalidation/.pytest-results/wide-loan-*。
+| 領域 | 置ける場所 |
+| --- | --- |
+| `rxBuffer`/`txBuffer`（ring） | 内部RAMでもPSRAMでもよい。境界の条件もない。PSRAMのringはFS loopbackとHS直結の両方で確認済み |
+| 自動確保のring | 通常の`malloc`で確保する（置き場所はsdkconfigのmalloc設定による） |
+| DMA用bufferとコピー送信のstaging | ライブラリが内部RAM（DMA可能、64 byte境界）に確保する |
+| 借用転送のbuffer | DMA可能な内部RAMが必要。PSRAMは`NotDmaCapable`で拒否 |
 
+`rxBuffer`/`txBuffer`はライブラリが解放しません。`begin()`から`end()`まで保持してください。大きさの管理もアプリの責任です。
 
-製品`f1c9f29`固定の全34件も成功（1631.13秒、0 skipped/error/failure/unfinished）。
-68 serial全てSTOPPED、panicなし。774取得点の回復とheap前後同量、他classとの回帰も確認。
-詳細は[一括結果](../validation/README.ja.md#wide-loan変更後の全34件)。
+## 2.xと初期のv3からの移行
 
+- `build_opt.h`でのVendor容量や方式の指定は不要です。`CFG_TUD_VENDOR`は使いません。容量は`configure()`で指定します。
+- 起動前に容量を知りたいときは`configuration()`から要求値を読みます。
+- 旧`onTxComplete`はコピー送信の通知です。借用bufferの返却は、statusが付いた`onDirectTxComplete`を使います。
+- `device.end()`は`esp_err_t`を返します。bufferやFunctionを破棄する前に`ESP_OK`を確かめてください。
+- callbackの登録は開始前に移してください。稼働中の登録はエラーになります。
+- 旧`flush()`の待ちや、暗黙のZLPに頼ったHost側のreadは、終端の条件を見直してください。
+- `bool ok = vendor.writeDirect(...)`は`auto submission = vendor.writeDirect(...)`へ、`lastDirectError`は`submission.error`へ、`onDirectComplete`は`onDirectTxComplete`へ移します。`if (!vendor.writeDirect(...))`の形はそのまま使えます。
+- 65535や65472を上限と見なして大きなbufferを確保していたコードは、必要な容量を明示する形に変えてください。
+- `EspUsbDeviceVendorControlRequest`にfieldを追加したので、位置指定のaggregate初期化は見直してください。内部の`usbd_control_received_bytes()`を使っていた場合は`r.actualBytes`へ移せます。
 
-## 背圧を含む連続往復
+## 設計判断の理由
 
-vendor_soakで1000フレーム・各方向713000 byteを照合し、39回のHost再列挙と終了後heap一致、
-非整列外部ringのguardを確認した。1 passed、59.76秒、2 logs STOPPED/panicなし。
-HostはINをcontinuous callbackで受信しながら同期OUTを送る。
-echo要求がDeviceのRX/TX保存量を超える場合、同期OUTを完了させてから初めてINを読むと相互待ちになる。
-Hostの並行受信、またはアプリの明示的な送受信分割で背圧を進める。capacityを無条件に大きくする契約は追加しない。
-詳細と原本は[実験記録](V3_EXPERIMENTS.ja.md#2026-10-29-e1e2の追加観測cface78)を参照。
+- **instance単位の設定**：容量をbuild設定ではなく`configure()`で持つことで、1つのbinaryで構成を変えられ、使わない資源を確保しません。代わりに、`begin()`での確保失敗と、停止してからの再設定が必要になります。
+- **投稿結果を戻り値で返す**：以前はinstanceの`lastDirectError`に残していましたが、続くTX/RXの呼出しで上書きされるため、呼出しごとの`EspUsbTransferSubmission`にしました。
+- **借用受信を投稿式に**：内部のpacket bufferが要らず、アプリがbufferの数を決められます。代わりに、明示的な投稿とbufferの寿命・境界の管理が必要です。
+- **受信bufferをDMA専用にする条件**：容量をMPSと64の倍数にし、領域全体をDMAに渡すことで、P4などでcacheのinvalidateが周りの変数を壊す状況を避けます。
+- **取消しは要求と返却を分ける**：DMAを止め、USB workerのqueueにfenceを置いて古い完了eventを処理してから返します。queueが満杯なら次のworker周回で再試行し、取消しごとのheap確保はしません。DWC2の実装はHostへSTALLせず、DATA PIDも変えずにDMAを止めます。
+- **Functionのcopy/moveを禁止**：登録済みのFunctionをコピーすると所有権が壊れるためです。
+- **`waitWritable()`はpolling**：待ち用の同期資源を常に確保しないためです。遅延とCPU負荷を測ったうえで、通知式にするかを後で判断します。
+- **背圧の扱い**：echoの量がDeviceのRX+TXの保存量を超える場合、Hostが同期OUTを終えてからINを読むと、お互いに待ち続けます。Hostが並行して受信するか、アプリが送受信を分けてください。容量を無条件に増やす約束はしません。
+- **標準要求の回復処理**：コピー専用の構成でもabort/fenceのコードがリンクされます。公開の`cancelDirectTx`/`cancelDirectRx`は、使わなければリンクされません。
+
+## 実測の記録
+
+記載時点の結果です。いまの仕様は上の節を見てください。
+
+### HS直結のVendor（2026-10-31）
+
+`validation/peer/vendor_link`。旧P4とP4XをHSで直結し、両方向のcomboで成功しました。各試験を3回繰り返しています。
+
+- Hostから見てspeed=HS、bulk IN/OUTのMPSは512。
+- コピー方式のecho：1/511/512/513/4095/4096/4097 byte。
+- 借用受信→借用送信：1/511/512/513/4097/65535/65536/65537 byte。完了は1回で、status、実長、buffer、idが一致し、DMA領域の外のguardも壊れていない。受信容量はMPSの倍数へ切り上げて渡す。
+- `cancelDirectRx`で完了が1回だけ（`Cancelled`、idが一致）。
+- 借用受信を持ったまま`end()`すると`Stopped`で1回だけ返る。
+
+この試験で、P4X Deviceの65535 byteの借用受信が9216 byte以降で書き込まれない不具合を見つけました（完了は成功・65535 byteと報告していた）。
+OUT DMAの開始時にbufferのcacheを書き戻していなかったため、DMAの途中で追い出されたcache行が受信データを上書きしていました。
+09470d6でOUT開始時にもcache cleanするよう直し、P4/P4 PSRAM/P4X-PC/HS直結の全32件で回帰を確認しました。S3はcache同期のない構成なので影響しません。
+詳細は[P4/P4Xと試験環境](V3_P4_VARIANTS_AND_BENCH.ja.md#vendor列挙コピー借用転送2026-10-31)。
+
+### PSRAM上のring（2026-10-30〜31）
+
+- FS loopback（`validation/p4/psram`）：Vendor RX/TX ring（各8 KiB）をPSRAMに置き、160往復・各方向153664 byteを照合（53bcfeb）。
+- HS直結（`validation/peer/psram_link`、42d844d）：同じくringをPSRAMに置き、1〜32768 byteの10種を4回echo。8 KiBより大きい転送では、ringが満ちても欠けずに待つことを確認。
+
+詳細は[P4/P4Xと試験環境のPSRAM](V3_P4_VARIANTS_AND_BENCH.ja.md#psram)。
+
+### 65535 byteを跨ぐ借用転送
+
+総長とDMAの進捗を32 bitに広げ、内部のcore/controllerも`uint32_t`の長さを扱うようにしました。
+1回のhardware設定は、実装されたcounterの幅と`uint16_t`に収まる大きさに分け、途中の設定はMPSの倍数にします。
+途中に短いpacketやZLPは入れず、元のpointer・`requestedBytes`・idに対して1回だけ返します。
+Control/ISOの16 bitの投稿上限はそのままです。大きな転送のためにqueue/task/bufferは増やしていません。
+
+- S3実機のpacket counterは7 bitで、MPS 64なら1回の設定は8128 byteまで。分割はライブラリが行う。
+- DWC2のendpoint recordは16→20 byte。S3でのcontroller領域はEP0のみ128→128、Vendor単体192→192、CDC＋HID 192→256、sparse構成256→256 byte（cache line単位の切り上げで増える構成がある）。
+- 修正前：131072 byteの領域を確保できても、65536 byteの投稿が`BadArgument`で拒否された（1 failed、56.84秒）。
+- 修正後：transfer_limits/Vendor/Audio/Video関連5件が成功（275.46秒）。大きな転送中のreset/endとcore/確保失敗の3件も成功（147.55秒）。774か所の確保失敗からの回復とheapの前後一致を確認。
+- 最後のFS packetを残す131008 byteの位置でcancel/reset/endする試験も成功（48.66秒）。最大131072 byte、92件の返却、2種類の終端、short/ZLP、返却pointer/id、canaryと全byteを確認。patternにはoffsetの上位bitも混ぜ、64 KiBでpointerが折り返しても一致しないようにした。
+- 製品`f1c9f29`固定の全34件も成功（1631.13秒、0 skipped/error/failure）。[一括結果](../validation/README.ja.md#wide-loan変更後の全34件)。
+- 結果は`validation/.pytest-results/wide-loan-*`。当時の実機はS3–S3で、S2/P4はcompileのみ（P4のHSは上のvendor_linkで確認）。
+
+### 取消しとreset/endの競合
+
+USB workerを止めた専用の実機試験で、3つの条件を各3回確認しました。
+
+- 取消しの処理が動く前に実際のbus resetが来る
+- 取消しの処理が動く前に`end()`する
+- DMAを止めた後、fenceを処理する前に`end()`する
+
+### 背圧を含む連続往復
+
+`vendor_soak`で1000 frame、各方向713000 byteを照合しました。39回のHost再列挙、終了後のheap一致、境界の揃っていない外部ringのguardも確認しています（1 passed、59.76秒）。
+HostはINをcontinuous callbackで受けながら同期OUTを送りました。
+詳細は[実験記録](V3_EXPERIMENTS.ja.md#2026-10-29-e1e2の追加観測cface78)。
+
+### 小さいringと未使用資源
+
+- MIDIと共通化した転送層で、RX/TX/transferBytesをすべて1 byteにしたVendorの往復を確認。
+- S3で容量変更、2のべき乗でない外部ring、callback受信、複数instance、reset/endでの返却、ZLP、100回の開始・終了を確認。
+- Deviceだけのbuildでは、Vendorの実装がリンクされないことを確認。

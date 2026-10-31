@@ -1,8 +1,11 @@
 # v3 descriptorのサイズ照会と動的領域
 
-2026-10-26。configurationの704 byte、複合HID reportの256 byte、BOS/MS OSの固定領域を撤去した。
-構成を数えてから実数分だけ確保し、begin失敗またはendで解放する。
-通常のDevice/Function、configure、Print/read/writeの使い方は変えない。
+2026-10-26に実装。descriptorの固定領域をやめ、構成から必要な長さを数えてから、実数分だけ確保する。
+
+- 撤去した固定領域：configuration 704 byte、複合HID report 256 byte、BOS/MS OS。
+- 確保した領域は、`begin()`の失敗時または`end()`で解放する。
+- 通常のDevice/Function、`configure()`、Print/read/writeの使い方は変わらない。
+- 独自Functionを書いている場合だけ、writerの移行が必要（[独自Functionのwriter契約](#独自functionのwriter契約)）。
 
 ## 使用した分だけ確保する
 
@@ -17,12 +20,12 @@
 | USB文字列 | 提供した文字列のUTF-16とindexまでのoffset表。全てnullなら確保なし |
 | WebUSB URL | WebUSB有効かつURLありの場合のみ。prefix除去後の実byte数+3 |
 
-USBのwTotalLength/wDescriptorLengthが16 bitである制約は残る。これはTinyUSBの転送buffer定数ではない。
-FS/HSの長さが違うFunctionも、速度ごとに照会・出力する。以前のFS全体をHSへコピーして
-一部だけ上書きする方法や、HIDの速度補正用一時配列も不要になった。
-
-beginで使う領域はUSB workerの起動前に構築・公開する。稼働中のGET_DESCRIPTORは確保や再構築を行わない。
-FIFOの検証も同じ公開前のsnapshotを参照する。確保失敗はNoMemoryとして返し、一部だけの構成を公開しない。
+- USBのwTotalLength/wDescriptorLengthが16 bitであるという上限は残る。これはUSB規格の制約で、TinyUSBの定数ではない。
+- FSとHSで長さが違うFunctionも、速度ごとに照会・出力する。
+  以前の「FS全体をHSへcopyして一部を上書きする」方法や、HIDの速度補正用の一時配列は不要になった。
+- `begin()`で使う領域は、USB workerを起動する前に作って公開する。稼働中のGET_DESCRIPTORでは確保や作り直しをしない。
+- FIFOの検証も、公開前の同じsnapshotを参照する。
+- 確保に失敗したら`ESP_ERR_NO_MEM`を返し、途中までの構成は公開しない。
 
 FS専用機種でHSを検討する場合は、PHYを開始しない構成で明示照会できる。
 
@@ -36,9 +39,9 @@ const uint8_t *hs = device.configurationDescriptorForSpeed(0, true);
 device.end();
 ```
 
-実USB稼働中のFS専用機種では、HS領域がなければHS照会はNotSupportedになる。
-停止中のpointer getterは必要なら再構築するため、次の構築や構成変更を跨いでpointerを保持しない。
-beginで公開したpointerもend後には保持しない。
+- FS専用機種でUSBを動かしている間は、HS領域がないのでHSの照会はnullptrを返し、`lastError()`が`ESP_ERR_NOT_SUPPORTED`になる。
+- 停止中のpointer getterは必要なら作り直すので、次の構築や構成変更をまたいでpointerを保持しない。
+- `begin()`で公開したpointerも、`end()`の後は使わない。
 
 ## 独自Functionのwriter契約
 
@@ -68,10 +71,14 @@ Audio等のbuilderでは内部DescriptorBufferのnull/0による計数を使い�
 
 ## 複数のWinUSB Function
 
-MS OS setも全対象Functionのinterfaceから構築する。以前のVendor/DFU各一個、最大二個の一覧は使わない。
-Vendorを三つ使えば三つのfunction subset、GUID property、revisionを出力し、interface順に並べる。
-一つのflat setに複数対象を曖昧にまとめないため、複数WinUSB対象でFlatを明示するとInvalidArgumentで拒否する。
-通常のAutoではfunction subsetsを選ぶ。単体Functionの従来の既定layoutとGUIDは維持する。
+MS OS 2.0 descriptor setも、WinUSB対象（Vendor/DFU）の全Functionのinterfaceから作る。
+以前の「Vendor/DFU各一個、最大二個」の一覧は使わない。
+
+- Vendorを三つ使えば、三つのfunction subset、GUID property、revisionを、interfaceの順に出力する。
+- 複数のWinUSB対象があるのに`msOs20Layout`でFlatを明示すると、`begin()`が`ESP_ERR_INVALID_ARG`で拒否する。
+  一つのflat setに複数の対象を曖昧にまとめないため。
+- 既定のAutoでは、configurationのinterfaceが2個以上ならfunction subsetsを選ぶ。
+  `msOs20CcgpDevice = true`のときもsubsetsを選ぶ。単体Functionの従来の既定layoutとGUIDは変えない。
 
 ## S3–S3の実験
 
@@ -86,10 +93,12 @@ Vendorを三つ使えば三つのfunction subset、GUID property、revisionを�
 
 最終の標準入口は`dynamic-descriptors-all.xml`、8 passed、390.92秒。
 HS byte列の検証をS3上で行った結果であり、P4/S2/S31のPHY・DMA/cacheやWindowsのWinUSB動作を検証したものではない。
+（2026-10-31追記：その後、P4/P4XのHS直結でHS descriptorの実列挙を確認した。[P4の記録](V3_P4_VARIANTS_AND_BENCH.ja.md)。）
 
-文字列応答用scratchとWebUSB URLの固定領域も、その後の実装で撤去した。
+文字列応答用のscratchとWebUSB URLの固定領域も、その後の実装で撤去した。
 UTF-8入力、寿命、長さ制限の移行は[V3_TEXT_DESCRIPTORS.ja.md](V3_TEXT_DESCRIPTORS.ja.md)を参照する。
-legacy class/core内の固定資源、残クラス・EP0/DCDの独自化は継続する。
+当時は「legacy class/core内の固定資源、残りのclass・EP0/DCDの独自化は継続する」としていた。
+これらはその後すべて独自実装へ移した（[共通core](V3_CORE_API.ja.md)）。
 
 追加のfocused実行は`descriptor-storage-final.xml`、1 passed、28.45秒。
 WebUSBのみのBOS 29 byte、MS OS併用57 byte、誤ったGUIDの拒否、
@@ -113,3 +122,4 @@ countとtextはbeginの処理中に安定していることがwriter契約であ
 `validation/.pytest-results/function-auxiliary-strings*`。
 通常収集は17件のまま。今回の関連3件は、DFU段階の全17件成功とは別の結果である。
 NCMのclass/NTB pool/MAC globalはまだlegacyのままで、この変更だけで複数NCM通信に対応したとはしない。
+（後にNCMを独自化し、MACをこの補助文字列でFunctionごとに持つようにした。[NCMガイド](V3_NCM_API.ja.md)。）

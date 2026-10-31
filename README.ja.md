@@ -56,24 +56,31 @@ Hostからは切断・再列挙に見えます。Functionの容量・個数を�
 HID Keyboard/Mouse/Gamepad/Consumer/System/Custom、CDC ACM、MIDI 1.0、Vendor bulk/control、
 MSC、UAC1/UAC2 Audio、UVC Video、CDC-NCM、CCID、DFUを実装しています。
 controllerのendpoint予算内で組み合わせられ、ライブラリ共通の4 Function制限はありません。
-実装の存在と実機確認の範囲は分けて扱います。
+実装の有無と実機で確認した範囲は分けて扱います。下の「機種ごとの確認状況」を参照してください。
 
 ## ビルドと試験
 
-現在の開発基準は**Arduino-ESP32 3.3.12**で、exampleの`sketch.yaml`にも固定しています。
-過去のCore互換表は当時のlibrary versionの記録であり、v3の動作保証には使いません。
+開発の基準は**Arduino-ESP32 3.3.12**です。exampleの`sketch.yaml`もこの版に固定しています。
+過去のCore互換表は当時のlibrary versionの記録です。v3の動作保証には使いません。
 
-| 機種 | 現在のv3の確認範囲 |
-| --- | --- |
-| ESP32-S3 | 二台ピアのFS実機試験。列挙、各クラスの転送、所有権、reset/回復、故障注入 |
-| ESP32-S2 | controller/資源のcompile probe。実機確認は今後 |
-| ESP32-P4 | 両Device controllerのFS loopback実機：全10 classの基本通信、Audio duplex、borrowed DMA、PSRAM保存先/ring。480 Mbps HS linkは未確認 |
-| ESP32-S31 | SDK/controller portを今後追加する対象。現時点では非対応 |
+### 機種ごとの確認状況（2026-10-31）
 
-S3二台のnative OTG同士を結線し、書き込み・ログ用portは各boardで別に用意します。
-独立した[validation環境](validation/README.ja.md)から、plugin標準の`--combo all`で実行します。
-`--noconftest`を使い、旧2.x試験から独立しています。検証記録は対象commitと範囲を明記しており、
-全OS・全control順序・全機種の確認を意味するものではありません。
+| 機種 | 実機での確認 | 主な内容 |
+| --- | --- | --- |
+| ESP32-S3 | 済み（FS） | S3二台のpeer試験。列挙、各クラスの転送、所有権、reset/回復、故障注入 |
+| ESP32-P4（旧P4 v1.3）とP4X（v3.2） | 済み（HS 480 Mbpsと FS） | 旧P4とP4XをHSで直結し、両方向でS3 peer試験39本とHS用の試験（PSRAMを保存先/ringに使う試験を含む）を実行。一台のloopback（FS）で両controller・全10クラス・Audio・借用DMA・PSRAM。P4XはLinux PCへのHS直結でDFU/MSCも確認 |
+| ESP32-S2 | compileのみ | 実機は調達中 |
+| ESP32-S31 | 未対応 | 機材は調達中。ビルドにArduino-ESP32 4.0.0-RC1が必要 |
+
+まだ確認していない主なものは、S2/S31の実機、Arduino-ESP32 4系、Windows/macOSを含むPC OSとの互換性です。
+残作業は[TODO](TODO.ja.md)、現在の状況は[引き渡し](docs/V3_HANDOFF.ja.md)にまとめています。
+
+### 試験の実行
+
+試験は独立した[validation環境](validation/README.ja.md)で、plugin標準の`--combo all`を使って実行します。
+`--combo all`は、結線済みとして登録した組（S3二台、P4 loopback、P4/P4XのHS直結、P4XとPC）を順に実行します。
+`--noconftest`を使い、旧2.x試験とは独立しています。
+検証記録には対象commitと範囲を書いています。全OS・全control順序・全機種での確認を意味するものではありません。
 
 [サンプル一覧](examples/README.md)に基本例、複合構成、同じbinaryでの容量変更を用意しています。
 ビルド例:

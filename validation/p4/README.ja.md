@@ -1,22 +1,35 @@
 # P4実機loopback
 
-Device製品source `80e8676`。現在の結果は次表、初期probeの詳細は後段を参照。
-既存P4（port alias `esp32-p4-e8f60ae0aa24`）のnative HS/FS connector間の結線を使う。
-書き込み・log portはdata cableと独立。Core3.3.12、公開EspUsbHost2.10.1、local EspUsbDevice v3。
+P4一台の中で、native HS口とFS口をつないで試験する（bench 2-1、port alias `esp32-p4-e8f60ae0aa24`、旧P4 v1.3）。
+書込み・log用のportはdata cableとは別。Core 3.3.12、公開EspUsbHost 2.10.1、local EspUsbDevice v3。
 
 | Device側 | Host側 | 実際のlink |
 | --- | --- | --- |
 | HS controller / UTMI | FS controller | FS、12 Mbps、bulk MPS64 |
 | FS controller | HS controller / UTMI | FS、12 Mbps、bulk MPS64 |
 
-両controllerのDevice動作を確認したが、**480 MbpsのHS link試験ではない**。
+両controllerのDevice動作を確かめるが、linkはどちらの向きでもFSになる。
+**480 MbpsのHS linkは、ここでは試験しない。**
+HSは旧P4とP4Xの直結（combo `p4_p4x_hs`/`p4x_p4_hs`）で2026-10-31に確認した。
+結果は[P4/P4Xと試験環境](../../docs/V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)を参照。
+
+## いまの状態（2026-10-31）
+
+- 30 case（通常28＋PSRAM 2）を、probeごとに別の実行で成功させた。基準の製品は`80e8676`。
+- その後の製品変更（`02c7509`、`22afc15`、`09470d6`、`aade7e0`）では、関係するcaseを再実行して成功した。
+  - `09470d6`（OUT DMAのcache書戻し）のあとは、P4/P4_PSRAM/P4X–PC/HS直結の全32件で回帰を確かめた。
+  - `aade7e0`（ISO OUT）のあとは、このloopbackのaudio 4件が成功した。
+- 30 caseを最新の製品で一括に再実行した記録はまだない。
+- 実行コマンドは各節にある。件数は`--collect-only`で確かめる。
+
+以下は各時点の記録。件数や「現在」は、その記録を書いた時点のもの。
 
 ## API調整後の関連回帰
 
 Video投稿型統一02c7509のP4 Video4件と、CDC期限付き送信22afc15のloopback6件が成功。
 前者はS3も含む12件179.81秒、後者も関連12件374.48秒の一括実行に含まれる。
 今回も両controllerのFS link。以前の30件を最新版で全て再実行したという意味ではない。
-記録video-submission-initial*、cdc-tx-related*。標準allの現在収集はS3 50＋P4 30＝80件。
+記録video-submission-initial*、cdc-tx-related*。当時の標準all収集はS3 50＋P4 30＝80件。
 
 ## 基準80e8676の結果（2026-10-30）
 
@@ -37,7 +50,7 @@ Video投稿型統一02c7509のP4 Video4件と、CDC期限付き送信22afc15のl
 **30 caseを各probeの別実行で成功**。全30件一括実行の結果ではない。
 標準all収集はS3 47＋P4通常28＋PSRAM2＝77件。対象の合わないcomboは収集しない。
 各probeで開始・正常終了を反復し、30 serial logsにpanic/heap破損はなかった。
-P4X、480 Mbps HS link、PC OS binding、実OTA/SD/codecの認定結果ではない。
+P4X、480 Mbps HS link、PC OS binding、実OTA/SD/codecの認定結果ではない（P4XとHS linkは、その後HS直結で確認した）。
 
 ### 後半4 classの詳細
 
@@ -61,7 +74,7 @@ NCM失敗原本は`p4-ncm-ready*`へ残した。
 
 MSC＋2 cable MIDIの新規4件が31.85秒で成功。8開始、24 write/24 read、256 MIDI往復、
 4 logs正常停止/panicなし。これまでの6件と合わせP4は10項目を別実行で確認した。
-標準allの収集はS3 47＋P4 10＝57件。P4X用postv3 compileも成功したが、接続中2台はともにv1.3。
+標準allの収集はS3 47＋P4 10＝57件。P4X用postv3 compileも成功したが、当時接続していた2台はともにv1.3だった（P4Xはその後benchへ追加）。
 [差異・SDK設定・追加機材と試験計画](../../docs/V3_P4_VARIANTS_AND_BENCH.ja.md)を参照。
 
 ## PSRAMの追加確認
@@ -81,7 +94,7 @@ probe e577698、UAC1/UAC2×両controllerの4件33.95秒成功、4 logs全正常�
 各2開始し、16 kHz/mono/16 bitのplayback/captureを同時に流した。100 msのwarmup後の
 測定で89600/88064 byteを照合、bad0、playback overrun/capture underrun0。
 UAC1は明示feedbackなし、UAC2はfeedback更新/reject0も確認。codec/I2Sは使わない。
-postv3 Audio compileも成功。P4X実機の確認ではない。
+postv3 Audio compileも成功。P4X実機の確認ではない（P4XのAudioは、その後HS直結で確認した）。
 
 ```sh
 uv run --locked --env-file .env pytest p4/audio --combo p4 -q -rs

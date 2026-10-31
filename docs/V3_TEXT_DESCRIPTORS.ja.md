@@ -1,8 +1,13 @@
 # v3のUSB文字列とWebUSB URL
 
-2026-10-26。Device configとFunction名の入力方法を維持し、UTF-8からUSB文字列へ変換する。
-begin時に必要量だけ確保し、稼働中は変更しない。旧63 byteの切り詰めと、各UTF-8 byteを
-そのままUTF-16へ広げる処理を廃止した。WebUSB URLも128 byteの共通領域で作り直さない。
+文字列はUTF-8で受け取り、`begin()`のときにUSB用のUTF-16へ変換して保存する（2026-10-26に実装）。
+
+2.xからの変更点：
+
+- 63 byteでの切り詰めをやめた。
+- UTF-8の各byteをそのままUTF-16へ広げる処理（日本語が文字化けする原因）をやめた。
+- WebUSB URLを128 byteの共通領域で作り直す処理をやめた。
+- 設定の書き方（Device configとFunction名）は変えていない。
 
 ## 設定と寿命
 
@@ -19,61 +24,89 @@ void setup() {
 }
 ```
 
-入力はNUL終端のUTF-8。毎回のbeginが戻るまで、有効で変更されない配列を渡す。
-成功したbeginの後はdescriptor用のcopyを保持するため、元の配列を書き換えてもUSB応答は変わらない。
-次回のbeginには、その時点で有効な入力を設定し直す。FunctionのsetNameも停止中に行う。
-`config()`は渡したpointer値を保持する既存の参照APIで、元の配列の寿命を延ばすものではない。
+- 入力はNUL終端のUTF-8。`begin()`が戻るまで、有効で変更しない配列を渡す。
+- `begin()`が成功した後は、descriptor用のcopyを使う。元の配列を書き換えてもUSBの応答は変わらない。
+- 次の`begin()`には、その時点で有効な入力を設定し直す。Functionの`setName`も停止中に行う。
+- `config()`は渡したpointerの値を返すだけで、元の配列の寿命を延ばさない。
 
-manufacturer/product/serialのnullは省略、空文字は空のdescriptorとなる。
-Function名は従来どおりnull/空文字なら省略する。
-USB文字列は提供されたものだけを一つの領域に保存し、indexへのoffset表も実数分だけ確保する。
-全て省略すれば文字列用heapを確保しない。index 0のLANGID応答は4 byteの定数。
-NCMのMAC文字列はNCM Functionがある場合だけ含める。
+### 既定と省略
 
-各文字列の上限は126 UTF-16 code unit。ASCIIだけなら126文字、補助文字の絵文字は通常2 unitを使う。
-header込みで最大254 byteとなり、USBの1 byte長フィールドに収まる。
-長さ超過は`ESP_ERR_INVALID_SIZE`、不正なUTF-8は`ESP_ERR_INVALID_ARG`でbeginを失敗させる。
-overlong、surrogate値、U+10FFFF超過、不完全な列も拒否し、replacement文字への置換や切り詰めは行わない。
-LANGIDは従来の0x0409一つ。直接照会の`langid=0`も同じ文字列を返すが、他のLANGIDは応答しない。
+| 項目 | 既定 | null | 空文字 |
+| --- | --- | --- | --- |
+| `manufacturer` | `"EspUsbDevice"` | 省略（index 0） | 長さ0の文字列descriptor |
+| `product` | `"EspUsbDevice"` | 省略 | 長さ0の文字列descriptor |
+| `serialNumber` | nullptr | 省略 | 長さ0の文字列descriptor |
+| Function名 | Functionごと | 省略 | 省略 |
 
-beginで公開した`stringDescriptor()`のpointerは、同じ構成の他の文字列照会では上書きされず、endまで有効。
-停止中の明示照会は他のdescriptorと同じく再構築し得るため、次の構築を跨いで保持しない。
-end/開始失敗で全領域を解放する。GET_DESCRIPTOR中のUTF変換・確保はない。
+- 文字列は、指定されたものだけを一つの領域に保存する。indexからの位置の表も実数分だけ確保する。
+- すべて省略すれば、文字列用のheapは確保しない。index 0（LANGID）の応答は4 byteの定数。
+- NCMのMAC文字列は、NCM Functionがある場合だけ含める（[Function固有の補助文字列](V3_DESCRIPTOR_STORAGE.ja.md#function固有の補助文字列)）。
+- 文字列のindexは、1〜3がmanufacturer/product/serial、4が予約、5以降がFunction名、その後にFunction固有の補助文字列。
+
+### 長さと不正な入力
+
+| 条件 | 結果 |
+| --- | --- |
+| 1文字列が126 UTF-16 code unitを超える | `begin()`が`ESP_ERR_INVALID_SIZE` |
+| 不正なUTF-8 | `begin()`が`ESP_ERR_INVALID_ARG` |
+
+- 126 unitの目安：ASCIIだけなら126文字。絵文字などの補助文字は1文字で2 unitを使う。
+- headerを含めて最大254 byteになり、USBの1 byteの長さfieldに収まる。
+- 不正なUTF-8には、overlong、surrogateの値、U+10FFFF超、途中で切れた列を含む。
+  replacement文字への置換や切り詰めはしない。
+- LANGIDは0x0409の一つだけ。`stringDescriptor()`の直接照会で`langid=0`を渡しても同じ文字列を返す。他のLANGIDには応答しない。
+
+### pointerの有効期間
+
+- `begin()`で公開した`stringDescriptor()`のpointerは、他の文字列を照会しても上書きされず、`end()`まで有効。
+- 停止中の明示照会は、descriptorを作り直すことがある。次の構築をまたいで保持しない。
+- `end()`または開始失敗で、すべての領域を解放する。GET_DESCRIPTORの処理中に変換や確保はしない。
 
 ## WebUSB
 
-`webusbEnabled=true`でBOS capabilityを有効にする。`webusbUrl=nullptr`ならlanding pageなし
-（iLandingPage=0）とし、URL用領域を確保しない。URLを指定した場合はindex 1のdescriptorを一度構築する。
-空文字または`http://`/`https://`だけの入力はInvalidArgument。
+`webusbEnabled = true`でBOSのWebUSB capabilityを有効にする。
 
-`https://`はscheme 1、`http://`はscheme 0としてprefixを除き、他の入力はscheme 255で全文を保存する。
-prefix除去後で最大252 byteのUTF-8を保持できる。超過・不正なUTF-8・確保失敗はbeginのエラーとなる。
-URL全体の構文やアクセス可能性の検証は行わない。
+| `webusbUrl` | 動作 |
+| --- | --- |
+| nullptr | landing pageなし（iLandingPage=0）。URL用の領域は確保しない |
+| `https://…` | scheme 1。prefixを除いて保存する |
+| `http://…` | scheme 0。prefixを除いて保存する |
+| それ以外 | scheme 255。全文をそのまま保存する |
+| 空文字、または`http://`/`https://`だけ | `begin()`が`ESP_ERR_INVALID_ARG` |
 
-従来prefixなしURLは暗黙にhttps扱いだった。httpsを期待する既存コードは`https://`を明記する。
-URLの黙った125 byte切り詰めも廃止したため、長すぎる設定を使うコードは開始エラーを扱う必要がある。
-通常の短い明示https/http URLの設定方法は変わらない。
+- 保存できるのは、prefixを除いて最大252 byteのUTF-8。超えると`ESP_ERR_INVALID_SIZE`、不正なUTF-8は`ESP_ERR_INVALID_ARG`、確保失敗は`ESP_ERR_NO_MEM`。
+- URL全体の構文や、アクセスできるかは検証しない。
+- 応答するのは、device宛のIN vendor request（0xc0）、GET_URL（wIndex=2）、URL index 1だけ。
+  不正なindex/方向/recipientはSTALLし、その後の正しい要求は続けて受け付ける。
+- `webUsbUrlDescriptor()`は構築済みのbyte列かnullを返す。`end()`または開始失敗で無効になる。
 
-応答はdevice宛IN vendor request（0xc0）、GET_URL（wIndex=2）、URL index 1だけを受け付ける。
-不正なindex/方向/recipientをSTALLし、その後の正しい要求は継続できる。
-`webUsbUrlDescriptor()`は構築済みのconst byte列またはnullを返し、end/開始失敗で無効になる。
+### 2.xからの移行
 
-## 判断と検証範囲
+- 2.xではprefixのないURLを暗黙にhttpsとして扱っていた。httpsにしたいなら`https://`を明記する。
+- URLを黙って125 byteで切り詰める処理もやめた。長すぎる設定は開始エラーになる。
+- 短いhttps/http URLを明記する普通の設定は変わらない。
 
-利点は日本語・絵文字の正しい出力、長い名前、稼働中の元配列への依存解消、使わないURL/文字列の確保省略。
-不利益はbegin時の変換と確保点、および以前は切り詰めや文字化けで通っていた設定の明示エラー化。
-入力をUTF-8で渡すこと、長さと開始結果を確認することが既存利用の移行点になる。
+## 判断の理由
 
-S3–S3のfocused試験`text-descriptors.xml`は2 passed、89.45秒。
-日本語/絵文字、最大254 byte文字列と255 byte URLのwire応答、短い要求、無効な要求後の復帰、
-元配列の変更後の再取得、各種不正UTF-8と長さ境界、10回のheap回復、107取得点の確保失敗/回復を確認した。
-この結果は多言語翻訳、Windows/ブラウザでの表示、P4/S2/S31の実機動作までは証明しない。
+- 利点：日本語や絵文字を正しく出せる。長い名前を使える。稼働中に元の配列へ依存しない。使わないURLや文字列の領域を確保しない。
+- 不利益：`begin()`での変換と確保点が増える。以前は切り詰めや文字化けで通っていた設定が、明示的なエラーになる。
+- 移行点：入力をUTF-8で渡すこと。長さと`begin()`の結果を確かめること。
 
-その後の標準`--combo all`実行`immutable-text-all.xml`は8 passed、0 skipped、0 unfinished、408.43秒。
-文字列なしの確保省略を含む118取得点の失敗/回復と、251 Functionの長い名前・index 255も確認した。
-全caseで両board STOPPED、panicなし。Device only / Vendor copy / CDC copyの3 build/nmも成功し、
-未使用クラスと取消し処理のリンク除外を維持した。
+## 検証の記録
 
-参照: [USB文字列](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/usb-string-descriptors)、
+S3–S3のfocused試験`text-descriptors.xml`：2 passed、89.45秒。
+
+- 日本語/絵文字、最大254 byteの文字列と255 byteのURL descriptorのwire応答。
+- 短い要求、無効な要求の後の復帰、元配列を変えた後の再取得。
+- 各種の不正UTF-8と長さの境界、10回のheap回復、107取得点の確保失敗と回復。
+
+その後の標準`--combo all`（`immutable-text-all.xml`）：8 passed、0 skipped、0 unfinished、408.43秒。
+文字列なしで確保しないことを含む118取得点の失敗/回復と、251 Functionの長い名前・index 255も確認した。
+全caseで両board STOPPED、panicなし。Device only / Vendor copy / CDC copyの3つのbuildとnmも成功し、
+未使用classと取消し処理がリンクされないことを確かめた。
+
+この結果は、多言語の翻訳、Windowsやブラウザでの表示、P4/S2/S31の実機動作までは示さない。
+
+参照：[USB文字列](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/usb-string-descriptors)、
 [USB_STRING_DESCRIPTOR](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbspec/ns-usbspec-_usb_string_descriptor)、
 [WebUSB GET_URLとURL descriptor](https://wicg.github.io/webusb/#get-url)。

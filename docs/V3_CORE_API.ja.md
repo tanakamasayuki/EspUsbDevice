@@ -1,78 +1,203 @@
-# v3 共通coreとEP0の独自化
+# v3 共通coreとEP0
 
-TinyUSBの`device/usbd.c`をビルド対象から削除し、`EspUsbDeviceCore`へ置き換える。
-クラス実装、共通core、protocol型は独自側で扱う。DWC2は由来とライセンスを保持した本体内の保守forkを使う。
-一つの独自coreだけを起動し、旧coreへfallbackする二重backendは持たない。
+この文書は、全Functionが共有するUSBの土台（core、EP0、controller、DWC2）について書く。
 
-## 設定と資源
+- [現在の仕様](#現在の仕様)：いま有効な決定。利用者とコード保守者はここを読む。
+- [未解決の事項](#未解決の事項)：決めていない点、確かめていない点。
+- [経緯の記録](#経緯の記録)：段階ごとの変更理由と実測。当時の「未完了」は現在の状態ではない。
+
+開始modeとworker設定の使い方は[移行ガイド](V3_MIGRATION.ja.md)、
+借用転送の契約は[Vendorガイド](V3_VENDOR_API.ja.md)を参照する。
+
+## 現在の仕様
+
+更新：2026-10-31。
+
+### 構成
+
+TinyUSBの`device/usbd.c`は使わない。USBの処理は本体内の次の層で行う。
+旧coreへ切り替える仕組み（二重backend）は持たない。
+
+| 層 | 主なファイル（`src/internal/`） | 役割 |
+| --- | --- | --- |
+| core | `EspUsbDeviceCore.*` | EP0、標準要求、event queue、世代の管理 |
+| runtime | `EspUsbRuntime.*` | PHYの取得、controllerの選択、USB workerの起動 |
+| controller境界 | `EspUsbController.h` | coreとDWC2の間の型付きの入口 |
+| DWC2 | `EspUsbDwc2Device.c`、`EspUsbDwc2Phy.c`、`EspUsbDwc2Registers.h`、`EspUsbDwc2Hardware.h` | register、FIFO、DMA |
+| platform | `EspUsbDwc2Platform.*` | SoCごとのport表、IRQ、cache同期 |
+| wire型 | `EspUsbWire.h` | SETUP（8 byte）、interface（9 byte）、endpoint（7 byte）のlayout |
+
+- DWC2はTinyUSB由来（MIT/ST BSD）の保守forkで、本体で保守する。自動のvendor更新は終えた。
+  clean-roomで書き直したものではない。[由来と保守方法](../third_party/tinyusb/PROVENANCE.ja.md)。
+- 内部headerは利用者APIではない。TinyUSB内部APIに直接依存するコードは、v3では動作を保証しない。
+- 旧build flag（`CFG_TUD_*`など）は`EspUsbLegacyFlags.h`でcompile errorにする。0を指定しても拒否する。
+
+### 対応するcontroller
+
+`EspUsbDeviceConfig::controller`の既定は`Auto`。runtimeがport表から選ぶ。
+
+| SoC / port | 速度 | endpoint番号 | 非control IN endpoint | FIFO（32 bit word） |
+| --- | --- | --- | --- | --- |
+| ESP32-S2 / S3 | FS | 0〜6 | 4本 | 256 |
+| ESP32-P4 FS port | FS | 0〜6 | 4本 | 256 |
+| ESP32-P4 HS port | HS（480 Mbps） | 0〜15 | 7本 | 1024 |
+
+- `Auto`はHS portがあればHSを選ぶ。P4ではHS、S2/S3ではFS。
+- `FullSpeed`/`HighSpeed`を明示すると、その速度のportを選ぶ。該当するportがなければ`ESP_ERR_NOT_SUPPORTED`。
+- 未知のSoCを既存のportへ暗黙に割り当てない。S31は現在のSDKでは未対応。
+- 表の数は`src/internal/EspUsbDwc2Platform.cpp`の`espusb_dwc2_ports`。上の「非control IN」はEP0を除いた数。
+  descriptorの検査、bulk二重buffer、ISO IN FIFOの予算は、すべてこの表を参照する。
+- 上限を超える構成は、`begin()`が`ESP_ERR_INVALID_SIZE`で拒否する。PHY・IRQ・workerは開始しない。
+
+HSで変わる値（2026-10-31、P4/P4XのHS直結で確認）：
+
+- bulkのMPS（最大packet長）は512になる。FSでは64。
+- MSCの`transferBytes`はbulk MPSの倍数でなければならない。HSで64や256を指定すると`begin()`が`ESP_ERR_INVALID_SIZE`。
+- CCIDの明示`messageBytes`がBulk-OUT MPS未満なら、`begin()`が`ESP_ERR_INVALID_SIZE`。既定0（自動）は`max(271, MPS)`になる。
+- 借用RX（`readDirect`）の容量はMPSの倍数が必要。HSでは512の倍数。
+- CDC/Vendor/MIDIの`transferBytes`はMPS未満でも受け付ける。
+- HIDのinterrupt endpointはHSで1024 byteまで使える。
+
+詳しい記録は[P4の機種差とbench](V3_P4_VARIANTS_AND_BENCH.ja.md#hsで変わる値)。
+
+### 開始時に確保する資源
 
 ```cpp
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 EspUsbDeviceConfig config;
-config.eventQueueDepth = 16;
+config.eventQueueDepth = 16;  // 既定16。0は不可
 if (!device.begin(config)) {
-  // device.lastError()で設定不正とメモリ不足を区別する。
+  // device.lastError()で、設定の誤りとメモリ不足を区別する。
 }
 ```
 
-`eventQueueDepth`は非ゼロのuint16_t。旧`CFG_TUD_TASK_QUEUE_SZ`は拒否し、この設定へ移す。
-必要容量の確保に失敗すればNoMemで開始を失敗させる。型の上限は全機種での確保成功保証ではない。
-同一binaryでend→設定変更→beginできる。キュー深さは待ち時間・処理速度の保証ではなく、
-割込みイベントの一時保持量である。
-指定深さに加えてhardware event用に1件を確保する。deferred job/fenceはこの予備枠を使わず、
-投入可否の確認と投入は同じlockで行う。深さ1でもfenceがEP0 statusの記録枠を占有しない。深さを小さくすると費用は減るが、同時転送の多い構成では過負荷になりやすい。
+- `begin()`で、core状態、選んだ構成のinterface/endpoint表、event queue、EP0のDMA領域、
+  DWC2の転送recordを**一つの内部DMA領域**にまとめて確保する。`end()`でまとめて返す。
+- 転送・取消し・過負荷からの回復の途中では、heapを確保しない。
+- DWC2の転送recordは、全alternateのdescriptorに現れるendpoint方向の数とEP0の2方向分だけ作る。
+  使わない方向のrecordは作らない。
+- EP0のSETUP用64 byteは、metadataと別のcache lineに置く。
+- 確保に失敗したら`ESP_ERR_NO_MEM`。途中まで確保した資源は戻す。
+- Functionを一つも登録しない`begin()`はcontrollerを起動せず、DWC2の領域も確保しない。
 
-core状態、選択configurationのinterface/endpoint map、event queue storage、EP0のDMA packetを
-begin時の一つの内部DMA領域に確保する。EP0 packetは64-byte境界でmetadataから分離する。
-FreeRTOS queueもその領域を利用し、通常の要求・転送・取消し・過負荷回復中にheap確保しない。
-DMA停止とクラス終了後に領域を解放する。FreeRTOS自身のtask TCB等の回収時点とは区別する。
+`eventQueueDepth`の意味：
 
-以前の固定interface map、EP0 staging、event queueの全構成向けstatic領域を廃止する。
-代償としてbegin時にcore領域の確保失敗が増えるため、失敗点と回復の試験対象へ加える。
-通常のDevice/Function/config/beginとread/write等の操作は維持する。
+- 割込みから受け取ったeventを一時的に保持する数。処理速度や待ち時間の保証ではない。
+- 型は`uint16_t`、0は拒否。大きい値は確保失敗（NoMem）になり得る。
+- 指定した数とは別に、hardware event用の予備を1件確保する。
+  理由：深さ1のとき、標準要求のfenceがEP0 statusの枠を奪って再列挙が起きたため。
+- 小さくするとRAMは減るが、同時に多く転送する構成ではqueueがあふれやすい。
 
-## EP0と標準要求
+### EP0と標準要求
 
-EP0はSetup/Data/Statusを明示して管理し、受信データの実byte数をクラスへ渡す。
-INの短い返信と末尾ZLP、OUTの容量、成功していない転送結果、status方向を区別する。
-新SETUPのserialとbus世代をeventへ付け、旧dataが新しい要求へ転送を投稿しないようにする。
-先に完了した旧statusのACK callbackは、新SETUPが到着済みでも適用する。
-SET_ADDRESSのhardware/status armは現在のDWC2 adapterへ委譲する。
+- EP0はSETUP・DATA・STATUSの段階を区別して扱い、受信した実byte数をclassへ渡す。
+- 新しいSETUPが来たら、古い要求のdataを新しい要求へ混ぜない。SETUPの通し番号とbus世代で区別する。
+- 標準要求（device/interface/endpoint）は、方向・値・index・長さを検査する。
+  advertiseしていないremote wakeupや、EP0・ISO endpointへのHALT設定は拒否する。
+- 未対応のconfiguration値への要求は拒否するが、動いている構成は解除しない。
+- SET_CONFIGURATIONで解除または同じ値を再選択したときは、DMAを止め、借用bufferを返し、classを初期化し直す。
 
-device/interface/endpointの標準要求を方向・値・index・長さで検証する。
-未対応configurationへの要求を拒否しても、稼働中の正しい構成は解除しない。
-SET_CONFIGURATIONの解除と同じ値の再選択では、DMAを止め、クラスの所有権を返し、再初期化する。
-Hostにadvertiseしていないremote wakeup featureや、EP0/ISOのHalt設定は受け付けない。
+`sendControlResponse(..., 0)`の意味：
 
-`sendControlResponse(..., 0)`は、Hostの要求長が非ゼロのINなら長さ0のdataを返す。
-要求長0のno-data要求ではstatusを返す。従来の「長さ0なら常にstatus」では非ゼロINのdata段階を
-飛ばしてしまうため、両者を分けた。短い返信はHost要求より少ないbyte数でも正常終了する。
-OUTで要求長を保持できない受信領域は拒否する。
+| Hostの要求 | 長さ0の応答 |
+| --- | --- |
+| IN、要求長が1以上 | 長さ0のDATA段階（ZLP）を送る |
+| 要求長0（no-data） | STATUS段階だけを返す |
 
-## eventと所有権
+理由：以前は「長さ0なら常にSTATUS」だったため、要求長のあるINでHostがDATAを待ち続けた。
+要求より短い応答も正常に終わる。OUTで受信領域が要求長より小さい場合は拒否する。
 
-成功した完了eventを失ってborrowed bufferが永久に残ることを防ぐため、queue過負荷では
-DMA停止、クラスresetによる所有権返却、旧eventの回収、disconnect/reconnectを行う。
-従来のfence予約は非blockingで、満杯ならworker jobから再試行する。
-resetが割込みで通知済みの場合は、workerがresetを処理するまで旧構成のproducer jobを進めない。
+### event、世代、所有権
 
-通常のクラス完了・reset/end通知はUSB worker上で扱う。
-内部class/controller接続には独自のdriver/event型とespusb_controller_*境界を用いる。
-これらの内部headerは利用者APIではない。旧TinyUSB coreやSDK内の同名headerへのfallbackは持たない。
-開始modeとworker設定の現行APIは[v3移行ガイド](V3_MIGRATION.ja.md)を参照。旧startTinyUsbと空task()は撤去した。
+- classの完了通知、reset、end通知はUSB worker（FreeRTOS task）で処理する。SOFだけはISRから呼ぶ。
+- **queueがあふれた場合**：成功した完了eventを捨てると借用bufferが戻らなくなる。
+  そこでDMAを止め、classをresetしてbufferを返し、古いeventを回収してから、切断・再接続する。
+- **構成世代**：class全体をresetするたびに世代を進める。古い世代の完了eventは、endpointの状態を変える前に捨てる。
+  同じendpoint番号を再利用しても、古い完了が新しい借用を返すことはない。
+- **reset開始**：USBRSTを受けた時点で、coreのbus世代を進め、構成・接続・suspendを無効にする。
+  workerがreset処理を終えるまで、新しいjobやDMAの登録を受け付けない。
+- **再構成前のDMA停止**：`close_all`は有効なendpointの停止を待ち、残った転送完了割込み（XFRC）も消す。
+  endpoint割込みとtask側の操作は同じhardware lockで同期する。
+- deferred jobやfenceの予約はblockしない。満杯ならworkerのjobから再試行する。
 
-## 検証と残り
+### IRQとcache
 
-以下は段階ごとの実測記録で、暫定C ABI/vendor依存や未対応classの記述は当時の状態を示す。
+- IRQは`begin()`で一度だけ登録し、`end()`で解放する。稼働中の停止・再開はmask/unmaskで行う。
+  登録に失敗したら`begin()`は`ESP_FAIL`を返す。
+- P4では、DMAを始める前にCPU cacheを同期する（S2/S3はcacheがないので何もしない）。
+  - IN：送るdataをcacheからmemoryへ書き戻す（clean）。
+  - OUT：受信領域のdirtyな行も書き戻す（clean）。理由は下記。
+  - 開始時：SETUP領域をclean→invalidateしてから、DWC2へ渡す。失敗したら`ESP_FAIL`で、次の`begin()`で再試行できる。
+- OUTのcleanは`09470d6`（2026-10-31）で追加した。
+  P4XのHS借用RXで、DMAの途中に追い出されたdirty行が受信dataを上書きし、65535 byte中9216 byte以降が壊れた。
+
+### ISO OUTの取りこぼし対策
+
+DWC2のISO OUTは、armするときに「次の(micro)frameが偶数か奇数か」を指定する。
+Hostが1 intervalを空けて送ると、この偶奇が合わず、incomplete ISO OUT割込みになる。
+
+- 現在（`aade7e0`、2026-10-31）：ISRの中で、同じDMA bufferのまま偶奇を反転してarmし直す。
+  受信dataはないので、古いdataを送る心配はなく、回数の上限も設けない。
+- 以前（`4480513`）：DMAを止めて失敗の完了をworkerへ返し、workerがarmし直していた。
+  HSでは125 µsのmicroframeに間に合わず、次のpacketも失っていた。
+- ISO OUTを開いたときだけ、incomplete OUT割込みを有効にする。EP0、bulk、interrupt OUTは対象外。
+
+### VBUSの検出
+
+`EspUsbDeviceConfig::vbusSensing`（既定false）。
+
+| 値 | 動作 |
+| --- | --- |
+| false | B-session validを強制する。検出回路のないboard向け（従来の動作） |
+| true | boardのhardware VBUS-valid信号を使う |
+
+- trueは、board側に検出回路と信号の配線がある場合だけ選ぶ。GPIOや回路を自動で用意するものではない。
+- 変更は`end()`の後、次の`begin()`の前に行う。
+- 旧`CFG_TUD_VBUS_DETECT_HW`などのbuild flagは拒否する。
+
+```cpp
+EspUsbDeviceConfig config;
+config.vbusSensing = true;  // 検出回路と配線があるboardだけ
+if (!device.begin(config)) { /* lastError()を処理する */ }
+```
+
+旧P4（v1.3）のHS口では、BSesVldがVBUSの有無を示さなかった（[記録](V3_P4_VARIANTS_AND_BENCH.ja.md#hs直結の列挙とvbus2026-10-31)）。
+実ケーブル抜去によるVBUS検出の試験はしていない。
+
+## 未解決の事項
+
+決めていない点、確かめていない点。
+
+- 新しいSETUPと古いstatus/dataの到着順の全組合せ。OUTの物理的なshort/overrun。
+- hardware故障時のDMA停止待ちのtimeout。
+- IRQのmask/unmask自体が失敗する場合の故障注入。
+- 進行中のSET_CONFIGURATION/SETUP/reset/endの全順序。
+- 実機での確認範囲：S3–S3（FS）、P4の両controllerのFS loopback、P4/P4XのHS直結、P4X–Linux PC。
+  S2は実機未確認（compileのみ）。S31は未対応。Windows/macOSは未確認。
+- 実ケーブル抜去によるVBUS検出（`vbusSensing=true`）。
+
+要求の基準は[USB-IF USB 2.0 specification](https://www.usb.org/document-library/usb-20-specification)。
+実機試験は独立した`validation/`と標準pluginのcomboを使い、旧test/sampleを合否基準へ戻さない。
+
+## 経緯の記録
+
+以下は段階ごとの実装と実測の記録で、日付順に並ぶ。各節の「未完了」「残り」「暫定」は当時の状態を示す。
+現在の仕様は[上](#現在の仕様)を正とする。
 現在のbackendは本体内で保守し、privateの投稿口は32 bitの総長を扱う。
+
+### 独自coreの初回（2026-10-26〜27）
+
+TinyUSBの`device/usbd.c`をビルド対象から外し、`EspUsbDeviceCore`へ置き換えた。
+以前の固定interface map、EP0 staging、全構成向けのevent queue static領域を廃止し、begin時の一つの領域へ移した。
+代償としてbegin時の確保失敗点が増えるため、失敗と回復を試験対象に加えた。
 借用転送の実効契約と費用は[Vendorガイド](V3_VENDOR_API.ja.md#65535-byteを跨ぐ借用転送)、
 現在の作業状態は[引き渡し](V3_HANDOFF.ja.md)を参照する。
 
 初回の独自coreではVendor、descriptor、複数Videoの関連3件が成功した
 （`core-initial.xml`、253.37秒、serial 6本STOPPED、panicなし）。
 
-## 共通coreの関連検証
+### 共通coreの関連検証
 
 2026-10-27。`core-controls-related.xml`は**5 passed、0 skipped、0 unfinished、323.22秒**。
 control_core、712取得点の確保失敗、cancel_fence、cancel_lifecycle、video_controlを実行した。
@@ -90,7 +215,6 @@ FreeRTOSの自己削除taskのTCBはidle taskが回収するため、heap比較�
 現在のvendor選択は24 file / 2 compiled sourcesで、コンパイルするTinyUSB sourceはDWC2関連だけ。
 ABI/header依存を含む全撤去はまだ完了していない。
 
-
 新SETUPと旧完了の全到着順、OUTの物理的なshort/overrun、suspend/resume・remote wakeup、
 Vendor/CDC以外のクラスの転送中SET_INTERFACE・HALT/CLEAR_FEATUREでのPID/所有権回復は追加検証・実装の対象とする。
 特にaltを実装しないクラスへの共通fallbackは現在alt 0のACKを扱い、
@@ -100,7 +224,7 @@ DWC2、残存helper・protocol定義、内部ABI、他SoC/HS、PC/OSの確認は
 要求の基準は[USB-IF USB 2.0 specification](https://www.usb.org/document-library/usb-20-specification)。
 実機試験は独立した`validation/`と標準pluginのcomboを用い、旧test/sampleを合否基準へ戻さない。
 
-## 独自coreでの全体試験
+### 独自coreでの全体試験
 
 2026-10-27、実装`ce6a444`。標準`--combo all`の`runtime-core-all.xml`は
 **27 passed、0 skipped、0 unfinished、1743.12秒**。
@@ -115,8 +239,7 @@ TinyUSB manifestは24 file / 2 compiled sourcesで照合成功し、旧test/samp
 新SETUPと旧status/dataの到着順、物理short/overrun、suspend/remote wakeupは引き続き対象。
 残るDWC2・ABI/header依存、公開APIの最終整理、出荷exampleとOS互換性も未完了。
 
-
-## Vendor/CDC標準要求の補強
+### Vendor/CDC標準要求の補強
 
 SET_INTERFACEとHALT/CLEAR_FEATUREで転送を停止し、fence後の返却とDATA PIDの回復を行う。
 詳細とcopy queue破棄の影響は[Vendorガイド](V3_VENDOR_API.ja.md#標準要求による転送の再初期化)。
@@ -124,8 +247,7 @@ SET_INTERFACEとHALT/CLEAR_FEATUREで転送を停止し、fence後の返却とDA
 関連10件と最終4件のS3–S3試験は[試験記録](../validation/README.ja.md#vendorcdc標準要求の回復)を参照。
 全体27件の記録はこの補強前の実装に対する結果であり、現在の全28件を再実行した結果ではない。
 
-
-## Vendor controlの公開actualBytes
+### Vendor controlの公開actualBytes
 
 2026-10-27。callback引数にactualBytesを追加し、実data量の取得にprivate headerを要求しない形にした。
 control_coreはSETUP=0、DATA/ACKのIN/OUT実量、0 byte返信、short返信、末尾ZLP、
@@ -138,19 +260,16 @@ control_coreはSETUP=0、DATA/ACKのIN/OUT実量、0 byte返信、short返信、
 short OUTの物理検証や、全28件の一括再試験はこの結果に含まない。
 TinyUSB manifestは24 file / 2 compiled sourcesで一致し、旧tests/examplesはmainと同じ。
 
-
 HIDの標準要求による方向別回復も追加済み。公開APIの影響と関連4件の実測は
 [HIDガイド](V3_HID_API.ja.md#標準interfaceendpoint要求による回復)を参照。
 共有bulkを使うMIDIはVendor/CDCと同じ回復経路に入るが、MIDI固有の標準要求試験はまだ追加していない。
 他クラスも個別の所有権・protocol契約と検証を継続する。
 
-
 MSCのSET_INTERFACEも独自recovery fenceへ接続済み。不正CBWのBOT reset要求と区別する。
 [MSCガイド](V3_MSC_API.ja.md#interfaceの再初期化とbot回復)にAPIの影響と関連3件の実測を記録した。
 任意Host HALT中のcommand継続、他instanceの同時進行、全競合順序を完了したという意味ではない。
 
-
-## DWC2の転送状態をcoreの開始時領域へ移す
+### DWC2の転送状態をcoreの開始時領域へ移す
 
 DWC2の全endpoint向けstatic転送配列、常駐controller stateとSETUP bufferを撤去する。
 独自coreがbegin時の一つのDMA領域にDWC2 storageも含め、deinit・割込み停止の後に解放する。
@@ -171,15 +290,13 @@ alternate切替中のheap取得はなく、bus resetでも選択済み領域を�
 FIFO予約量・hardware register操作・暫定C ABIとprotocol型は今回維持し、TinyUSB依存の全撤去とはしない。
 P4の初回SETUP DMA前のcache同期、HS・他SoCの実機確認も個別に検証する。
 
-
 S3実測ではDWC2領域がEP0のみ128 byte、Vendor（4 record）192 byte、
 着脱可能な2 CCID（8 record、疎なOUT配置）256 byte。metadataからSETUP DMAを隔離するため、
 領域全体を64 byte単位へ丸める。record数の違いが同じ確保byte数になる場合もある。
 これは現在の領域の測定で、v2との速度比較や全機種での同じサイズを保証する値ではない。
 S3/S2のnmで旧xfer_status・_dcd_data・_dcd_usbbuf symbolの不在とruntime storage経路の存在を確認した。
 
-
-## DWC2 runtime storageでの全体試験
+### DWC2 runtime storageでの全体試験
 
 2026-10-27。標準`--combo all`の`dwc2-runtime-all-final.xml`は
 **30 passed、0 skipped、0 unfinished、1952.20秒**。
@@ -205,8 +322,7 @@ manifestは24 file / 2 compiled sourcesで一致し、updater dry-runも差分0�
 DWC2のregister/FIFO処理と内部ABI/headerはまだvendor依存であり、全撤去完了ではない。
 P4の初回SETUP DMA前のcache同期、他SoC/HS実機、全EP0世代境界・各classのHALT競合などは継続する。
 
-
-## 初回SETUP DMAのcache引渡し
+### 初回SETUP DMAのcache引渡し
 
 開始時に初期化したSETUP領域はCPU cacheがdirtyな可能性があるため、hardware初期化前に
 clean、invalidateを順に実行する。既存のbackend hookを使い、cacheのないS3/S2ではno-opとなる。
@@ -218,8 +334,7 @@ S3専用probeではno-op hookを置換し、clean失敗とinvalidate失敗を一
 どちらも未公開・未回収0で戻ることと、通常hookへ戻した後の実通信を確認する。
 これはP4でcache coherencyを実測した証拠ではなく、P4/HSの実機試験は残る。
 
-
-## DWC2初回cache引渡しの補強
+### DWC2初回cache引渡しの補強
 
 全30件成功の実装`105d998`の後、SETUP lineの初期化によるdirty cacheを初回DMA前に同期する処理を加えた。
 clean/invalidateに成功するまでruntime pointerを公開せず、失敗時はESP_FAILでqueue/領域を返す。
@@ -237,8 +352,7 @@ S3 probeは既存no-op backend hookを置換し、clean失敗とinvalidate失敗
 この追加後に全30件を再実行したわけではない。全体試験は`105d998`、追加後の関連確認は上の2件と区別する。
 P4/HSの実cache coherency、他SoC実機、残るvendor DWC2 register/FIFOとABI/headerの撤去は未完了。
 
-
-## 構成を跨ぐqueue内の完了event
+### 構成を跨ぐqueue内の完了event
 
 SET_CONFIGURATIONで同じ値を再選択しても、endpointとclass transportを初期化し直す。
 この間に古い完了eventがqueueへ残ると、再openした同じendpoint番号の新しい転送へ適用され得る。
@@ -255,8 +369,7 @@ begin時のqueue領域は増える。転送時のheap取得点は増やさない
 これは投入済みeventを再構成後に適用しないための補強であり、DCDの遅れたISR/latched IRQや
 DMA armごとの識別をすべて解決したものではない。そこは独自DCDへの移行と合わせて検証する。
 
-
-## 再選択した構成への古い完了event混入
+### 再選択した構成への古い完了event混入
 
 2026-10-27。新規configuration_epochで、実HostのSET_CONFIGURATION 1をqueueへ入れた後に
 新規借用を投稿するdeferred job、旧TX/RX完了eventを並べ、workerを再開した。
@@ -281,8 +394,7 @@ S2/P4 HSのcompile-only probeも成功。記録は`configuration-epoch-{s2,p4}-b
 今回の識別対象はqueue投入済みの旧完了であり、遅れて実行されるDCD ISRやlatched IRQ、
 armごとのtoken、全EP0順序、他SoC/HS実機の検証を完了した扱いにはしない。
 
-
-## 再構成前のDMA停止とlatched IRQ
+### 再構成前のDMA停止とlatched IRQ
 
 queueに投入済みのeventだけでなく、hardwareに残った旧XFRCも区別する必要がある。
 S3でSET_CONFIGURATIONのSETUP後にDCD IRQを止め、旧INを実Hostで完了させた。
@@ -299,7 +411,7 @@ IRQ処理はDAINTMSKを反映し、endpoint IRQ・ISO不完全転送処理とtas
 公開API、転送時heap、確保点数は変えない。代償は再構成時の実DMA停止待ちと、
 endpoint処理中のcritical section増加。hardware故障時の停止待ちtimeoutや全EP0到着順などは別の検証対象とする。
 
-## DWC2停止・IRQ同期の全体確認
+### DWC2停止・IRQ同期の全体確認
 
 2026-10-27。構成世代filterだけでは防げない実latched XFRCをS3–S3で再現した。
 修正前は旧INの完了後、IRQを保留して再構成・新規armすると、新規TXが実data前にSuccessになった。
@@ -315,7 +427,7 @@ vendor検証は24 files/2 compiled sources、updater dry runは差分0。
 旧tests/examplesはmainとの差分なし。他SoC/HS実機、hardware故障時の停止timeout、
 全EP0順序とvendor ABI/header/DWC2の完全撤去は未完了。
 
-## native class登録表の独自化
+### native class登録表の独自化
 
 独自coreは選択されたclassだけを`UsbClassDriver`として登録し、C++の
 `selectedUsbClassDrivers`から借用する。TinyUSBの`usbd_class_driver_t` layoutと
@@ -332,7 +444,7 @@ wire typeやprotocol headerの依存は残り、全ABI撤去や全TinyUSB撤去�
 重なること。coreのtranslation unitで両headerをincludeし、型の不一致をcompile errorにする。
 両方の意味を変えるときはまとめて変更する。driverの任意ISR dispatchは公開しない。
 
-## class登録表独自化後の全体確認
+### class登録表独自化後の全体確認
 
 2026-10-27。native class登録を独自`UsbClassDriver`とC++ getterへ移した。
 unused name/xfer_isr枠を削除し、native classのendpoint宣言を独自headerへ限定した。
@@ -347,7 +459,7 @@ S3 Vendor-onlyではHID/MSC/Audio/Video/NCM/CCID/DFU stateのsymbolもない。
 残るwire/protocol header、endpoint/control C symbol、core/DWC2のprivate headerと
 DWC2実装の完全置換、各classのHALT競合・全EP0順序・他SoC/HS実機は次の作業対象。
 
-## controller境界と未使用のvendor基盤の撤去
+### controller境界と未使用のvendor基盤の撤去
 
 `internal/EspUsbController.h`がcoreと残存DWC2 adapterの専用境界となる。
 型付き`EspUsbControllerConfig`でbulk INの二重bufferとVBUS policyを渡し、initはdevice専用の
@@ -369,7 +481,7 @@ controllerにinternal DMAがなければ初期化を明示的に拒否する。�
 vendor選択は24→17 files、compiled sourceは2本のまま。wire/protocol定義、device向け残存headerと
 DWC2 register/port処理の置換は続く。
 
-## controller境界移行後の全体確認
+### controller境界移行後の全体確認
 
 2026-10-28。controller event/IRQ/転送/cache hookと型付き設定を独自境界へ移し、
 vendor DCD/private、FIFO、OS抽象、umbrellaの7 headersと無効slave/FIFO経路を撤去した。
@@ -394,7 +506,7 @@ vendor検証17 files/2 sources、updater dry run差分0。旧tests/examplesはma
 残るdevice向けheader、wire/protocol type、DWC2 register/port実装、全EP0順序・class HALT競合、
 S2/P4/S31とHSの実機検証は未完了。APIの最終整理とv3 sample整備も引き続き必要。
 
-## native bus APIとruntime CDC/MIDI記述子
+### native bus APIとruntime CDC/MIDI記述子
 
 class/core間の宣言を`EspUsbDeviceBus.h`と`EspUsbDeviceEndpoint.h`へ限定し、
 内部symbolを`espusb_device_*`へ移した。vendor `device/usbd.h`の旧init/deinit/task pump、
@@ -417,7 +529,7 @@ MIDIは1～16 cableの方向別jack graphをruntime設定から生成する。�
 Audio/CDC/MIDIとdevice headerを撤去し、vendor選択は17→13 files、compiled sourceはDWC2の2本を維持する。
 wire type、HID table、DWC2 register/port/sourceとcapability定義は引き続き置換対象。
 
-## native busとCDC/MIDI記述子移行後の全体確認
+### native busとCDC/MIDI記述子移行後の全体確認
 
 2026-10-28。標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1502.57秒**。
 774確保点の失敗/回復が成功し、heapは試験前後で同量。62 serial log全てSTOPPED、panicなし。
@@ -432,7 +544,7 @@ S3 Vendor-onlyでは未使用class stateも不在。各targetのライブラリ2
 wire type・HID table・DWC2とcapability定義、HALT競合・全EP0順序・他SoC/HS実機、
 最終API/sampleの整理は未完了。逆向きIN1/OUT16の追加試験はこの全体結果には含めない。
 
-## MIDI逆向き非対称cableの追加確認
+### MIDI逆向き非対称cableの追加確認
 
 2026-10-28。`c67fe1c`の製品実装を変更せず、MIDI probeへIN1/OUT16を追加した。
 Hostが方向別cable数を読み取り、全16 OUT cableへ計64 eventを送りDeviceで全byteを確認する。
@@ -445,7 +557,7 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/native-midi-asym*
 全体31件の一括成功は追加前の`c67fe1c`であり、追加後はMIDIのみ再実行した。
 製品コードは全体試験時と同一。S2/P4の追加実機確認を行った意味ではない。
 
-## native USB wire型とruntime VBUS policy
+### native USB wire型とruntime VBUS policy
 
 `internal/EspUsbWire.h`がSETUP 8 byte、interface 9 byte、endpoint 7 byteのlayoutと
 byte単位のLE読み取りを定義する。request type/recipient、endpoint typeはmaskで読み、
@@ -476,7 +588,7 @@ if (!device.begin(config)) { /* lastError()を処理する */ }
 公開の要求field・sendControlResponseなどの操作は維持する。rawRequestをTinyUSB型へcastする拡張は
 v3で継続保証せず、公開fieldと返信APIを使う。転送時heapや新たな取得点は増やさない。
 
-## native USB型とVBUS設定の全体確認
+### native USB型とVBUS設定の全体確認
 
 2026-10-28。最終版の標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1479.82秒**。
 MIDIの追加IN1/OUT16を含む11 modeも同じ一括実行で成功した。
@@ -497,7 +609,7 @@ DWC2のC 2ソースだけはregister/common helperに依存しており、完全
 実機の不合格/合格結果に数えていない。残るDWC2/common/capability、HALT競合・全EP0順序、
 他SoC/HS実機と最終API/sampleは継続対象。
 
-## ESP DWC2 platformとIRQ所有の整理
+### ESP DWC2 platformとIRQ所有の整理
 
 DWC2から汎用TinyUSB common/compiler/MCU/optionsと旧ESP port shimを撤去した。
 `EspUsbDwc2Platform`がSoCの物理port情報、USB_WRAP、cacheとIRQを管理し、
@@ -523,7 +635,7 @@ P4はSDK cache capabilityと64byte lineを確認し、strongなmsync実装を使
 legacy Host/slave/他MCUやcompliance test modeの未公開分岐は持ち込まない。
 公開Device/Function API・borrowed契約・新規移行手順は変わらない。
 
-## ESP platform移行後の全体確認
+### ESP platform移行後の全体確認
 
 2026-10-28。標準`pytest --combo all`は**31 passed、0 skipped、0 failed/error、0 unfinished、1123.26秒**。
 単独control_coreも1 passed（39.39秒）。最終一括実行にIRQ_RECOVERY 1とVBUS_POLICY 1を確認した。
@@ -543,8 +655,7 @@ flagなしが成功、55旧flagの0指定も全て明示拒否することを確
 DWC2のregister/PHY/endpointアルゴリズムは残るvendor 4 fileに依存している。
 mask/unmask SDK自身の故障注入、全EP0順序・class HALT競合、他SoC/HS実機、最終API/sampleは未完了。
 
-
-## DWC2を本体で保守する段階へ移行
+### DWC2を本体で保守する段階へ移行
 
 2026-10-28。残るvendor 4 fileを`internal/EspUsbDwc2Device.c`、`EspUsbDwc2Phy.c`、
 `EspUsbDwc2Hardware.h`、`EspUsbDwc2Registers.h`へ整理し、自動vendor更新を終了した。
@@ -568,8 +679,7 @@ control_coreの単独試験は1 passed、32.31秒。14 interval条件と不正op
 private probeでFIFO初期化を明示して修正した。HSの算術確認とHS実通信の確認は区別する。
 全体試験結果は末尾を参照。
 
-
-## native DWC2整理後の全体確認
+### native DWC2整理後の全体確認
 
 2026-10-28、実装`cd6dc24`。標準`pytest --combo all`は**31 passed、0 skipped、
 0 failed/error、0 unfinished、1150.57秒**。62 serial log全てSTOPPED、panicなし。
@@ -589,8 +699,7 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/native-dwc2-all*`
 mainは全て取り込み済み、旧tests/examplesはmainとの差分なし。
 DWC2由来コードの本体保守への移行と、全protocol/全SoC実機確認の完了は区別する。
 
-
-## class HALT整理後の全33件確認
+### class HALT整理後の全33件確認
 
 2026-10-28、製品コード`8064804`。標準`pytest --combo all`は**33 passed、0 skipped、
 0 failed/error、0 unfinished、2588.65秒**。66 serial全てSTOPPED、STOP_FAILED/panicなし。
@@ -611,8 +720,7 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/class-halt-all*`�
 `python3 tools/verify_usb_backend.py`、git diff --checkも成功し、mainは取り込み済み。
 旧tests/examplesはmainとの差分なし。
 
-
-## reset開始時の世代無効化
+### reset開始時の世代無効化
 
 2026-10-28。実USBRST IRQの入口ではmounted=1だった構成が、元のIRQ処理の直後も
 mounted=1/job-ready=1で残ることを再現した。ENUMDNEまでcoreへresetを伝えていなかったためである。
@@ -639,8 +747,7 @@ Host/Deviceの通常のstart/stopと、試験sketchが明示するworker park/re
 任意の進行中SET_CONFIGURATION/SETUP/reset/endの全順序までを実証したわけではない。
 全体34件の結果は次節を参照。
 
-
-## reset開始guard後の全34件確認
+### reset開始guard後の全34件確認
 
 2026-10-28、製品`929f206`を固定。標準`pytest --combo all`は**34 passed、0 skipped、
 0 failed/error、0 unfinished、2274.81秒**。68 serial全てSTOPPED、STOP_FAILED/panicなし。
@@ -660,8 +767,7 @@ JUnit/transcript/serialコピーは`validation/.pytest-results/reset-start-all*`
 verify_usb_backend、git diff --checkも成功。mainは取り込み済み、旧tests/examplesはmainとの差分なし。
 実機はS3–S3のみ。任意の全競合順序やOS/他SoC/HS実機までの完了とは扱わない。
 
-
-## v3開始modeとworker設定
+### v3開始modeとworker設定
 
 library metadata/headerを3.0.0へ変更した。release/tagは作らず、基本のbegin/Function操作は維持する。
 startTinyUsbを型付きstartModeへ置換し、DescriptorsOnlyとUsbを区別する。空のtask()入口は削除した。
@@ -677,8 +783,7 @@ control_core 1 passed（89.59秒）。metadata-onlyでの資源有無、invalid 
 初回worker fixtureのinitializer_list型不一致によるcompile errorも区別して記録する。
 このAPI整理後の全34件とS2/P4 compileは次に実行する。
 
-
-## 開始mode・worker API整理後の一括確認
+### 開始mode・worker API整理後の一括確認
 
 製品`d876d50`を固定した全34件が4651.38秒で成功した。0 skipped/error/failure/unfinished。
 DescriptorsOnlyの無worker、不正enum/stack/priority/coreの拒否、実priority/core、
@@ -688,7 +793,10 @@ S2/P4 compileと全29 sourceの依存・symbol確認も成功。
 記録は[validationの最新全体結果](../validation/README.ja.md#開始modeworker-api整理後の全34件)。
 他SoC/HS実機・OS・任意の全EP0競合順序までの確認とはしない。
 
-## ISO OUTの欠落frame回復
+### ISO OUTの欠落frame回復
+
+> 2026-10-31の`aade7e0`で、この方式（DMAを止めて失敗をworkerへ返す）は、ISR内で偶奇を反転して再armする方式に置き換えた。
+> 現在の動作は[ISO OUTの取りこぼし対策](#iso-outの取りこぼし対策)を参照。
 
 S3の間欠ISO OUTでHostの送信は継続するのにDeviceは最初の96 byteだけ受信した。
 観測値はGINTSTS=00a08428（incomplete OUT bit21）、mask=801c3804（bit21無効）、
@@ -702,3 +810,24 @@ Audioは失敗packetをringへ渡さず再armする。EP0/bulk/interrupt OUTを�
 missを処理するIRQ/workerの費用がある。全HS/全intervalの実機確認ではなく、S3 FSのAudio間隔1で確認した。
 関連7件には通常の連続PCMとSDK Hostの間欠ISO、core標準要求、816取得点の回復を含む。
 手順の照合には[Linux DWC2のincomplete OUT処理](https://code.googlesource.com/linux/torvalds/linux/+/56bf6fc266ca14d2b9276c8a62e4ff6783bfe68b/drivers/usb/dwc2/gadget.c)も参照した。
+
+### HS直結での確認と二つの修正（2026-10-31）
+
+P4/P4XをHSで直結し、既存のS3 peer試験をHS comboでも実行した。
+FS前提だった値はlinkのMPSから導くように試験側を直し、S3では従来の値のままにした。
+
+| combo | 結果 |
+| --- | --- |
+| s3（FS回帰） | 51 passed、34分22秒 |
+| p4_p4x_hs（旧P4 Host→P4X Device） | 59 passed、40分31秒 |
+| p4x_p4_hs（P4X Host→旧P4 Device） | 58 passed、1 failed（ISO OUT）、66分38秒 |
+
+この過程で、core/DWC2の不具合を二つ直した。
+
+1. `09470d6`：OUT DMAの開始時にもcacheをcleanする。P4XのHS借用RXで、65535 byte中9216 byte以降が0xa5のまま残り、
+   完了は成功・実長65535と報告していた。DMA中に追い出されたdirty行が受信dataを上書きしていた。
+   P4/P4_PSRAM/P4X-PC/HS直結の全32件で回帰を確認。S3はcache同期が空の実装なので影響しない。
+2. `aade7e0`：ISO OUTの偶奇不一致を、ISR内で反転して再armする。修正前は旧P4 Deviceの`audio_overflow`が5回中2回失敗し、
+   修正後は10回連続で成功した。HS両方向のaudio/video各17件、S3のaudio 9件、旧P4 loopbackのaudio 4件も成功した。
+
+詳細は[P4の機種差とbench](V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)。
