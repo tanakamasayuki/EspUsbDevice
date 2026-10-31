@@ -275,3 +275,36 @@ Hostは公開EspUsbHost2.10.1のHIGH_SPEED portを使い、Vendor INはcache準�
 OUT DMAの開始時にbufferのdirtyなcache行を書き戻していなかったのが原因。DMAの途中で行が追い出されると、受信データの上に書き戻される。
 試験の中で書戻しを足すと3回とも成功したので、原因を確定した。製品側で、OUT armでもcleanするように直した。
 FS（旧loopback）では表に出ていなかった。P4/P4_PSRAM/P4X-PC/HS直結の全32件で回帰を確認した。S3はcache同期が空の実装なので影響しない。
+
+## S3 peer試験をHS直結へ広げた結果（2026-10-31）
+
+新しいpeer probeを書き足す代わりに、既存S3 peer試験39本のsketch.yamlへP4/P4Xのprofileを加え、HS comboでも収集した。
+P4ではEspUsbController::AutoとHostの既定portがHS controllerを選ぶので、sketchの役割は変えずに動く。
+FS前提だった値は`validation/s3/common/probe_link.h`の`PROBE_BULK_MPS`から導き、S3では従来の数値のままにした。
+testでは`"_hs_" in request.node.name`で同じ値を使う。conftestや独自lockは追加していない。
+
+| combo | 結果 | 時間 |
+| --- | --- | --- |
+| s3（FS回帰） | 51 passed | 34分22秒 |
+| p4_p4x_hs（旧P4 Host→P4X Device） | 59 passed | 40分31秒 |
+| p4x_p4_hs（P4X Host→旧P4 Device） | 58 passed、1 failed（下記のISO OUT） | 66分38秒 |
+
+修正後に関連試験を再実行した結果は次のとおり。HS両方向のaudio/videoは各17件、S3のaudioは9件、旧P4 loopbackのaudioは4件が成功した。
+audio_overflowは、修正前は旧P4 Deviceで5回中2回失敗していた。修正後は10回連続で成功した。
+
+### HSで変わる値
+
+- **MPSに縛られるもの**：MSCのstaging（transferBytes）とCCIDのmessageBytesは、HSではbulk MPS未満だと`begin()`がESP_ERR_INVALID_SIZEを返す（設計どおり）。借用RXの容量もMPSの倍数が必要。CDC/Vendor/MIDIのtransferBytesは、MPS未満でも受け付ける。
+- **endpoint数と周期転送**：非control IN endpointの上限は、S3が4、P4 HSが7。HIDのinterrupt endpointはHSで1024まで使える。そのためHost側では、周期OUT FIFOの既定（512 B）が足りない場合がある。
+- **Host側（ESP-IDF）の制約**：bulk INのnum_bytesはMPSの倍数が必要。`usb_host_endpoint_clear`はhost側のdata toggleを戻さないので、halt試験はclear前のpacket数が偶数になるように組む。P4のHCDはhostのdata bufferを自分でcache同期する。
+
+### 見つけて直した製品の不具合
+
+1. **OUT DMA開始時のcache書戻し漏れ**（09470d6）。前節を参照。
+2. **ISO OUTの取りこぼし**（aade7e0）。DWC2のISO OUTは、armするときに「次のmicroframe」の偶奇を指定する。Hostが1 intervalを空けて送ると偶奇が合わず、incomplete ISO OUTになる。従来はendpointを止めてFAILEDを返し、workerがarmし直していた。HSでは間に合わず、次のpacketも失っていた（届いたframeが1 packetおきに欠ける形）。
+   - 修正：ISRの中で、同じDMA bufferのまま偶奇を反転してarmし直す。OUTには古いデータを送る問題がないので回数の上限は設けない。
+   - 測定：連続200 packetの受信率は、修正前から両方向・S3とも200/200だった（`test_iso_out_rate`）。欠けるのは、Hostが間を空けたときだけ。
+
+### 未決の提案
+
+- CCIDの既定`messageBytes=320`は、HSでは`begin()`で必ず拒否される。CCID 1.1の規定（Bulk-OUTのMPS以上）による設計で、文書にもあるが、既定のままHSで使うと失敗する。既定をcontrollerに応じて決めるか、今のまま文書で案内するかは、API判断として保留する。

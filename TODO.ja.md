@@ -6,7 +6,7 @@
 
 ## 優先する残作業
 
-- [ ] **HS直結検証**：bench 2-3のP4（v1.3）と2-4のP4X（v3.2）。両方の向き（p4_p4x_hs、p4x_p4_hs）で、段階0〜2が成功した。p4_hs/linkは列挙と、Device側のVBUS session。peer/vendor_linkはMPS512、コピー方式のecho、借用RX/TXの境界長〜65537、取消し・end時の返却、3回の再開始。この過程でP4のOUT DMAのcache書戻し漏れを修正した。次は段階3のclass（CDC/HID/MSC/MIDI/CCID/DFU）、その後に段階4のISO（UAC/UVC）と段階5（NCM/PSRAM）。[計画と結果](docs/V3_P4_VARIANTS_AND_BENCH.ja.md#hs直結-段階12vendor2026-10-31)。
+- [ ] **HS直結検証**：2-3の旧P4と2-4のP4X、両方向。既存S3 peer試験39本をHS comboへ広げ、S3は51件、p4_p4x_hsは59件、p4x_p4_hsは59件が成功した（ISO OUT修正後の関連再実行を含む）。製品の不具合2件（OUT DMAのcache書戻し、ISO OUTの偶奇）を修正済み。残り：P4X PSRAM profile、NCMのP4X外部RAM、CCIDの既定messageBytesの扱い（API判断）、全comboを一括でもう一度。[結果](docs/V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)。
 - [ ] **S2実機検証（物品調達中）**：現在はcompile確認まで。到着後、P4 FS Hostとのpeerで列挙・各class・reset/end/借用返却を確認し、S2固有のROM DFU移行も別に確認する。S3での成功を代替にしない。
 - [ ] **S31対応・実機検証（物品調達中）**：ユーザー申告でビルドにベータ版コアが必要。まず4.0.0-RC1のS31 target/FQBNとSDK・toolchainを確認し、以後も採用するbeta版のversion/commitを固定して、既存の安定版Core profileと分離してcompileから始める。port能力/driver対応を確認後、P4 HS Hostとのpeerを追加する。S31 Hostの対応は別途確認し、Device成功だけで逆向きも対応済みとしない。
 - [ ] **Arduino-ESP32 4系の互換性検証**：指定の[開発版index](https://espressif.github.io/arduino-esp32/package_esp32_dev_index.json)を使い、まず4.0.0-RC1へ固定する。S31は必須。他のS3/S2/P4/P4Xは代表probeのcompileと短い実機試験から始める。3.3.12を標準として残し、別のcore4 profile/comboを優先する。一時切替が必要なら隔離した環境と復帰手順を用意する。RC1の成功を4系全体の対応済みとせず、RC更新/正式版で差分に応じて再試験する。[版固定・試験範囲と更新方針](docs/V3_DEVELOPMENT_PLAN.ja.md#arduino-esp32-4系コアの検証方針2026-10-30)。
