@@ -999,19 +999,22 @@ static void handle_incomplete_iso_in(uint8_t rhport) {
   }
 }
 
-// An ISO OUT arm whose target frame passed may never receive XFRC. Stop its
-// DMA before reporting failure; the class can then safely reuse and rearm the
-// packet for a later frame. Bulk/interrupt OUT and EP0 are not involved.
+// An ISO OUT arm whose target (micro)frame passed without data. Nothing was
+// received, so keep the same DMA buffer and retarget the arm to the other
+// parity here: a Host may skip an interval, and at high speed a rearm through
+// the worker misses the next 125 us microframe. Bulk/interrupt OUT and EP0
+// are not involved.
 static void handle_incomplete_iso_out(uint8_t rhport) {
   EspUsbDwc2Registers *dwc2 = espusb_dwc2_registers(rhport);
   const EspUsbDwc2Dsts status = {.value = dwc2->dsts};
+  const uint32_t odd_now = status.frame_number & 1u;
   for (uint8_t epnum = 1; epnum < dwc2_ep_count(dwc2); ++epnum) {
     EspUsbDwc2EndpointRegisters *dep = &dwc2->epout[epnum];
-    const EspUsbDwc2Depctl control = {.value = dep->ctl};
-    if (!control.enable || control.type != DEPCTL_EPTYPE_ISOCHRONOUS || control.dpid_iso_odd != (status.frame_number & 1u) || !selected_transfer(epnum, ESPUSB_DIR_OUT)) continue;
-    edpt_disable(rhport, epnum, false);
-    dep->ctl |= EPCTL_USBAEP;
-    espusb_controller_event_xfer_complete(rhport, epnum, 0, ESPUSB_TRANSFER_FAILED, true);
+    EspUsbDwc2Depctl control = {.value = dep->ctl};
+    if (!control.enable || control.type != DEPCTL_EPTYPE_ISOCHRONOUS || control.dpid_iso_odd != odd_now || !selected_transfer(epnum, ESPUSB_DIR_OUT)) continue;
+    if (odd_now) control.set_data0_iso_even = 1;
+    else control.set_data1_iso_odd = 1;
+    dep->ctl = control.value;
   }
 }
 
