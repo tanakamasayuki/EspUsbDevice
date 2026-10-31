@@ -99,7 +99,8 @@ bool capabilities() {
       EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
       ok &= function.configure(config) == ESP_OK;
       if (scenario != 4) {
-        ok &= !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_SIZE;
+        // Settings that disagree are an argument error, not a size.
+        ok &= !local.begin(identity) && local.lastError() == ESP_ERR_INVALID_ARG;
         ok &= !local.started() && !local.ready() && !input.capacity() && !function.eventCapacity();
         if (scenario == 0) ok &= input.addFormat({16000,2,3,24});
         else if (scenario == 2) {
@@ -186,7 +187,7 @@ void loop() {
   } else if (command == "intruder") {
     auto *rejected = new EspUsbAudioFunction(device, EspUsbAudioProtocol::Uac2);
     auto &stream = rejected->addPlaybackStream();
-    bool ok = !rejected->begin() && rejected->startError() == ESP_ERR_INVALID_STATE && !stream.available() && !stream.clearBuffer();
+    bool ok = device.lastError() == ESP_ERR_INVALID_STATE && !stream.available() && !stream.clearBuffer();
     delete rejected;
     ok &= device.ready(); Serial.printf("INTRUDER_REJECTED %u\r\n", unsigned(ok));
   } else if (command.startsWith("drain ")) {

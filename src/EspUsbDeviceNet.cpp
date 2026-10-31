@@ -386,7 +386,7 @@ bool EspUsbDeviceNet::begin() {
 }
 void EspUsbDeviceNet::prepareToStop() { NetGuard guard; if (state_) state_->stopping.store(true); }
 void EspUsbDeviceNet::end() {
-  if (state_ && device_.usbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.stopAndWait(); return; }
   endNetwork();
   if (!state_) return;
   EspUsbNetState *s;

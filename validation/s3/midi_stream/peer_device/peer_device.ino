@@ -59,7 +59,9 @@ bool metadata() {
   ok &= local.begin(detached) && function.receiveCapacity() == 1 && function.sendCapacity() == 1;
   ok &= function.onPacket(nullptr) == ESP_ERR_INVALID_STATE && function.configure(config) == ESP_ERR_INVALID_STATE;
   ok &= local.end() == ESP_OK && !function.receiveCapacity() && !function.sendCapacity();
-  auto invalid = config; invalid.inCables = 0;
+  // A fresh config keeps the cable count given at construction.
+  ok &= function.configure(EspUsbMidiConfig{}) == ESP_OK && function.inCableCount() == 16 && function.configure(config) == ESP_OK;
+  auto invalid = config; invalid.inCables = 17;
   ok &= function.configure(invalid) == ESP_ERR_INVALID_ARG && function.inCableCount() == 16;
   invalid = config; invalid.outCables = 17;
   ok &= function.configure(invalid) == ESP_ERR_INVALID_ARG;
@@ -73,7 +75,8 @@ bool metadata() {
   {
     EspUsbDevice invalidDevice; EspUsbDeviceMidi invalidFunction(invalidDevice, 0);
     ok &= !invalidDevice.begin(detached);
-    EspUsbMidiConfig fixed; ok &= invalidFunction.configure(fixed) == ESP_OK && invalidDevice.begin(detached);
+    EspUsbMidiConfig fixed; fixed.inCables = fixed.outCables = 1;
+    ok &= invalidFunction.configure(fixed) == ESP_OK && invalidDevice.begin(detached);
     ok &= invalidDevice.end() == ESP_OK;
   }
   return ok && heap_caps_check_integrity_all(true);
@@ -90,6 +93,8 @@ void loop() {
       delete second; second = nullptr; delete serialPort; serialPort = nullptr; delete keyboard; keyboard = nullptr;
       const unsigned mode = command.substring(6).toInt();
       EspUsbMidiConfig config; config.rxPackets = config.txPackets = config.transferPackets = 1;
+      // The object is reused across modes; 0 would keep the previous mode's cables.
+      config.inCables = config.outCables = 1;
       cables = 1; config.name = "MIDI primary"; receiveOnly = false;
       if (mode == 1) { config.rxPackets = 37; config.txPackets = 43; config.transferPackets = 17; config.inCables = config.outCables = cables = 16; }
       if (mode == 2) {
@@ -175,7 +180,7 @@ void loop() {
           case 4: accepted = midi.polyPressure(6,62,80,cable); break;
           case 5: accepted = midi.channelPressure(7,81,cable); break;
           case 6: accepted = midi.pitchBend(8,8192,cable); break;
-          case 7: accepted = midi.noteOn(31,200,255,cable); break;
+          case 7: accepted = midi.noteOn(15,127,127,cable); break;
           default: {
             EspUsbDeviceMidiPacket event; memcpy(&event, midiHelperExpected[which], 4); event.header |= uint8_t(cable << 4);
             accepted = midi.writePacket(event); break;
@@ -202,6 +207,9 @@ void loop() {
       Serial.printf("END_RACE %u\r\n", unsigned(ok && closedAttempts.load() >= 10 && !staleWrites.load()));
     } else if (command == "helpers") {
       bool ok = midi.noteOn(2, 60, 100) && !midi.noteOn(0, 1, 1, 16);
+      // Out-of-range channel or data is refused, not clamped into another message.
+      ok &= !midi.noteOn(16, 60, 100) && device.lastError() == ESP_ERR_INVALID_ARG;
+      ok &= !midi.noteOn(0, 128, 100) && !midi.controlChange(0, 7, 128) && !midi.pitchBend(0, 16384);
       Serial.printf("HELPERS %u\r\n", unsigned(ok));
     } else if (command == "errors") {
       Serial.printf("ERRORS %u\r\n", unsigned(midi.receiveErrors()));

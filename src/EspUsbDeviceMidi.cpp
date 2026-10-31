@@ -14,8 +14,11 @@ EspUsbDeviceMidi::EspUsbDeviceMidi(EspUsbDevice &device, uint8_t inCables, uint8
 }
 EspUsbDeviceMidi::~EspUsbDeviceMidi() { end(); }
 
-esp_err_t EspUsbDeviceMidi::configure(const EspUsbMidiConfig &c) {
+esp_err_t EspUsbDeviceMidi::configure(const EspUsbMidiConfig &requested) {
   if (state_) return ESP_ERR_INVALID_STATE;
+  EspUsbMidiConfig c = requested;
+  if (!c.inCables) c.inCables = midiConfig_.inCables;
+  if (!c.outCables) c.outCables = midiConfig_.outCables;
   if (!c.inCables || c.inCables > MAX_CABLES || !c.outCables || c.outCables > MAX_CABLES ||
       c.rxPackets > SIZE_MAX / 8 || c.txPackets > SIZE_MAX / 8 ||
       (c.rxMode != EspUsbMidiRxMode::Queue && c.rxMode != EspUsbMidiRxMode::Callback && c.rxMode != EspUsbMidiRxMode::Disabled) ||
@@ -183,73 +186,69 @@ uint16_t EspUsbDeviceMidi::configurationDescriptorForSpeed(
 
 bool EspUsbDeviceMidi::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable)
 {
-  if (cable >= MAX_CABLES)
+  if (cable >= MAX_CABLES || channel > 15 || note > 127 || velocity > 127)
   {
-    return false;
+    return rejectMessage();
   }
-  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, cable), status(ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, channel), clamp7(note), clamp7(velocity)};
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, cable), status(ESP_USB_DEVICE_MIDI_CIN_NOTE_ON, channel), note, velocity};
   return writePacket(packet);
 }
 
 bool EspUsbDeviceMidi::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint8_t cable)
 {
-  if (cable >= MAX_CABLES)
+  if (cable >= MAX_CABLES || channel > 15 || note > 127 || velocity > 127)
   {
-    return false;
+    return rejectMessage();
   }
-  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, cable), status(ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, channel), clamp7(note), clamp7(velocity)};
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, cable), status(ESP_USB_DEVICE_MIDI_CIN_NOTE_OFF, channel), note, velocity};
   return writePacket(packet);
 }
 
 bool EspUsbDeviceMidi::controlChange(uint8_t channel, uint8_t control, uint8_t value, uint8_t cable)
 {
-  if (cable >= MAX_CABLES)
+  if (cable >= MAX_CABLES || channel > 15 || control > 127 || value > 127)
   {
-    return false;
+    return rejectMessage();
   }
-  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, cable), status(ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, channel), clamp7(control), clamp7(value)};
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, cable), status(ESP_USB_DEVICE_MIDI_CIN_CONTROL_CHANGE, channel), control, value};
   return writePacket(packet);
 }
 
 bool EspUsbDeviceMidi::programChange(uint8_t channel, uint8_t program, uint8_t cable)
 {
-  if (cable >= MAX_CABLES)
+  if (cable >= MAX_CABLES || channel > 15 || program > 127)
   {
-    return false;
+    return rejectMessage();
   }
-  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, cable), status(ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, channel), clamp7(program), 0};
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, cable), status(ESP_USB_DEVICE_MIDI_CIN_PROGRAM_CHANGE, channel), program, 0};
   return writePacket(packet);
 }
 
 bool EspUsbDeviceMidi::polyPressure(uint8_t channel, uint8_t note, uint8_t pressure, uint8_t cable)
 {
-  if (cable >= MAX_CABLES)
+  if (cable >= MAX_CABLES || channel > 15 || note > 127 || pressure > 127)
   {
-    return false;
+    return rejectMessage();
   }
-  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, cable), status(ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, channel), clamp7(note), clamp7(pressure)};
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, cable), status(ESP_USB_DEVICE_MIDI_CIN_POLY_KEYPRESS, channel), note, pressure};
   return writePacket(packet);
 }
 
 bool EspUsbDeviceMidi::channelPressure(uint8_t channel, uint8_t pressure, uint8_t cable)
 {
-  if (cable >= MAX_CABLES)
+  if (cable >= MAX_CABLES || channel > 15 || pressure > 127)
   {
-    return false;
+    return rejectMessage();
   }
-  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, cable), status(ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, channel), clamp7(pressure), 0};
+  EspUsbDeviceMidiPacket packet = {header(ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, cable), status(ESP_USB_DEVICE_MIDI_CIN_CHANNEL_PRESSURE, channel), pressure, 0};
   return writePacket(packet);
 }
 
 bool EspUsbDeviceMidi::pitchBend(uint8_t channel, uint16_t value, uint8_t cable)
 {
-  if (cable >= MAX_CABLES)
+  if (cable >= MAX_CABLES || channel > 15 || value > 16383)
   {
-    return false;
-  }
-  if (value > 16383)
-  {
-    value = 16383;
+    return rejectMessage();
   }
   EspUsbDeviceMidiPacket packet = {
       header(ESP_USB_DEVICE_MIDI_CIN_PITCH_BEND_CHANGE, cable),
@@ -267,15 +266,14 @@ uint8_t EspUsbDeviceMidi::header(uint8_t codeIndex, uint8_t cable)
 
 uint8_t EspUsbDeviceMidi::status(uint8_t codeIndex, uint8_t channel)
 {
-  if (channel > 15)
-  {
-    channel = 15;
-  }
   return static_cast<uint8_t>((codeIndex << 4) | channel);
 }
 
-uint8_t EspUsbDeviceMidi::clamp7(uint8_t value)
+bool EspUsbDeviceMidi::rejectMessage()
 {
-  return value > 127 ? 127 : value;
+  // A channel is 4 bits and a data byte 7 bits (MIDI 1.0, USB MIDI 1.0 4).
+  // Clamping would send a different message, so nothing is sent.
+  device_.setLastError(ESP_ERR_INVALID_ARG);
+  return false;
 }
 

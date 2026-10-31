@@ -4,10 +4,12 @@
 #include "../common/probe_link.h"
 // HS services ISO per 125 us microframe: queue 8 per URB so each URB still spans 1 ms.
 constexpr unsigned PACKETS=PROBE_BULK_MPS==512 ? 8:1,PER_SECOND=1000*PACKETS;
+// USB 2.0 5.12.4.2 feedback: 10.14 in 3 bytes at FS, 16.16 in 4 bytes at HS.
+constexpr unsigned FEEDBACK_BYTES=PACKETS==8 ? 4:3,FEEDBACK_SHIFT=PACKETS==8 ? 16:14;
 usb_host_client_handle_t client=nullptr;
 usb_device_handle_t handle=nullptr;
 std::atomic<bool> running{false},exited{true},allFree{false};
-struct Choice { uint8_t endpoint=0,feedback=0,bytes=0,bits=0; uint16_t packet=0; } choices[2][5];
+struct Choice { uint8_t endpoint=0,feedback=0,bytes=0,bits=0; uint16_t packet=0,feedbackPacket=0; } choices[2][5];
 usb_transfer_t *control=nullptr,*input=nullptr,*output=nullptr,*feedback=nullptr;
 bool done=true,streaming=false,pending[3]={},claimed[2]={},parsed=false;
 unsigned protocol=0,selected=0,rate=0,frame=0,received=0,sent=0,filled=0,feedbacks=0,bad=0,lost=0;
@@ -37,12 +39,13 @@ void event(const usb_host_client_event_msg_t *e,void *) {
       if(protocol==1)parsed &= p[0]==14 && p[7]==2;
     }
     if(p[1]==5 && p[0]>=7) {
-      if((p[3]&0x30)==0x10)c.feedback=p[2];
+      if((p[3]&0x30)==0x10){c.feedback=p[2];c.feedbackPacket=p[4]|unsigned(p[5])<<8;}
       else {c.endpoint=p[2];c.packet=p[4]|unsigned(p[5])<<8;}
     }
   }
   for(unsigned i=0;i<2;++i)for(unsigned a=1;a<=4;++a) {
     const auto &c=choices[i][a];parsed &= c.endpoint && c.bytes==(a==1 ? 2:a==2 ? 3:4) && c.bits==(a==1 ? 16:a==3 ? 32:24);
+    parsed &= !c.feedback || c.feedbackPacket==FEEDBACK_BYTES;
   }
 }
 void completedControl(usb_transfer_t *){done=true;}
@@ -72,9 +75,9 @@ void completedIso(usb_transfer_t *t) {
       }
     } else if(index==1)sent+=p.actual_num_bytes;
     else {
-      // UAC2 feedback: 16.16 samples per microframe on HS, per frame on FS (as the Device sends it).
-      uint32_t value=0;memcpy(&value,d,4);
-      if(p.actual_num_bytes!=4 || value!=uint32_t((uint64_t(rate)<<16)/PER_SECOND))++bad;
+      // UAC2 feedback: samples per microframe on HS, per frame on FS.
+      uint32_t value=0;memcpy(&value,d,FEEDBACK_BYTES);
+      if(p.actual_num_bytes!=FEEDBACK_BYTES || value!=uint32_t((uint64_t(rate)<<FEEDBACK_SHIFT)/PER_SECOND))++bad;
       ++feedbacks;
     }
   }
@@ -112,7 +115,7 @@ bool startIso(unsigned alternate,unsigned sampleRate) {
   for(unsigned i=0;i<3;++i) {
     auto *t=transfers[i];t->device_handle=handle;t->callback=completedIso;
     t->bEndpointAddress=i==0 ? choices[1][selected].endpoint:i==1 ? choices[0][selected].endpoint:choices[0][selected].feedback;
-    const unsigned bytes=i==0 ? choices[1][selected].packet:i==1 ? rate/PER_SECOND*frame:4;
+    const unsigned bytes=i==0 ? choices[1][selected].packet:i==1 ? rate/PER_SECOND*frame:FEEDBACK_BYTES;
     for(int k=0;k<t->num_isoc_packets;++k)t->isoc_packet_desc[k].num_bytes=bytes;
     t->num_bytes=bytes*t->num_isoc_packets;
     if(i==1)memset(t->data_buffer,0x5a,t->num_bytes);

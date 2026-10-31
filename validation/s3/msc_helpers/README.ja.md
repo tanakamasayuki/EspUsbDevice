@@ -1,14 +1,23 @@
-# 任意MSC helperのRAM試験
+# MSC helper の RAM 試験
 
-2026-10-31からは、同じprobeをP4/P4XのHS直結（combo `p4_p4x_hs`/`p4x_p4_hs`）でも実行する。
-HSでの結果は[P4/P4Xと試験環境](../../../docs/V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)を参照。以下の記録はS3–S3での結果。
+公開の `EspUsbDeviceMscRamDisk` と `EspUsbDeviceMscFatRamDisk` を MSC に attach し、実際の BOT で読み書きできることを確かめます。
+S3 の FS（combo `s3`）と、P4 / P4X の HS 直結（`p4_p4x_hs`、`p4x_p4_hs`）で動きます。
 
-公開RamDisk/FatRamDiskをMSCへattachし、64/192/512 byte stagingで実BOTを通す。
-RAMは511 byte sector×7のHost書込み・読戻しをDevice helperからも照合する。
-FATはHostがBPB・2個のFAT12・directory・cluster chainを読み、helperが追加した1537 byte fileを全比較する。
-Hostから4 clusterの内容を書き換え、DeviceのfileSize/readFileで照合し、別のREADME fileの保持も確認する。
-各構成を2回開始し、CPU用の非整列storageの両端guardとRAMの未使用末尾も確認する。
-このprobeはRAMのみを使う。SD/OTAの実媒体やPC OS mountは対象外。実機は1 passed、39.64秒。8開始/8 guard検査、raw/FAT各4往復、2 logs STOPPED/panicなし。
-原本は/tmp/pytest-embedded/2026-10-29_05-58-02-529930/、記録はvalidation/.pytest-results/msc-helpers*。
-2026-10-29: S3 Host/Device compileと標準comboの1件収集は成功した。
-Host初回のstd::min型不一致を修正し、失敗ログも`.pytest-results/msc-helpers-initial-host-type-error.txt`に保存した。
+## 目的
+
+- RAM disk：Host が書いた内容を、Host と Device の helper の両方から読み戻して一致すること。
+- FAT RAM disk：Host が FAT12 の構造を読み、helper が追加した file を取り出せること。Host が書き換えた内容を Device 側の API で読めること。
+- staging の容量を変えても動くこと。
+
+## 手順
+
+- staging を 64 / 192 / 512 byte に変えて BOT を通します（HS では MPS 512 の倍数になるよう 8 倍にします）。
+- RAM disk：511 byte sector × 7 を Host が書いて読み戻し、Device の helper からも照合します。
+- FAT RAM disk：Host が BPB、2 つの FAT12、directory、cluster chain を読み、helper が追加した 1537 byte の file を全比較します。
+  Host が 4 cluster 分を書き換え、Device の `fileSize` / `readFile` で照合します。別の README file が残ることも確かめます。
+- 各構成を 2 回開始し、CPU 用の非整列の storage の両端の guard と、RAM の未使用の末尾も確かめます。
+
+## 範囲外
+
+- SD card と OTA の実媒体
+- PC の OS での mount

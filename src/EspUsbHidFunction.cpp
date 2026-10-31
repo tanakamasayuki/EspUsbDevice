@@ -496,7 +496,7 @@ const espusb::internal::UsbClassDriver hidDriver = {
 EspUsbHidFunction::EspUsbHidFunction(EspUsbDevice &device) : EspUsbDeviceClass(device) {}
 EspUsbHidFunction::~EspUsbHidFunction() { end(); }
 bool EspUsbHidFunction::begin() {
-  if (!registered_ || hidState_) { hidStartError_ = ESP_ERR_INVALID_STATE; return false; }
+  if (!registered_ || hidState_ || espusb::internal::usbRuntimeStarted()) { hidStartError_ = ESP_ERR_INVALID_STATE; return false; }
   auto *s = EspUsbHidState::first;
   while (s && &s->device != &device_) s = s->next;
   if (!s) {
@@ -517,7 +517,7 @@ void EspUsbHidFunction::prepareToStop() {
   portENTER_CRITICAL(&hidLock); if (hidState_) hidState_->stopping = true; portEXIT_CRITICAL(&hidLock);
 }
 void EspUsbHidFunction::end() {
-  if (device_.usbStarted_ && hidState_) { device_.end(); return; }
+  if (device_.usbStarted_ && hidState_) { device_.stopAndWait(); return; }
   portENTER_CRITICAL(&hidLock);
   auto *s = hidState_; hidState_ = nullptr;
   bool remove = s && !--s->references;
@@ -597,4 +597,20 @@ esp_err_t EspUsbHidFunction::setFeatureReport(const void *data, size_t length, u
   if (length > report->bytes(2) - (report->id ? 1 : 0)) { portEXIT_CRITICAL(&hidLock); return ESP_ERR_INVALID_SIZE; }
   s->save(*report, 2, static_cast<const uint8_t *>(data), length);
   portEXIT_CRITICAL(&hidLock); return ESP_OK;
+}
+
+uint16_t EspUsbHidFunction::inputPacketSize() const {
+  const EspUsbBusSpeed speed = device_.speed();
+  if (!hidStarted() || speed == EspUsbBusSpeed::None || descriptorInterfaceNumber_ == 0xff) return 0;
+  const bool high = speed == EspUsbBusSpeed::High;
+  const uint8_t *d = high ? device_.configDescriptorHighSpeed_ : device_.configDescriptor_;
+  if (!d) return 0;
+  const uint16_t total = uint16_t(d[2] | d[3] << 8);
+  bool inInterface = false;
+  for (uint16_t offset = 9; offset + 2 <= total && d[offset] >= 2; offset = uint16_t(offset + d[offset])) {
+    const uint8_t *p = d + offset;
+    if (p[1] == 4 && p[0] >= 9) inInterface = p[2] == descriptorInterfaceNumber_;
+    else if (inInterface && p[1] == 5 && p[0] >= 7 && (p[2] & 0x80) && (p[3] & 3) == 3) return uint16_t((p[4] | p[5] << 8) & 0x7ff);
+  }
+  return 0;
 }

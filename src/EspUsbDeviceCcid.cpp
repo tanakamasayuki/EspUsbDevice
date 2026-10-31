@@ -257,7 +257,7 @@ size_t EspUsbDeviceCcid::resolvedMessageBytes() const {
   return config_.messageBytes ? config_.messageBytes : std::max<size_t>(271,maximumBulkPacketSize());
 }
 bool EspUsbDeviceCcid::begin() {
-  if(state_ || !registered_){startError_=ESP_ERR_INVALID_STATE;return false;}
+  if(state_ || !registered_ || espusb::internal::usbRuntimeStarted()){startError_=ESP_ERR_INVALID_STATE;return false;}
   startError_=configure(config_);if(startError_!=ESP_OK)return false;
   if(!config_.removable && !cardPresent_){startError_=ESP_ERR_INVALID_STATE;return false;}
   const uint16_t mps=maximumBulkPacketSize();
@@ -281,7 +281,7 @@ bool EspUsbDeviceCcid::begin() {
 }
 void EspUsbDeviceCcid::prepareToStop(){portENTER_CRITICAL(&ccidLock);if(state_)state_->stopping=true;portEXIT_CRITICAL(&ccidLock);}
 void EspUsbDeviceCcid::end() {
-  if(state_ && device_.usbStarted_){device_.end();return;}
+  if(state_ && device_.usbStarted_){device_.stopAndWait();return;}
   portENTER_CRITICAL(&ccidLock);
   auto *s=state_;state_=nullptr;auto **link=&EspUsbCcidState::first;while(*link && *link!=s)link=&(*link)->next;if(*link)*link=s->next;
   bool empty=!EspUsbCcidState::first;portEXIT_CRITICAL(&ccidLock);

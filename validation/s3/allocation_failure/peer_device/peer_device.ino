@@ -109,7 +109,7 @@ bool audioFormatSettings() {
     EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= local.begin(config) && local.end() == ESP_OK && outstanding == before;
     ok &= stream.clearFormats() == ESP_OK && stream.clearFormats() == ESP_OK && !outstanding && !function.currentSampleRate();
-    ok &= !local.begin(config) && local.lastError() == ESP_ERR_INVALID_SIZE && local.end() == ESP_OK && !outstanding;
+    ok &= !local.begin(config) && local.lastError() == ESP_ERR_INVALID_ARG && local.end() == ESP_OK && !outstanding;
     ok &= stream.addFormat({44100,2,2,16}) && local.begin(config) && function.currentSampleRate() == 44100;
     const unsigned active = outstanding;
     ok &= stream.clearFormats() == ESP_ERR_INVALID_STATE && local.lastError() == ESP_ERR_INVALID_STATE && outstanding == active && function.currentSampleRate() == 44100;

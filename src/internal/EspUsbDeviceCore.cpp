@@ -128,6 +128,7 @@ struct Core {
       if (x.ep_addr != statusEp || x.len) { stallControl(); return; }
       c.phase = Control::Phase::Idle;
       if (c.request.bmRequestType==0 && c.request.bRequest==5) addressed = c.request.wValue != 0;
+      if (c.request.bmRequestType==0 && c.request.bRequest==3 && c.request.wValue==2) espusb_controller_test_mode(port,uint8_t(c.request.wIndex>>8));
       espusb_device_control_acknowledged(port,&c.request);
       if (c.callback) c.callback(port,ESPUSB_CONTROL_STAGE_ACK,&c.request);
       return;
@@ -231,8 +232,16 @@ struct Core {
       uint8_t state[2]={uint8_t(unsigned(selfPowered) | unsigned(bool(wakeupFlags.load() & WakeEnabled))<<1),0}; return reply(state,2);
     }
     case 1: case 3: {
+      // TEST_MODE (USB 2.0 9.4.9): high-speed only, test selector 1-4 in the
+      // wIndex high byte, entered after the status stage. It cannot be cleared.
+      if (r.bRequest==3 && r.bmRequestType==0 && r.wValue==2) {
+        const uint8_t selector=uint8_t(r.wIndex>>8);
+        if ((r.wIndex&0xff) || r.wLength || selector<1 || selector>4 || speed.load()!=ESPUSB_SPEED_HIGH) return false;
+        return status();
+      }
+      // DEVICE_REMOTE_WAKEUP is valid in the Address and Configured states.
       const auto *p=espusb_device_descriptor_configuration(0);
-      if (r.bmRequestType || r.wValue!=1 || r.wIndex || r.wLength || !configuration.load() || !p || !(p[7]&32)) return false;
+      if (r.bmRequestType || r.wValue!=1 || r.wIndex || r.wLength || !addressed || !p || !(p[7]&32)) return false;
       if (r.bRequest==3) wakeupFlags.fetch_or(WakeEnabled); else wakeupFlags.fetch_and(uint8_t(~WakeEnabled));
       return status();
     }

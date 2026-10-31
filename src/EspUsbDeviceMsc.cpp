@@ -302,7 +302,10 @@ EspUsbDeviceMsc::~EspUsbDeviceMsc() { end(); }
 esp_err_t EspUsbDeviceMsc::configure(const EspUsbMscConfig &c) {
   if (state_) return ESP_ERR_INVALID_STATE;
   if (!c.transferBytes || c.transferBytes > UINT16_MAX || c.transferBytes % 64) return ESP_ERR_INVALID_SIZE;
-  if (c.transferBuffer && (reinterpret_cast<uintptr_t>(c.transferBuffer) % 64 || !esp_ptr_internal(c.transferBuffer) || !esp_ptr_dma_capable(c.transferBuffer) || reinterpret_cast<uintptr_t>(c.transferBuffer) > UINTPTR_MAX - c.transferBytes)) return ESP_ERR_INVALID_ARG;
+  // The whole staging area is a DMA target: check its last byte as well.
+  const uint8_t *last = c.transferBuffer ? c.transferBuffer + c.transferBytes - 1 : nullptr;
+  if (c.transferBuffer && (reinterpret_cast<uintptr_t>(c.transferBuffer) % 64 || reinterpret_cast<uintptr_t>(c.transferBuffer) > UINTPTR_MAX - c.transferBytes ||
+      !esp_ptr_internal(c.transferBuffer) || !esp_ptr_dma_capable(c.transferBuffer) || !esp_ptr_internal(last) || !esp_ptr_dma_capable(last))) return ESP_ERR_INVALID_ARG;
   config_ = c; return ESP_OK;
 }
 bool EspUsbDeviceMsc::begin(uint32_t count, uint16_t size) {
@@ -316,11 +319,9 @@ bool EspUsbDeviceMsc::begin() {
   if (state_ || !registered_ || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
   if (!blockCount_ || !blockSize_ || !readCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
   startError_ = configure(config_); if (startError_ != ESP_OK) return false;
-  size_t mps = 64;
-#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
-  if (device_.config().controller != EspUsbController::FullSpeed) mps = 512;
-#endif
-  if (config_.transferBytes % mps) { startError_ = ESP_ERR_INVALID_SIZE; return false; }
+  // One OUT DMA receives a whole staging chunk, so it must end on a packet
+  // boundary or a full last packet would overrun it.
+  if (config_.transferBytes % maximumBulkPacketSize()) { startError_ = ESP_ERR_INVALID_SIZE; return false; }
   auto *s = espusb::internal::newUsbObject<EspUsbMscState>(*this);
   if (s) {
     s->buffer = config_.transferBuffer;
@@ -337,7 +338,7 @@ bool EspUsbDeviceMsc::begin() {
 void EspUsbDeviceMsc::prepareToStop() { if (state_) state_->stopping.store(true); }
 void EspUsbDeviceMsc::end() {
   // Device also calls end after its worker and DMA have stopped.
-  if (state_ && device_.usbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.stopAndWait(); return; }
   portENTER_CRITICAL(&mscLock);
   auto *s = state_; state_ = nullptr;
   auto **link = &EspUsbMscState::first;

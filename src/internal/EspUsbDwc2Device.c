@@ -507,6 +507,16 @@ void espusb_controller_set_address(uint8_t rhport, uint8_t dev_addr) {
   espusb_controller_edpt_xfer(rhport, espusb_endpoint_address(0, ESPUSB_DIR_IN), NULL, 0, false);
 }
 
+void espusb_controller_test_mode(uint8_t rhport, uint8_t selector) {
+  // DCTL.TstCtl (bits 6:4) selects the USB 2.0 7.1.20 test; only a power
+  // cycle leaves it.
+  espusb_controller_lock(false);
+  if (!espusb_controller_io_ready(rhport)) { espusb_controller_unlock(false); return; }
+  EspUsbDwc2Registers* dwc2 = espusb_dwc2_registers(rhport);
+  dwc2->dctl = (dwc2->dctl & ~(7u << 4)) | ((uint32_t) (selector & 7u) << 4);
+  espusb_controller_unlock(false);
+}
+
 void espusb_controller_remote_wakeup(uint8_t rhport) {
   espusb_controller_lock(false);
   if (!espusb_controller_io_ready(rhport)) { espusb_controller_unlock(false); return; }

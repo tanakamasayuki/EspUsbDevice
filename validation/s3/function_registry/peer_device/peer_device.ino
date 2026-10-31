@@ -109,27 +109,27 @@ void loop() {
     const bool started = device.begin(config);
     Serial.printf("REGISTRY_STARTED %u reports=%u\r\n", unsigned(started), unsigned(device.hidReportDescriptorLength(0)));
   } else if (command == "active_reject") {
+    // A Function added while the device runs is refused at registration; its
+    // lifecycle hooks are not public, so it can only start with the device.
     auto *cdc = new EspUsbDeviceCdcSerial(device);
     bool rejected = device.lastError() == ESP_ERR_INVALID_STATE;
-    rejected &= !cdc->begin() && static_cast<EspUsbDeviceClass *>(cdc)->startError() == ESP_ERR_INVALID_STATE;
     delete cdc;
     rejected &= device.ready();
     auto *vendor = new EspUsbDeviceVendor(device);
     rejected &= device.lastError() == ESP_ERR_INVALID_STATE;
-    rejected &= !vendor->begin() && static_cast<EspUsbDeviceClass *>(vendor)->startError() == ESP_ERR_INVALID_STATE;
     delete vendor;
     rejected &= device.ready();
     auto *midi = new EspUsbDeviceMidi(device);
-    rejected &= !midi->begin() && midi->startError() == ESP_ERR_INVALID_STATE;
+    rejected &= device.lastError() == ESP_ERR_INVALID_STATE;
     delete midi;
     rejected &= device.ready();
     auto *msc = new EspUsbDeviceMsc(device);
-    rejected &= !msc->begin() && msc->startError() == ESP_ERR_INVALID_STATE;
+    rejected &= device.lastError() == ESP_ERR_INVALID_STATE;
     delete msc;
     rejected &= device.ready();
     auto *hid = new PreferredHid(device, 5);
     rejected &= device.lastError() == ESP_ERR_INVALID_STATE;
-    rejected &= !hid->begin() && hid->startError() == ESP_ERR_INVALID_STATE && !hid->inputReportCapacity();
+    rejected &= !hid->inputReportCapacity();
     const uint8_t data = 0xab;
     rejected &= !hid->sendReport(&data, 1);
     delete hid;

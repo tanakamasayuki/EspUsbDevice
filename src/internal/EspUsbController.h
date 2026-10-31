@@ -71,6 +71,7 @@ bool espusb_controller_int_enable(uint8_t port);
 void espusb_controller_int_disable(uint8_t port);
 void espusb_controller_set_address(uint8_t port, uint8_t address);
 void espusb_controller_remote_wakeup(uint8_t port);
+void espusb_controller_test_mode(uint8_t port, uint8_t selector);
 void espusb_controller_connect(uint8_t port);
 void espusb_controller_disconnect(uint8_t port);
 void espusb_controller_sof_enable(uint8_t port, bool enabled);

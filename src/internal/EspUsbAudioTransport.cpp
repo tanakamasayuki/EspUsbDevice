@@ -119,9 +119,11 @@ struct EspUsbAudioState {
     if (stopping || !playback.active || !feedbackEndpoint) return;
     // The first transport uses a USB-derived nominal sample clock. External
     // codec-clock feedback needs a separate consumption/clock API.
-    const uint32_t value = uint32_t((uint64_t(owner.currentSampleRate()) << 16) / intervals);
-    for (unsigned i = 0; i < 4; ++i) feedback[i] = uint8_t(value >> (8 * i));
-    espusb_device_edpt_xfer(port, feedbackEndpoint, feedback, 4, false);
+    // Samples per (micro)frame: 10.14 in 3 bytes at FS, 16.16 in 4 at HS.
+    const unsigned bytes = intervals == 8000 ? 4 : 3;
+    const uint32_t value = uint32_t((uint64_t(owner.currentSampleRate()) << (bytes == 4 ? 16 : 14)) / intervals);
+    for (unsigned i = 0; i < bytes; ++i) feedback[i] = uint8_t(value >> (8 * i));
+    espusb_device_edpt_xfer(port, feedbackEndpoint, feedback, uint16_t(bytes), false);
   }
   bool change(AudioPacketStream &stream, uint8_t alternate, bool isPlayback) {
     const auto &model = isPlayback ? owner.model_.playback() : owner.model_.capture();
@@ -214,7 +216,7 @@ struct EspUsbAudioState {
           if (!stream->packet || !size || size > stream->packetCapacity || current != (stream == &s->playback ? s->owner.graph_.playback.interfaceNumber : s->owner.graph_.capture.interfaceNumber)) return 0;
           stream->endpoint = d[2];
           if (size > stream->packetSize) { stream->descriptor = d; stream->packetSize = size; }
-        } else if (d[2] == s->owner.graph_.playback.feedbackEndpoint && s->feedback && size == 4) {
+        } else if (d[2] == s->owner.graph_.playback.feedbackEndpoint && s->feedback && size == (espusb_device_speed() == ESPUSB_SPEED_HIGH ? 4 : 3)) {
           if (!s->feedbackEndpoint) {
             EspUsbEndpointDescriptor endpoint; memcpy(&endpoint, d, 7); endpoint.bLength = 7;
             if (!espusb_device_edpt_open(port, &endpoint)) return 0;

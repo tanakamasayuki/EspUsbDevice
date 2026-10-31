@@ -201,15 +201,18 @@ bool usbRuntimeInTask()
   return g_deviceTask && xTaskGetCurrentTaskHandle() == g_deviceTask;
 }
 
-bool stopUsbRuntime()
+esp_err_t stopUsbRuntime(uint32_t timeoutMs)
 {
-  if (usbRuntimeInTask()) return false;
+  if (usbRuntimeInTask()) return ESP_ERR_INVALID_STATE;
   if (g_deviceTask)
   {
     // Finish the current event/callback before deinitializing endpoints or
     // releasing class buffers. Deleting a running task can abandon a lock.
+    // On timeout the stop request stays set: the worker exits once its
+    // callback returns, and the next call completes the stop.
     g_stop.store(true);
-    xSemaphoreTake(g_taskExited, portMAX_DELAY);
+    const TickType_t wait = timeoutMs ? pdMS_TO_TICKS(timeoutMs) : portMAX_DELAY;
+    if (xSemaphoreTake(g_taskExited, wait) != pdTRUE) return ESP_ERR_TIMEOUT;
     g_deviceTask = nullptr;
     vSemaphoreDelete(g_taskExited);
     g_taskExited = nullptr;
@@ -224,7 +227,7 @@ bool stopUsbRuntime()
     usb_del_phy(g_phy);
     g_phy = nullptr;
   }
-  return true;
+  return ESP_OK;
 }
 
 bool usbRuntimeStopping() { return g_stop.load(); }

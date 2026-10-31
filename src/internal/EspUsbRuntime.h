@@ -39,7 +39,8 @@ bool postUsbRuntimeJob(UsbRuntimeJob &job);
 void removeUsbRuntimeJob(UsbRuntimeJob &job);
 
 esp_err_t startUsbRuntime(const UsbRuntimeOptions &options);
-bool stopUsbRuntime();
+// timeoutMs 0 waits for the worker indefinitely.
+esp_err_t stopUsbRuntime(uint32_t timeoutMs = 0);
 bool usbRuntimeInTask();
 bool usbRuntimeStarted();
 bool usbRuntimeStopping();

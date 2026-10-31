@@ -190,8 +190,10 @@ bool writeStreamingInterfaceAlternate(DescriptorBuildContext &context,
     return false;
   }
 
+  // USB 2.0 5.12.4.2: feedback is 10.14 in 3 bytes at full speed and 16.16
+  // in 4 bytes at high speed.
   if (layout.feedbackEndpoint &&
-      !context.writeEndpoint(layout.feedbackEndpoint, 0x11, 4, 4, 1, 4))
+      !context.writeEndpoint(layout.feedbackEndpoint, 0x11, 3, 4, 1, 4))
   {
     return false;
   }

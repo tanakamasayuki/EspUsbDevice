@@ -1,27 +1,27 @@
-# 未完HID INのprotocol切替試験
+# 未完の HID IN と protocol の切替
 
-2026-10-31からは、同じprobeをP4/P4XのHS直結（combo `p4_p4x_hs`/`p4x_p4_hs`）でも実行する。
-HSでの結果は[P4/P4Xと試験環境](../../../docs/V3_P4_VARIANTS_AND_BENCH.ja.md#s3-peer試験をhs直結へ広げた結果2026-10-31)を参照。以下の記録はS3–S3での結果。
+boot / report protocol を切り替えるとき、まだ Host が読んでいない旧形式の IN report を Host に渡さないことを確かめます。
+S3 の FS（combo `s3`）と、P4 / P4X の HS 直結（`p4_p4x_hs`、`p4x_p4_hs`）で動きます。
 
-S3–S3の通常comboを使い、pytestのdut/peers以外のfixture/hookを追加しない。
-既存examples/testsから独立している。
+## 目的
 
-HostはこのcaseだけESP-IDFの公開USB Host APIでinterfaceを取得する。
-通常のEspUsbHostはHID INを自動pollするため、旧形式を確実にDevice DMAへ保留する条件を作れない。
-manual Hostはprotocol切替までinterrupt INを一度も投稿せず、二つ目の非blocking送信が拒否されることで
-最初のreportが未完了であることを確認する。
+- Device の DMA に旧形式の report が残ったまま SET_PROTOCOL が来ても、切替後に Host が最初に読む report が新形式であること。
+- 現在の形式と長さの違う送信を `InvalidSize` で拒否すること。
 
-Keyboard(NKRO29/boot8 byte)とMouse(report4/boot3 byte)で各4回切り替える。
-切替後に初めてINを投稿して30 ms未完了であることを確認し、旧reportが届かないことを調べる。
-そのINへ新しいmarkerのreportを送って、正しい長さと全byteを照合する。
-現在の形式と異なる長さの送信もInvalidSizeで拒否されることを確認する。
+## 手順
 
-このCoreではCONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACKが有効なので、対象VID/PIDを許可する
-標準enum_filter_cbを登録する。nullでは列挙が中止される。
-開始/取得の診断値をserialへ残し、終了時はtransferの返却、interface/device/clientとHostを解放する。
-未返却DMA領域はfreeしない。試験失敗や停止失敗はskipせずfailedとする。
+- Host はこの probe だけ ESP-IDF の公開 USB Host API で interface を取ります。
+  通常の EspUsbHost は HID IN を自動で poll するので、旧形式の report を Device の DMA に確実に残す条件を作れないためです。
+- Host は protocol を切り替えるまで interrupt IN を一度も投稿しません。Device の二回目の非 blocking 送信が拒否されることで、最初の report が未完であることを確かめます。
+- Keyboard（NKRO 29 byte / boot 8 byte）と Mouse（report 4 byte / boot 3 byte）で、それぞれ 4 回切り替えます。
+- 切替後に初めて IN を投稿し、30 ms のあいだ完了しないこと（旧 report が届かないこと）を確かめます。
+- その IN へ新しい marker の report を送り、長さと全 byte を照合します。
+- Core の `CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK` が有効なので、対象の VID/PID を許可する `enum_filter_cb` を登録します。null では列挙が中止されます。
+- 終了時は transfer を返し、interface / device / client と Host を解放します。返っていない DMA 領域は free しません。
 
-このcaseは実hardware停止の確認であり、core event queue満杯/人工的な古い完了eventの注入や、
-IN転送途中のbus reset/endを網羅する試験ではない。
-参考: [HID 1.11](https://www.usb.org/sites/default/files/hid1_11.pdf)、
-[ESP-IDF USB Host](https://docs.espressif.com/projects/esp-usb/en/latest/esp32s3/usb_host.html)。
+## 範囲外
+
+- core の event queue の満杯や、人工的な古い完了 event の注入
+- IN 転送の途中の bus reset / `end()`
+
+参考：[HID 1.11](https://www.usb.org/sites/default/files/hid1_11.pdf) §7.2.6（Set_Protocol）、[ESP-IDF USB Host](https://docs.espressif.com/projects/esp-usb/en/latest/esp32s3/usb_host.html)

@@ -439,7 +439,7 @@ bool EspUsbDeviceVideo::begin() {
 }
 void EspUsbDeviceVideo::prepareToStop() { stopping_.store(true); }
 void EspUsbDeviceVideo::end() {
-  if (state_ && device_.usbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.stopAndWait(); return; }
   espusb::internal::VideoTransport::end(*this);
   running_.store(false); inFlight_.store(false); commit_ = {};
 }

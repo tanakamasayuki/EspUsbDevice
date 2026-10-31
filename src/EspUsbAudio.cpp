@@ -179,16 +179,39 @@ esp_err_t EspUsbAudioFunction::configure(const EspUsbAudioConfig &config)
 }
 size_t EspUsbAudioFunction::eventCapacity() const { return events_.capacity(); }
 
-bool EspUsbAudioFunction::begin()
+esp_err_t EspUsbAudioFunction::descriptorConfigurationError() const
 {
-  if (!registered_ || started_.load() || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
-  startError_ = ESP_ERR_INVALID_ARG;
+  // No stream, a stream without formats, channels changing within a direction,
+  // or rate sets that differ across the shared clock: the settings disagree,
+  // so this is an argument error rather than a size the descriptor could not hold.
   if ((!playbackEnabled_ && !captureEnabled_) ||
       (playbackEnabled_ && (!model_.playback().formatCount() || !model_.playback().hasCompleteRateSets())) ||
       (captureEnabled_ && (!model_.capture().formatCount() || !model_.capture().hasCompleteRateSets())))
   {
-    return false;
+    return ESP_ERR_INVALID_ARG;
   }
+  espusb::internal::DescriptorLayout layout(espusb::internal::EndpointLimits{15, 15, 15});
+  espusb::internal::AudioFunctionGraphConfig config;
+  config.playbackFeedback = protocol_ == EspUsbAudioProtocol::Uac2;
+  espusb::internal::AudioFunctionGraph graph;
+  if (!espusb::internal::buildAudioFunctionGraph(model_, layout, config, graph))
+  {
+    using Error = espusb::internal::AudioGraphError;
+    if (graph.error == Error::NoStreams || graph.error == Error::InconsistentChannels ||
+        graph.error == Error::IncompatibleClockRates)
+    {
+      return ESP_ERR_INVALID_ARG;
+    }
+  }
+  return ESP_OK;
+}
+
+bool EspUsbAudioFunction::begin()
+{
+  if (!registered_ || started_.load() || espusb::internal::usbRuntimeStarted()) { startError_ = ESP_ERR_INVALID_STATE; return false; }
+  startError_ = descriptorConfigurationError();
+  if (startError_ != ESP_OK) return false;
+  startError_ = ESP_ERR_INVALID_ARG;
   if (!buildGraph(graph_.controlInterface,
                   graph_.playback.dataEndpoint
                       ? static_cast<uint8_t>(
@@ -211,7 +234,7 @@ bool EspUsbAudioFunction::begin()
 void EspUsbAudioFunction::prepareToStop() { espusb::internal::AudioTransport::prepareToStop(*this); }
 void EspUsbAudioFunction::end()
 {
-  if (state_ && device_.usbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.stopAndWait(); return; }
   espusb::internal::AudioTransport::end(*this);
   started_.store(false);
   playbackAlternate_ = captureAlternate_ = 0;

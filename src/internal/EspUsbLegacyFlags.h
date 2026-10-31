@@ -1,59 +1,167 @@
 #pragma once
-// Legacy build knobs are not a second configuration path.
+// Build-time knobs of EspUsbDevice 2.x and the TinyUSB stack it bundled. None
+// of them configures this library; a sketch or build_opt.h that still defines
+// one is stopped here instead of having it silently ignored.
 #if defined(CFG_TUD_AUDIO) || \
     defined(CFG_TUD_AUDIO_CTRL_BUF_SZ) || \
+    defined(CFG_TUD_AUDIO_ENABLE_EP_IN) || \
+    defined(CFG_TUD_AUDIO_ENABLE_EP_OUT) || \
+    defined(CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP) || \
+    defined(CFG_TUD_AUDIO_ENABLE_INTERRUPT_EP) || \
+    defined(CFG_TUD_AUDIO_EP_IN_FLOW_CONTROL) || \
     defined(CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ) || \
     defined(CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX) || \
     defined(CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ) || \
     defined(CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX) || \
+    defined(CFG_TUD_AUDIO_FUNC_2_EP_IN_SW_BUF_SZ) || \
+    defined(CFG_TUD_AUDIO_FUNC_2_EP_IN_SZ_MAX) || \
+    defined(CFG_TUD_AUDIO_FUNC_2_EP_OUT_SW_BUF_SZ) || \
+    defined(CFG_TUD_AUDIO_FUNC_2_EP_OUT_SZ_MAX) || \
+    defined(CFG_TUD_AUDIO_FUNC_3_EP_IN_SW_BUF_SZ) || \
+    defined(CFG_TUD_AUDIO_FUNC_3_EP_IN_SZ_MAX) || \
+    defined(CFG_TUD_AUDIO_FUNC_3_EP_OUT_SW_BUF_SZ) || \
+    defined(CFG_TUD_AUDIO_FUNC_3_EP_OUT_SZ_MAX) || \
+    defined(CFG_TUD_AUDIO_INTERRUPT_EP_SZ) || \
+    defined(CFG_TUD_AUDIO_MAX_N_BYTES_PER_SAMPLE) || \
+    defined(CFG_TUD_AUDIO_MAX_N_CHANNELS) || \
+    defined(CFG_TUD_BTH) || \
+    defined(CFG_TUD_BTH_ISO_ALT_COUNT) || \
     defined(CFG_TUD_CDC) || \
+    defined(CFG_TUD_CDC_EP_BUFSIZE) || \
+    defined(CFG_TUD_CDC_LOG_LEVEL) || \
+    defined(CFG_TUD_CDC_NOTIFY) || \
     defined(CFG_TUD_CDC_RX_BUFSIZE) || \
+    defined(CFG_TUD_CDC_RX_EPSIZE) || \
+    defined(CFG_TUD_CDC_RX_NEED_ZLP) || \
+    defined(CFG_TUD_CDC_RX_PERSISTENT) || \
     defined(CFG_TUD_CDC_TX_BUFSIZE) || \
+    defined(CFG_TUD_CDC_TX_EPSIZE) || \
+    defined(CFG_TUD_CDC_TX_OVERWRITABLE_IF_NOT_CONNECTED) || \
+    defined(CFG_TUD_CDC_TX_PERSISTENT) || \
+    defined(CFG_TUD_CI_HS_EPBUF_4K_ALIGNED) || \
+    defined(CFG_TUD_CI_HS_VBUS_CHARGE) || \
+    defined(CFG_TUD_CI_HS_VBUS_CHARGE_DEFAULT) || \
+    defined(CFG_TUD_CONFIGURE_DWC2_DEFAULT) || \
     defined(CFG_TUD_DFU) || \
+    defined(CFG_TUD_DFU_LOG_LEVEL) || \
     defined(CFG_TUD_DFU_RUNTIME) || \
+    defined(CFG_TUD_DFU_RUNTIME_LOG_LEVEL) || \
+    defined(CFG_TUD_DFU_XFER_BUFSIZE) || \
     defined(CFG_TUD_DWC2_DMA_ENABLE) || \
+    defined(CFG_TUD_DWC2_DMA_ENABLE_DEFAULT) || \
     defined(CFG_TUD_DWC2_SLAVE_ENABLE) || \
+    defined(CFG_TUD_DWC2_SLAVE_ENABLE_DEFAULT) || \
+    defined(CFG_TUD_ECM_RNDIS) || \
+    defined(CFG_TUD_EDPT_DEDICATED_HWFIFO) || \
+    defined(CFG_TUD_ENABLED) || \
     defined(CFG_TUD_ENDPOINT0_BUFSIZE) || \
     defined(CFG_TUD_ENDPOINT0_SIZE) || \
+    defined(CFG_TUD_ENDPOINT_ONE_DIRECTION_ONLY) || \
     defined(CFG_TUD_ENDPPOINT_MAX) || \
     defined(CFG_TUD_HID) || \
     defined(CFG_TUD_HID_BUFSIZE) || \
     defined(CFG_TUD_HID_EP_BUFSIZE) || \
     defined(CFG_TUD_INTERFACE_MAX) || \
+    defined(CFG_TUD_LOG_LEVEL) || \
+    defined(CFG_TUD_MAX_SPEED) || \
+    defined(CFG_TUD_MEM_ALIGN) || \
+    defined(CFG_TUD_MEM_DCACHE_ENABLE) || \
+    defined(CFG_TUD_MEM_DCACHE_ENABLE_DEFAULT) || \
+    defined(CFG_TUD_MEM_DCACHE_LINE_SIZE) || \
+    defined(CFG_TUD_MEM_SECTION) || \
     defined(CFG_TUD_MIDI) || \
+    defined(CFG_TUD_MIDI2) || \
     defined(CFG_TUD_MIDI_EP_BUFSIZE) || \
     defined(CFG_TUD_MIDI_RX_BUFSIZE) || \
     defined(CFG_TUD_MIDI_RX_EPSIZE) || \
     defined(CFG_TUD_MIDI_TX_BUFSIZE) || \
     defined(CFG_TUD_MIDI_TX_EPSIZE) || \
     defined(CFG_TUD_MSC) || \
+    defined(CFG_TUD_MSC_BUFSIZE) || \
+    defined(CFG_TUD_MSC_EP_BUFSIZE) || \
+    defined(CFG_TUD_MSC_LOG_LEVEL) || \
+    defined(CFG_TUD_MTP) || \
     defined(CFG_TUD_NCM) || \
+    defined(CFG_TUD_NCM_DEFAULT_LINK_UP) || \
     defined(CFG_TUD_NCM_IN_MAX_DATAGRAMS_PER_NTB) || \
     defined(CFG_TUD_NCM_IN_NTB_MAX_SIZE) || \
     defined(CFG_TUD_NCM_IN_NTB_N) || \
+    defined(CFG_TUD_NCM_LOG_LEVEL) || \
     defined(CFG_TUD_NCM_OUT_MAX_DATAGRAMS_PER_NTB) || \
     defined(CFG_TUD_NCM_OUT_NTB_MAX_SIZE) || \
     defined(CFG_TUD_NCM_OUT_NTB_N) || \
+    defined(CFG_TUD_NET) || \
     defined(CFG_TUD_NET_MTU) || \
+    defined(CFG_TUD_PRINTER) || \
+    defined(CFG_TUD_RPI_PIO_USB) || \
+    defined(CFG_TUD_SAMX7X_DMA_ENABLE) || \
+    defined(CFG_TUD_SAMX7X_DMA_ENABLE_DEFAULT) || \
     defined(CFG_TUD_TASK_EVENTS_PER_RUN) || \
     defined(CFG_TUD_TASK_QUEUE_SZ) || \
     defined(CFG_TUD_TEST_MODE) || \
+    defined(CFG_TUD_USBTMC) || \
+    defined(CFG_TUD_VALIDATION_LEVEL) || \
     defined(CFG_TUD_VBUS_DETECT_HW) || \
     defined(CFG_TUD_VBUS_DETECT_HW_DEFAULT) || \
+    defined(CFG_TUD_VENDOR) || \
+    defined(CFG_TUD_VENDOR_ALT_SETTINGS) || \
+    defined(CFG_TUD_VENDOR_EPSIZE) || \
+    defined(CFG_TUD_VENDOR_EP_INT_IN) || \
+    defined(CFG_TUD_VENDOR_EP_INT_IN_BUFSIZE) || \
+    defined(CFG_TUD_VENDOR_EP_INT_OUT) || \
+    defined(CFG_TUD_VENDOR_EP_INT_OUT_BUFSIZE) || \
+    defined(CFG_TUD_VENDOR_EP_ISO_IN) || \
+    defined(CFG_TUD_VENDOR_EP_ISO_IN_BUFSIZE) || \
+    defined(CFG_TUD_VENDOR_EP_ISO_OUT) || \
+    defined(CFG_TUD_VENDOR_EP_ISO_OUT_BUFSIZE) || \
+    defined(CFG_TUD_VENDOR_RX) || \
     defined(CFG_TUD_VENDOR_RX_BUFFERED) || \
     defined(CFG_TUD_VENDOR_RX_BUFSIZE) || \
+    defined(CFG_TUD_VENDOR_RX_EPSIZE) || \
+    defined(CFG_TUD_VENDOR_RX_MANUAL_XFER) || \
+    defined(CFG_TUD_VENDOR_RX_NEED_ZLP) || \
+    defined(CFG_TUD_VENDOR_TXRX_BUFFERED) || \
     defined(CFG_TUD_VENDOR_TX_BUFFERED) || \
     defined(CFG_TUD_VENDOR_TX_BUFSIZE) || \
+    defined(CFG_TUD_VENDOR_TX_EPSIZE) || \
     defined(CFG_TUD_VIDEO) || \
+    defined(CFG_TUD_VIDEO_LOG_LEVEL) || \
     defined(CFG_TUD_VIDEO_STREAMING) || \
     defined(CFG_TUD_VIDEO_STREAMING_BULK) || \
     defined(CFG_TUD_VIDEO_STREAMING_EP_BUFSIZE) || \
+    defined(CFG_TUD_WCH_USBIP_FSDEV) || \
+    defined(CFG_TUD_WCH_USBIP_USBFS) || \
+    defined(CFG_TUD_WCH_USBIP_USBHS) || \
+    defined(CFG_TUSB_CONFIG_FILE) || \
     defined(CFG_TUSB_DEBUG) || \
+    defined(CFG_TUSB_DEBUG_BREAKPOINT) || \
+    defined(CFG_TUSB_DEBUG_PRINTF) || \
+    defined(CFG_TUSB_FIFO_HWFIFO_ADDR_STRIDE) || \
+    defined(CFG_TUSB_FIFO_HWFIFO_API) || \
+    defined(CFG_TUSB_FIFO_HWFIFO_CUSTOM_READ) || \
+    defined(CFG_TUSB_FIFO_HWFIFO_CUSTOM_WRITE) || \
+    defined(CFG_TUSB_FIFO_HWFIFO_DATA_ODD_16BIT_ACCESS) || \
+    defined(CFG_TUSB_FIFO_HWFIFO_DATA_ODD_8BIT_ACCESS) || \
+    defined(CFG_TUSB_FIFO_HWFIFO_DATA_STRIDE) || \
+    defined(CFG_TUSB_FSDEV_32BIT) || \
+    defined(CFG_TUSB_FSDEV_PMA_SIZE) || \
     defined(CFG_TUSB_MCU) || \
+    defined(CFG_TUSB_MEM_ALIGN) || \
+    defined(CFG_TUSB_MEM_DCACHE_LINE_SIZE) || \
+    defined(CFG_TUSB_MEM_DCACHE_LINE_SIZE_DEFAULT) || \
+    defined(CFG_TUSB_MEM_SECTION) || \
     defined(CFG_TUSB_OS) || \
+    defined(CFG_TUSB_OS_HAS_SCHEDULER) || \
+    defined(CFG_TUSB_OS_INC_PATH) || \
+    defined(CFG_TUSB_OS_INC_PATH_DEFAULT) || \
+    defined(CFG_TUSB_RHPORT0_MODE) || \
+    defined(CFG_TUSB_RHPORT1_MODE) || \
+    defined(CFG_TUSB_VALIDATION_LEVEL) || \
+    defined(ESP_USB_DEVICE_CDC_PORTS) || \
+    defined(ESP_USB_DEVICE_HID_EP_BUFSIZE) || \
+    defined(ESP_USB_TINYUSB_AUDIO_FS_EP_SIZE) || \
+    defined(ESP_USB_TINYUSB_AUDIO_HS_EP_SIZE) || \
     defined(ESP_USB_TINYUSB_AUDIO_MAX_SAMPLE_RATE) || \
-    defined(ESP_USB_TINYUSB_AUDIO_SW_PACKETS) || \
-    defined(CFG_TUD_DFU_XFER_BUFSIZE) || \
-    defined(CFG_TUD_MSC_EP_BUFSIZE)
-#error "Remove TinyUSB build flags; configure EspUsbDevice/Function runtime APIs instead"
+    defined(ESP_USB_TINYUSB_AUDIO_SW_PACKETS)
+#error "Remove TinyUSB build flags (build_opt.h); configure EspUsbDevice/Function runtime APIs instead"
 #endif

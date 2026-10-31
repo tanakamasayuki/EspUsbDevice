@@ -382,6 +382,12 @@ bool EspUsbDeviceBulkStream::begin() {
   if (!unit || (unit > 1 && (config_.rxCapacity % unit || config_.txCapacity % unit || config_.transferBytes % unit))) {
     startError_ = ESP_ERR_INVALID_ARG; return false;
   }
+  // USB 2.0 5.8.3: a full-speed bulk endpoint carries 8, 16, 32 or 64 bytes.
+  // Sizes above 64 mean the largest one; high speed always uses 512.
+  const uint16_t fullSpeedPacket = std::min<uint16_t>(endpointSize_, 64);
+  if (fullSpeedPacket != 8 && fullSpeedPacket != 16 && fullSpeedPacket != 32 && fullSpeedPacket != 64) {
+    startError_ = ESP_ERR_INVALID_SIZE; return false;
+  }
   const uint16_t maxPacket = maximumBulkPacketSize();
   if (config_.rxMode == EspUsbBulkRxMode::Callback && !rxDataCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
   if (config_.rxMode == EspUsbBulkRxMode::Borrowed && !directRxCompleteCallback_) { startError_ = ESP_ERR_INVALID_ARG; return false; }
@@ -401,7 +407,7 @@ void EspUsbDeviceBulkStream::prepareToStop() {
   portEXIT_CRITICAL(&bulkLock);
 }
 void EspUsbDeviceBulkStream::end() {
-  if (device_.usbStarted_ && state_) { device_.end(); return; }
+  if (device_.usbStarted_ && state_) { device_.stopAndWait(); return; }
   portENTER_CRITICAL(&bulkLock);
   auto *state = state_;
   state_ = nullptr;

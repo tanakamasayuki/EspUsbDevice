@@ -198,7 +198,7 @@ bool EspUsbDeviceDfu::begin() {
 }
 void EspUsbDeviceDfu::prepareToStop() { if (state_) state_->stopping.store(true); }
 void EspUsbDeviceDfu::end() {
-  if (state_ && device_.usbStarted_) { device_.end(); return; }
+  if (state_ && device_.usbStarted_) { device_.stopAndWait(); return; }
   if (!state_) return;
   handleAbort();
   auto **link = &EspUsbDfuState::first;
