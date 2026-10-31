@@ -10,7 +10,10 @@ bool serving=false;
 EspUsbDevice device;
 EspUsbDeviceNet *net = nullptr;
 std::atomic<unsigned> received{0}, rejected{0};
-alignas(64) uint8_t externalTx[6400], externalRx[6400];
+#include "../../common/probe_link.h"
+// Two 3200-byte NTBs; RX strides round up to the bulk MPS (3584 on HS).
+constexpr size_t EXTERNAL_BYTES = 2*((3200+PROBE_BULK_MPS-1)/PROBE_BULK_MPS*PROBE_BULK_MPS);
+alignas(64) uint8_t externalTx[EXTERNAL_BYTES], externalRx[EXTERNAL_BYTES];
 bool metadata() {
   EspUsbDevice d; EspUsbDeviceNet f(d); bool ok = !f.ntbInCapacity() && !f.txBufferCount();
   EspUsbNetConfig c;

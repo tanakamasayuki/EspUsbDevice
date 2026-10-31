@@ -2,12 +2,14 @@
 #include <EspUsbDevice.h>
 #include <esp_heap_caps.h>
 #include <atomic>
+#include "../../common/probe_link.h"
 EspUsbDevice device;
 EspUsbDeviceVendor first(device);
 EspUsbDeviceBulkStream *stream[2]={&first,nullptr};
 EspUsbDeviceCdcSerial *serialPort=nullptr;
 std::atomic<unsigned> codingChanges{0};
-alignas(64) uint8_t tx[2][256],rx[2][320];
+constexpr unsigned MPS=PROBE_BULK_MPS,RXN=3*MPS;
+alignas(64) uint8_t tx[2][4*MPS],rx[2][RXN+128];
 struct Counts {
   std::atomic<unsigned> tx{0},rx{0},bad{0};
   std::atomic<bool> txPending{false},rxPending{false};
@@ -26,12 +28,12 @@ void callbacks(unsigned i) {
     Serial.printf("TX_RESULT i=%u status=%s actual=%u known=%u\r\n",i,name(r.status),unsigned(r.actualBytes),unsigned(r.actualBytesKnown));
   });
   stream[i]->onDirectRxComplete([i](const EspUsbTransferResult &r){
-    auto &c=counts[i];if(!c.rxPending.exchange(false) || r.buffer!=rx[i]+64 || r.id!=c.rxId || r.requestedBytes!=192)++c.bad;
+    auto &c=counts[i];if(!c.rxPending.exchange(false) || r.buffer!=rx[i]+64 || r.id!=c.rxId || r.requestedBytes!=RXN)++c.bad;
     if(r.status==EspUsbTransferStatus::Success){
-      if(!r.actualBytesKnown || r.actualBytes>192)++c.bad;
+      if(!r.actualBytesKnown || r.actualBytes>RXN)++c.bad;
       for(unsigned n=0;n<r.actualBytes;++n)if(rx[i][64+n]!=uint8_t(n*17+7+i*53))++c.bad;
     }
-    for(unsigned n=0;n<64;++n)if(rx[i][n]!=0x5a || rx[i][256+n]!=0x5a)++c.bad;
+    for(unsigned n=0;n<64;++n)if(rx[i][n]!=0x5a || rx[i][64+RXN+n]!=0x5a)++c.bad;
     c.rxStatus=r.status;++c.rx;
   });
 }
@@ -50,19 +52,19 @@ void loop(){
       memset(rx[i],0x5a,sizeof(rx[i]));for(unsigned n=0;n<sizeof(tx[i]);++n)tx[i][n]=uint8_t(n*37+13+i*41);
       callbacks(i);EspUsbBulkStreamConfig cfg;
       if(!copy){cfg.rxMode=EspUsbBulkRxMode::Borrowed;cfg.rxCapacity=cfg.txCapacity=cfg.transferBytes=0;}
-      else {cfg.rxCapacity=97;cfg.txCapacity=131;cfg.transferBytes=128;}
+      else {cfg.rxCapacity=MPS+33;cfg.txCapacity=2*MPS+3;cfg.transferBytes=2*MPS;}
       ok &= stream[i]->configure(cfg)==ESP_OK;
     }
     ok &= device.begin();Serial.printf("STARTED %u\r\n",unsigned(ok));
   } else if(s.startsWith("queue ")) {
     unsigned i;char direction[4];sscanf(s.c_str(),"queue %u %3s",&i,direction);bool ok=i<2;
     if(ok && String(direction)!="tx") {
-      auto &c=counts[i];memset(rx[i]+64,0x5a,192);c.rxPending=true;
-      auto r=stream[i]->readDirect(rx[i]+64,192);c.rxId=r.id;ok &= bool(r);if(!r)c.rxPending=false;
+      auto &c=counts[i];memset(rx[i]+64,0x5a,RXN);c.rxPending=true;
+      auto r=stream[i]->readDirect(rx[i]+64,RXN);c.rxId=r.id;ok &= bool(r);if(!r)c.rxPending=false;
     }
     if(ok && String(direction)!="rx") {
-      auto &c=counts[i];c.txLength=129;c.txPending=true;
-      auto r=stream[i]->writeDirect(tx[i],129);c.txId=r.id;ok &= bool(r);if(!r)c.txPending=false;
+      auto &c=counts[i];c.txLength=2*MPS+1;c.txPending=true;
+      auto r=stream[i]->writeDirect(tx[i],2*MPS+1);c.txId=r.id;ok &= bool(r);if(!r)c.txPending=false;
     }
     Serial.printf("QUEUED %u\r\n",unsigned(ok));
   } else if(s.startsWith("stats ")) {
@@ -75,7 +77,7 @@ void loop(){
   } else if(s.startsWith("copytx ")) {
     unsigned i,n;sscanf(s.c_str(),"copytx %u %u",&i,&n);Serial.printf("COPIED %u\r\n",unsigned(stream[i]->write(tx[i],n)==n));
   } else if(s.startsWith("copyrx ")) {
-    unsigned i,n;sscanf(s.c_str(),"copyrx %u %u",&i,&n);uint8_t data[192];
+    unsigned i,n;sscanf(s.c_str(),"copyrx %u %u",&i,&n);uint8_t data[RXN];
     uint32_t until=millis()+3000;while(stream[i]->available()<int(n) && int32_t(until-millis())>0)delay(1);
     bool ok=stream[i]->available()==int(n);
     if(ok && n){ok=stream[i]->read(data,n)==n;for(unsigned j=0;j<n;++j)ok &= data[j]==uint8_t(j*17+7+i*53);}

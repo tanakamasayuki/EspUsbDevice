@@ -1,11 +1,12 @@
 """BOT thirteen cases, invalid CBW, reset handshake and SCSI sense."""
 
 
-def test_msc_bot(dut, peers):
+def test_msc_bot(dut, peers, request):
     device = peers["device"]
+    mps = 512 if "_hs_" in request.node.name else 64
     try:
-        device.write("start 64 0")
-        device.expect_exact("STARTED 1 capacity=64\r\n", timeout=30)
+        device.write(f"start {mps} 0")
+        device.expect_exact(f"STARTED 1 capacity={mps}\r\n", timeout=30)
         dut.write("start")
         dut.expect_exact("HOST_READY 1\r\n", timeout=30)
         for case in range(1, 14):
@@ -35,8 +36,8 @@ def test_msc_bot(dut, peers):
         for board in (dut, device):
             board.write("stop")
             board.expect_exact("STOPPED\r\n", timeout=30)
-        device.write("start 64 0 511")
-        device.expect_exact("STARTED 1 capacity=64\r\n", timeout=30)
+        device.write(f"start {mps} 0 511")
+        device.expect_exact(f"STARTED 1 capacity={mps}\r\n", timeout=30)
         dut.write("start")
         dut.expect_exact("HOST_READY 1\r\n", timeout=30)
         dut.write("sector 511")
@@ -49,8 +50,8 @@ def test_msc_bot(dut, peers):
         for board in (dut, device):
             board.write("stop")
             board.expect_exact("STOPPED\r\n", timeout=30)
-        device.write("start 64 4")
-        device.expect_exact("STARTED 1 capacity=64\r\n", timeout=30)
+        device.write(f"start {mps} 4")
+        device.expect_exact(f"STARTED 1 capacity={mps}\r\n", timeout=30)
         for interface, command in ((1, "second"), (0, "primary")):
             dut.write(f"start {interface}")
             dut.expect_exact("HOST_READY 1\r\n", timeout=30)

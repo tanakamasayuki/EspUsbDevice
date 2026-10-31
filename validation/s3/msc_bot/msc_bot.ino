@@ -2,6 +2,14 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include <esp_cache.h>
+// P4 host DMA reads OUT and control data from memory, not from the cache.
+bool flush(usb_transfer_t *t) { return esp_cache_msync(t->data_buffer, t->data_buffer_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED) == ESP_OK; }
+#else
+bool flush(usb_transfer_t *) { return true; }
+#endif
 usb_host_client_handle_t client = nullptr;
 usb_device_handle_t handle = nullptr;
 usb_transfer_t *control = nullptr, *input = nullptr, *output = nullptr;
@@ -49,6 +57,7 @@ bool request(uint8_t type, uint8_t code, uint16_t value, uint16_t bytes, uint16_
   *s = {}; s->bmRequestType = type; s->bRequest = code; s->wValue = value; s->wIndex = index; s->wLength = bytes;
   control->device_handle = handle; control->bEndpointAddress = 0; control->num_bytes = 8 + bytes;
   control->callback = [](usb_transfer_t *) { controlDone.store(true); };
+  if (!flush(control)) return false;
   controlDone.store(false);
   if (usb_host_transfer_submit_control(client, control) != ESP_OK) return false;
   const uint32_t until = millis() + 3000;
@@ -92,6 +101,7 @@ bool bulk(bool in, uint32_t bytes) {
   t->device_handle = handle; t->bEndpointAddress = in ? endpoint : outEndpoint;
   t->num_bytes = in ? ((bytes + packetSize - 1) / packetSize) * packetSize : bytes;
   t->callback = [](usb_transfer_t *) { inputDone.store(true); };
+  if (!in && !flush(t)) return false;
   inputDone.store(false); inputActive = in;
   if (usb_host_transfer_submit(t) != ESP_OK) { inputActive = false; return false; }
   const uint32_t until = millis() + 3000;
@@ -193,14 +203,15 @@ bool invalidCbw(unsigned variant) {
 bool alternate() {return request(1,11,0,0) && reclaim();}
 bool nextCommand() {return cbw(0,false,0) && csw(0,0);}
 bool interfaceCheck() {
-  bool ok=reset();
+  bool ok=reset();const unsigned blocks=sectorBytes>PROBE_BULK_MPS ? 1:2;
   // Command, pending CSW, partially completed READ, and partially committed WRITE.
   for(unsigned phase=0;phase<(selectedInterface ? 3u:4u);++phase) {
     if(phase==1)ok &= cbw(0,false,0);
-    if(phase==2)ok &= cbw(0x28,true,sectorBytes,1,4) && bulk(true,64) && actual==64;
+    // One full bus packet of a longer transfer: on HS a sector is one packet.
+    if(phase==2)ok &= cbw(0x28,true,blocks*sectorBytes,blocks,4) && bulk(true,PROBE_BULK_MPS) && actual==PROBE_BULK_MPS;
     if(phase==3) {
-      ok &= cbw(0x2a,false,sectorBytes,1,4);
-      memset(output->data_buffer,0x91,64);ok &= bulk(false,64) && actual==64;
+      ok &= cbw(0x2a,false,blocks*sectorBytes,blocks,4);
+      memset(output->data_buffer,0x91,PROBE_BULK_MPS);ok &= bulk(false,PROBE_BULK_MPS) && actual==PROBE_BULK_MPS;
     }
     events(5);
     ok &= alternate() && nextCommand();
@@ -208,7 +219,7 @@ bool interfaceCheck() {
   }
   if(!selectedInterface) {
     ok &= cbw(0x28,true,sectorBytes,1,4) && bulk(true,sectorBytes) && actual==sectorBytes;
-    for(unsigned i=0;i<sectorBytes;++i)ok &= input->data_buffer[i]==(i<64 ? 0x91:0);
+    for(unsigned i=0;i<sectorBytes;++i)ok &= input->data_buffer[i]==(i<PROBE_BULK_MPS ? 0x91:0);
     ok &= csw(0,0);
   }
   if(!ok){Serial.println("INTERFACE_WRITE_COMMIT");return false;}

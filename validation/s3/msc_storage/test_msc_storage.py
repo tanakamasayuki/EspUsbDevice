@@ -1,13 +1,16 @@
 """Runtime MSC staging sizes, optional write path, media/errors and recovery."""
 
 
-def test_msc_storage(dut, peers):
+def test_msc_storage(dut, peers, request):
     device = peers["device"]
+    # Staging must be a multiple of the bulk MPS: scale FS sizes on HS.
+    scale = 8 if "_hs_" in request.node.name else 1
     try:
         device.write("metadata")
         result = device.expect(r"METADATA ok=1 before=(\d+) after=(\d+)\r\n", timeout=30)
         assert result.group(1) == result.group(2), "MSC configuration leaked heap"
         for capacity, mode in ((64, 0), (128, 0), (512, 0), (4096, 0), (192, 1), (64, 2), (128, 3)):
+            capacity = min(capacity * scale, 4096)
             device.write(f"start {capacity} {mode}")
             device.expect_exact(f"STARTED 1 capacity={capacity}\r\n", timeout=30)
             dut.write("start")
@@ -51,16 +54,17 @@ def test_msc_storage(dut, peers):
         assert not errors, "USB stop failed: " + "; ".join(errors)
 
 
-def test_msc_cdc_concurrent(dut, peers):
+def test_msc_cdc_concurrent(dut, peers, request):
     """Small CDC rings keep progressing during BOT and media-not-present errors."""
     device = peers["device"]
+    mps = 512 if "_hs_" in request.node.name else 64
 
     def command(board, text, reply, timeout=15):
         board.write(text)
         board.expect_exact(reply + "\r\n", timeout=timeout)
 
     try:
-        for capacity in (64, 4096):
+        for capacity in (mps, 4096):
             command(device, f"start {capacity} 3", f"STARTED 1 capacity={capacity}", 30)
             command(dut, "start", "HOST_READY 1", 30)
             command(dut, "cdc_start", "CDC_STARTED 1")

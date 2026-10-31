@@ -4,8 +4,10 @@
 static_assert(!std::is_base_of<Print, EspUsbDeviceMidi>::value);
 static_assert(!std::is_base_of<Stream, EspUsbDeviceMidi>::value);
 #include <atomic>
+#include <algorithm>
 #include "esp_heap_caps.h"
 #include "../packets.h"
+#include "../../common/probe_link.h"
 EspUsbDevice device;
 EspUsbDeviceMidi midi(device);
 EspUsbDeviceMidi *second = nullptr;
@@ -46,7 +48,7 @@ bool metadata() {
   {
     EspUsbDevice automatic; EspUsbDeviceMidi function(automatic);
     EspUsbDeviceConfig config; config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
-    ok &= !function.transferCapacity() && automatic.begin(config) && function.transferCapacity() == 16;
+    ok &= !function.transferCapacity() && automatic.begin(config) && function.transferCapacity() == PROBE_BULK_MPS / 4;
     ok &= automatic.end() == ESP_OK && !function.transferCapacity();
   }
   EspUsbDevice local; EspUsbDeviceMidi function(local, 16, 1);
@@ -127,8 +129,10 @@ void loop() {
       midi.flush(); Serial.println("FLUSHED");
     } else if (command == "pending") {
       const uint32_t deadline = millis() + 3000;
-      while (midi.availablePackets() < 16 && int32_t(deadline - millis()) > 0) delay(1);
-      Serial.printf("STAGED %u\r\n", unsigned(midi.receiveCapacity() == 1 && midi.availablePackets() == 16));
+      // One bus packet of the 64 events the host sent stays staged.
+      const size_t staged = std::min(64u, PROBE_BULK_MPS / 4);
+      while (midi.availablePackets() < staged && int32_t(deadline - millis()) > 0) delay(1);
+      Serial.printf("STAGED %u\r\n", unsigned(midi.receiveCapacity() == 1 && midi.availablePackets() == staged));
     } else if (command == "composite") {
       const uint32_t deadline = millis() + 3000;
       while (serialPort->available() < 3 && int32_t(deadline - millis()) > 0) delay(1);

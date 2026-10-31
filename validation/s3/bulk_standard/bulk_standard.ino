@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
 usb_host_client_handle_t client=nullptr;usb_device_handle_t handle=nullptr;
 usb_transfer_t *control=nullptr,*input[2]={},*output[2]={};
 std::atomic<bool> running{false},exited{true},allFree{false},done{true};
@@ -68,7 +69,7 @@ bool coding(unsigned n,unsigned invalid) {
 }
 bool bulk(unsigned i,bool reading,unsigned n) {
   if(!done.load())return false;auto *t=reading ? input[i]:output[i];
-  t->device_handle=handle;t->bEndpointAddress=reading ? in[i]:out[i];t->num_bytes=reading ? (n+63)/64*64:n;t->callback=complete;
+  t->device_handle=handle;t->bEndpointAddress=reading ? in[i]:out[i];t->num_bytes=reading ? (n+PROBE_BULK_MPS-1)/PROBE_BULK_MPS*PROBE_BULK_MPS:n;t->callback=complete;
   if(!reading)for(unsigned j=0;j<n;++j)t->data_buffer[j]=uint8_t((txOffset[i]+j)*17+7+i*53);
   done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
   if(!wait() || t->status!=USB_TRANSFER_STATUS_COMPLETED || t->actual_num_bytes!=n){Serial.printf("BULK_ERROR i=%u in=%u requested=%u status=%u actual=%u\r\n",i,unsigned(reading),n,unsigned(t->status),unsigned(t->actual_num_bytes));return false;}
@@ -116,7 +117,7 @@ void loop(){
     usb_host_client_config_t cc={};cc.max_num_event_msg=8;cc.async.client_event_callback=event;
     ok &= usb_host_client_register(&cc,&client)==ESP_OK;
     ok &= usb_host_transfer_alloc(64,0,&control)==ESP_OK;
-    for(unsigned i=0;i<2;++i)ok &= usb_host_transfer_alloc(256,0,&input[i])==ESP_OK && usb_host_transfer_alloc(256,0,&output[i])==ESP_OK;
+    for(unsigned i=0;i<2;++i)ok &= usb_host_transfer_alloc(4*PROBE_BULK_MPS,0,&input[i])==ESP_OK && usb_host_transfer_alloc(4*PROBE_BULK_MPS,0,&output[i])==ESP_OK;
     uint32_t until=millis()+10000;while(ok && !claimed[1] && int32_t(until-millis())>0)events(1);
     ok &= claimed[0] && claimed[1];if(notification)ok &= request(0x21,0x22,1,interfaces[1]-1);
     Serial.printf("HOST_READY %u\r\n",unsigned(ok));

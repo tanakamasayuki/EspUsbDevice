@@ -2,6 +2,7 @@
 #include <EspUsbDevice.h>
 #include "../../../../src/internal/EspUsbMemory.h"
 #include "esp_heap_caps.h"
+#include "../../common/probe_link.h"
 
 namespace {
 struct Allocation { void *pointer; } live[64] = {};
@@ -52,7 +53,7 @@ EspUsbDeviceMidiPacket midiRx[19], midiTx[21];
 EspUsbDeviceHidCustom *inputOnly = nullptr;
 const uint8_t pushReport[] = {0x06,0x00,0xff,0x09,0x01,0xa1,0x01,0xa4,0x75,0x08,0x95,0x01,0x09,0x01,0x81,0x02,0xb4,0xc0};
 const uint8_t inputReport[] = {0x06,0x00,0xff,0x09,0x01,0xa1,0x01,0x75,0x08,0x95,0x01,0x09,0x01,0x81,0x02,0xc0};
-uint8_t echo[129];
+uint8_t echo[2 * PROBE_BULK_MPS + 1];
 size_t wanted = 0, received = 0;
 
 bool audioFormatSettings() {
@@ -181,7 +182,7 @@ void loop() {
           msc[0] = new EspUsbDeviceMsc(device);
           msc[0]->onRead([](uint32_t, uint32_t, void *, uint32_t n) { return int32_t(n); });
           ok &= msc[0]->begin(8, 512);
-          EspUsbMscConfig storage; storage.transferBytes = 64;
+          EspUsbMscConfig storage; storage.transferBytes = PROBE_BULK_MPS; // One packet, the HS minimum.
           if (mode == 22) storage.transferBuffer = mscBuffer;
           ok &= msc[0]->configure(storage) == ESP_OK;
           if (mode == 23) {
@@ -228,7 +229,7 @@ void loop() {
         }
         if (mode >= 41 && mode <= 43) {
           ccid[0] = new EspUsbDeviceCcid(device);
-          EspUsbCcidConfig card;card.messageBytes=64;card.removable=mode==41;
+          EspUsbCcidConfig card;card.messageBytes=PROBE_BULK_MPS;card.removable=mode==41;
           const uint8_t atr[]={0x3b,0};
           ok &= ccid[0]->configure(card)==ESP_OK && ccid[0]->insertCard(atr,sizeof(atr));
           if(mode==43){ccid[1]=new EspUsbDeviceCcid(device);ok &= ccid[1]->configure(card)==ESP_OK && ccid[1]->insertCard(atr,sizeof(atr));}
@@ -343,7 +344,11 @@ void loop() {
   if (wanted && wanted <= sizeof(echo)) {
     received += vendor.read(echo + received, wanted - received);
     if (received == wanted) {
-      if (vendor.write(echo, received) == received) Serial.printf("ECHOED %u\r\n", unsigned(received));
+      // HS: 2*MPS+1 bytes exceed the default 512-byte TX ring, so drain in turns.
+      size_t sent = vendor.write(echo, received);
+      for (const uint32_t deadline = millis() + 3000; sent < received && int32_t(deadline - millis()) > 0; delay(1))
+        sent += vendor.write(echo + sent, received - sent);
+      if (sent == received) Serial.printf("ECHOED %u\r\n", unsigned(received));
       else Serial.println("ECHO_FAILED");
       wanted = received = 0;
     }

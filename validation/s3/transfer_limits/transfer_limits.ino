@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EspUsbHost.h>
 #include <atomic>
+#include "../common/probe_link.h"
 
 EspUsbHost host;
 std::atomic<uint8_t> address{0};
@@ -30,7 +31,7 @@ void loop() {
     sscanf(command.c_str() + (send ? 5 : 8), "%u %u %u", &length, &terminate, &pattern);
     if (!pattern) pattern = length;
     constexpr size_t payloadChunk = 4096;
-    uint8_t data[payloadChunk + 64];
+    static uint8_t data[payloadChunk + PROBE_BULK_MPS];
     size_t total = 0;
     bool ok = length && length <= 131072;
     while (ok && total < length) {
@@ -43,7 +44,7 @@ void loop() {
       } else {
         size_t actual = 0;
         // On the final read, leave room for an explicit ZLP/short terminator.
-        const size_t request = chunk + (terminate && chunk == remaining && chunk % 64 == 0 ? 64 : 0);
+        const size_t request = chunk + (terminate && chunk == remaining && chunk % PROBE_BULK_MPS == 0 ? PROBE_BULK_MPS : 0);
         // A final full chunk may be followed by an explicit ZLP.
         if (request > sizeof(data)) { ok = false; break; }
         ok = host.vendorReadSync(data, request, &actual, 5000, address.load()) && actual == chunk;

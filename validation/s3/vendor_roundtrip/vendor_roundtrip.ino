@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EspUsbHost.h>
 #include <atomic>
+#include "../common/probe_link.h"
 
 EspUsbHost host;
 std::atomic<uint8_t> address{0};
@@ -44,14 +45,14 @@ void loop() {
       Serial.println("HOST_START_FAILED");
     }
   } else if (command == "prefix") {
-    uint8_t data[64]; size_t actual = 0;
+    uint8_t data[PROBE_BULK_MPS]; size_t actual = 0;
     bool ok = host.vendorReadSync(data, sizeof(data), &actual, 3000, address.load()) && actual == sizeof(data);
     for (size_t i = 0; i < actual && i < sizeof(data); ++i) ok &= data[i] == 0x5a;
     Serial.printf("PREFIX_OK %u\r\n", unsigned(ok));
   } else if (command.startsWith("send ")) {
     unsigned length = 0, zlp = 0;
     sscanf(command.c_str(), "send %u %u", &length, &zlp);
-    uint8_t data[129];
+    uint8_t data[2 * PROBE_BULK_MPS + 1];
     if (!opened || length > sizeof(data)) { Serial.println("INVALID_SEND"); return; }
     for (size_t i = 0; i < length; ++i) data[i] = uint8_t(i * 37 + length);
     bool ok = !length || host.vendorWrite(data, length, address.load());
@@ -62,7 +63,7 @@ void loop() {
     unsigned requested = 0, terminate = 0;
     sscanf(command.c_str() + (exchange ? 9 : 8), "%u %u", &requested, &terminate);
     const size_t length = requested;
-    uint8_t sent[129], received[256];
+    uint8_t sent[2 * PROBE_BULK_MPS + 1], received[4 * PROBE_BULK_MPS];
     if (!opened || length == 0 || length > sizeof(sent)) {
       Serial.println("INVALID_EXCHANGE");
       return;
@@ -76,7 +77,7 @@ void loop() {
     const uint32_t deadline = millis() + 3000;
     while (count < length && int32_t(deadline - millis()) > 0) {
       size_t actual = 0;
-      if (!host.vendorReadSync(received + count, length - count + (terminate ? 64 : 0), &actual, 3000, address.load())) break;
+      if (!host.vendorReadSync(received + count, length - count + (terminate ? PROBE_BULK_MPS : 0), &actual, 3000, address.load())) break;
       count += actual;
       delay(1);
     }

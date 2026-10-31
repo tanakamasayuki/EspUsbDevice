@@ -1,8 +1,10 @@
 """Runtime CCID storage, two readers and optional fixed-card notifications."""
 
 
-def test_ccid_stream(dut, peers):
+def test_ccid_stream(dut, peers, request):
     device = peers["device"]
+    # HS readers need room for one 512-byte bulk packet; FS sizes shift up.
+    shift = 448 if "_hs_" in request.node.name else 0
 
     def command(board, text, reply, timeout=10):
         board.write(text)
@@ -12,7 +14,7 @@ def test_ccid_stream(dut, peers):
         device.write("metadata")
         result = device.expect(r"METADATA ok=1 before=(\d+) after=(\d+)\r\n", timeout=30)
         assert result.group(1) == result.group(2)
-        for capacity, removable in ((64, 1), (271, 0), (320, 1), (1024, 0)):
+        for capacity, removable in ((64 + shift, 1), (271 + shift, 0), (320 + shift, 1), (1024 + shift, 0)):
             command(device, f"start {capacity} {removable}", "STARTED 1", 30)
             command(dut, "start", "HOST_READY 1", 30)
             opened = set()

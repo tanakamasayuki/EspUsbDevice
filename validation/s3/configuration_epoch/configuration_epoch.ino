@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
 usb_host_client_handle_t client=nullptr;usb_device_handle_t handle=nullptr;
 usb_transfer_t *control=nullptr,*input=nullptr,*output=nullptr;
 std::atomic<bool> running{false},exited{true},allFree{false},done{true};
@@ -38,7 +39,7 @@ bool configurationDone() {
   return ok && claimed;
 }
 bool oldRead() {
-  input->device_handle=handle;input->bEndpointAddress=in;input->num_bytes=64;input->callback=[](usb_transfer_t *){oldDone=true;};
+  input->device_handle=handle;input->bEndpointAddress=in;input->num_bytes=PROBE_BULK_MPS;input->callback=[](usb_transfer_t *){oldDone=true;};
   oldDone=false;if(usb_host_transfer_submit(input)!=ESP_OK){oldDone=true;return false;}
   uint32_t until=millis()+3000;while(!oldDone.load() && int32_t(until-millis())>0)events();
   if(!oldDone.load())return false;
@@ -47,7 +48,7 @@ bool oldRead() {
   return ok;
 }
 bool exchange() {
-  if(!done.load())return false;input->device_handle=handle;input->bEndpointAddress=in;input->num_bytes=64;input->callback=complete;
+  if(!done.load())return false;input->device_handle=handle;input->bEndpointAddress=in;input->num_bytes=PROBE_BULK_MPS;input->callback=complete;
   done=false;if(usb_host_transfer_submit(input)!=ESP_OK){done=true;return false;}
   bool ok=wait() && input->status==USB_TRANSFER_STATUS_COMPLETED && input->actual_num_bytes==64;
   for(unsigned j=0;ok && j<64;++j)ok &= input->data_buffer[j]==uint8_t(j*37+13);
@@ -83,7 +84,7 @@ void loop() {
     ok &= xTaskCreate(daemon,"configuration-epoch",4096,nullptr,5,nullptr)==pdPASS;
     usb_host_client_config_t c={};c.max_num_event_msg=8;c.async.client_event_callback=event;
     ok &= usb_host_client_register(&c,&client)==ESP_OK;
-    ok &= usb_host_transfer_alloc(8,0,&control)==ESP_OK && usb_host_transfer_alloc(64,0,&input)==ESP_OK && usb_host_transfer_alloc(64,0,&output)==ESP_OK;
+    ok &= usb_host_transfer_alloc(8,0,&control)==ESP_OK && usb_host_transfer_alloc(PROBE_BULK_MPS,0,&input)==ESP_OK && usb_host_transfer_alloc(64,0,&output)==ESP_OK;
     uint32_t until=millis()+10000;while(ok && !claimed && int32_t(until-millis())>0)events();
     Serial.printf("HOST_READY %u\r\n",unsigned(ok && claimed));
   } else if(s=="configure")Serial.printf("CONFIG_SUBMITTED %u\r\n",unsigned(configureAsync()));

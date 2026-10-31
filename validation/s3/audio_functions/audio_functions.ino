@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
+// 24 kHz stereo 16-bit = 96 B/ms; HS splits it into 8 microframe packets per URB.
+constexpr unsigned PACKETS=PROBE_BULK_MPS==512 ? 8:1,PAYLOAD=96/PACKETS,MPS=PAYLOAD+4;
 usb_host_client_handle_t client=nullptr;
 usb_device_handle_t handle=nullptr;
 std::atomic<bool> running{false},exited{true},allFree{false};
@@ -21,7 +24,8 @@ void event(const usb_host_client_event_msg_t *e,void *) {
   if(e->event!=USB_HOST_CLIENT_EVENT_NEW_DEV || handle)return;
   if(usb_host_device_open(client,e->new_dev.address,&handle)!=ESP_OK)return;
   const usb_config_desc_t *cfg=nullptr;if(usb_host_get_active_config_descriptor(handle,&cfg)!=ESP_OK)return;
-  unsigned functions=0,itf=0,alt=0;bool as=false;parsed=true;
+  unsigned functions=0,itf=0,alt=0;bool as=false;usb_device_info_t info;
+  parsed=usb_host_device_info(handle,&info)==ESP_OK && (info.speed==USB_SPEED_HIGH)==(PACKETS==8);
   const auto *d=reinterpret_cast<const uint8_t *>(cfg);
   for(size_t n=9;n+2<=cfg->wTotalLength && d[n]>=2 && d[n]<=cfg->wTotalLength-n;n+=d[n]) {
     const auto *p=d+n;
@@ -34,7 +38,7 @@ void event(const usb_host_client_event_msg_t *e,void *) {
     if(p[1]==5 && p[0]>=7) {
       const unsigned dir=(p[2]&128) ? 1:0;auto &s=streams[functions-1][dir];
       s.itf=itf;s.ep=p[2];s.packet=p[4]|unsigned(p[5])<<8;
-      parsed &= s.packet==100 && (p[3]&3)==1;
+      parsed &= s.packet==MPS && (p[3]&3)==1;
     }
   }
   parsed &= functions==4;
@@ -54,13 +58,17 @@ bool submit(usb_transfer_t *t) {
   pending[i]=false;return false;
 }
 void completed(usb_transfer_t *t) {
-  const unsigned i=t==input ? 0:1;pending[i]=false;const auto &p=t->isoc_packet_desc[0];
-  if(t->status!=USB_TRANSFER_STATUS_COMPLETED || p.status!=USB_TRANSFER_STATUS_COMPLETED)++lost;
-  else if(!i) {
-    if(p.actual_num_bytes && p.actual_num_bytes!=96)++bad;
-    received+=p.actual_num_bytes;
-    for(unsigned n=0;n<p.actual_num_bytes;++n){if(t->data_buffer[n]!=0 && t->data_buffer[n]!=0x50+active)++bad;if(t->data_buffer[n]==0x50+active)++filled;}
-  } else sent+=p.actual_num_bytes;
+  const unsigned i=t==input ? 0:1;pending[i]=false;
+  if(t->status!=USB_TRANSFER_STATUS_COMPLETED)++lost;
+  else for(unsigned k=0;k<PACKETS;++k) {
+    const auto &p=t->isoc_packet_desc[k];const uint8_t *d=t->data_buffer+k*p.num_bytes;
+    if(p.status!=USB_TRANSFER_STATUS_COMPLETED)++lost;
+    else if(!i) {
+      if(p.actual_num_bytes && p.actual_num_bytes!=PAYLOAD)++bad;
+      received+=p.actual_num_bytes;
+      for(unsigned n=0;n<p.actual_num_bytes;++n){if(d[n]!=0 && d[n]!=0x50+active)++bad;if(d[n]==0x50+active)++filled;}
+    } else sent+=p.actual_num_bytes;
+  }
   if(streaming && !submit(t))++bad;
 }
 bool pauseStreams() {
@@ -81,7 +89,8 @@ bool exchange(unsigned f) {
   received=sent=filled=bad=lost=0;
   for(unsigned i=0;i<2;++i) {
     auto *t=i ? output:input;t->device_handle=handle;t->callback=completed;t->bEndpointAddress=streams[f][i ? 0:1].ep;
-    t->num_bytes=i ? 96:100;t->isoc_packet_desc[0].num_bytes=t->num_bytes;
+    for(unsigned k=0;k<PACKETS;++k)t->isoc_packet_desc[k].num_bytes=i ? PAYLOAD:MPS;
+    t->num_bytes=PACKETS*(i ? PAYLOAD:MPS);
     if(i)memset(t->data_buffer,0x50+f,t->num_bytes);
   }
   streaming=true;ok &= submit(input) && submit(output);
@@ -114,7 +123,7 @@ void loop() {
     ok &= xTaskCreate(daemon,"four-audio",4096,nullptr,5,nullptr)==pdPASS;
     usb_host_client_config_t c={};c.max_num_event_msg=8;c.async.client_event_callback=event;
     ok &= usb_host_client_register(&c,&client)==ESP_OK;
-    ok &= usb_host_transfer_alloc(64,0,&control)==ESP_OK && usb_host_transfer_alloc(256,1,&input)==ESP_OK && usb_host_transfer_alloc(256,1,&output)==ESP_OK;
+    ok &= usb_host_transfer_alloc(64,0,&control)==ESP_OK && usb_host_transfer_alloc(256,PACKETS,&input)==ESP_OK && usb_host_transfer_alloc(256,PACKETS,&output)==ESP_OK;
     const uint32_t until=millis()+10000;while(ok && !handle && int32_t(until-millis())>0)events();
     Serial.printf("HOST_READY %u\r\n",unsigned(ok && handle && parsed));
   } else if(s.startsWith("run ")) {

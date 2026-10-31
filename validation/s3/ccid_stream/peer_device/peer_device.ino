@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EspUsbDevice.h>
 #include <esp_heap_caps.h>
+#include "../../common/probe_link.h"
 EspUsbDevice device;
 EspUsbDeviceCcid first(device),second(device);
 EspUsbDeviceCcid *reader[2]={&first,&second};
@@ -12,12 +13,14 @@ bool metadata() {
     ok &= card.configure(cfg)==ESP_OK;
     auto invalid=cfg;invalid.messageBytes=63;ok &= card.configure(invalid)==ESP_ERR_INVALID_SIZE && card.configuration().messageBytes==capacity;
     EspUsbDeviceConfig identity;identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
+    // A message must hold one bulk packet; on HS that is 512, refused at begin().
+    if(capacity<PROBE_BULK_MPS){ok &= !local.begin(identity) && local.lastError()==ESP_ERR_INVALID_SIZE && !card.messageCapacity() && local.end()==ESP_OK;continue;}
     ok &= local.begin(identity) && card.messageCapacity()==capacity;
     ok &= card.configure(cfg)==ESP_ERR_INVALID_STATE && card.onApdu(nullptr)==ESP_ERR_INVALID_STATE;
     ok &= local.end()==ESP_OK && !card.messageCapacity();
   }
   {
-    EspUsbDevice local;EspUsbDeviceCcid card(local);EspUsbCcidConfig cfg;cfg.removable=false;cfg.messageBytes=64;
+    EspUsbDevice local;EspUsbDeviceCcid card(local);EspUsbCcidConfig cfg;cfg.removable=false;cfg.messageBytes=PROBE_BULK_MPS;
     ok &= card.configure(cfg)==ESP_OK;EspUsbDeviceConfig identity;identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
     ok &= !local.begin(identity) && local.lastError()==ESP_ERR_INVALID_STATE && local.end()==ESP_OK;
     ok &= card.insertCard(atrValue,sizeof(atrValue)) && local.begin(identity);

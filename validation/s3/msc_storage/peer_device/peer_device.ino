@@ -3,6 +3,7 @@
 #include <esp_heap_caps.h>
 #include <atomic>
 #include <algorithm>
+#include "../../common/probe_link.h"
 EspUsbDevice device;
 EspUsbDeviceMsc disk(device);
 uint8_t storage[32 * 512];
@@ -40,14 +41,14 @@ bool metadata() {
     EspUsbDevice local; EspUsbDeviceMsc function(local);
     function.onRead([](uint32_t, uint32_t, void *, uint32_t n) { return int32_t(n); });
     ok &= function.begin(32, 512);
-    EspUsbMscConfig config; config.transferBytes = 64; config.name = "ストレージ";
+    EspUsbMscConfig config; config.transferBytes = PROBE_BULK_MPS; config.name = "ストレージ";
     ok &= function.configure(config) == ESP_OK;
     auto invalid = config; invalid.transferBytes = 63;
-    ok &= function.configure(invalid) == ESP_ERR_INVALID_SIZE && function.configuration().transferBytes == 64;
+    ok &= function.configure(invalid) == ESP_ERR_INVALID_SIZE && function.configuration().transferBytes == PROBE_BULK_MPS;
     invalid = config; invalid.transferBuffer = external + 1;
     ok &= function.configure(invalid) == ESP_ERR_INVALID_ARG;
     EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
-    ok &= local.begin(identity) && function.transferCapacity() == 64;
+    ok &= local.begin(identity) && function.transferCapacity() == PROBE_BULK_MPS;
     ok &= function.configure(config) == ESP_ERR_INVALID_STATE && !function.begin(64, 512) && function.onRead(nullptr) == ESP_ERR_INVALID_STATE;
     ok &= function.vendorID("changed") == ESP_ERR_INVALID_STATE && function.onStartStop(nullptr) == ESP_ERR_INVALID_STATE;
     ok &= local.end() == ESP_OK && !function.transferCapacity();

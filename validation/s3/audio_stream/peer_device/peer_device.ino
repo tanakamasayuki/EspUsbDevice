@@ -2,6 +2,7 @@
 #include <EspUsbDevice.h>
 #include <algorithm>
 #include "../../../../src/internal/EspUsbDwc2Hardware.h"
+#include "../../../../src/internal/EspUsbRuntime.h"
 EspUsbDevice device;
 EspUsbAudioFunction *audio = nullptr;
 EspUsbAudioPlaybackStream *playback = nullptr;
@@ -106,7 +107,7 @@ void loop() {
     bool ok = capture && capture->clearBuffer() && capture->write(data,sizeof(data)) > 0;
     Serial.printf("POISONED %u\r\n",unsigned(ok));
   } else if (command == "iso_diag") {
-    const auto *r = espusb_dwc2_registers(0);
+    const auto *r = espusb_dwc2_registers(espusb::internal::usbRuntimeRhport());  // port 0 is the FS controller on the P4
     Serial.printf("ISO_DIAG sts=%08x mask=%08x outctl=%08x outsize=%08x outint=%08x\r\n",unsigned(r->gintsts),unsigned(r->gintmsk),unsigned(r->epout[1].ctl),unsigned(r->epout[1].tsiz),unsigned(r->epout[1].intr));
   } else if (command == "clock") {
     Serial.printf("CLOCK %u\r\n", unsigned(audio->currentSampleRate()));

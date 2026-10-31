@@ -1,8 +1,12 @@
 """A fresh S3 pair probe using only the plugin's dut/peers fixtures."""
 
 
-def test_vendor_roundtrip(dut, peers):
+def test_vendor_roundtrip(dut, peers, request):
     device = peers["device"]
+    mps = 512 if "_hs_" in request.node.name else 64  # bulk MPS of the link
+    ready = f"HOST_READY mps_in={mps} mps_out={mps}\r\n"
+    hold = 2 * mps + 1  # direct TX size of "hold"
+    lengths = (1, mps - 1, mps, mps + 1, 2 * mps - 1, 2 * mps, 2 * mps + 1)
     try:
         # Reconfigure the same binary, including small -> large -> small.
         for rx, tx, transfer, automatic in ((1, 1, 1, 1), (64, 64, 64, 1), (2048, 4096, 256, 1), (97, 131, 128, 1),
@@ -19,7 +23,7 @@ def test_vendor_roundtrip(dut, peers):
             device.write("start")
             device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
             dut.write("start")
-            dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+            dut.expect_exact(ready, timeout=30)
             device.write("capacities")
             device.expect_exact(f"CAPACITIES {rx} {tx}\r\n", timeout=5)
             device.write("start_again")
@@ -34,8 +38,8 @@ def test_vendor_roundtrip(dut, peers):
                 dut.write("receive 1")
                 dut.expect_exact("READ_OK 1\r\n", timeout=10)
 
-            cases = [(n, 129, not automatic) for n in (1, 63, 64, 65, 127, 128, 129)]
-            cases += [(n, chunk, True) for n in (64, 129) for chunk in (1, 17)]
+            cases = [(n, hold, not automatic) for n in lengths]
+            cases += [(n, chunk, True) for n in (mps, hold) for chunk in (1, 17)]
             for length, chunk, flush in cases:
                 device.write(f"expect {length} {chunk} {int(flush)}")
                 device.expect_exact(f"ARMED {length}\r\n", timeout=5)
@@ -63,14 +67,14 @@ def test_vendor_roundtrip(dut, peers):
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
         dut.write("start")
-        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        dut.expect_exact(ready, timeout=30)
         device.write("direct_invalid")
         assert int(device.expect(r"DIRECT_INVALID 1 max=(\d+)\r\n", timeout=5).group(1)) >= 131072
         device.write("callback_mutation")
         device.expect_exact("CALLBACK_MUTATION_REJECTED 1\r\n", timeout=5)
-        for length in (1, 63, 64, 65, 127, 128, 129):
+        for length in lengths:
             for terminate in (0, 1):
-                device.write(f"expect {length} 129 0 {terminate}")
+                device.write(f"expect {length} {hold} 0 {terminate}")
                 device.expect_exact(f"ARMED {length}\r\n", timeout=5)
                 dut.write(f"exchange {length} {terminate}")
                 dut.expect_exact(f"ROUNDTRIP_OK {length}\r\n", timeout=10)
@@ -81,15 +85,15 @@ def test_vendor_roundtrip(dut, peers):
         dut.write("stop")
         dut.expect_exact("STOPPED\r\n", timeout=30)
         dut.write("start")
-        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        dut.expect_exact(ready, timeout=30)
         device.write("direct_status")
-        device.expect_exact("DIRECT_STATUS 15 status=1 requested=129 actual=0 known=0 pointer=1\r\n", timeout=5)
+        device.expect_exact(f"DIRECT_STATUS 15 status=1 requested={hold} actual=0 known=0 pointer=1\r\n", timeout=5)
         device.write("hold")
         device.expect_exact("HELD 1 busy=1\r\n", timeout=5)
         device.write("stop")
         device.expect_exact("STOPPED\r\n", timeout=30)
         device.write("direct_status")
-        device.expect_exact("DIRECT_STATUS 16 status=2 requested=129 actual=0 known=0 pointer=1\r\n", timeout=5)
+        device.expect_exact(f"DIRECT_STATUS 16 status=2 requested={hold} actual=0 known=0 pointer=1\r\n", timeout=5)
         device.write("end_status")
         device.expect_exact("END_STATUS 16 error=0\r\n", timeout=5)
 
@@ -100,10 +104,10 @@ def test_vendor_roundtrip(dut, peers):
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
         dut.write("start 1")
-        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        dut.expect_exact(ready, timeout=30)
         device.write("second_capacities")
-        device.expect_exact("SECOND_CAPACITIES 64 0 512 256\r\n", timeout=5)
-        for length in (1, 64, 129):
+        device.expect_exact(f"SECOND_CAPACITIES 64 0 512 {4 * mps}\r\n", timeout=5)
+        for length in (1, mps, hold):
             device.write(f"expect {length} 17 0")
             device.expect_exact(f"ARMED {length}\r\n", timeout=5)
             dut.write(f"exchange {length}")
@@ -118,11 +122,11 @@ def test_vendor_roundtrip(dut, peers):
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
         dut.write("start 1")
-        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        dut.expect_exact(ready, timeout=30)
         device.write("second_capacities")
-        device.expect_exact("SECOND_CAPACITIES 64 0 0 256\r\n", timeout=5)
-        for length in (1, 64, 129):
-            device.write(f"expect {length} 129 0")
+        device.expect_exact(f"SECOND_CAPACITIES 64 0 0 {4 * mps}\r\n", timeout=5)
+        for length in (1, mps, hold):
+            device.write(f"expect {length} {hold} 0")
             device.expect_exact(f"ARMED {length}\r\n", timeout=5)
             dut.write(f"exchange {length}")
             dut.expect_exact(f"ROUNDTRIP_OK {length}\r\n", timeout=10)
@@ -135,15 +139,15 @@ def test_vendor_roundtrip(dut, peers):
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
         dut.write("start")
-        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        dut.expect_exact(ready, timeout=30)
         device.write("capacities")
         device.expect_exact("CAPACITIES 0 0\r\n", timeout=5)
         device.write("rx_invalid")
         assert int(device.expect(r"RX_INVALID 1 max=(\d+)\r\n", timeout=5).group(1)) >= 131072
         count = 0
-        for capacity, length, zlp in ((64, 0, 1), (64, 1, 0), (64, 63, 0), (64, 64, 0),
-                                      (128, 65, 0), (128, 127, 0), (128, 128, 0),
-                                      (192, 129, 0), (192, 64, 1), (192, 128, 1)):
+        for capacity, length, zlp in ((mps, 0, 1), (mps, 1, 0), (mps, mps - 1, 0), (mps, mps, 0),
+                                      (2 * mps, mps + 1, 0), (2 * mps, 2 * mps - 1, 0), (2 * mps, 2 * mps, 0),
+                                      (3 * mps, 2 * mps + 1, 0), (3 * mps, mps, 1), (3 * mps, 2 * mps, 1)):
             device.write(f"rx_arm {capacity} {length}")
             device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
             device.write("rx_busy")
@@ -155,10 +159,10 @@ def test_vendor_roundtrip(dut, peers):
             device.expect_exact(f"RX_RESULT {count} status=0 requested={capacity} actual={length} known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
 
         # A full packet alone does not finish a larger posted receive.
-        device.write("rx_arm 192 64")
+        device.write(f"rx_arm {3 * mps} {mps}")
         device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
-        dut.write("send 64 0")
-        dut.expect_exact("SENT 64 zlp=0 ok=1\r\n", timeout=10)
+        dut.write(f"send {mps} 0")
+        dut.expect_exact(f"SENT {mps} zlp=0 ok=1\r\n", timeout=10)
         device.write("rx_count")
         device.expect_exact(f"RX_COUNT {count}\r\n", timeout=5)
         device.write("rx_busy")
@@ -167,11 +171,11 @@ def test_vendor_roundtrip(dut, peers):
         dut.expect_exact("SENT 0 zlp=1 ok=1\r\n", timeout=10)
         count += 1
         device.write("rx_result")
-        device.expect_exact(f"RX_RESULT {count} status=0 requested=192 actual=64 known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
+        device.expect_exact(f"RX_RESULT {count} status=0 requested={3 * mps} actual={mps} known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
 
         device.write("rx_chain")
         device.expect_exact("RX_CHAIN_ARMED 1\r\n", timeout=5)
-        for length in (1, 63):
+        for length in (1, mps - 1):
             dut.write(f"send {length} 0")
             dut.expect_exact(f"SENT {length} zlp=0 ok=1\r\n", timeout=10)
         device.write("rx_chain_result")
@@ -179,21 +183,21 @@ def test_vendor_roundtrip(dut, peers):
         count += 2
 
         for status in (1, 2):
-            device.write("rx_arm 192 64")
+            device.write(f"rx_arm {3 * mps} {mps}")
             device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
-            dut.write("send 64 0")
-            dut.expect_exact("SENT 64 zlp=0 ok=1\r\n", timeout=10)
+            dut.write(f"send {mps} 0")
+            dut.expect_exact(f"SENT {mps} zlp=0 ok=1\r\n", timeout=10)
             if status == 1:
                 dut.write("stop")
                 dut.expect_exact("STOPPED\r\n", timeout=30)
                 dut.write("start")
-                dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+                dut.expect_exact(ready, timeout=30)
             else:
                 device.write("stop")
                 device.expect_exact("STOPPED\r\n", timeout=30)
             count += 1
             device.write("rx_result")
-            device.expect_exact(f"RX_RESULT {count} status={status} requested=192 actual=0 known=0 pointer=1 guards=1 payload=1\r\n", timeout=5)
+            device.expect_exact(f"RX_RESULT {count} status={status} requested={3 * mps} actual=0 known=0 pointer=1 guards=1 payload=1\r\n", timeout=5)
         dut.write("stop")
         dut.expect_exact("STOPPED\r\n", timeout=30)
         device.write("cycles")
@@ -203,13 +207,13 @@ def test_vendor_roundtrip(dut, peers):
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
         dut.write("start")
-        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+        dut.expect_exact(ready, timeout=30)
         for cycle in range(20):
-            device.write("rx_arm 192 64")
+            device.write(f"rx_arm {3 * mps} {mps}")
             device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
             if cycle % 2:
-                dut.write("send 64 0")
-                dut.expect_exact("SENT 64 zlp=0 ok=1\r\n", timeout=10)
+                dut.write(f"send {mps} 0")
+                dut.expect_exact(f"SENT {mps} zlp=0 ok=1\r\n", timeout=10)
             device.write("hold")
             device.expect_exact("HELD 1 busy=1\r\n", timeout=5)
             if cycle % 2:
@@ -220,31 +224,31 @@ def test_vendor_roundtrip(dut, peers):
             device.write(f"tx_wait {17 + 2 * cycle}")
             device.expect_exact(f"TX_WAIT {17 + 2 * cycle}\r\n", timeout=5)
             device.write("direct_status")
-            device.expect_exact(f"DIRECT_STATUS {17 + 2 * cycle} status=4 requested=129 actual=0 known=0 pointer=1\r\n", timeout=5)
+            device.expect_exact(f"DIRECT_STATUS {17 + 2 * cycle} status=4 requested={hold} actual=0 known=0 pointer=1\r\n", timeout=5)
             device.write("rx_result")
-            device.expect_exact(f"RX_RESULT {16 + 2 * cycle} status=4 requested=192 actual=0 known=0 pointer=1 guards=1 payload=1\r\n", timeout=5)
+            device.expect_exact(f"RX_RESULT {16 + 2 * cycle} status=4 requested={3 * mps} actual=0 known=0 pointer=1 guards=1 payload=1\r\n", timeout=5)
             device.write("cancel_empty")
             device.expect_exact("CANCEL_EMPTY tx=259 rx=259\r\n", timeout=5)
 
             # Re-use each endpoint without reset/reconfiguration, preserving PID.
-            device.write("rx_arm 64 63")
+            device.write(f"rx_arm {mps} {mps - 1}")
             device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
             device.write("cancel_stale")
             device.expect_exact("CANCEL_STALE tx=259 rx=259\r\n", timeout=5)
-            dut.write("send 63 0")
-            dut.expect_exact("SENT 63 zlp=0 ok=1\r\n", timeout=10)
+            dut.write(f"send {mps - 1} 0")
+            dut.expect_exact(f"SENT {mps - 1} zlp=0 ok=1\r\n", timeout=10)
             device.write("rx_result")
-            device.expect_exact(f"RX_RESULT {17 + 2 * cycle} status=0 requested=64 actual=63 known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
-            device.write("tx_post 63")
+            device.expect_exact(f"RX_RESULT {17 + 2 * cycle} status=0 requested={mps} actual={mps - 1} known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
+            device.write(f"tx_post {mps - 1}")
             device.expect_exact("TX_POSTED 1 error=0\r\n", timeout=5)
             device.write("cancel_stale")
             device.expect_exact("CANCEL_STALE tx=259 rx=259\r\n", timeout=5)
-            dut.write("receive 63")
-            dut.expect_exact("READ_OK 63\r\n", timeout=10)
+            dut.write(f"receive {mps - 1}")
+            dut.expect_exact(f"READ_OK {mps - 1}\r\n", timeout=10)
             device.write(f"tx_wait {18 + 2 * cycle}")
             device.expect_exact(f"TX_WAIT {18 + 2 * cycle}\r\n", timeout=5)
             device.write("direct_status")
-            device.expect_exact(f"DIRECT_STATUS {18 + 2 * cycle} status=0 requested=63 actual=63 known=1 pointer=1\r\n", timeout=5)
+            device.expect_exact(f"DIRECT_STATUS {18 + 2 * cycle} status=0 requested={mps - 1} actual={mps - 1} known=1 pointer=1\r\n", timeout=5)
         for board in (dut, device):
             board.write("stop")
             board.expect_exact("STOPPED\r\n", timeout=30)
@@ -253,8 +257,8 @@ def test_vendor_roundtrip(dut, peers):
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
         dut.write("start")
-        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
-        for length in (1, 63, 64, 65, 127, 128, 129):
+        dut.expect_exact(ready, timeout=30)
+        for length in lengths:
             device.write(f"copy_post {length}")
             device.expect_exact(f"COPY_POSTED {length}\r\n", timeout=5)
             dut.write(f"receive {length} 1")

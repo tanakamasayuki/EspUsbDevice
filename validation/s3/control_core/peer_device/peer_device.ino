@@ -9,7 +9,9 @@
 #include "../../../../src/internal/EspUsbDwc2Timing.h"
 #include "../../../../src/internal/EspUsbDwc2Platform.h"
 #include "soc/usb_dwc_struct.h"
-#include "../../../../src/internal/EspUsbDwc2Registers.h"
+#include "soc/soc_caps.h"
+#include "../../../../src/internal/EspUsbDwc2Hardware.h"
+#include "../../common/probe_link.h"
 static_assert(offsetof(EspUsbDwc2Registers, gotgctl)==offsetof(usb_dwc_dev_t, gotgctl_reg));
 static_assert(offsetof(EspUsbDwc2Registers, dcfg)==offsetof(usb_dwc_dev_t, dcfg_reg));
 static_assert(offsetof(EspUsbDwc2Registers, epin)==offsetof(usb_dwc_dev_t, diepctl0_reg));
@@ -24,7 +26,9 @@ extern "C" esp_err_t espusb_dwc2_allocate_interrupt(int source,int flags,intr_ha
 }
 // S3 has no cache on internal DMA RAM. Replace its no-op backend hooks to
 // verify synchronization failure cleanup without adding product test switches.
+// The P4 hooks are the real (strong) cache backends, so this check is S3-only.
 unsigned cacheFailure=0,cacheClean=0,cacheInvalidate=0,cacheBad=0;
+#if !SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
 extern "C" bool espusb_controller_dcache_clean(const void *address,uint32_t bytes) {
   if(cacheFailure){++cacheClean;if((uintptr_t(address)&63) || bytes!=64 || espusb_dwc2_runtime_bytes())++cacheBad;}
   return cacheFailure!=1;
@@ -33,10 +37,11 @@ extern "C" bool espusb_controller_dcache_invalidate(const void *address,uint32_t
   if(cacheFailure){++cacheInvalidate;if((uintptr_t(address)&63) || bytes!=64 || espusb_dwc2_runtime_bytes())++cacheBad;}
   return cacheFailure!=2;
 }
+#endif
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 uint8_t controlIn[129], controlOut[129];
-alignas(64) uint8_t direct[64];
+alignas(64) uint8_t direct[PROBE_BULK_MPS];
 std::atomic<unsigned> inputs{0},outputs{0},empty{0},bad{0},successes{0},resets{0},stops{0};
 uint64_t ticket=0;
 void noop(void *) {}
@@ -81,6 +86,9 @@ bool selectedStorage() {
   }
   {
     EspUsbDevice local;EspUsbDeviceCcid first(local),second(local);
+    // CCID requires messageBytes >= bulk MPS; the 320-byte default is FS-sized.
+    EspUsbCcidConfig message;if(message.messageBytes<PROBE_BULK_MPS)message.messageBytes=PROBE_BULK_MPS;
+    ok &= first.configure(message)==ESP_OK && second.configure(message)==ESP_OK;
     // Sparse OUT addresses 1/3; IN 1/2/3/4. Add both EP0 directions.
     ok &= local.begin() && espusb_dwc2_runtime_transfers()==8 && espusb_dwc2_runtime_bytes()>paired;
     sparse=espusb_dwc2_runtime_bytes();
@@ -91,6 +99,7 @@ bool selectedStorage() {
 }
 bool cacheFailures() {
   bool ok=true;
+#if !SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
   for(unsigned failure:{1u,2u}) {
     cacheFailure=failure;cacheClean=cacheInvalidate=cacheBad=0;
     ok &= !device.begin() && device.lastError()==ESP_FAIL && !espusb_dwc2_runtime_bytes() && device.end()==ESP_OK;
@@ -99,6 +108,7 @@ bool cacheFailures() {
     ok &= device.begin() && espusb_dwc2_runtime_transfers()==4 && device.end()==ESP_OK && !espusb_dwc2_runtime_bytes();
     delay(10);
   }
+#endif
   return ok;
 }
 bool vbusPolicy() {
@@ -106,9 +116,10 @@ bool vbusPolicy() {
   for(bool sensing:{false,true,false}) {
     EspUsbDeviceConfig config;config.vbusSensing=sensing;
     ok &= device.begin(config);
-    usb_dwc_gotgctl_reg_t status={};status.val=USB_DWC.gotgctl_reg.val;
-    ok &= bool(status.bvalidoven)==!sensing;
-    if(!sensing)ok &= bool(status.bvalidovval);
+    const auto *regs=espusb_dwc2_registers(espusb::internal::usbRuntimeRhport());
+    const uint32_t status=regs ? regs->gotgctl:0;ok &= regs!=nullptr;
+    ok &= bool(status&GOTGCTL_BVALOEN)==!sensing;
+    if(!sensing)ok &= bool(status&GOTGCTL_BVALOVAL);
     ok &= device.end()==ESP_OK;
     delay(10);
   }
@@ -257,8 +268,8 @@ void setup() {
     return false;
   });
   vendor.onDirectTxComplete([](const EspUsbTransferResult &r){
-    if(r.id!=ticket || r.buffer!=direct || r.requestedBytes!=64)++bad;
-    if(r.status==EspUsbTransferStatus::Success){++successes;if(!r.actualBytesKnown || r.actualBytes!=64)++bad;}
+    if(r.id!=ticket || r.buffer!=direct || r.requestedBytes!=sizeof(direct))++bad;
+    if(r.status==EspUsbTransferStatus::Success){++successes;if(!r.actualBytesKnown || r.actualBytes!=sizeof(direct))++bad;}
     else if(r.status==EspUsbTransferStatus::BusReset)++resets;
     else if(r.status==EspUsbTransferStatus::Stopped)++stops;
     else ++bad;
@@ -276,7 +287,7 @@ void loop() {
     bool ok=device.begin(cfg) && espusb_device_queue_capacity()==cfg.eventQueueDepth;
     Serial.printf("STARTED %u\r\n",unsigned(ok));
   } else if(c=="queue") {
-    auto r=vendor.writeDirect(direct,64,EspUsbTransferTermination::EndWithShortPacket);ticket=r.id;
+    auto r=vendor.writeDirect(direct,sizeof(direct),EspUsbTransferTermination::EndWithShortPacket);ticket=r.id;
     Serial.printf("QUEUED %u\r\n",unsigned(bool(r)));
   } else if(c=="overflow") {
     const unsigned before=resets.load();

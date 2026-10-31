@@ -1,8 +1,10 @@
 """Exercise borrowed transfers across 16-bit boundaries with bounded DMA storage."""
 
 
-def test_transfer_limits(dut, peers):
+def test_transfer_limits(dut, peers, request):
     device = peers["device"]
+    mps = 512 if "_hs_" in request.node.name else 64
+    partial = 131072 - mps
     try:
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
@@ -27,7 +29,7 @@ def test_transfer_limits(dut, peers):
             device.expect_exact("POSTED 1 error=0\r\n", timeout=5)
             dut.write(f"send {length} 0")
             dut.expect_exact(f"TRANSFER length={length} actual={length} ok=1\r\n", timeout=15)
-            if length % 64 == 0 and length < 131072:
+            if length % mps == 0 and length < 131072:
                 # Full packets below the posted capacity need a separate ZLP.
                 # Use the existing Host API through a dedicated command below.
                 dut.write("zlp")
@@ -36,23 +38,23 @@ def test_transfer_limits(dut, peers):
             device.write("result")
             device.expect_exact(f"RESULT count={count} ok=1 guards=1 payload=1\r\n", timeout=5)
         assert tx_limit >= 131072 and rx_limit >= 131072
-        # Keep the last FS packet outstanding. Even the largest uint16 hardware
+        # Keep the last packet outstanding. Even the largest uint16 hardware
         # arm must have completed more than 65535 bytes by this point. Reuse
         # each endpoint. Returning the moved DMA pointer must not lose the loan.
         for direction in ("tx", "rx"):
             device.write(f"{direction} 131072 0")
             device.expect_exact("POSTED 1 error=0\r\n", timeout=5)
             if direction == "tx":
-                dut.write("receive 131008 0 131072")
+                dut.write(f"receive {partial} 0 131072")
             else:
-                dut.write("send 131008 0")
-            dut.expect_exact("TRANSFER length=131008 actual=131008 ok=1\r\n", timeout=10)
+                dut.write(f"send {partial} 0")
+            dut.expect_exact(f"TRANSFER length={partial} actual={partial} ok=1\r\n", timeout=10)
             device.write(f"cancel {direction}")
             device.expect_exact("CANCELLED_REQUEST 0\r\n", timeout=5)
             count += 1
             device.write("result")
             device.expect_exact(f"RESULT count={count} ok=1 guards=1 payload=1\r\n", timeout=5)
-            device.write("tx 1 0" if direction == "tx" else "rx 64 63")
+            device.write("tx 1 0" if direction == "tx" else f"rx {mps} 63")
             device.expect_exact("POSTED 1 error=0\r\n", timeout=5)
             dut.write("receive 1 0" if direction == "tx" else "send 63 0")
             n = 1 if direction == "tx" else 63
@@ -65,8 +67,8 @@ def test_transfer_limits(dut, peers):
             for direction in ("tx", "rx"):
                 device.write(f"{direction} 131072 0")
                 device.expect_exact("POSTED 1 error=0\r\n", timeout=5)
-                dut.write("receive 131008 0 131072" if direction == "tx" else "send 131008 0")
-                dut.expect_exact("TRANSFER length=131008 actual=131008 ok=1\r\n", timeout=10)
+                dut.write(f"receive {partial} 0 131072" if direction == "tx" else f"send {partial} 0")
+                dut.expect_exact(f"TRANSFER length={partial} actual={partial} ok=1\r\n", timeout=10)
                 if boundary == "reset":
                     device.write("expect_reset")
                     device.expect_exact("RESET_EXPECTED\r\n", timeout=5)
@@ -87,7 +89,7 @@ def test_transfer_limits(dut, peers):
                     device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
                     dut.write("start")
                     dut.expect_exact("HOST_READY\r\n", timeout=30)
-                device.write("tx 1 0" if direction == "tx" else "rx 64 63")
+                device.write("tx 1 0" if direction == "tx" else f"rx {mps} 63")
                 device.expect_exact("POSTED 1 error=0\r\n", timeout=5)
                 dut.write("receive 1 0" if direction == "tx" else "send 63 0")
                 n = 1 if direction == "tx" else 63

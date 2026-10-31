@@ -2,6 +2,7 @@
 #include <EspUsbDevice.h>
 #include "esp_heap_caps.h"
 #include <atomic>
+#include "../../common/probe_link.h"
 #if defined(ESPUSB_CANCEL_FENCE_FAULT) || defined(ESPUSB_CANCEL_LIFECYCLE_FAULT)
 #include "../../../../src/internal/EspUsbDeviceBus.h"
 #include "../../../../src/internal/EspUsbDeviceEndpoint.h"
@@ -13,13 +14,13 @@ EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 EspUsbDeviceVendor *second = nullptr;
 bool started = false;
-uint8_t buffer[129];
+uint8_t buffer[2 * PROBE_BULK_MPS + 1];
 size_t expected = 0;
 size_t received = 0;
 size_t chunk = sizeof(buffer);
 bool explicitFlush = false;
 bool directMode = false, terminate = false, echoPending = false;
-alignas(64) uint8_t directBuffer[192];
+alignas(64) uint8_t directBuffer[3 * PROBE_BULK_MPS];
 EspUsbTransferResult directResult;
 std::atomic<unsigned> completions{0};
 std::atomic<unsigned> rejectedWorkerEnds{0};
@@ -27,13 +28,13 @@ unsigned echoCompletion = 0;
 bool callbackReceive = false;
 std::atomic<size_t> callbackRx{0}, callbackTx{0};
 uint8_t externalRx[99], externalTx[133];
-alignas(64) uint8_t postedStorage[384];
+alignas(64) uint8_t postedStorage[4 * PROBE_BULK_MPS + 128]; // 64-byte guards around up to 4 packets
 EspUsbTransferResult rxResult;
 std::atomic<unsigned> rxCompletions{0};
 unsigned rxTarget = 0;
 size_t rxExpectedBytes = 0, rxCapacity = 0;
 bool rxPending = false;
-alignas(64) uint8_t chainStorage[192];
+alignas(64) uint8_t chainStorage[PROBE_BULK_MPS + 128];
 std::atomic<bool> chainRequested{false}, chainSubmitted{false}, chainFirstValid{false};
 std::atomic<bool> chainAfterCancel{false};
 unsigned chainTarget = 0;
@@ -129,7 +130,7 @@ void setup() {
           ? result.status == EspUsbTransferStatus::Cancelled && !result.actualBytesKnown
           : result.status == EspUsbTransferStatus::Success && result.actualBytesKnown && result.actualBytes == 1 && postedStorage[64] == 1;
       chainFirstValid.store(expected && result.buffer == postedStorage + 64);
-      chainSubmitted.store(bool(vendor.readDirect(chainStorage + 64, 64)));
+      chainSubmitted.store(bool(vendor.readDirect(chainStorage + 64, PROBE_BULK_MPS)));
     }
   });
 }
@@ -158,7 +159,7 @@ void loop() {
     } else if (command.startsWith("rx_arm ")) {
       unsigned capacity = 0, bytes = 0;
       sscanf(command.c_str(), "rx_arm %u %u", &capacity, &bytes);
-      if (rxPending || capacity > 256 || bytes > capacity) {
+      if (rxPending || capacity > 4 * PROBE_BULK_MPS || bytes > capacity) {
         Serial.println("INVALID_RX_COMMAND");
       } else {
         memset(postedStorage, 0xa5, sizeof(postedStorage));
@@ -176,20 +177,20 @@ void loop() {
       chainTarget = rxCompletions.load(std::memory_order_acquire) + 2;
       chainFirstValid.store(false); chainSubmitted.store(false); chainRequested.store(true);
       chainAfterCancel.store(false);
-      const auto result = vendor.readDirect(postedStorage + 64, 64);
+      const auto result = vendor.readDirect(postedStorage + 64, PROBE_BULK_MPS);
       Serial.printf("RX_CHAIN_ARMED %u\r\n", unsigned(bool(result)));
     } else if (command == "rx_chain_result") {
       const uint32_t deadline = millis() + 3000;
       while (rxCompletions.load(std::memory_order_acquire) < chainTarget && int32_t(deadline - millis()) > 0) delay(1);
       bool guards = true, payload = true;
       for (size_t i = 0; i < 64; ++i) guards &= postedStorage[i] == 0xa5 && chainStorage[i] == 0xa5;
-      for (size_t i = 128; i < sizeof(postedStorage); ++i) guards &= postedStorage[i] == 0xa5;
-      for (size_t i = 128; i < sizeof(chainStorage); ++i) guards &= chainStorage[i] == 0xa5;
-      for (size_t i = 0; i < 63; ++i) payload &= chainStorage[64 + i] == uint8_t(i * 37 + 63);
+      for (size_t i = 64 + PROBE_BULK_MPS; i < sizeof(postedStorage); ++i) guards &= postedStorage[i] == 0xa5;
+      for (size_t i = 64 + PROBE_BULK_MPS; i < sizeof(chainStorage); ++i) guards &= chainStorage[i] == 0xa5;
+      for (size_t i = 0; i < PROBE_BULK_MPS - 1; ++i) payload &= chainStorage[64 + i] == uint8_t(i * 37 + PROBE_BULK_MPS - 1);
       const bool result = rxCompletions.load(std::memory_order_acquire) == chainTarget &&
           chainFirstValid.load() && chainSubmitted.load() && guards && payload &&
           rxResult.status == EspUsbTransferStatus::Success && rxResult.actualBytesKnown &&
-          rxResult.buffer == chainStorage + 64 && rxResult.actualBytes == 63;
+          rxResult.buffer == chainStorage + 64 && rxResult.actualBytes == PROBE_BULK_MPS - 1;
       Serial.printf("RX_CHAIN_RESULT %u\r\n", unsigned(result));
     } else if (command == "cancel_both") {
       staleTxId = lastTxId; staleRxId = lastRxId;
@@ -213,7 +214,7 @@ void loop() {
       lastTxId = submission.id;
       Serial.printf("TX_POSTED %u error=%u\r\n", unsigned(bool(submission)), unsigned(submission.error));
     } else if (command == "rx_busy") {
-      const auto busy = vendor.readDirect(postedStorage + 64, 64);
+      const auto busy = vendor.readDirect(postedStorage + 64, PROBE_BULK_MPS);
       Serial.printf("RX_BUSY %u\r\n", unsigned(!busy && busy.error == EspUsbTransferError::Busy));
     } else if (command == "rx_count") {
       Serial.printf("RX_COUNT %u\r\n", rxCompletions.load(std::memory_order_acquire));
@@ -221,9 +222,11 @@ void loop() {
       const auto zero = vendor.readDirect(postedStorage + 64, 0);
       const auto length = vendor.readDirect(postedStorage + 64, 63);
       const auto alignment = vendor.readDirect(postedStorage + 65, 64);
-      const bool ok = !zero && zero.error == EspUsbTransferError::BadArgument &&
+      bool ok = !zero && zero.error == EspUsbTransferError::BadArgument &&
           !length && length.error == EspUsbTransferError::BadArgument &&
           !alignment && alignment.error == EspUsbTransferError::NotAligned;
+      // HS: a 64-byte multiple is still not a whole number of packets.
+      ok &= PROBE_BULK_MPS == 64 || vendor.readDirect(postedStorage + 64, 64).error == EspUsbTransferError::BadArgument;
       Serial.printf("RX_INVALID %u max=%u\r\n", unsigned(ok), unsigned(vendor.maxDirectReceive()));
     } else if (command == "rx_result") {
       const uint32_t deadline = millis() + 3000;
@@ -291,7 +294,7 @@ void loop() {
 #endif
     } else if (command == "copy_terminated") {
       EspUsbBulkStreamConfig config;
-      config.rxCapacity = 64; config.txCapacity = 256; config.transferBytes = 128;
+      config.rxCapacity = PROBE_BULK_MPS; config.txCapacity = 4 * PROBE_BULK_MPS; config.transferBytes = 2 * PROBE_BULK_MPS;
       config.streamTermination = EspUsbStreamTermination::EndWithShortPacket;
       const auto result = vendor.configure(config);
       auto invalid = config; invalid.streamTermination = static_cast<EspUsbStreamTermination>(255);
@@ -351,7 +354,7 @@ void loop() {
       if (!started && !second) {
         second = new EspUsbDeviceVendor(device);
         EspUsbVendorConfig config;
-        config.rxCapacity = 512; config.txCapacity = 256; config.transferBytes = 128;
+        config.rxCapacity = 512; config.txCapacity = 4 * PROBE_BULK_MPS; config.transferBytes = 2 * PROBE_BULK_MPS;
         if (second->configure(config) == ESP_OK) {
           directMode = false;
           Serial.println("SECOND_REGISTERED");
@@ -380,7 +383,7 @@ void loop() {
       Serial.println("DIRECT_MODE");
     } else if (command == "hold") {
       memset(directBuffer, 0x5a, sizeof(directBuffer));
-      const auto accepted = vendor.writeDirect(directBuffer, 129);
+      const auto accepted = vendor.writeDirect(directBuffer, 2 * PROBE_BULK_MPS + 1);
       lastTxId = accepted.id;
       const auto duplicate = vendor.writeDirect(directBuffer, 1);
       const bool busy = !duplicate && duplicate.error == EspUsbTransferError::Busy && duplicate.id == 0;

@@ -6,6 +6,7 @@ static_assert(std::is_base_of<Stream, EspUsbDeviceCdcSerial>::value);
 static_assert(!std::is_base_of<Stream, EspUsbDeviceVendor>::value);
 static_assert(!std::is_base_of<Print, EspUsbDeviceMidi>::value);
 #include <atomic>
+#include "../../common/probe_link.h"
 
 EspUsbDevice device;
 EspUsbDeviceCdcSerial serial0(device, "data");
@@ -15,7 +16,8 @@ EspUsbDeviceHidKeyboard *keyboard = nullptr;
 EspUsbDeviceBulkStream *channels[] = {&serial0, serial1, nullptr};
 uint8_t buffers[3][129];
 size_t wanted[3] = {}, received[3] = {}, sent[3] = {};
-alignas(64) uint8_t direct[384];
+// Borrowed RX capacity is a multiple of the bulk MPS; 64-byte guards each side.
+alignas(64) uint8_t direct[64 + 4 * PROBE_BULK_MPS + 64];
 EspUsbTransferResult rxResult, txResult;
 std::atomic<unsigned> rxDone{0}, txDone{0};
 unsigned rxTarget = 0, txTarget = 0;
@@ -169,7 +171,7 @@ void loop() {
         txTarget = txDone.load(std::memory_order_acquire) + 1;
         txPosted = false;
         memset(direct, 0xa5, sizeof(direct));
-        if (!serial0.readDirect(direct + 64, (length + 63) & ~size_t(63))) { Serial.println("RX_POST_FAILED"); return; }
+        if (!serial0.readDirect(direct + 64, (length + PROBE_BULK_MPS - 1) & ~size_t(PROBE_BULK_MPS - 1))) { Serial.println("RX_POST_FAILED"); return; }
       }
       Serial.printf("ARMED %u %u\r\n", port, length);
     } else if (command == "stop") {
@@ -193,7 +195,7 @@ void loop() {
       if (txPosted && txDone.load(std::memory_order_acquire) >= txTarget) {
         bool guards = true;
         for (unsigned i = 0; i < 64; ++i) guards &= direct[i] == 0xa5;
-        const size_t capacity = (wanted[0] + 63) & ~size_t(63);
+        const size_t capacity = (wanted[0] + PROBE_BULK_MPS - 1) & ~size_t(PROBE_BULK_MPS - 1);
         for (size_t i = 64 + capacity; i < sizeof(direct); ++i) guards &= direct[i] == 0xa5;
         if (txResult.status == EspUsbTransferStatus::Success && txResult.actualBytesKnown && txResult.actualBytes == wanted[0] &&
             txResult.buffer == direct + 64 && guards) Serial.printf("ECHOED 0 %u\r\n", unsigned(wanted[0]));

@@ -1,8 +1,10 @@
 """Standard interface and endpoint changes return only affected stream loans."""
 
 
-def test_bulk_standard(dut, peers):
+def test_bulk_standard(dut, peers, request):
     device = peers["device"]
+    mps = 512 if "_hs_" in request.node.name else 64
+    full, short, over, wide = mps, mps - 1, mps + 1, 2 * mps + 1
 
     def command(board, text, reply, timeout=10):
         board.write(text)
@@ -44,8 +46,8 @@ def test_bulk_standard(dut, peers):
                 for i in (0, 1):
                     command(dut, f"alternate {i}", "ALTERNATE 1")
                     queue(i)
-                    command(dut, f"read {i} 64", "BULK 1")
-                    command(dut, f"write {i} 64", "BULK 1")
+                    command(dut, f"read {i} {full}", "BULK 1")
+                    command(dut, f"write {i} {full}", "BULK 1")
                 if kind:
                     command(dut, "control", "CONTROL 1")
                     command(device, "cdc", "CDC 1")
@@ -56,8 +58,8 @@ def test_bulk_standard(dut, peers):
                 stats(1 - target, 1, 1)
                 queue(target)
                 for i in (target, 1 - target):
-                    command(dut, f"read {i} {129 if i == target else 65}", "BULK 1")
-                    command(dut, f"write {i} 63", "BULK 1")
+                    command(dut, f"read {i} {wide if i == target else over}", "BULK 1")
+                    command(dut, f"write {i} {short}", "BULK 1")
                     returned(i, "Success", "Success")
                     stats(i)
             # Start the affected host pipe at DATA0. Keep the other direction
@@ -67,7 +69,7 @@ def test_bulk_standard(dut, peers):
                     for input_direction in (1, 0):
                         command(dut, f"alternate {i}", "ALTERNATE 1")
                         queue(i)
-                        command(dut, f"{'write' if input_direction else 'read'} {i} 64", "BULK 1")
+                        command(dut, f"{'write' if input_direction else 'read'} {i} {full}", "BULK 1")
                         command(dut, f"{'halt' if halt else 'clear'} {i} {input_direction}", "FEATURE 1")
                         status = "TransferError" if halt else "Cancelled"
                         returned(i, status if input_direction else None, None if input_direction else status)
@@ -75,8 +77,8 @@ def test_bulk_standard(dut, peers):
                         if halt:
                             command(dut, f"clear {i} {input_direction}", "FEATURE 1")
                         queue(i, "tx" if input_direction else "rx")
-                        command(dut, f"read {i} {129 if input_direction else 65}", "BULK 1")
-                        command(dut, f"write {i} 63", "BULK 1")
+                        command(dut, f"read {i} {wide if input_direction else over}", "BULK 1")
+                        command(dut, f"write {i} {short}", "BULK 1")
                         returned(i, "Success", "Success")
                         stats(i)
                 # Also halt after partial data in both directions. Recreate
@@ -84,8 +86,8 @@ def test_bulk_standard(dut, peers):
                 # endpoint_clear resumes IDF's pipe without resetting its PID.
                 command(dut, f"alternate {i}", "ALTERNATE 1")
                 queue(i)
-                command(dut, f"read {i} 64", "BULK 1")
-                command(dut, f"write {i} 64", "BULK 1")
+                command(dut, f"read {i} {full}", "BULK 1")
+                command(dut, f"write {i} {full}", "BULK 1")
                 for direction in (1, 0):
                     command(dut, f"halt {i} {direction}", "FEATURE 1")
                 returned(i, "TransferError", "TransferError")
@@ -94,8 +96,8 @@ def test_bulk_standard(dut, peers):
                     command(dut, f"clear {i} {direction}", "FEATURE 1")
                 command(dut, f"reclaim {i}", "RECLAIMED 1")
                 queue(i)
-                command(dut, f"read {i} 129", "BULK 1")
-                command(dut, f"write {i} 63", "BULK 1")
+                command(dut, f"read {i} {wide}", "BULK 1")
+                command(dut, f"write {i} {short}", "BULK 1")
                 returned(i, "Success", "Success")
                 stats(i)
             if kind:
@@ -105,19 +107,19 @@ def test_bulk_standard(dut, peers):
         # Copy queues recover without retaining old DMA packets or RX bytes.
         command(device, "start 0 1", "STARTED 1", 30)
         command(dut, "start", "HOST_READY 1", 30)
-        command(device, "copytx 0 129", "COPIED 1")
-        command(dut, "read 0 64", "BULK 1")
-        command(dut, "write 0 64", "BULK 1")
+        command(device, f"copytx 0 {wide}", "COPIED 1")
+        command(dut, f"read 0 {full}", "BULK 1")
+        command(dut, f"write 0 {full}", "BULK 1")
         command(dut, "alternate 0", "ALTERNATE 1")
         command(device, "copyrx 0 0", "COPY_RX 1")
-        command(device, "copytx 0 63", "COPIED 1")
-        command(dut, "read 0 63", "BULK 1")
-        command(dut, "write 0 63", "BULK 1")
-        command(device, "copyrx 0 63", "COPY_RX 1")
+        command(device, f"copytx 0 {short}", "COPIED 1")
+        command(dut, f"read 0 {short}", "BULK 1")
+        command(dut, f"write 0 {short}", "BULK 1")
+        command(device, f"copyrx 0 {short}", "COPY_RX 1")
         command(dut, "alternate 0", "ALTERNATE 1")
-        command(device, "copytx 0 129", "COPIED 1")
-        command(dut, "read 0 64", "BULK 1")
-        command(dut, "write 0 64", "BULK 1")
+        command(device, f"copytx 0 {wide}", "COPIED 1")
+        command(dut, f"read 0 {full}", "BULK 1")
+        command(dut, f"write 0 {full}", "BULK 1")
         for direction in (1, 0):
             command(dut, f"halt 0 {direction}", "FEATURE 1")
         command(device, "blocked", "BLOCKED 1")
@@ -125,10 +127,10 @@ def test_bulk_standard(dut, peers):
             command(dut, f"clear 0 {direction}", "FEATURE 1")
         command(dut, "reclaim 0", "RECLAIMED 1")
         command(device, "copyrx 0 0", "COPY_RX 1")
-        command(device, "copytx 0 63", "COPIED 1")
-        command(dut, "read 0 63", "BULK 1")
-        command(dut, "write 0 63", "BULK 1")
-        command(device, "copyrx 0 63", "COPY_RX 1")
+        command(device, f"copytx 0 {short}", "COPIED 1")
+        command(dut, f"read 0 {short}", "BULK 1")
+        command(dut, f"write 0 {short}", "BULK 1")
+        command(device, f"copyrx 0 {short}", "COPY_RX 1")
     finally:
         errors = []
         for name, board in (("host", dut), ("device", device)):

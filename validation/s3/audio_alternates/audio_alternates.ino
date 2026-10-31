@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
+// HS services ISO per 125 us microframe: queue 8 per URB so each URB still spans 1 ms.
+constexpr unsigned PACKETS=PROBE_BULK_MPS==512 ? 8:1,PER_SECOND=1000*PACKETS;
 usb_host_client_handle_t client=nullptr;
 usb_device_handle_t handle=nullptr;
 std::atomic<bool> running{false},exited{true},allFree{false};
@@ -22,7 +25,8 @@ void event(const usb_host_client_event_msg_t *e,void *) {
   if(usb_host_device_open(client,e->new_dev.address,&handle)!=ESP_OK)return;
   const usb_config_desc_t *cfg=nullptr;if(usb_host_get_active_config_descriptor(handle,&cfg)!=ESP_OK)return;
   memset(choices,0,sizeof(choices));const auto *d=reinterpret_cast<const uint8_t *>(cfg);
-  unsigned itf=0,alt=0;parsed=true;
+  unsigned itf=0,alt=0;usb_device_info_t info;
+  parsed=usb_host_device_info(handle,&info)==ESP_OK && (info.speed==USB_SPEED_HIGH)==(PACKETS==8);
   for(size_t n=9;n+2<=cfg->wTotalLength && d[n]>=2 && d[n]<=cfg->wTotalLength-n;n+=d[n]) {
     const auto *p=d+n;
     if(p[1]==4 && p[0]==9){itf=p[2];alt=p[3];protocol=p[7]==0x20 ? 2:1;}
@@ -55,20 +59,24 @@ bool request(uint8_t type,uint8_t code,uint16_t value,uint16_t index,void *data=
 bool submitIso(usb_transfer_t *t);
 void completedIso(usb_transfer_t *t) {
   const unsigned index=t==input ? 0:t==output ? 1:2;pending[index]=false;
-  const auto &p=t->isoc_packet_desc[0];
-  if(t->status!=USB_TRANSFER_STATUS_COMPLETED || p.status!=USB_TRANSFER_STATUS_COMPLETED)++lost;
-  else if(index==0) {
-    if(p.actual_num_bytes>unsigned(t->num_bytes) || (p.actual_num_bytes && p.actual_num_bytes!=rate/1000*frame)){++bad;return;}
-    received+=p.actual_num_bytes;if(p.actual_num_bytes%frame)++bad;
-    for(unsigned i=0;i<p.actual_num_bytes;++i) {
-      if(t->data_buffer[i]!=0 && t->data_buffer[i]!=0x5a)++bad;
-      if(t->data_buffer[i]==0x5a)++filled;
+  if(t->status!=USB_TRANSFER_STATUS_COMPLETED)++lost;
+  else for(unsigned k=0,o=0;k<unsigned(t->num_isoc_packets);o+=t->isoc_packet_desc[k++].num_bytes) {
+    const auto &p=t->isoc_packet_desc[k];const uint8_t *d=t->data_buffer+o;
+    if(p.status!=USB_TRANSFER_STATUS_COMPLETED)++lost;
+    else if(index==0) {
+      if(p.actual_num_bytes>p.num_bytes || (p.actual_num_bytes && p.actual_num_bytes!=rate/PER_SECOND*frame)){++bad;return;}
+      received+=p.actual_num_bytes;if(p.actual_num_bytes%frame)++bad;
+      for(unsigned i=0;i<p.actual_num_bytes;++i) {
+        if(d[i]!=0 && d[i]!=0x5a)++bad;
+        if(d[i]==0x5a)++filled;
+      }
+    } else if(index==1)sent+=p.actual_num_bytes;
+    else {
+      // UAC2 feedback: 16.16 samples per microframe on HS, per frame on FS (as the Device sends it).
+      uint32_t value=0;memcpy(&value,d,4);
+      if(p.actual_num_bytes!=4 || value!=uint32_t((uint64_t(rate)<<16)/PER_SECOND))++bad;
+      ++feedbacks;
     }
-  } else if(index==1)sent+=p.actual_num_bytes;
-  else {
-    uint32_t value=0;memcpy(&value,t->data_buffer,4);
-    if(p.actual_num_bytes!=4 || value!=uint32_t((uint64_t(rate)<<16)/1000))++bad;
-    ++feedbacks;
   }
   if(streaming && !submitIso(t))++bad;
 }
@@ -104,8 +112,9 @@ bool startIso(unsigned alternate,unsigned sampleRate) {
   for(unsigned i=0;i<3;++i) {
     auto *t=transfers[i];t->device_handle=handle;t->callback=completedIso;
     t->bEndpointAddress=i==0 ? choices[1][selected].endpoint:i==1 ? choices[0][selected].endpoint:choices[0][selected].feedback;
-    t->num_bytes=i==0 ? choices[1][selected].packet:i==1 ? rate/1000*frame:4;
-    t->isoc_packet_desc[0].num_bytes=t->num_bytes;
+    const unsigned bytes=i==0 ? choices[1][selected].packet:i==1 ? rate/PER_SECOND*frame:4;
+    for(int k=0;k<t->num_isoc_packets;++k)t->isoc_packet_desc[k].num_bytes=bytes;
+    t->num_bytes=bytes*t->num_isoc_packets;
     if(i==1)memset(t->data_buffer,0x5a,t->num_bytes);
   }
   received=sent=filled=feedbacks=bad=lost=0;streaming=true;
@@ -141,7 +150,7 @@ void loop() {
     ok &= xTaskCreate(daemon,"iso-alternates",4096,nullptr,5,nullptr)==pdPASS;
     usb_host_client_config_t c={};c.max_num_event_msg=8;c.async.client_event_callback=event;
     ok &= usb_host_client_register(&c,&client)==ESP_OK;
-    ok &= usb_host_transfer_alloc(64,0,&control)==ESP_OK && usb_host_transfer_alloc(400,1,&input)==ESP_OK && usb_host_transfer_alloc(400,1,&output)==ESP_OK && usb_host_transfer_alloc(4,1,&feedback)==ESP_OK;
+    ok &= usb_host_transfer_alloc(64,0,&control)==ESP_OK && usb_host_transfer_alloc(400,PACKETS,&input)==ESP_OK && usb_host_transfer_alloc(400,PACKETS,&output)==ESP_OK && usb_host_transfer_alloc(4,1,&feedback)==ESP_OK;
     uint32_t until=millis()+10000;while(ok && !handle && int32_t(until-millis())>0)events();
     Serial.printf("HOST_DETAILS install=%d ok=%u handle=%u parsed=%u protocol=%u\r\n",int(installed),unsigned(ok),unsigned(bool(handle)),unsigned(parsed),protocol);
     for(unsigned i=0;i<2;++i)for(unsigned a=1;a<=4;++a){const auto &v=choices[i][a];Serial.printf("CHOICE itf=%u alt=%u ep=%u bytes=%u bits=%u packet=%u\r\n",i+1,a,unsigned(v.endpoint),unsigned(v.bytes),unsigned(v.bits),unsigned(v.packet));}

@@ -1,6 +1,16 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
+// HID interrupt MPS: 64 on FS, 1024 on HS. A report spans two full packets plus one byte.
+constexpr unsigned PACKET=PROBE_BULK_MPS==64 ? 64:1024,REPORT=2*PACKET+1;
+#if CONFIG_IDF_TARGET_ESP32P4
+#include <esp_cache.h>
+// P4 host DMA reads OUT and control data from memory, not from the cache.
+bool flush(usb_transfer_t *t){return esp_cache_msync(t->data_buffer,t->data_buffer_size,ESP_CACHE_MSYNC_FLAG_DIR_C2M|ESP_CACHE_MSYNC_FLAG_UNALIGNED)==ESP_OK;}
+#else
+bool flush(usb_transfer_t *){return true;}
+#endif
 usb_host_client_handle_t client=nullptr;usb_device_handle_t handle=nullptr;
 usb_transfer_t *control=nullptr,*input=nullptr,*output=nullptr;
 std::atomic<bool> running{false},exited{true},allFree{false},done{true};
@@ -31,15 +41,17 @@ bool request(uint8_t type,uint8_t code,uint16_t value,uint16_t index) {
   if(!done.load())return false;auto *s=reinterpret_cast<usb_setup_packet_t *>(control->data_buffer);*s={};
   s->bmRequestType=type;s->bRequest=code;s->wValue=value;s->wIndex=index;
   control->device_handle=handle;control->bEndpointAddress=0;control->num_bytes=8;control->callback=complete;
+  if(!flush(control))return false;
   done=false;if(usb_host_transfer_submit_control(client,control)!=ESP_OK){done=true;return false;}
   return wait() && control->status==USB_TRANSFER_STATUS_COMPLETED && control->actual_num_bytes==8;
 }
 uint8_t pattern(unsigned offset){return offset ? uint8_t((offset-1)*37+13):6;}
 bool transfer(bool reading,unsigned offset,unsigned bytes) {
-  if(!done.load() || offset+bytes>129 || !bytes)return false;
+  if(!done.load() || offset+bytes>REPORT || !bytes)return false;
   auto *t=reading ? input:output;t->device_handle=handle;t->bEndpointAddress=reading ? in:out;
-  t->num_bytes=reading ? (bytes+63)/64*64:bytes;t->callback=complete;
+  t->num_bytes=reading ? (bytes+PACKET-1)/PACKET*PACKET:bytes;t->callback=complete;
   if(!reading)for(unsigned i=0;i<bytes;++i)t->data_buffer[i]=pattern(offset+i);
+  if(!reading && !flush(t))return false;
   done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
   if(!wait() || t->status!=USB_TRANSFER_STATUS_COMPLETED || unsigned(t->actual_num_bytes)!=bytes) {
     Serial.printf("TRANSFER_ERROR in=%u status=%u actual=%u\r\n",unsigned(reading),unsigned(t->status),unsigned(t->actual_num_bytes));return false;
@@ -72,6 +84,10 @@ void loop() {
   if(!Serial.available()){delay(1);return;}String s=Serial.readStringUntil('\n');s.trim();
   if(s=="start") {
     in=out=0;usb_host_config_t cfg={};cfg.intr_flags=ESP_INTR_FLAG_LEVEL1;
+#if CONFIG_IDF_TARGET_ESP32P4
+    // The HS default periodic TX FIFO (512 bytes) cannot hold a 1024-byte interrupt OUT packet.
+    cfg.fifo_settings_custom.rx_fifo_lines=260;cfg.fifo_settings_custom.nptx_fifo_lines=128;cfg.fifo_settings_custom.ptx_fifo_lines=280;
+#endif
 #if CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK
     cfg.enum_filter_cb=[](const usb_device_desc_t *d,uint8_t *){return d->idVendor==0x303a && d->idProduct==0x4000;};
 #endif
@@ -79,7 +95,7 @@ void loop() {
     ok &= xTaskCreate(daemon,"hid-standard",4096,nullptr,5,nullptr)==pdPASS;
     usb_host_client_config_t c={};c.max_num_event_msg=8;c.async.client_event_callback=event;
     ok &= usb_host_client_register(&c,&client)==ESP_OK;
-    ok &= usb_host_transfer_alloc(8,0,&control)==ESP_OK && usb_host_transfer_alloc(192,0,&input)==ESP_OK && usb_host_transfer_alloc(192,0,&output)==ESP_OK;
+    ok &= usb_host_transfer_alloc(8,0,&control)==ESP_OK && usb_host_transfer_alloc(3*PACKET,0,&input)==ESP_OK && usb_host_transfer_alloc(3*PACKET,0,&output)==ESP_OK;
     uint32_t until=millis()+10000;while(ok && !claimed && int32_t(until-millis())>0)events();
     Serial.printf("HOST_READY %u\r\n",unsigned(ok && claimed));
   } else if(s.startsWith("read ") || s.startsWith("write ")) {

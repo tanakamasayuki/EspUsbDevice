@@ -6,9 +6,10 @@
 #include "../../../../src/internal/EspUsbDeviceCore.h"
 #include "../../../../src/internal/EspUsbDwc2Hardware.h"
 #include "../../../../src/internal/EspUsbRuntime.h"
+#include "../../common/probe_link.h"
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
-alignas(64) uint8_t oldTx[129],oldRx[192],newTx[64],newRx[64];
+alignas(64) uint8_t oldTx[2*PROBE_BULK_MPS+1],oldRx[3*PROBE_BULK_MPS],newTx[64],newRx[PROBE_BULK_MPS];
 std::atomic<bool> monitor{false},parked{false},released{true};
 std::atomic<unsigned> seen{0},beforeMounted{0},afterMounted{0},afterReady{0},oldReturns{0},successes{0},bad{0};
 uint64_t oldTxId=0,oldRxId=0,newTxId=0,newRxId=0;
@@ -24,7 +25,7 @@ void observeInterrupt(void *) {
   if(sample && !seen.load()) {
     beforeMounted=mounted;afterMounted=espusb_device_mounted();
     afterReady=espusb::internal::usbDeviceCoreReadyForJobs();
-    const EspUsbEndpointDescriptor endpoint={7,5,input,2,64,0};
+    const EspUsbEndpointDescriptor endpoint={7,5,input,2,PROBE_BULK_MPS,0};
     openBlocked=!espusb_controller_edpt_open(port,&endpoint);
     dataBlocked=!espusb_controller_edpt_xfer(port,input,oldTx,64,true);
     controlBlocked=!espusb_controller_edpt_xfer(port,128,oldTx,64,true);

@@ -1,6 +1,14 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include <esp_cache.h>
+// P4 host DMA reads OUT and control data from memory, not from the cache.
+bool flush(usb_transfer_t *t){return esp_cache_msync(t->data_buffer,t->data_buffer_size,ESP_CACHE_MSYNC_FLAG_DIR_C2M|ESP_CACHE_MSYNC_FLAG_UNALIGNED)==ESP_OK;}
+#else
+bool flush(usb_transfer_t *){return true;}
+#endif
 usb_host_client_handle_t client=nullptr;usb_device_handle_t handle=nullptr;
 usb_transfer_t *control=nullptr,*input[2]={},*output[2]={};
 std::atomic<bool> running{false},exited{true},allFree{false},done{true};
@@ -42,6 +50,7 @@ uint32_t get32(const uint8_t *p){return uint32_t(p[0])|uint32_t(p[1])<<8|uint32_
 void put32(uint8_t *p,uint32_t n){for(unsigned j=0;j<4;++j)p[j]=uint8_t(n>>(j*8));}
 bool transfer(usb_transfer_t *t,uint8_t endpoint,unsigned bytes) {
   if(!done.load())return false;t->device_handle=handle;t->bEndpointAddress=endpoint;t->num_bytes=bytes;t->callback=complete;
+  if(!(endpoint&0x80) && !flush(t))return false;
   done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
   const bool completed=wait();
   if(!completed) {
@@ -59,7 +68,7 @@ bool message(uint8_t type,unsigned n,unsigned expected,int error=-1,uint8_t slot
   auto *t=output[selected];memset(t->data_buffer,0,10);t->data_buffer[0]=type;put32(t->data_buffer+1,declared==UINT64_MAX ? n:uint32_t(declared));t->data_buffer[5]=slot;t->data_buffer[6]=++sequence;t->data_buffer[7]=specific;
   for(unsigned j=0;j<n;++j)t->data_buffer[10+j]=uint8_t(j*37+n);
   if(!transfer(t,out[selected],10+n) || t->actual_num_bytes!=10+int(n))return false;
-  t=input[selected];if(!transfer(t,in[selected],((expected+10+63)/64+1)*64))return false;
+  t=input[selected];if(!transfer(t,in[selected],((expected+10+PROBE_BULK_MPS-1)/PROBE_BULK_MPS+1)*PROBE_BULK_MPS))return false;
   bool ok=t->actual_num_bytes==int(expected+10) && get32(t->data_buffer+1)==expected && t->data_buffer[6]==sequence && (t->data_buffer[7]&0xc0)==(error<0 ? 0:0x40) && (error<0 || t->data_buffer[8]==error) && t->data_buffer[0]==(type==0x62 || type==0x6f ? 0x80:type==0x6e ? 0x83:(type==0x61 || type==0x6c || type==0x6d) ? 0x82:0x81);
   if(!ok)Serial.printf("REPLY_ERROR type=%u status=%u error=%u actual=%u length=%u\r\n",t->data_buffer[0],t->data_buffer[7],t->data_buffer[8],unsigned(t->actual_num_bytes),unsigned(get32(t->data_buffer+1)));
   return ok;
@@ -67,6 +76,7 @@ bool message(uint8_t type,unsigned n,unsigned expected,int error=-1,uint8_t slot
 bool setupRequest(uint8_t type,uint8_t code,uint16_t value,uint16_t index=UINT16_MAX,uint16_t bytes=0) {
   auto *s=reinterpret_cast<usb_setup_packet_t *>(control->data_buffer);*s={};s->bmRequestType=type;s->bRequest=code;s->wValue=value;s->wIndex=index==UINT16_MAX ? interfaces[selected]:index;s->wLength=bytes;
   control->device_handle=handle;control->num_bytes=8+bytes;control->bEndpointAddress=0;control->callback=complete;
+  if(!flush(control))return false;
   done=false;if(usb_host_transfer_submit_control(client,control)!=ESP_OK){done=true;return false;}
   return wait() && control->status==USB_TRANSFER_STATUS_COMPLETED;
 }
@@ -86,15 +96,15 @@ bool halt(unsigned which) {
   return endpointStatus(endpointAddress(which),false) && feature(which,true) && feature(which,false);
 }
 bool fragment(bool partial) {
-  auto *t=output[selected];memset(t->data_buffer,0,64);
-  t->data_buffer[0]=partial ? 0x6e:0x62;put32(t->data_buffer+1,partial ? 246:0);t->data_buffer[6]=++sequence;
-  const unsigned bytes=partial ? 64:10;
+  auto *t=output[selected];memset(t->data_buffer,0,PROBE_BULK_MPS);
+  t->data_buffer[0]=partial ? 0x6e:0x62;put32(t->data_buffer+1,partial ? 4*PROBE_BULK_MPS-10:0);t->data_buffer[6]=++sequence;
+  const unsigned bytes=partial ? PROBE_BULK_MPS:10;
   const bool ok=transfer(t,out[selected],bytes) && t->actual_num_bytes==int(bytes);
   events(5);return ok;
 }
 bool readPower() {
   auto *t=input[selected];
-  return transfer(t,in[selected],64) && t->actual_num_bytes==14 && t->data_buffer[0]==0x80 &&
+  return transfer(t,in[selected],PROBE_BULK_MPS) && t->actual_num_bytes==14 && t->data_buffer[0]==0x80 &&
       get32(t->data_buffer+1)==4 && t->data_buffer[6]==sequence && !t->data_buffer[8] &&
       t->data_buffer[10]==0x3b && t->data_buffer[11]==0x80 && t->data_buffer[12]==1 && t->data_buffer[13]==0x81;
 }

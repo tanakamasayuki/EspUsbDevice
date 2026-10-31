@@ -36,7 +36,12 @@ void loop() {
     keyboardMode = command == "keyboard"; mouseMode = command == "mouse";
     reportBytes = keyboardMode || mouseMode ? 0 : command.substring(6).toInt();
     address.store(0); expected.store(0); received.store(0); valid.store(true);
-    started = host.begin();
+    EspUsbHostConfig config;
+#if CONFIG_IDF_TARGET_ESP32P4
+    // HS interrupt OUT packets reach 1024 bytes; the default periodic TX FIFO holds 512.
+    config.fifo = ESP_USB_HOST_FIFO_LARGE_PERIODIC_OUT;
+#endif
+    started = host.begin(config);
     const uint32_t deadline = millis() + 10000;
     while (started && !address.load() && int32_t(deadline - millis()) > 0) delay(1);
     Serial.printf("HOST_READY %u\r\n", unsigned(started && address.load()));

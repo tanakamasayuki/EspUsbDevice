@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EspUsbHost.h>
 #include <atomic>
+#include "../common/probe_link.h"
 EspUsbHost host;
 std::atomic<uint8_t> address{0};
 std::atomic<unsigned> pcmBytes{0},pcmBad{0},filled{0};
@@ -26,7 +27,9 @@ void loop() {
   if(!Serial.available()){delay(1);return;}
   String s=Serial.readStringUntil('\n');s.trim();
   if(s=="start") {
-    address=0;EspUsbHostConfig config;config.fifo={64,32,64};
+    // Same split scaled 4x for the HS port, so RX/NPTX hold a 512-byte bulk packet.
+    const uint32_t lines=PROBE_BULK_MPS==64 ? 64:256;
+    address=0;EspUsbHostConfig config;config.fifo={lines,lines/2,lines};
     bool ok=host.begin(config);const uint32_t until=millis()+10000;
     while(ok && (!address.load() || !host.serialReady(address.load(),0)) && int32_t(until-millis())>0)delay(1);
     ok &= address.load() && host.serialReady(address.load(),0) && host.serialPortCount(address.load())==1;

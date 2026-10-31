@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
 usb_host_client_handle_t client=nullptr;
 usb_device_handle_t handle=nullptr;
 usb_transfer_t *control=nullptr,*input=nullptr;
@@ -81,7 +82,7 @@ void loop(){
     ok &= xTaskCreate(daemon,"core-host",4096,nullptr,5,nullptr)==pdPASS;
     usb_host_client_config_t cc={};cc.max_num_event_msg=8;cc.async.client_event_callback=event;
     ok &= usb_host_client_register(&cc,&client)==ESP_OK;
-    ok &= usb_host_transfer_alloc(512,0,&control)==ESP_OK && usb_host_transfer_alloc(128,0,&input)==ESP_OK;
+    ok &= usb_host_transfer_alloc(512,0,&control)==ESP_OK && usb_host_transfer_alloc(2*PROBE_BULK_MPS,0,&input)==ESP_OK;
     uint32_t until=millis()+10000;while(ok && !claimed && int32_t(until-millis())>0)events(1);
     ok &= claimed && configuration(1);Serial.printf("HOST_READY %u\r\n",unsigned(ok));
   } else if(c=="data") {
@@ -137,9 +138,9 @@ void loop(){
     while((connections==before || !claimed) && int32_t(until-millis())>0)events(1);
     Serial.printf("RECOVERED %u\r\n",unsigned(connections>before && claimed && configuration(1)));
   } else if(c=="read") {
-    input->device_handle=handle;input->bEndpointAddress=endpoint;input->num_bytes=128;input->callback=complete;
-    done=false;bool ok=usb_host_transfer_submit(input)==ESP_OK && wait() && input->status==USB_TRANSFER_STATUS_COMPLETED && input->actual_num_bytes==64;
-    for(unsigned i=0;i<64 && ok;++i)ok &= input->data_buffer[i]==uint8_t(i*17+7);
+    input->device_handle=handle;input->bEndpointAddress=endpoint;input->num_bytes=2*PROBE_BULK_MPS;input->callback=complete;
+    done=false;bool ok=usb_host_transfer_submit(input)==ESP_OK && wait() && input->status==USB_TRANSFER_STATUS_COMPLETED && input->actual_num_bytes==PROBE_BULK_MPS;
+    for(unsigned i=0;i<PROBE_BULK_MPS && ok;++i)ok &= input->data_buffer[i]==uint8_t(i*17+7);
     Serial.printf("READ %u\r\n",unsigned(ok));
   } else if(c=="stop")Serial.println(!client || stop() ? "STOPPED" : "STOP_FAILED");
 }

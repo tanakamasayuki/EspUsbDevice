@@ -37,7 +37,7 @@ def test_video_control(dut, peers):
         command(device, "queue 0 65536", "QUEUED 0 0")
         command(dut, "recommit", "RECOMMIT 1")
         stats(0, 3, 1, 2, 0, 0, 3, 65)
-        # 62 data + 2 header = one full FS packet, below payload limit 65.
+        # 62 data + 2 header = one full FS packet, below payload limit 65 (short on HS).
         command(device, "queue 0 62", "QUEUED 0 0")
         command(dut, "read 0 62", "FRAME 1")
         stats(0, 4, 2, 2, 0, 0, 3, 65)
@@ -102,8 +102,9 @@ def test_video_halt(dut, peers):
                 prepare(i)
                 queue(i, 512 if i else 65536)
                 if partial:
-                    # Both payload limits occupy two FS packets, leaving the
-                    # affected host pipe at DATA0 after this partial frame.
+                    # Both payload limits occupy two FS packets (HS: the host
+                    # reads two one-packet payloads), leaving the affected host
+                    # pipe at DATA0 after this partial frame.
                     command(dut, f"packet {i}", "PACKET 1")
                     command(device, f"armed {i}", "ARMED 1")
                 queue(other, 512 if other else 257)

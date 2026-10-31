@@ -1,6 +1,12 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
+// Bulk IN reads must be MPS multiples; every 65/128-byte payload is short on HS.
+constexpr unsigned READ=PROBE_BULK_MPS>128 ? PROBE_BULK_MPS:128;
+// Payloads read by "packet": two FS packets, or two single-packet HS payloads,
+// so the IDF pipe PID (kept across endpoint_clear) is back at DATA0.
+constexpr unsigned PARTIAL_PAYLOADS=PROBE_BULK_MPS>128 ? 2:1;
 usb_host_client_handle_t client=nullptr;
 usb_device_handle_t handle=nullptr;
 usb_transfer_t *control=nullptr,*input[2]={};
@@ -75,10 +81,14 @@ bool waitInput(usb_transfer_t *t) {
   return false;
 }
 bool packet(unsigned i) {
-  auto *t=input[i];t->device_handle=handle;t->bEndpointAddress=endpoints[i];t->num_bytes=128;t->callback=completed;
-  done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
-  return waitInput(t) && t->status==USB_TRANSFER_STATUS_COMPLETED && t->actual_num_bytes==(i ? 128:65) &&
-      t->data_buffer[0]==2 && (t->data_buffer[1]&128) && !(t->data_buffer[1]&2);
+  bool ok=true;
+  for(unsigned n=0;n<PARTIAL_PAYLOADS && ok;++n) {
+    auto *t=input[i];t->device_handle=handle;t->bEndpointAddress=endpoints[i];t->num_bytes=READ;t->callback=completed;
+    done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
+    ok=waitInput(t) && t->status==USB_TRANSFER_STATUS_COMPLETED && t->actual_num_bytes==(i ? 128:65) &&
+        t->data_buffer[0]==2 && (t->data_buffer[1]&128) && !(t->data_buffer[1]&2);
+  }
+  return ok;
 }
 bool prepare(unsigned i) {
   if(i>=2 || !request(1,11,0,1+2*i,0) || usb_host_interface_release(client,handle,1+2*i)!=ESP_OK)return false;
@@ -87,7 +97,7 @@ bool prepare(unsigned i) {
 bool readFrame(unsigned i,unsigned expected) {
   unsigned offset=0;bool eof=false;uint8_t fid=0;
   while (!eof && offset<=expected) {
-    auto *t=input[i];t->device_handle=handle;t->bEndpointAddress=endpoints[i];t->num_bytes=128;t->callback=completed;
+    auto *t=input[i];t->device_handle=handle;t->bEndpointAddress=endpoints[i];t->num_bytes=READ;t->callback=completed;
     done=false;if(usb_host_transfer_submit(t)!=ESP_OK){done=true;return false;}
     if(!waitInput(t) || t->status!=USB_TRANSFER_STATUS_COMPLETED || t->actual_num_bytes<2)return false;
     const auto *d=t->data_buffer;unsigned n=t->actual_num_bytes;
@@ -130,7 +140,7 @@ void loop(){
     usb_host_client_config_t cc={};cc.max_num_event_msg=8;cc.async.client_event_callback=event;
     error=usb_host_client_register(&cc,&client);Serial.printf("REGISTER %d\r\n",int(error));ok &= error==ESP_OK;
     ok &= usb_host_transfer_alloc(128,0,&control)==ESP_OK;
-    for(auto &t:input)ok &= usb_host_transfer_alloc(128,0,&t)==ESP_OK;
+    for(auto &t:input)ok &= usb_host_transfer_alloc(READ,0,&t)==ESP_OK;
     uint32_t until=millis()+10000;while(ok && !claimed[1] && int32_t(until-millis())>0)events(1);
     ok &= claimed[0] && claimed[1] && endpoints[0]!=endpoints[1];
     ok &= probe(0,26,65) && probe(1,34,128);

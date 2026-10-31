@@ -2,6 +2,7 @@
 #include <usb/usb_host.h>
 #include <atomic>
 #include <hal/usb_dwc_ll.h>
+#include "../common/probe_link.h"
 usb_host_client_handle_t client=nullptr;usb_device_handle_t handle=nullptr;
 usb_transfer_t *input=nullptr,*output=nullptr;
 std::atomic<bool> running{false},exited{true},allFree{false},done{true};
@@ -27,7 +28,7 @@ void events(){usb_host_client_handle_events(client,pdMS_TO_TICKS(1));}
 void complete(usb_transfer_t *){done=true;}
 bool wait(){uint32_t until=millis()+3000;while(!done.load() && int32_t(until-millis())>0)events();return done.load();}
 bool exchange() {
-  if(!done.load())return false;input->device_handle=handle;input->bEndpointAddress=in;input->num_bytes=64;input->callback=complete;
+  if(!done.load())return false;input->device_handle=handle;input->bEndpointAddress=in;input->num_bytes=PROBE_BULK_MPS;input->callback=complete;
   done=false;if(usb_host_transfer_submit(input)!=ESP_OK){done=true;return false;}
   bool ok=wait() && input->status==USB_TRANSFER_STATUS_COMPLETED && input->actual_num_bytes==64;
   for(unsigned j=0;ok && j<64;++j)ok &= input->data_buffer[j]==uint8_t(j*37+13);
@@ -77,7 +78,7 @@ void loop() {
     ok &= xTaskCreate(daemon,"configuration-epoch",4096,nullptr,5,nullptr)==pdPASS;
     usb_host_client_config_t c={};c.max_num_event_msg=8;c.async.client_event_callback=event;
     ok &= usb_host_client_register(&c,&client)==ESP_OK;
-    ok &= usb_host_transfer_alloc(64,0,&input)==ESP_OK && usb_host_transfer_alloc(64,0,&output)==ESP_OK;
+    ok &= usb_host_transfer_alloc(PROBE_BULK_MPS,0,&input)==ESP_OK && usb_host_transfer_alloc(64,0,&output)==ESP_OK;
     uint32_t until=millis()+10000;while(ok && !claimed && int32_t(until-millis())>0)events();
     Serial.printf("HOST_READY %u\r\n",unsigned(ok && claimed));
   } else if(s=="suspend")Serial.printf("SUSPENDED %u\r\n",unsigned(suspendPort()));

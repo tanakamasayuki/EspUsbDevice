@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
+#include "../common/probe_link.h"
+// Bulk IN reads must be MPS multiples (3200 FS, 3584 HS).
+constexpr unsigned M=PROBE_BULK_MPS,IN_BYTES=(3200+M-1)/M*M;
 usb_host_client_handle_t client = nullptr;
 usb_device_handle_t handle = nullptr;
 usb_transfer_t *control = nullptr, *input = nullptr, *output = nullptr;
@@ -66,7 +69,7 @@ unsigned ntb(bool two=true,bool tableLast=false,bool reverse=false) {
   return bytes;
 }
 bool response(unsigned count,const unsigned *sizes,const unsigned *tags) {
-  if (!bulk(true,3200)) return false;
+  if (!bulk(true,IN_BYTES)) return false;
   auto *p=input->data_buffer;
   if (actual<12 || le32(p)!=0x484d434e || le16(p+8)!=actual) return false;
   const unsigned table=le16(p+10);
@@ -81,10 +84,16 @@ bool response(unsigned count,const unsigned *sizes,const unsigned *tags) {
   }
   return got==count;
 }
+// IDF endpoint_clear keeps the host PID, so the halt sequence relies on the
+// 96-byte NTBs being two FS packets. On HS pad them to two packets as well.
+unsigned twoPackets(unsigned bytes) {
+  if(bytes>M)return bytes;
+  put16(output->data_buffer+8,M+1);return M+1;
+}
 bool marker(unsigned tag=0x40) {
   unsigned bytes=ntb(false); const unsigned sizes[]={64},tags[]={tag};
   for(unsigned j=0;j<64;++j)output->data_buffer[32+j]=uint8_t((tag+j)%251);
-  return bulk(false,bytes) && response(1,sizes,tags);
+  return bulk(false,twoPackets(bytes)) && response(1,sizes,tags);
 }
 bool matrix() {
   bool ok=true;
@@ -144,7 +153,7 @@ bool feature(unsigned which,bool setting) {
 }
 bool stalled(unsigned which) {
   result=USB_TRANSFER_STATUS_ERROR;
-  const bool completed=bulk(which!=0,64,endpointAddress(which));
+  const bool completed=bulk(which!=0,which==1 ? M:64,endpointAddress(which));
   return !completed && bulkDone.load() && result==USB_TRANSFER_STATUS_STALL;
 }
 bool prepare() {
@@ -157,13 +166,14 @@ bool prepare() {
   }
   return true;
 }
+// A partial NTB is 1 or 2 full packets of a 4-packet NTB; the finish adds the rest plus a short byte.
 bool fragment(bool finishing,bool onePacket=false) {
-  if(!finishing){ntb(false);put16(output->data_buffer+8,256);for(unsigned j=0;j<64;++j)output->data_buffer[32+j]=uint8_t((0x55+j)%251);}
+  if(!finishing){ntb(false);put16(output->data_buffer+8,4*M);for(unsigned j=0;j<64;++j)output->data_buffer[32+j]=uint8_t((0x55+j)%251);}
   else {
-    memset(output->data_buffer,0,193);
-    if(onePacket)for(unsigned j=0;j<32;++j)output->data_buffer[j]=uint8_t((0x55+32+j)%251);
+    memset(output->data_buffer,0,3*M+1);
+    if(onePacket)for(unsigned j=0;j+M<96;++j)output->data_buffer[j]=uint8_t((0x55+M-32+j)%251);
   }
-  return bulk(false,finishing ? (onePacket ? 193:129):(onePacket ? 64:128));
+  return bulk(false,finishing ? (onePacket ? 3*M+1:2*M+1):(onePacket ? M:2*M));
 }
 bool receive(unsigned tag) {const unsigned sizes[]={64},tags[]={tag};return response(1,sizes,tags);}
 bool speedNotification() {
@@ -232,7 +242,7 @@ void loop() {
     }
     Serial.printf("HOST_READY %u\r\n",unsigned(ok));
   } else if(command.startsWith("select ")) {selected=command.substring(7).toInt();Serial.printf("SELECTED %u\r\n",unsigned(selected<2));
-  } else if(command=="queued") {unsigned n=ntb(false);Serial.printf("QUEUED %u\r\n",unsigned(bulk(false,n)));
+  } else if(command=="queued") {unsigned n=twoPackets(ntb(false));Serial.printf("QUEUED %u\r\n",unsigned(bulk(false,n)));
   } else if(command=="partial" || command=="finish" || command=="partial_one" || command=="finish_one")
     Serial.printf("FRAGMENT %u\r\n",unsigned(fragment(command.startsWith("finish"),command.endsWith("_one"))));
   else if(command=="speed")Serial.printf("SPEED %u\r\n",unsigned(speedNotification()));

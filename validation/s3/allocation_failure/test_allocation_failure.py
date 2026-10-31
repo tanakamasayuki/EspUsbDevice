@@ -1,8 +1,9 @@
 """Fail each Vendor/driver-registry acquisition and prove recovery on S3."""
 
 
-def test_allocation_failure(dut, peers):
+def test_allocation_failure(dut, peers, request):
     device = peers["device"]
+    mps = 512 if "_hs_" in request.node.name else 64  # bulk MPS of the link
     try:
         device.write("faults")
         device.expect(r"AUDIO_SETTINGS ok=1 formats=24 rates=12 failures=14 object=\d+ model=\d+ controls=\d+\r\n", timeout=30)
@@ -18,8 +19,8 @@ def test_allocation_failure(dut, peers):
         device.write("start")
         device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
         dut.write("start")
-        dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
-        for length in (1, 64, 129):
+        dut.expect_exact(f"HOST_READY mps_in={mps} mps_out={mps}\r\n", timeout=30)
+        for length in (1, mps, 2 * mps + 1):
             device.write(f"expect {length}")
             device.expect_exact(f"ARMED {length}\r\n", timeout=5)
             dut.write(f"exchange {length}")

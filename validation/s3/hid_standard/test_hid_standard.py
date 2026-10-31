@@ -1,8 +1,11 @@
 """Recover multi-packet HID reports without changing the other endpoint PID."""
 
 
-def test_hid_standard(dut, peers):
+def test_hid_standard(dut, peers, request):
     device = peers["device"]
+    # Report = ID + two full interrupt packets (HID MPS 64 on FS, 1024 on HS).
+    packet = 1024 if "_hs_" in request.node.name else 64
+    report = 2 * packet + 1
 
     def command(board, text, reply, timeout=10):
         board.write(text)
@@ -17,8 +20,8 @@ def test_hid_standard(dut, peers):
 
     def fresh():
         command(device, "send", "SENT 1")
-        command(dut, "read 0 129", "TRANSFER 1")
-        command(dut, "write 0 129", "TRANSFER 1")
+        command(dut, f"read 0 {report}", "TRANSFER 1")
+        command(dut, f"write 0 {report}", "TRANSFER 1")
         received()
 
     try:
@@ -26,8 +29,8 @@ def test_hid_standard(dut, peers):
         command(dut, "start", "HOST_READY 1", 30)
         for _ in range(3):
             command(device, "send", "SENT 1")
-            command(dut, "read 0 64", "TRANSFER 1")
-            command(dut, "write 0 64", "TRANSFER 1")
+            command(dut, f"read 0 {packet}", "TRANSFER 1")
+            command(dut, f"write 0 {packet}", "TRANSFER 1")
             command(device, "send", "SENT 0")
             command(dut, "alternate", "ALTERNATE 1")
             command(device, f"stats {count}", f"STATS outputs={count} bad=0")
@@ -37,7 +40,7 @@ def test_hid_standard(dut, peers):
                 command(dut, "alternate", "ALTERNATE 1")
                 command(device, "send", "SENT 1")
                 # Advance only the unaffected direction to DATA1.
-                command(dut, "write 0 64" if reading else "read 0 64", "TRANSFER 1")
+                command(dut, f"write 0 {packet}" if reading else f"read 0 {packet}", "TRANSFER 1")
                 command(dut, f"feature {reading} {halt}", "FEATURE 1")
                 if reading:
                     command(device, "send", "SENT 0" if halt else "SENT 1")
@@ -45,15 +48,15 @@ def test_hid_standard(dut, peers):
                     command(dut, f"feature {reading} 0", "FEATURE 1")
                     if reading:
                         command(device, "send", "SENT 1")
-                command(dut, "read 0 129" if reading else "read 64 65", "TRANSFER 1")
-                command(dut, "write 64 65" if reading else "write 0 129", "TRANSFER 1")
+                command(dut, f"read 0 {report}" if reading else f"read {packet} {packet + 1}", "TRANSFER 1")
+                command(dut, f"write {packet} {packet + 1}" if reading else f"write 0 {report}", "TRANSFER 1")
                 received()
         # Both endpoints have sent one packet before HALT. Recreate host pipes
         # after CLEAR because this SDK resumes their previous PID on clear.
         command(dut, "alternate", "ALTERNATE 1")
         command(device, "send", "SENT 1")
-        command(dut, "read 0 64", "TRANSFER 1")
-        command(dut, "write 0 64", "TRANSFER 1")
+        command(dut, f"read 0 {packet}", "TRANSFER 1")
+        command(dut, f"write 0 {packet}", "TRANSFER 1")
         for reading in (1, 0):
             command(dut, f"feature {reading} 1", "FEATURE 1")
             command(dut, f"feature {reading} 0", "FEATURE 1")

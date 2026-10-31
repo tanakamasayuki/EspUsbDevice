@@ -1,8 +1,10 @@
 """Deterministic cancellation/reset/end races on the real S3 pair."""
 
 
-def test_cancel_lifecycle(dut, peers):
+def test_cancel_lifecycle(dut, peers, request):
     device = peers["device"]
+    mps = 512 if "_hs_" in request.node.name else 64  # bulk MPS of the link
+    ready = f"HOST_READY mps_in={mps} mps_out={mps}\r\n"
     tx_count = rx_count = 0
     try:
         device.write("rx_mode")
@@ -12,11 +14,11 @@ def test_cancel_lifecycle(dut, peers):
                 device.write("start")
                 device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
                 dut.write("start")
-                dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
-                device.write("rx_arm 192 64")
+                dut.expect_exact(ready, timeout=30)
+                device.write(f"rx_arm {3 * mps} {mps}")
                 device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
-                dut.write("send 64 0")
-                dut.expect_exact("SENT 64 zlp=0 ok=1\r\n", timeout=10)
+                dut.write(f"send {mps} 0")
+                dut.expect_exact(f"SENT {mps} zlp=0 ok=1\r\n", timeout=10)
                 device.write("hold")
                 device.expect_exact("HELD 1 busy=1\r\n", timeout=5)
                 dut.write("prefix")
@@ -35,7 +37,7 @@ def test_cancel_lifecycle(dut, peers):
                     dut.write("start")
                     device.write("fault_reset_release")
                     device.expect_exact("LIFECYCLE_RESET observed=1 parked=1\r\n", timeout=10)
-                    dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+                    dut.expect_exact(ready, timeout=30)
                     status = 1  # BusReset
                 else:
                     device.write("fault_end_release")
@@ -46,35 +48,35 @@ def test_cancel_lifecycle(dut, peers):
                 device.write(f"tx_wait {tx_count}")
                 device.expect_exact(f"TX_WAIT {tx_count}\r\n", timeout=5)
                 device.write("direct_status")
-                device.expect_exact(f"DIRECT_STATUS {tx_count} status={status} requested=129 actual=0 known=0 pointer=1\r\n", timeout=5)
+                device.expect_exact(f"DIRECT_STATUS {tx_count} status={status} requested={2 * mps + 1} actual=0 known=0 pointer=1\r\n", timeout=5)
                 device.write("rx_result")
-                device.expect_exact(f"RX_RESULT {rx_count} status={status} requested=192 actual=0 known=0 pointer=1 guards=1 payload=1\r\n", timeout=5)
+                device.expect_exact(f"RX_RESULT {rx_count} status={status} requested={3 * mps} actual=0 known=0 pointer=1 guards=1 payload=1\r\n", timeout=5)
                 if scenario != "reset":
                     dut.write("stop")
                     dut.expect_exact("STOPPED\r\n", timeout=30)
                     device.write("start")
                     device.expect_exact("DEVICE_STARTED\r\n", timeout=30)
                     dut.write("start")
-                    dut.expect_exact("HOST_READY mps_in=64 mps_out=64\r\n", timeout=30)
+                    dut.expect_exact(ready, timeout=30)
                 # A returned old loan/id cannot disturb either new direction.
-                device.write("rx_arm 64 63")
+                device.write(f"rx_arm {mps} {mps - 1}")
                 device.expect_exact("RX_ARMED 1 error=0\r\n", timeout=5)
-                device.write("tx_post 63")
+                device.write(f"tx_post {mps - 1}")
                 device.expect_exact("TX_POSTED 1 error=0\r\n", timeout=5)
                 device.write("cancel_stale")
                 device.expect_exact("CANCEL_STALE tx=259 rx=259\r\n", timeout=5)
-                dut.write("send 63 0")
-                dut.expect_exact("SENT 63 zlp=0 ok=1\r\n", timeout=10)
+                dut.write(f"send {mps - 1} 0")
+                dut.expect_exact(f"SENT {mps - 1} zlp=0 ok=1\r\n", timeout=10)
                 rx_count += 1
                 device.write("rx_result")
-                device.expect_exact(f"RX_RESULT {rx_count} status=0 requested=64 actual=63 known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
-                dut.write("receive 63")
-                dut.expect_exact("READ_OK 63\r\n", timeout=10)
+                device.expect_exact(f"RX_RESULT {rx_count} status=0 requested={mps} actual={mps - 1} known=1 pointer=1 guards=1 payload=1\r\n", timeout=5)
+                dut.write(f"receive {mps - 1}")
+                dut.expect_exact(f"READ_OK {mps - 1}\r\n", timeout=10)
                 tx_count += 1
                 device.write(f"tx_wait {tx_count}")
                 device.expect_exact(f"TX_WAIT {tx_count}\r\n", timeout=5)
                 device.write("direct_status")
-                device.expect_exact(f"DIRECT_STATUS {tx_count} status=0 requested=63 actual=63 known=1 pointer=1\r\n", timeout=5)
+                device.expect_exact(f"DIRECT_STATUS {tx_count} status=0 requested={mps - 1} actual={mps - 1} known=1 pointer=1\r\n", timeout=5)
                 for board in (dut, device):
                     board.write("stop")
                     board.expect_exact("STOPPED\r\n", timeout=30)

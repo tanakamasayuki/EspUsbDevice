@@ -3,11 +3,12 @@
 #include "../../../../src/internal/EspUsbController.h"
 #include "../../../../src/internal/EspUsbDeviceEndpoint.h"
 #include "../../../../src/internal/EspUsbRuntime.h"
+#include "../../../../src/internal/EspUsbDwc2Hardware.h"
 #include <atomic>
-#include "soc/usb_dwc_struct.h"
+#include "../../common/probe_link.h"
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
-alignas(64) uint8_t oldTx[64],oldRx[64],newTx[64],newRx[64];
+alignas(64) uint8_t oldTx[64],oldRx[PROBE_BULK_MPS],newTx[64],newRx[PROBE_BULK_MPS];
 std::atomic<bool> irqMasked{false};
 std::atomic<unsigned> setups{0},oldReturns{0},successes{0},bad{0};
 std::atomic<bool> parked{false},released{false},armed{false},newTxPending{false},newRxPending{false};
@@ -23,13 +24,13 @@ espusb::internal::UsbRuntimeJob parkJob{park,nullptr};
 void armNew(void *) {
   newTxPending=newRxPending=true;
   auto tx=vendor.writeDirect(newTx,64);newTxId=tx.id;
-  auto rx=vendor.readDirect(newRx,64);newRxId=rx.id;
+  auto rx=vendor.readDirect(newRx,sizeof(newRx));newRxId=rx.id;
   if(!tx || !rx)++bad;
   armed=true;
 }
 void setup() {
   Serial.begin(115200);Serial.setTimeout(100);
-  memset(oldTx,0xdd,64);memset(oldRx,0xcc,64);
+  memset(oldTx,0xdd,64);memset(oldRx,0xcc,sizeof(oldRx));
   for(unsigned i=0;i<64;++i)newTx[i]=uint8_t(i*37+13);
   vendor.onDirectTxComplete([](const EspUsbTransferResult &r) {
     if(r.buffer==oldTx){if(r.id!=oldTxId || r.status!=EspUsbTransferStatus::BusReset)++bad;++oldReturns;}
@@ -54,8 +55,8 @@ void loop() {
     for(unsigned j=9;j+2<=n && d[j]>=2 && d[j]<=n-j;j+=d[j])if(d[j+1]==5)(d[j+2]&128 ? input:output)=d[j+2];
     Serial.printf("STARTED %u\r\n",unsigned(ok && input && output));
   } else if(s=="prime") {
-    oldReturns=successes=bad=0;armed=newTxPending=newRxPending=false;memset(newRx,0x5a,64);
-    auto tx=vendor.writeDirect(oldTx,64);oldTxId=tx.id;auto rx=vendor.readDirect(oldRx,64);oldRxId=rx.id;
+    oldReturns=successes=bad=0;armed=newTxPending=newRxPending=false;memset(newRx,0x5a,sizeof(newRx));
+    auto tx=vendor.writeDirect(oldTx,64);oldTxId=tx.id;auto rx=vendor.readDirect(oldRx,sizeof(oldRx));oldRxId=rx.id;
     Serial.printf("PRIMED %u\r\n",unsigned(bool(tx) && bool(rx)));
   } else if(s=="park") {
     released=false;setupMark=setups.load();bool ok=espusb::internal::postUsbRuntimeJob(parkJob);
@@ -67,7 +68,8 @@ void loop() {
     if(ok){espusb_controller_int_disable(espusb::internal::usbRuntimeRhport());irqMasked=true;}
     Serial.printf("MASKED %u\r\n",unsigned(ok));
   } else if(s=="latched") {
-    const bool completed=(input&15) && USB_DWC.in_eps[(input&15)-1].diepint_reg.xfercompl;
+    EspUsbDwc2Diepint status={};if(input&15)status.value=espusb_dwc2_registers(espusb::internal::usbRuntimeRhport())->epin[input&15].diepint;
+    const bool completed=status.xfer_complete;
     Serial.printf("LATCHED %u\r\n",unsigned(irqMasked.load() && completed && !oldReturns.load()));
   } else if(s=="inject_latched") {
     bool ok=irqMasked.load() && parked.load() && espusb_device_try_defer(armNew,nullptr);released=true;
