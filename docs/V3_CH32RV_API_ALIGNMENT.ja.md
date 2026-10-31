@@ -191,3 +191,20 @@ S3–S3の独立validationを基準にし、conftestを追加しない。P4の�
 - Audioは[ESP現行仕様のレビュー用初稿](V3_AUDIO_API.ja.md#ch32rv調整向けplaybackあふれ仕様の初稿2026-10-30)を用意した。
   その後、先方から選択APIの命名待ちとの返答を確認。現在の具体案と合意事項は冒頭から各APIガイドを参照。
 - Audio/DFU/MSCの実装変更は未適用。現在の残作業は[TODO](../TODO.ja.md#優先する残作業)を参照。
+
+## 2026-10-31：CCIDの既定messageBytes
+
+P4 HSの試験で、ESPの既定320がMPS512未満のためbeginで拒否されることが分かった。
+CH32RV側は既定271で、MPS未満を拒否していなかったため、USBHSでdwMaxCCIDMessageLength=271とwMaxPacketSize=512を出していた（CCID 1.1 §5.1違反）。
+両側で次の形にそろえた。
+
+- messageBytes=0は自動。beginのときに`max(271, 選択controllerのBulk-OUT MPS)`に決める（FS 271、HS 512、CH32のUSBSS 1024）。
+- 明示値は64～65535。MPS未満ならbeginで失敗させ、黙って切り上げない。
+- messageCapacity()とdescriptorのdwMaxCCIDMessageLengthには、決まった値を出す。
+
+| 側 | commit | 確認 |
+| --- | --- | --- |
+| ESP | 57ae028 | S3（FS）271、P4/P4X HS 512をccid_streamで確認 |
+| CH32RV | 7248ca0d（未push） | x035s3とESP32-S3のusb-peer-classesで271/271/64。HS/SSはbuildのみ（V307、H417） |
+
+バッファの確保はそれぞれの方式のまま（ESPはbeginで確保、CH32は系列の最大packetで静的に確保）。ESPだけがconfiguration()を持つ。
