@@ -21,7 +21,6 @@ bool metadata() {
   ok &= v.setFrameRate(1) && v.setFrameSize(4096,4096) && !v.setFrameRate(255) && v.frameRate()==1;
   EspUsbDeviceConfig identity; identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
   ok &= d.begin(identity) && !v.setFrameSize(16,16) && !v.setFrameRate(15) && !v.setMaxFrameSize(65536);
-  ok &= !v.begin() && v.startError()==ESP_ERR_INVALID_STATE;
   ok &= !v.configurationDescriptorForSpeed(nullptr,0,0,1,false);
   ok &= d.end()==ESP_OK && v.setMaxFrameSize(0) && v.setFrameSize(16,16) && v.setFrameRate(15);
   return ok;
@@ -56,7 +55,7 @@ void loop() {
     ok &= device.begin() && video->payloadBufferSize()==payload && video->onFrameComplete({})==ESP_ERR_INVALID_STATE; Serial.printf("STARTED %u\r\n",unsigned(ok));
   } else if (command=="intruder") {
     auto *v=new EspUsbDeviceVideo(device);
-    bool ok=!v->begin() && v->startError()==ESP_ERR_INVALID_STATE; delete v;
+    bool ok=device.lastError()==ESP_ERR_INVALID_STATE; delete v;  // refused at registration
     Serial.printf("INTRUDER %u\r\n",unsigned(ok && device.ready()));
   } else if (command.startsWith("frame ")) {
     unsigned n=command.substring(6).toInt();

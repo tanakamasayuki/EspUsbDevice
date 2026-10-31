@@ -67,7 +67,8 @@ void loop() {
     ok &= dfu[0]->configure({}) == ESP_ERR_INVALID_STATE && dfu[0]->setBackend({}) == ESP_ERR_INVALID_STATE;
     ok &= dfu[0]->restartWhenComplete(false) == ESP_ERR_INVALID_STATE && dfu[0]->onProgress({}) == ESP_ERR_INVALID_STATE;
     auto *intruder = new EspUsbDeviceDfu(device);
-    ok &= !intruder->begin() && intruder->startError() == ESP_ERR_INVALID_STATE;
+    // Refused at registration while the device runs; its lifecycle is not public.
+    ok &= device.lastError() == ESP_ERR_INVALID_STATE;
     delete intruder;
     Serial.printf("STARTED %u\r\n", unsigned(ok));
   } else if (command.startsWith("inject ")) { inject = command.substring(7).toInt(); Serial.println("INJECTED");
