@@ -565,7 +565,11 @@ static constexpr size_t ESP_USB_DEVICE_CCID_MAX_ATR = 33;
 #endif
 struct EspUsbCcidConfig
 {
-  size_t messageBytes = 320; // complete message, including its 10-byte header
+  // Complete message, including its 10-byte header. 0 selects 271 (a whole
+  // short APDU: 10 + 4 + 1 + 255 + 1), raised to the Bulk-OUT max packet of the
+  // selected controller (512 at high speed), which CCID 1.1 requires as the
+  // minimum for short APDU exchange.
+  size_t messageBytes = 0;
   bool removable = true; // false omits notification endpoint; insert before begin
   const char *name = nullptr;
 };
@@ -1417,6 +1421,8 @@ private:
   friend struct EspUsbCcidState;
   EspUsbCcidConfig config_;
   EspUsbCcidState *state_ = nullptr;
+  size_t messageBytes_ = 0; // resolved at begin
+  size_t resolvedMessageBytes() const;
   esp_err_t startError_ = ESP_OK;
   uint8_t interfaceNumber_ = 255, stringIndex_ = 0;
   size_t writeHeader(uint8_t messageType, uint32_t dataLength, uint8_t slot,

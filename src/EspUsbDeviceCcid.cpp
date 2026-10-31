@@ -119,7 +119,7 @@ struct EspUsbCcidState {
     if(!stopping && !(draining&3) && !txBusy && out && !espusb_device_edpt_stalled(port,in))espusb_device_edpt_xfer(port,out,packet,packetSize,false);
   }
   bool send(size_t bytes) {
-    if(stopping || (draining&3) || !in || txBusy || bytes>owner.config_.messageBytes || !espusb_device_edpt_claim(port,in))return false;
+    if(stopping || (draining&3) || !in || txBusy || bytes>owner.messageBytes_ || !espusb_device_edpt_claim(port,in))return false;
     txBusy=true;zlp=bytes%packetSize==0;
     if(espusb_device_edpt_xfer(port,in,owner.response_,uint16_t(bytes),false))return true;
     txBusy=zlp=false;espusb_device_edpt_release(port,in);return false;
@@ -178,7 +178,7 @@ struct EspUsbCcidState {
     const unsigned count=s->owner.config_.removable ? 3:2,needed=63+7*count;
     if(bytes<needed || itf->bNumEndpoints!=count)return 0;
     const auto *d=reinterpret_cast<const uint8_t *>(itf);
-    if(d[9]!=54 || d[10]!=0x21 || ccidRead32(d+9+44)!=s->owner.config_.messageBytes)return 0;
+    if(d[9]!=54 || d[10]!=0x21 || ccidRead32(d+9+44)!=s->owner.messageBytes_)return 0;
     s->port=port;s->interface=itf->bInterfaceNumber;
     for(unsigned n=0;n<count;++n) {
       const auto *ep=reinterpret_cast<const EspUsbEndpointDescriptor *>(d+63+7*n);
@@ -225,12 +225,12 @@ struct EspUsbCcidState {
     }
     if(result!=ESPUSB_TRANSFER_SUCCESS || bytes>s->packetSize){s->received=s->stored=0;s->receive();return true;}
     s->received+=bytes;
-    const size_t copy=std::min(size_t(bytes),s->owner.config_.messageBytes-s->stored);
+    const size_t copy=std::min(size_t(bytes),s->owner.messageBytes_-s->stored);
     memcpy(s->message+s->stored,s->packet,copy);s->stored+=copy;
     if(s->stored>=10) {
       const uint64_t wanted=uint64_t(ccidRead32(s->message+1))+10;
       if(s->received>=wanted || bytes<s->packetSize) {
-        if(s->received!=wanted || wanted>s->owner.config_.messageBytes)s->owner.handleOverrun(s->message[0],s->message[5],s->message[6]);
+        if(s->received!=wanted || wanted>s->owner.messageBytes_)s->owner.handleOverrun(s->message[0],s->message[5],s->message[6]);
         else s->owner.handleMessage(s->message,size_t(wanted));
         s->received=s->stored=0;
       }
@@ -247,24 +247,29 @@ EspUsbDeviceCcid::EspUsbDeviceCcid(EspUsbDevice &d):EspUsbDeviceClass(d) {}
 EspUsbDeviceCcid::~EspUsbDeviceCcid(){end();}
 esp_err_t EspUsbDeviceCcid::configure(const EspUsbCcidConfig &c) {
   if(state_)return ESP_ERR_INVALID_STATE;
-  if(c.messageBytes<64 || c.messageBytes>UINT16_MAX)return ESP_ERR_INVALID_SIZE;
+  if(c.messageBytes && (c.messageBytes<64 || c.messageBytes>UINT16_MAX))return ESP_ERR_INVALID_SIZE;
   config_=c;return ESP_OK;
 }
 size_t EspUsbDeviceCcid::messageCapacity() const {
-  portENTER_CRITICAL(&ccidLock);size_t n=state_ ? config_.messageBytes:0;portEXIT_CRITICAL(&ccidLock);return n;
+  portENTER_CRITICAL(&ccidLock);size_t n=state_ ? messageBytes_:0;portEXIT_CRITICAL(&ccidLock);return n;
+}
+size_t EspUsbDeviceCcid::resolvedMessageBytes() const {
+  return config_.messageBytes ? config_.messageBytes : std::max<size_t>(271,maximumBulkPacketSize());
 }
 bool EspUsbDeviceCcid::begin() {
   if(state_ || !registered_){startError_=ESP_ERR_INVALID_STATE;return false;}
   startError_=configure(config_);if(startError_!=ESP_OK)return false;
   if(!config_.removable && !cardPresent_){startError_=ESP_ERR_INVALID_STATE;return false;}
   const uint16_t mps=maximumBulkPacketSize();
-  if(config_.messageBytes<mps){startError_=ESP_ERR_INVALID_SIZE;return false;}
+  const size_t bytes=resolvedMessageBytes();
+  if(bytes<mps){startError_=ESP_ERR_INVALID_SIZE;return false;}
+  messageBytes_=bytes;
   auto *s=espusb::internal::newUsbObject<EspUsbCcidState>(*this);
   if(s) {
     s->packetCapacity=mps;
     s->packet=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(mps,64,true));
-    s->message=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(config_.messageBytes));
-    response_=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(config_.messageBytes,64,true));
+    s->message=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(bytes));
+    response_=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(bytes,64,true));
     if(config_.removable)s->notify=static_cast<uint8_t *>(espusb::internal::allocateUsbMemory(8,64,true));
   }
   if(!s || !s->packet || !s->message || !response_ || (config_.removable && !s->notify) ||
@@ -327,7 +332,7 @@ uint16_t EspUsbDeviceCcid::configurationDescriptor(uint8_t *dst, uint8_t interfa
   // and parameter negotiation itself, and exchanges whole short APDUs. That last
   // part is what tells the host it may send an APDU rather than TPDUs.
   ccidWrite32(&ccid[40], 0x000204fe);
-  ccidWrite32(&ccid[44], uint32_t(config_.messageBytes)); // dwMaxCCIDMessageLength
+  ccidWrite32(&ccid[44], uint32_t(resolvedMessageBytes())); // dwMaxCCIDMessageLength
   ccid[48] = 0xff;                    // bClassGetResponse: echoes the APDU class
   ccid[49] = 0xff;                    // bClassEnvelope: echoes the APDU class
   ccidWrite16(&ccid[50], 0);          // wLcdLayout: no display
@@ -475,7 +480,7 @@ void EspUsbDeviceCcid::sendStatus(uint8_t messageType, uint8_t slot, uint8_t seq
 void EspUsbDeviceCcid::sendData(uint8_t messageType, uint8_t slot, uint8_t sequence,
                                 const uint8_t *data, size_t length, uint8_t parameter)
 {
-  if (length > config_.messageBytes - CCID_HEADER_SIZE)
+  if (length > messageBytes_ - CCID_HEADER_SIZE)
   {
     sendStatus(messageType, slot, sequence, CCID_COMMAND_FAILED,
                ESP_USB_DEVICE_CCID_ERROR_XFR_OVERRUN, parameter);
@@ -595,7 +600,7 @@ void EspUsbDeviceCcid::handleMessage(const uint8_t *message, size_t length)
     if (apduCallback_)
     {
       responseLength = apduCallback_(data, dataSize, &response_[CCID_HEADER_SIZE],
-                                     config_.messageBytes - CCID_HEADER_SIZE);
+                                     messageBytes_ - CCID_HEADER_SIZE);
     }
     else
     {
@@ -624,7 +629,7 @@ void EspUsbDeviceCcid::handleMessage(const uint8_t *message, size_t length)
     if (escapeCallback_)
     {
       responseLength = escapeCallback_(data, dataSize, &response_[CCID_HEADER_SIZE],
-                                       config_.messageBytes - CCID_HEADER_SIZE);
+                                       messageBytes_ - CCID_HEADER_SIZE);
     }
     if (responseLength == 0)
     {

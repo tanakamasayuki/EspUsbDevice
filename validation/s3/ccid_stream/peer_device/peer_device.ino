@@ -27,6 +27,17 @@ bool metadata() {
     ok &= !card.insertCard(atrValue,sizeof(atrValue)) && card.removeCard()==ESP_ERR_INVALID_STATE;
     ok &= local.end()==ESP_OK && card.removeCard()==ESP_OK;
   }
+  {
+    // Default: 0 resolves at begin to max(271, Bulk-OUT MPS), in both the capacity and the descriptor.
+    EspUsbDevice local;EspUsbDeviceCcid card(local);
+    const size_t automatic=PROBE_BULK_MPS>271?PROBE_BULK_MPS:271;
+    EspUsbDeviceConfig identity;identity.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
+    ok &= card.configuration().messageBytes==0 && local.begin(identity) && card.messageCapacity()==automatic && card.configuration().messageBytes==0;
+    const uint8_t *d=local.configurationDescriptor(0);uint32_t advertised=0;
+    for(unsigned i=0,n=d?d[2]|d[3]<<8:0;i+2<=n && d[i]>=2;i+=d[i])
+      if(d[i]==54 && d[i+1]==0x21)advertised=d[i+44]|d[i+45]<<8|uint32_t(d[i+46])<<16|uint32_t(d[i+47])<<24;
+    ok &= advertised==automatic && local.end()==ESP_OK && !card.messageCapacity();
+  }
   return ok;
 }
 void setup(){Serial.begin(115200);Serial.setTimeout(100);}

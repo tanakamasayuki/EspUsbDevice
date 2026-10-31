@@ -465,7 +465,7 @@ BOT reset中のinterface再選択も、未受信のendpoint CLEAR_FEATUREを完�
 
 ESP_USB_DEVICE_CCID_BUFFER_SIZE、単一global ownerとdriver state、Function内の固定返信配列を撤去する。
 EspUsbCcidConfig.messageBytesはheaderを含む全message容量で、descriptorにも同じ値を出す。
-既定320、64～65535 byte。実際のcontrollerの最大packetより小さければbeginで拒否する。
+既定0は自動で、beginのときにmax(271, Bulk-OUT最大packet)に決まる（2026-10-31に320から変更、CH32RVと共通）。明示値は64～65535 byteで、実際のcontrollerの最大packetより小さければbeginで拒否する。
 2つのCCIDを別interfaceとして登録でき、各状態とbufferをbegin時に確保しendで返す。
 返信stagingと送信bufferの重複を避け、1本のDMA返信bufferをIN/ZLP完了まで保持する。
 次のOUTをその後にarmし、1 slot / 1 busy commandという広告とbackpressureを揃える。

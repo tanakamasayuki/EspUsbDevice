@@ -305,6 +305,8 @@ audio_overflowは、修正前は旧P4 Deviceで5回中2回失敗していた。�
    - 修正：ISRの中で、同じDMA bufferのまま偶奇を反転してarmし直す。OUTには古いデータを送る問題がないので回数の上限は設けない。
    - 測定：連続200 packetの受信率は、修正前から両方向・S3とも200/200だった（`test_iso_out_rate`）。欠けるのは、Hostが間を空けたときだけ。
 
-### 未決の提案
+### CCIDの既定messageBytes（2026-10-31に決定）
 
-- CCIDの既定`messageBytes=320`は、HSでは`begin()`で必ず拒否される。CCID 1.1の規定（Bulk-OUTのMPS以上）による設計で、文書にもあるが、既定のままHSで使うと失敗する。既定をcontrollerに応じて決めるか、今のまま文書で案内するかは、API判断として保留する。
+以前の既定320は、HSでは`begin()`で必ず拒否されていた。ユーザーの決定とArduinoCore-CH32RVとの相談により、既定0を自動とした。
+自動の値はbeginのときに`max(271, Bulk-OUT MPS)`に決まる（FS 271、HS 512）。明示値がMPS未満なら、従来どおり拒否する。
+ccid_streamのmetadataで、容量とdescriptorのdwMaxCCIDMessageLengthを確認した（S3 271、HS 512）。

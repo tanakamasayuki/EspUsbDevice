@@ -7,7 +7,6 @@
 EspUsbDevice device;
 EspUsbDeviceCcid reader(device);
 EspUsbCcidConfig config;
-config.messageBytes = 320;
 config.name = "Card reader";
 reader.configure(config);
 const uint8_t atr[] = {0x3b, 0x80, 0x01, 0x81}; // T=1
@@ -24,11 +23,13 @@ if (!device.begin()) {
 
 ## 容量と費用
 
-messageBytesは10 byte headerを含む全message容量。既定320、64～65535 byteで、
-選択controllerの最大packetより小さい構成はbeginで拒否する。
+messageBytesは10 byte headerを含む全message容量。既定0は自動で、beginのときに`max(271, 選択controllerのBulk-OUT最大packet)`に決まる。FSは271、HSは512。
+271はshort APDUがちょうど収まる値（command 10+4+1+255+1、response 10+256+2）。
+明示する場合は64～65535 byteで、選択controllerの最大packetより小さい構成はbeginで拒否し、黙って切り上げない。
 この最小値は[CCID 1.1 §5.1のdwMaxCCIDMessageLength](https://www.usb.org/sites/default/files/DWG_Smart-Card_CCID_Rev110.pdf#page=20)による。
-現在のshort APDU構成ではBulk-OUTのwMaxPacketSize以上が必要であり、単にpacket組立て領域を
-分離しただけではこの条件を外せない。HSではmessageBytesを512以上にする。
+現在のshort APDU構成ではBulk-OUTのwMaxPacketSize以上が必要であり、単にpacket組立て領域を分離しただけではこの条件を外せない。
+messageCapacity()とdescriptorには決まった値を出し、configuration().messageBytesは設定どおり0を返す。
+既定値はArduinoCore-CH32RVと同じ決め方にそろえた（2026-10-31）。以前の既定は320で、HSでは既定のままbeginが失敗していた。
 同じ値をdwMaxCCIDMessageLengthへ出し、callbackの出力容量はmessageBytes−10となる。
 大きい容量を設定してもextended APDU、chaining、PIN処理の対応は追加されない。
 T=1・short APDUを扱うemulated slotという既存の機能範囲を維持する。
