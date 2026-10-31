@@ -1,45 +1,82 @@
-# Arduino-ESP32標準USB APIからの移行ガイド
+# Arduino-ESP32標準USB APIからの移行
 
 > English: [migrating-from-arduino-esp32-usb.md](migrating-from-arduino-esp32-usb.md)
 
-Arduino-ESP32 core標準のUSB device API（`USB.begin()`、`USBHIDKeyboard`、
-`USBHIDMouse`、`USBCDC`、`USBMSC`、`USBMIDI`、`USBVendor`など）で書かれた
-スケッチをEspUsbDeviceへ移すためのガイドです。EspUsbDeviceは**意図的に**この
-スタックとAPI互換ではありません。port、speed、descriptor、endpoint packet
-size、raw class reportをスケッチ側から明示的に制御するためです。このページでは
-core APIごとの対応先、移行して得られるもの、どちらにも対応物がないものを
-まとめます。
+Arduino-ESP32のCoreに付属するUSB device API（`USB.begin()`、`USBHIDKeyboard`、`USBHIDMouse`、`USBCDC`、`USBMSC`、`USBMIDI`、`USBVendor`など）で
+書いたsketchを、EspUsbDevice v3へ移すための文書です。
+EspUsbDevice v3は、そのstackと**意図して互換にしていません**。sketchがcontroller、descriptor、各Functionのbuffer、生のreportを明示し、
+どの段階でも失敗の理由を返します。この文書では、Coreの各APIに対応するv3のAPIと、どちらか一方にしかないものをまとめます。
 
-## モデルの違い（最初に読んでください）
+EspUsbDevice 2.xから移る場合は[v2からの移行](migrating-from-v2.ja.md)を見てください。
 
-| | Arduino-ESP32 core | EspUsbDevice |
-|---|---|---|
-| 起動 | クラスごとの`begin()`のあとにグローバルな`USB.begin()` | `EspUsbDevice`オブジェクト1つ。各クラスはconstructorで自己登録し、`device.begin(config)`1回 |
-| VID / PID / 文字列 | `USB.VID()` / `USB.PID()` / `USB.productName()`などのsetter（またはビルドフラグ） | `EspUsbDeviceConfig`のフィールドとして`begin()`へ渡す |
-| ディスクリプタ | coreが所有 | ライブラリが所有し、バイト単位で確認できる（[DescriptorDump](../examples/Info/EspUsbDeviceDescriptorDump/)） |
-| イベント | `USB.onEvent()`の集中ハブ | クラスごとのcallback（`onOutputReport`、`onLineState`など）と`device.ready()` |
-| エラー | ほぼ無言 | `begin()`が`false`を返し、`device.lastErrorName()`が理由を名乗る |
-| 複合デバイス | クラスが暗黙に積み重なる | 最大4クラスを明示登録。endpoint予算はPHY開始前に検査される |
+## 考え方の違い（最初に読む）
 
-2つのスタックは**排他**です。EspUsbDeviceのスケッチでは`USB.begin()`を
-呼ばず、`USB Mode`は"USB-OTG (TinyUSB)"でビルドし、`USB CDC On Boot`は無効の
-ままにします。このため`Serial`はUART側に出ます
-（[ガイド3.5](usb-device-guide.ja.md#35-arduino-esp32標準usbスタックとは排他)）。
+| | Arduino-ESP32 Core | EspUsbDevice v3 |
+| --- | --- | --- |
+| object | 全体で1つの`USB`と、classごとのobject | 1つの`EspUsbDevice`（**Device**）と、機能ごとの**Function**のobject。Functionはconstructorで自分をDeviceに登録する |
+| 開始 | 各classの`begin()`の後に`USB.begin()` | 必要ならFunctionを`configure()`し、`device.begin(config)`を1回呼ぶ。Functionには公開の`begin()`がなく、呼ぶとcompile errorになる |
+| 停止 | - | `device.end()`がすべてを解放する。`end()`→`configure()`→`begin()`で、再buildなしに設定を変えられる |
+| VID/PID/文字列 | `USB.VID()`、`USB.productName()`など | `EspUsbDeviceConfig`のfieldに入れ、`device.begin()`へ渡す |
+| bufferの大きさ | Coreで固定、またはbuild flag | Functionごとに`configure()`で実行時に決める。旧`CFG_TUD_*` flagはcompile error |
+| callback | `onEvent()`をいつでも | 型付きのcallback（`onLineCoding`、`onOutputReport`など）を`device.begin()`の**前に**登録する |
+| deviceの状態 | `USB.onEvent(ARDUINO_USB_*_EVENT)` | `device.started()`、`device.ready()`、`device.suspended()`を調べる |
+| error | ほとんど知らせない | `configure()`は`esp_err_t`を返す。`begin()`は`bool`を返し、理由は`device.lastError()` |
+| 複合device | classを足すと暗黙に重なる | Functionはいくつでも置ける。endpointの予算は`begin()`の中でPHYの開始前に確かめる |
+| controller | chipごとに固定 | ESP32-P4では`config.controller`でFS/HSを選ぶ |
 
-### 移行チェックリスト
+### 2つのstackは同時に使えない
 
-1. `#include "USB.h"`とすべての`USB.*`呼び出しを削除する。
-2. `EspUsbDevice device;`を1つ作り、各クラスのconstructorへ渡す。
-3. VID/PID/manufacturer/product/serialを`EspUsbDeviceConfig`へ移す。
-4. クラスごとの`begin()`+`USB.begin()`のペアを、全クラス構築後の
-   `device.begin(config)`1回に置き換える。
-5. 送信は`device.ready()`でゲートする。未マウント中の送信は捨てられ、
-   キューされません。
-6. `begin()`の戻り値を確認し、`device.lastErrorName()`を出力する。
+EspUsbDeviceは、自前のdriverでUSB OTG controllerを動かします。CoreのUSB device stackも同じcontrollerを動かします。
+EspUsbDeviceのsketchでは次を守ります。
 
-## Keyboard: `USBHIDKeyboard` → `EspUsbDeviceHidKeyboard`
+- `USB.begin()`を呼ばず、`USBHID*`、`USBCDC`、`USBMSC`、`USBMIDI`、`USBVendor`、`FirmwareMSC`のobjectを作らない。
+- ESP32-S2/S3は*USB Mode: USB-OTG (TinyUSB)*（`USBMode=default`）でbuildする。
+- *USB CDC On Boot*、*USB MSC On Boot*、*USB DFU On Boot*を、OTG controllerに対して有効にしない。
+- そのため`Serial`はOTGの口には出ません。UART（ESP32-P4を`USBMode=hwcdc`でbuildしたならUSB Serial/JTAG）に出ます。
+  [トラブルシューティングの4](troubleshooting.ja.md#4-buildと書込み)を参照。
 
-移行前:
+### 移行の手順
+
+1. `#include "USB.h"`とclassのheaderを消し、`#include <EspUsbDevice.h>`にする。
+2. `EspUsbDevice device;`を1つ作り、各Functionのconstructorへ渡す。Functionは`device.begin()`より前に宣言する。
+3. VID、PID、文字列を`EspUsbDeviceConfig`へ移す。
+4. classの`begin()`と`USB.begin()`をすべて、1回の`device.begin(config)`に置き換える。
+   `msc.begin(blockCount, blockSize)`は残す（容量を設定するだけ）。
+5. callbackはすべて`device.begin()`の前に登録し、返る`esp_err_t`を確かめる。
+6. 送信は`device.ready()`がtrueの間だけ行う。
+7. `begin()`の結果を確かめ、`esp_err_to_name(device.lastError())`を表示する。
+8. 試験中はPID（またはserial番号）を変え、WindowsがCoreのstackのdeviceについて記憶した内容を使わないようにする。
+
+## USB object → EspUsbDeviceConfig
+
+| Core | v3 | 注意 |
+| --- | --- | --- |
+| `USB.VID(v)` / `USB.PID(p)` | `config.vid` / `config.pid` | 既定は`0x303a` / `0x4000`。机上の試験用で、製品には使わない |
+| `USB.manufacturerName()` / `productName()` / `serialNumber()` | `config.manufacturer` / `product` / `serialNumber` | UTF-8。それぞれUTF-16で126単位まで |
+| `USB.firmwareVersion(v)` | `config.deviceVersion` | `bcdDevice`。既定`0x0100` |
+| `USB.usbPower(mA)` | `config.maxPowerMilliamps` | 既定100 |
+| `USB.usbAttributes(...)` | `config.selfPowered`、`config.remoteWakeupSupported` | |
+| `USB.usbVersion()` | - | `bcdUSB`は0x0200。BOS descriptorがあるときは0x0201 |
+| `USB.usbClass()` / `usbSubClass()` / `usbProtocol()` | - | 自動で決める。IADがあれば`0xEF/0x02/0x01` |
+| `USB.webUSB(true)` / `USB.webUSBURL(url)` | `config.webusbEnabled` / `config.webusbUrl` | |
+| `USB.onEvent(...)` | `device.ready()`、`device.suspended()`、`device.started()` | device全体のevent callbackはない |
+| `USB.begin()` | `device.begin(config)` | `bool`を返す。理由は`device.lastError()` |
+
+```cpp
+EspUsbDeviceConfig config;
+config.vid = 0x303a;
+config.pid = 0x4001;
+config.manufacturer = "Example";
+config.product = "My Keyboard";
+config.serialNumber = "0001";
+if (!device.begin(config)) {
+  Serial.println(esp_err_to_name(device.lastError()));
+}
+```
+
+## Keyboard：`USBHIDKeyboard` → `EspUsbDeviceHidKeyboard`
+
+移行前：
 
 ```cpp
 #include "USB.h"
@@ -58,17 +95,16 @@ void loop() {
 }
 ```
 
-移行後:
+v3では：
 
 ```cpp
-#include "EspUsbDevice.h"
+#include <EspUsbDevice.h>
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 
 void setup() {
-  keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_JA_JP);
+  keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);  // Hostのlayout
   EspUsbDeviceConfig config;
-  config.vid = 0x303a;
   config.pid = 0x4001;
   config.product = "My Keyboard";
   device.begin(config);
@@ -77,53 +113,52 @@ void loop() {
   if (!device.ready()) { delay(10); return; }
   keyboard.write("Hello\n");
   keyboard.tapUsage(ESP_USB_HID_KEY_R, ESP_USB_DEVICE_MOD_LEFT_GUI);
+  delay(1000);
 }
 ```
 
-| core | EspUsbDevice | 補足 |
-|---|---|---|
-| `Keyboard.print()` / `println()` | `keyboard.write("text")` | レイアウト対応。`setLayout()`には**ホスト側**のレイアウトを指定 |
-| `Keyboard.press('a')` / `release()` | `keyboard.pressKey('a')` / `releaseAll()` | ASCII経路 |
-| `Keyboard.press(KEY_LEFT_GUI)`+キー | `keyboard.pressUsage(usage, modifiers)` / `tapUsage()` | 変換済みキーコードではなく、HID usage IDとmodifier bitが第一級API |
-| `Keyboard.releaseAll()` | `keyboard.releaseAll()` | 同じ発想 |
-| （対応なし） | `keyboard.sendReport(...)` | boot / NKROレポートをバイト単位で送信 |
-| （対応なし） | `keyboard.enableNkro()` + `EspUsbDeviceNkroKeyboardReport` | 224bitビットマップによる真のN-key rollover |
-| （対応なし） | `keyboard.ledState()` / `onOutputReport()` | ホストからのNumLock/CapsLock/ScrollLock |
-| （対応なし） | `keyboard.onProtocol()` | BIOS/UEFIのboot protocol切り替えを検出 |
+| Core | v3 | 注意 |
+| --- | --- | --- |
+| `Keyboard.print()` / `println()` / `write(c)` | `keyboard.write("text")`、`keyboard.tapKey(c)` | layoutに従う。`write()`はlayoutで打てない最初の文字で`false`を返す |
+| `Keyboard.begin(layout)` | `keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_*)` | **Host**が使うlayoutに合わせる |
+| `Keyboard.press(KEY_LEFT_GUI)`の後に`press('r')` | `keyboard.pressUsage(ESP_USB_HID_KEY_R, ESP_USB_DEVICE_MOD_LEFT_GUI)`または`tapUsage(...)` | HIDのusage IDと修飾キーのbitが基本のAPI |
+| `Keyboard.press(c)` / `release(c)` | `keyboard.pressKey(c)` / `releaseKey(c)` | `releaseKey(c)`は、その文字を打つためにlayoutが使う修飾キーも離す。usage IDなら`releaseUsage(usage)` |
+| 複数の`press()`で同時に押したまま | `pressUsage()` / `pressKey()` | Coreと同じく、押すたびにキーと修飾キーを足し込む。NKROなしでは修飾キー以外を6つまで。7つ目は`ESP_ERR_INVALID_SIZE`で、状態は変わらない。もっと押すには`enableNkro()` |
+| `Keyboard.releaseAll()` | `keyboard.releaseAll()` | 修飾キーも離す |
+| `Keyboard.pressRaw()` / `sendReport(KeyReport*)` | `keyboard.sendReport(EspUsbDeviceBootKeyboardReport)` | boot reportをbyteどおりに送る |
+| `onEvent(ARDUINO_USB_HID_KEYBOARD_LED_EVENT)` | `keyboard.onOutputReport(...)`（`begin()`の前）、または`keyboard.ledState()`を読む | |
+| - | `keyboard.enableNkro()`＋`EspUsbDeviceNkroKeyboardReport` | N-key rollover（usage 0x00〜0xDF） |
+| - | `keyboard.onProtocol()` / `protocol()` | BIOS/UEFIでのboot protocolへの切替を知る |
 
-## Mouse: `USBHIDMouse` → `EspUsbDeviceHidMouse`
+## Mouse：`USBHIDMouse` → `EspUsbDeviceHidMouse`
 
-| core | EspUsbDevice | 補足 |
-|---|---|---|
-| `Mouse.move(x, y, wheel)` | `mouse.move(x, y, wheel)` | 同形 |
-| `Mouse.click(MOUSE_LEFT)` | `mouse.click(ESP_USB_DEVICE_MOUSE_LEFT)` | 定数は`LEFT` / `RIGHT` / `MIDDLE` / `BACK` / `FORWARD` |
-| `Mouse.press()` / `release()` | `mouse.press(buttons)` / `release(buttons)` / `releaseAll()` | ボタンマスク |
-| （対応なし） | `mouse.sendReport(...)` | raw boot mouseレポート |
+| Core | v3 | 注意 |
+| --- | --- | --- |
+| `Mouse.move(x, y, wheel, pan)` | `mouse.move(x, y, wheel, buttons)` | **4番目の引数はpanではなくbuttonの状態。** 既定の`EspUsbDeviceHidMouse::KeepButtons`は`press()`で押したbuttonを保つので、Coreと同じく`press()`の後の`move()`でdragになる。0〜255を渡すと置き換える |
+| `Mouse.click(MOUSE_LEFT)` | `mouse.click(ESP_USB_DEVICE_MOUSE_LEFT)` | `LEFT` / `RIGHT` / `MIDDLE` / `BACK` / `FORWARD` |
+| `Mouse.press(b)` / `release(b)` | `mouse.press(b)` / `release(b)` / `releaseAll()` | buttonのmask |
+| `Mouse.isPressed(b)` | `(mouse.buttons() & b) != 0` | |
+| - | `mouse.wheel(w)`、`mouse.sendReport(EspUsbDeviceBootMouseReport)` | boot mouseの生のreport |
 
-`USBHIDAbsoluteMouse`に**対応物はありません**。このライブラリは相対移動の
-boot mouseのみ実装しています。
+横scroll（pan）と絶対座標のmouse（`USBHIDAbsoluteMouse`）はありません。
+どちらも`EspUsbDeviceHidCustom`に自分のreport descriptorを渡せば作れます。
 
-## メディアキーとその他HID: consumer / system control / gamepad / vendor HID
+## そのほかのHID
 
-- `USBHIDConsumerControl` → [`EspUsbDeviceHidConsumerControl`](../examples/MediaKeys/)。
-  `media.click(ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_UP)`など。任意の16bit
-  consumer usageも`press()` / `sendUsage()`で送れます。
-- `USBHIDSystemControl` → `EspUsbDeviceHidSystemControl`（power / sleep / wake）。
-- `USBHIDGamepad` → [`EspUsbDeviceHidGamepad`](../examples/Gamepad/)。
-  `gamepad.send(x, y, z, rz, rx, ry, hat, buttons)`の1呼び出し。
-- `USBHIDVendor` → [`EspUsbDeviceHidVendor`](../examples/VendorHID/)。
-  interrupt IN/OUTとfeature reportを持つvendor定義HID。
-- `USBHID`+`USBHIDDevice`のサブクラス化 →
-  [`EspUsbDeviceHidCustom`](../examples/CustomHID/)。report descriptorの
-  バイト列をそのまま渡します。サブクラス化は不要です。
+| Core | v3 | 注意 |
+| --- | --- | --- |
+| `USBHIDConsumerControl` | `EspUsbDeviceHidConsumerControl` | `press(usage)`、`release()`、`click(usage)`、`sendUsage(usage)`。usageの値はConsumer pageの同じID（例：`ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_UP` = 0x00E9）。0x3FFを超える値は`ESP_ERR_INVALID_ARG` |
+| `USBHIDSystemControl` | `EspUsbDeviceHidSystemControl` | `press(usage)`はGeneric Desktopのusage ID 0x81/0x82/0x83（`ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF`、`STANDBY`、`WAKE_HOST`）。**Coreの値1/2/3は拒否する**ので名前を使う |
+| `USBHIDGamepad` | `EspUsbDeviceHidGamepad` | `send(x, y, z, rz, rx, ry, hat, buttons)`は同じ順。ほかに`sendReport()`、`releaseAll()`。hatは`ESP_USB_DEVICE_GAMEPAD_HAT_*`（0 = 中央、1〜8）。`leftStick()`/`pressButton()`などの補助はない |
+| `USBHIDVendor` | `EspUsbDeviceHidVendor(device, reportSize)` | `sendInput(data, length)`。受信は`onOutputReport()`/`onFeatureReport()`（`read()`/`available()`はない）。`setFeatureReport()`でHostが読む値を設定する |
+| `USBHID`＋`USBHIDDevice`の派生class | `EspUsbDeviceHidCustom(device, descriptor, length, inputReportSize)` | report descriptorのbyte列を渡す。`sendReport(data, length, reportId)`。派生classは要らない |
 
-上記のHIDクラスは複合時に**1つのHIDインターフェース**へreport IDで統合される
-ため、keyboard + mouse + メディアキーの構成でもIN endpointは1本です
-（[ガイド3.3](usb-device-guide.ja.md#33-endpoint予算)）。
+1つのDeviceのHID Functionはすべて、report IDを付けて**1つのHID interface**にまとめます。
+keyboard＋mouse＋media keyでもIN endpointは1本です。複合のときはreport IDを自動で割り当て、`sendReport()`が付けます。
 
-## Serial: `USBCDC` → `EspUsbDeviceCdcSerial`
+## Serial：`USBCDC` → `EspUsbDeviceCdcSerial`
 
-移行前:
+移行前：
 
 ```cpp
 #include "USB.h"
@@ -133,103 +168,154 @@ void setup() {
   USBSerial.begin();
   USB.begin();
 }
-void loop() { USBSerial.println("tick"); }
+void loop() { USBSerial.println("tick"); delay(1000); }
 ```
 
-移行後:
+v3では：
 
 ```cpp
-#include "EspUsbDevice.h"
+#include <EspUsbDevice.h>
 EspUsbDevice device;
-EspUsbDeviceCdcSerial UsbSerial(device);
+EspUsbDeviceCdcSerial usbSerial(device, "Console");
 
 void setup() {
-  UsbSerial.onLineState([](const EspUsbDeviceCdcLineState &s) {
-    // s.dtr / s.rts
-  });
-  EspUsbDeviceConfig config;
-  device.begin(config);
+  EspUsbBulkStreamConfig buffers;      // 省略可。既定は512/512/512
+  buffers.rxCapacity = 1024;
+  usbSerial.configure(buffers);
+  usbSerial.onLineState([](const EspUsbDeviceCdcLineState &s) { /* s.dtr、s.rts */ });
+  device.begin();
 }
 void loop() {
-  if (UsbSerial.connected()) UsbSerial.write((const uint8_t *)"tick\n", 5);
+  if (usbSerial.connected()) usbSerial.println("tick");
+  delay(1000);
 }
 ```
 
-`read()` / `available()` / `write()` / `flush()`はそのまま移せます。coreの
-`onEvent(ARDUINO_USB_CDC_*)`イベントは、型付きcallbackの`onLineCoding()`、
-`onLineState()`、`onRx()`になります。このCDCはスケッチ用のデータポートで
-あり、Arduinoコンソールではありません（`Serial`はUART側に出ます。
-[ガイド2.3](usb-device-guide.ja.md#23-開発中のコネクタ構成)）。
+| Core | v3 | 注意 |
+| --- | --- | --- |
+| `USBSerial.begin(baud)` | （消す） | `device.begin()`が開始する。baud rateはHostが決め、`lineCoding()`で読める |
+| `print` / `println` / `write` / `read` / `available` / `peek` / `readBytes` / `setTimeout` | 同じ | `EspUsbDeviceCdcSerial`はArduinoの`Stream`。`Stream&`として渡せる |
+| `setRxBufferSize(n)`、TXのbuffer | `configure()`で`EspUsbBulkStreamConfig::rxCapacity` / `txCapacity` | 停止中に設定する |
+| `setTxTimeoutMs(ms)` | `setTxTimeoutMs(ms)` | 既定1000 ms。`write()`と`flush()`は空きや完了をこの時間まで待つ。`0`なら送れた分だけですぐ戻る |
+| `if (USBSerial)` | `usbSerial.connected()` | Hostがportを開いてDTRを立てている間true |
+| `onEvent(ARDUINO_USB_CDC_LINE_CODING_EVENT)` | `onLineCoding(callback)` | `device.begin()`の前 |
+| `onEvent(ARDUINO_USB_CDC_LINE_STATE_EVENT)` | `onLineState(callback)` | |
+| `onEvent(ARDUINO_USB_CDC_RX_EVENT)` | `onRx(callback)` | |
+| `enableReboot()`（Hostの要求でbootloaderへ再起動） | `onLineCoding()`と、`loop()`からの`device.rebootToBootloader()` | v3は自分では再起動しない。[USB経由のファームウェア更新](ota-over-usb.ja.md#24-sketchからboot-modeに入る)を参照 |
+| `USB CDC On Boot`（`Serial`をUSBに出す） | - | `Serial`は別のまま。CDCのFunctionはsketchのdata用の口 |
 
-## Mass storage: `USBMSC` → `EspUsbDeviceMsc`
+CDCのportを複数にするには、`EspUsbDeviceCdcSerial`を複数作ります。Windowsで区別できるよう、それぞれに名前を付けます。
+1つにつきIN endpointを2本使います。
 
-callback3点セットはほぼそのまま移り、容量指定が`begin()`から外れます。
+## Mass storage：`USBMSC` → `EspUsbDeviceMsc`
 
-| core | EspUsbDevice |
-|---|---|
-| `msc.vendorID("ESP32")` / `productID()` / `productRevision()` | 同名 |
-| `msc.onRead()` / `onWrite()` / `onStartStop()` | 同名 |
-| `msc.mediaPresent(true)` | 同名。加えて`isWritable(bool)` |
-| `msc.begin(blockCount, blockSize)` | 容量はattachしたバックエンドが持つ。登録はconstructorで行われる |
-
-新しいのは既製バックエンドで、ほとんどのスケッチはblock callbackを書かずに
-済みます。[`EspUsbDeviceMscRamDisk`](../examples/MSC/)（生ブロック）、
-[`EspUsbDeviceMscFatRamDisk`](../examples/MSCFatRamDisk/)（ファイルヘルパー
-付きの本物のFAT12イメージ）、[`EspUsbDeviceMscSdCard`](../examples/MSCSdCard/)
-（SDカードパススルー）。いずれも`disk.attach(msc)`で接続します。
-
-## MIDI: `USBMIDI` → `EspUsbDeviceMidi`
+callbackの形は同じです。呼ぶ時点が`device.begin()`の前に移ります。
 
 ```cpp
-EspUsbDeviceMidi MIDI(device);          // または (device, inCables, outCables)
+EspUsbDevice device;
+EspUsbDeviceMsc msc(device);
 
-MIDI.noteOn(0, 60, 96);                 // channel, note, velocity[, cable]
-MIDI.noteOff(0, 60, 0);
-MIDI.controlChange(0, 74, 32);
-
-EspUsbDeviceMidiPacket packet;
-while (MIDI.readPacket(packet)) { /* 4バイトのUSB-MIDIイベント */ }
+void setup() {
+  msc.vendorID("ESP32");
+  msc.productID("Disk");
+  msc.productRevision("1.0");
+  msc.onRead([](uint32_t lba, uint32_t offset, void *buffer, uint32_t size) -> int32_t { /* ... */ return size; });
+  msc.onWrite([](uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size) -> int32_t { /* ... */ return size; });
+  msc.begin(blockCount, 512);   // 容量の設定だけ。先にonRead()が要る
+  msc.mediaPresent(true);
+  device.begin();               // MSCを含めてUSBを開始する
+}
 ```
 
-引数順に注意してください。**ここではchannelが先頭**（0始まり）で、任意の
-USB-MIDI **cable**番号が末尾です。coreのヘルパーはchannelを末尾に取るため、
-機械的に移植するとコンパイルは通るのに違う音が出ます。複数cable（in/out
-非対称も可）と生の4バイトpacket I/Oはcoreに対応物がありません。
+| Core | v3 | 注意 |
+| --- | --- | --- |
+| `vendorID()` / `productID()` / `productRevision()` | 同じ名前 | `esp_err_t`を返す。停止中だけ |
+| `onRead()` / `onWrite()` / `onStartStop()` | 同じ名前、同じ引数 | `device.begin()`の前。callbackは要求された量を同期で全部返す |
+| `mediaPresent(bool)` | 同じ | 最初は媒体なし。Hostが構成済みのときに挿し直すと、UNIT ATTENTIONを1回返す |
+| `begin(blockCount, blockSize)` | 同じ名前 | 容量を設定するだけ。USBは`device.begin()`が開始する |
+| `isWritable(bool)` | 同じ | 既定は書込み可 |
+| `end()` | `device.end()` | |
+| - | `configure()`で`EspUsbMscConfig::transferBytes` | stagingの大きさ。既定512。bulkのMPS（HSでは512）の倍数が必要 |
+
+用意されたbackendを使えば、多くのsketchはcallbackを書かずに済みます。
+[`EspUsbDeviceMscRamDisk`](../examples/MSC/)（生のblock）、[`EspUsbDeviceMscFatRamDisk`](../examples/MSCFatRamDisk/)（fileを置けるFAT12のimage）、
+[`EspUsbDeviceMscSdCard`](../examples/MSCSdCard/)（SD card）です。どれも`device.begin()`の前に`disk.attach(msc)`でつなぎます。
+RAM diskは媒体なしで始まるので、`msc.mediaPresent(true)`を呼びます。
+
+### `FirmwareMSC` / *USB MSC On Boot* → `EspUsbDeviceMscFirmwareDisk`
+
+Coreのfirmware driveは`EspUsbDeviceMscFirmwareDisk`になります。data領域が予備のOTA partitionであるFAT volumeで、
+生の`.bin`と`.uf2`を受け付けます。[USB経由のファームウェア更新の3.6](ota-over-usb.ja.md#36-firmware-drive)と
+[`FirmwareMSC`](../examples/FirmwareMSC/)を参照してください。
+
+## MIDI：`USBMIDI` → `EspUsbDeviceMidi`
+
+```cpp
+EspUsbDeviceMidi midi(device);            // または (device, inCables, outCables)
+
+midi.noteOn(0, 60, 96);                   // channel, note, velocity[, cable]
+midi.noteOff(0, 60, 0);
+midi.controlChange(0, 74, 32);
+
+EspUsbDeviceMidiPacket packet;
+while (midi.readPacket(packet)) { /* 4 byteのUSB-MIDI event */ }
+```
+
+| Core | v3 |
+| --- | --- |
+| `MIDI.noteOn(note, velocity, channel)`、channelは1〜16 | `midi.noteOn(channel, note, velocity, cable)`、**channelは先頭で0〜15** |
+| `noteOff`、`controlChange`、`programChange`、`polyPressure`、`channelPressure` | 同じ名前。channelが先頭で0始まり |
+| `pitchBend(value, channel)` | `pitchBend(channel, value)`。valueは0〜16383（8192が中央） |
+| `readPacket(midiEventPacket_t*)` / `writePacket()` | `readPacket(EspUsbDeviceMidiPacket&)` / `writePacket()` |
+
+**引数の順に注意してください。** 機械的に置き換えるとcompileは通り、正しく動きません。
+Coreの`noteOn(60, 96, 1)`はchannel 60と読まれます。範囲外なので、`false`（`ESP_ERR_INVALID_ARG`）を返し、何も送りません。
+値は丸めません。たまたま範囲内の引数なら、違う音が出ます。Coreの1始まりのchannelから1を引くことも必要です。
+複数cableのinterface（各向き16まで）、callbackでの受信（`onPacket()`）、packet単位のbuffer設定（`EspUsbMidiConfig`）はCoreにはありません。
 [`MIDIInterface`](../examples/MIDIInterface/)を参照してください。
 
-## Vendor: `USBVendor` → `EspUsbDeviceVendor`
+## Vendor：`USBVendor` → `EspUsbDeviceVendor`
 
-| core | EspUsbDevice |
-|---|---|
-| `Vendor.write()` / `read()` / `available()` | 同名（bulk IN/OUT） |
-| `Vendor.onEvent()`でのリクエスト処理 | `onControlRequest()` + `sendControlResponse()` |
-| `USB.webUSB(true)` / `USB.webUSBURL(url)` | `config.webusbEnabled = true` / `config.webusbUrl = "..."` |
+| Core | v3 | 注意 |
+| --- | --- | --- |
+| `Vendor.write()` / `read()` / `available()` | 同じ名前（bulk IN/OUT） | `EspUsbDeviceVendor`はArduinoの`Print`。bufferは`configure(EspUsbVendorConfig)`で |
+| `Vendor.onRequest(handler)` | `vendor.onControlRequest(callback)` | `device.begin()`の前。callbackは`bool`を返す |
+| `Vendor.sendResponse(rhport, request, data, len)` | `vendor.sendControlResponse(request, data, len)` | |
+| `Vendor.onEvent(ARDUINO_USB_VENDOR_DATA_EVENT)` | `onRx(callback)` | |
+| `USB.webUSB(true)` / `webUSBURL(url)` | `config.webusbEnabled` / `config.webusbUrl` | |
 
-`webusbEnabled`を有効にするとBOSとMS OS 2.0 descriptorを返すので、Windowsは
-WinUSBを自動でバインドします。ZadigもINFも不要です。ブラウザ側との接続は
-[`USBVendor`](../examples/USBVendor/)を参照してください。
+ライブラリはVendorのinterfaceごとにMicrosoft OS 2.0 descriptorを自動で出すので、WindowsはINFやZadigなしでWinUSBを付けられます
+（v3ではWindowsで未確認）。`config.webusbEnabled`はWebUSBの能力を足すだけです。
+streamの書込みは、既定では短いpacketで終わりません。Host側で長さを決めて読むか、`streamTermination`を設定します。
+copyしない転送には`writeDirect()`/`readDirect()`を使えます。[`USBVendor`](../examples/USBVendor/)を参照してください。
 
-## EspUsbDeviceにしかないもの
+## DFU：*USB DFU On Boot* → `EspUsbDeviceDfu`
 
-- **USB Audio**（UAC1がdefault、UAC2は明示選択）: speaker、microphone、
-  duplex headsetの各stream。coreにはaudio classがそもそもありません。
-- **CDC-NCMネットワークデバイス**（`EspUsbDeviceNet`）: ボードがUSBネットワーク
-  インターフェースになり、背後はlwIP/esp_netifです。
-- **CCIDスマートカードリーダー**（`EspUsbDeviceCcid`）。
-- **NKRO keyboard**、raw report API、boot protocolの観測。
-- **ESP32-P4のcontroller選択**（FS / HS）: `config.controller`。
-- ホストを繋ぐ前にできるバイト単位のディスクリプタ確認とendpoint予算の表示。
+`EspUsbDeviceDfu(device, EspUsbDeviceDfuMode::Runtime)`は`dfu-util -e`（`DFU_DETACH`）に答え、既定ではROMのloaderへ再起動します。
+`EspUsbDeviceDfuMode::Download`（既定）は`dfu-util -D firmware.bin`を受け、予備のOTA partitionへ書きます。
+どちらもEP0だけを使います。[USB経由のファームウェア更新](ota-over-usb.ja.md)を参照してください。
 
-## まだ無いもの
+## EspUsbDeviceにだけあるもの
 
-- `USBHIDAbsoluteMouse` - 相対移動のboot mouseのみです。
-- `FirmwareMSC`（MSC経由のファーム更新）- 予定あり。[TODO.ja.md](../TODO.ja.md)
-  で追跡しています。
-- USBコンソール（`USB CDC On Boot` / `HWCDC`）- 設計上の判断です。ログは
-  UART側に出します。
+- **USB Audio**（既定はUAC1、UAC2も選べる）：playback、capture、両方向のstream。
+- **USB Video**（UVCのcamera、MJPEGかYUY2）。
+- **CDC-NCMのnetwork device**（`EspUsbDeviceNet`）。esp_netif/lwIPとDHCPも使える。
+- **CCIDのsmart card reader**（`EspUsbDeviceCcid`）。
+- **applicationでのDFU**と、UF2を受け付けるfirmware drive。
+- NKRO keyboard、生のreportのAPI、boot protocolの観察。
+- **ESP32-P4のHigh Speed**（480 Mbps）。`config.controller`で選ぶ。
+- 実行時のbuffer設定、再buildなしの`end()`と再開始、copyしないbulk転送。
+- Hostなしでのdescriptorの確認（`EspUsbDeviceStartMode::DescriptorsOnly`、
+  [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/)）。
 
-移植後に動きがおかしいときは[troubleshooting.ja.md](troubleshooting.ja.md)を
-上から辿ってください。特に
-[ディスクリプタキャッシュの項](troubleshooting.ja.md#変更したのにホストで古いデバイスのまま見える)
-は要注意です。core時代のVID/PIDのまま書き換えたボードは、移行直後の数分で
-Windowsを混乱させます。
+## ないもの
+
+- `USBHIDAbsoluteMouse`とmouseのpan：`EspUsbDeviceHidCustom`で作る。
+- gamepadの補助関数（`leftStick()`、`pressButton()`など）：`send()`か`sendReport()`を使う。
+- USBのconsole（`USB CDC On Boot`、OTGの口での`HWCDC`）：logはUARTかUSB Serial/JTAGに出す。
+- CDCの口からの自動のbootloader再起動：`onLineCoding()`と`rebootToBootloader()`で作る。
+- device全体のevent callback（`USB.onEvent`）：`ready()`と`suspended()`を調べる。
+
+移行の後で動きがおかしいときは[トラブルシューティング](troubleshooting.ja.md)を見てください。
+特に[descriptorの記憶の項](troubleshooting.ja.md#変更したのにhostに古いdeviceが見える)です。
+CoreのstackのVID/PIDのままのboardは、移行の直後にWindowsを混乱させます。

@@ -2,299 +2,181 @@
 
 > English: [ota-over-usb.md](ota-over-usb.md)
 
-ESP32のUSB deviceで「OTA」と呼ばれるものには、まったく別の2つがあります。
-壊れ方も違います。
+ESP32のUSB deviceで「OTA」と呼ばれるものには、まったく別の2つがあります。失敗の仕方も違います。
 
-- **経路A — chipをROMに明け渡す。** application は動作を止めます。ROM bootloader が
-  USB portを取り、`esptool` や `dfu-util` がflash全体を書き換えます。「boot modeに
-  入れてOTGケーブル経由で焼く」とはこれのことです。loader自体がmask ROM上にあるので、
-  途中で失敗してもbrickにはなりません。
-- **経路B — スケッチ自身が次のapplicationを書く。** 自分のコードは動き続け、USBの
-  identityも保ったまま、既に持っているUSB functionでimageを受け取り、もう一方の
-  OTA partitionへ書きます。バイトが届いた後はUSB固有の話は何もなく、Wi-Fi経由の
-  OTAと同じ `esp_ota` / Arduino `Update` です。
+- **経路A：chipをROMへ渡す。** applicationは止まります。ROMのbootloaderがUSBの口を受け持ち、
+  `esptool`（chipによっては`dfu-util`）がflashを書き換えます。いわゆる「boot mode」です。
+  loaderはmask ROMにあるので、書込みの失敗で壊れることはありません。
+- **経路B：sketchが次のapplicationを書く。** sketchはUSBの身元を保ったまま動き続け、
+  持っているUSB Functionでimageを受け取り、もう一方のOTA partitionへ書きます。
+  byte列が届いた後はUSBに固有の処理はなく、Wi-Fiと同じ`esp_ota`です。
 
-経路Aは復旧と工場出荷の経路、経路Bは製品の経路です。出荷する機器はたいてい両方を
-必要とし、面白い問題は「Bが動いている状態からどうやってAへ行くか」で、それが
-[2.4節](#24-スケッチからboot-modeへ入る)です。
+経路Aは復旧と工場での書込み用、経路Bは製品の更新用です。出荷する機器には普通は両方が要ります。
+問題は、経路Bが動いている状態から経路Aへどう移るかで、それが[2.4](#24-sketchからboot-modeに入る)です。
 
 ## 目次
 
-1. [このライブラリが持つ責任と持たない責任](#1-このライブラリが持つ責任と持たない責任)
-2. [経路A: chipをROMに明け渡す](#2-経路a-chipをromに明け渡す)
-3. [経路B: スケッチが次のapplicationを書く](#3-経路b-スケッチが次のapplicationを書く)
+1. [このライブラリが受け持つもの](#1-このライブラリが受け持つもの)
+2. [経路A：chipをROMへ渡す](#2-経路achipをromへ渡す)
+3. [経路B：sketchが次のapplicationを書く](#3-経路bsketchが次のapplicationを書く)
 4. [経路の比較](#4-経路の比較)
-5. [ライブラリ機能かスケッチ側のコードか](#5-ライブラリ機能かスケッチ側のコードか)
-6. [未実装のもの](#6-未実装のもの)
+5. [ライブラリの機能か、sketchのコードか](#5-ライブラリの機能かsketchのコードか)
+6. [実機での確認範囲](#6-実機での確認範囲)
+7. [対象外：bootloaderとしてのUF2](#7-対象外bootloaderとしてのuf2)
 
 ---
 
-## 1. このライブラリが持つ責任と持たない責任
+## 1. このライブラリが受け持つもの
 
-EspUsbDeviceが持つのはUSBの**転送路**です。descriptor、endpoint、バイトを運ぶclass。
-flashは持ちません。
+EspUsbDeviceが受け持つのはUSBの転送です。descriptor、endpoint、byte列を運ぶclass。flashは受け持ちません。
+次の4つはライブラリにあります。製品ごとに選ぶものではなく、正しくなければならない部分だからです。
 
-経路Bのうち2つはライブラリのものです。好みの問題ではなく、正しくなければならない
-部分だからです。
+| 部品 | 種類 | 役割 |
+| --- | --- | --- |
+| `EspUsbDevice::rebootToBootloader()` | deviceの関数 | 動いているsketchからROMのdownload loaderへ入る（[2.4](#24-sketchからboot-modeに入る)） |
+| `EspUsbDeviceFirmwareUpdate` | helper（Functionではない） | 予備のOTA partitionへimageを書き、検証し、起動先を切り替える（[3.2](#32-書く側はいつも同じ)） |
+| `EspUsbDeviceDfu` | Function | USB DFU 1.1。RuntimeとDownloadの2つのmode（[3.5](#35-dfu-function)） |
+| `EspUsbDeviceMscFirmwareDisk` | MSCのhelper | data領域がOTA partitionそのものであるdrive（[3.6](#36-firmware-drive)） |
 
-- **`EspUsbDeviceDfu`** — DFU function（2形態）。標準のhost toolでdeviceを更新できます。
-  [3.5](#35-dfu-function)。
-- **`EspUsbDeviceMscFirmwareDisk`** — hostがファームウェアのファイルを放り込むドライブ。
-  [3.6](#36-ファームウェアドライブ)。
-- **`EspUsbDeviceFirmwareUpdate`** — 上の2つと、手書きのどの経路も乗るOTA partition
-  writer。[3.2](#32-書き込み側はどの経路でも同じ)。
-
-経路Bの残りは、ライブラリが既に提供しているclass
-(`EspUsbDeviceCdcSerial`、`EspUsbDeviceVendor`、`EspUsbDeviceNet`、
-`EspUsbDeviceMsc`) を、そのwriterの上で使って書きます。まだ無いものは
-[6節](#6-未実装のもの)に挙げます。
-
-`esp_restart()` が走った後の経路Aはこのライブラリと無関係で、portはROMのものになります。
-ただし**そこへ到達する**まではライブラリの仕事です。
-`EspUsbDevice::rebootToBootloader()`（[2.4](#24-スケッチからboot-modeへ入る)）が
-あるのは、registerがtargetごとに違うからであり、Arduinoの定番の入り方がここでは
-linkできないからです
-([2.5](#25-usb_persist_restart-はこのライブラリではlinkできない))。
+ほかの経路は、既存のFunction（`EspUsbDeviceCdcSerial`、`EspUsbDeviceVendor`、`EspUsbDeviceNet`）と
+`EspUsbDeviceFirmwareUpdate`の組合せで作ります。`Firmware*`のexampleがそれぞれを示します。
 
 ---
 
-## 2. 経路A: chipをROMに明け渡す
+## 2. 経路A：chipをROMへ渡す
 
-### 2.1 boot modeとは何か
+### 2.1 boot modeとは
 
-reset時にROMがstrapping pinを読みます。High (既定) なら「flashからapplicationを起動」、
-Lowなら「ROMのdownload loaderに留まりhostを待つ」。download loaderはUARTで、そして
-このライブラリが対象とするchipではUSBでも、esptoolのプロトコルを話します。
+reset時にROMはstrapping pinを読みます。High（既定）ならflashのapplicationを起動します。
+LowならROMのdownload loaderにとどまり、Hostを待ちます。loaderはesptoolのprotocolをUARTで話し、
+このライブラリが対応するchipではUSBでも話します。
+firmwareではないので、flashの書込みの失敗で壊れません。だからこの文書のすべての経路の、最後の復旧手段になります。
 
-これはfirmwareではありません。flashの書き込み失敗で壊れることがなく、それがこのページの
-他のすべての経路の背後に経路Aが控えている理由です。
+### 2.2 手で入る方法
 
-### 2.2 手動で入る方法 (chip別)
+| chip | resetの間Lowにするpin | ほかの条件 | 注意 |
+| --- | --- | --- | --- |
+| ESP32-S2 | GPIO0 | - | |
+| ESP32-S3 | GPIO0 | GPIO46を浮かすかLow | |
+| ESP32-P4 | GPIO35 | **GPIO36をHigh** | GPIO35には弱い内部pull-upがあるので、buttonには強いpull-downが要る。GPIO35 = 0とGPIO36 = 0の組合せは無効 |
 
-| Chip | reset時にLowにするpin | 同時に必要な条件 | 備考 |
-|---|---|---|---|
-| ESP32-S2 | GPIO0 | — | |
-| ESP32-S3 | GPIO0 | GPIO46 がfloatingまたはLow | |
-| ESP32-P4 | GPIO35 | **GPIO36 がHigh** | GPIO35には約45kΩの内部pull-upがあるため、buttonには強いpull-down (GNDへ10kΩなど) が必要。GPIO36=0 と GPIO35=0 の組み合わせは無効で、動作が予測できません。 |
+devkitでは、BOOTを押したままRESETを押して離し、BOOTを離します。
+USB-UART bridgeのDTR/RTSがstrapping pinとENにつながったboardでは、`esptool`が自動で行います。
+P4ではpinがGPIO0ではなくGPIO35で、もう1本のstrapping pinをHighにする必要があります。
+P4がloaderに入らない一番多い原因です。
 
-devkitではこれがBOOT buttonです。BOOTを押しながらRESETを叩き、BOOTを離す。
-USB-UART bridgeのDTR/RTSがstrapping pinとENに配線されているboardでは `esptool` が
-やってくれるので、存在に気づきません。
-
-**P4ではpinが違います (GPIO0ではなくGPIO35)。** しかもP4にはHighでなければならない
-strapping pinがもう1本あります。「S3と同じようにやったのにP4がloaderに入らない」の
-最大の原因がこれです。
-
-### 2.3 ROMがどのUSB interfaceで応答するか
-
-既に挿さっているOTGケーブルがそのまま使えるかどうかを決めるのがここで、S3とP4が
-本当に違うのもここです。
+### 2.3 ROMが答えるUSBの口
 
 | | ESP32-S2 | ESP32-S3 | ESP32-P4 |
-|---|---|---|---|
-| USB-Serial-JTAG peripheral | なし | あり | あり |
-| USB経由のROM serial loader | USB-OTG、ROM内のCDC-ACM | USB-Serial-JTAG (`303a:1001`) | USB-Serial-JTAG (`303a:1001`) |
-| USB-OTG経由のROM DFU | あり | あり。ただし下記参照 | あり。**P4 v3.1以降は不具合あり** |
-| pin | OTGのpin | GPIO19/20、共有 | boardの回路図を参照 |
+| --- | --- | --- | --- |
+| USB Serial/JTAG | なし | あり | あり |
+| USBでのROMのserial loader | USB OTG（ROM内のCDC） | USB Serial/JTAG（`303a:1001`） | USB Serial/JTAG（`303a:1001`） |
+| USB OTGでのROM DFU | あり | `USB_PHY_SEL` eFuseを焼いたときだけ | 使えないものとして扱う（chip revision v3.1以降で不具合） |
+| pin | OTGのpin | GPIO19/20、共有 | boardの回路図を見る |
 
-ROMのDFU interfaceはVID `303a`、product IDはtarget別で `00xx` の範囲に出ます。
-ESP-IDF自身のudev ruleも固定PIDではなく `303a:00??` で照合しており、こちらも
-同じようにすべきです。
+ROMのDFU deviceはVID `303a`と、chipごとの`00xx`のproduct IDを使います。
+ESP-IDFのudev規則は`303a:00??`で合わせているので、自分の規則もそうします。
 
-押さえておく価値のある帰結が3つあります。
+ここから分かること：
 
-**S3では内蔵full-speed PHYが共有されています。** PHYは1つ、pinも1組
-(GPIO19=D-、GPIO20=D+)、所有者になり得るのはUSB-Serial-JTAG peripheralか
-USB-OTG controllerの2つ。`EspUsbDevice::begin()` がPHYを作った時点で、スケッチは
-これをOTG側へ切り替えています。
+- **S3のfull speed PHYは共有です。** 1つのPHYと1組のpin（GPIO19 = D-、GPIO20 = D+）を、USB Serial/JTAGかUSB OTGのどちらかが使います。
+  `device.begin()`はOTGへつなぎます。この切替は`RTC_CNTL_USB_CONF_REG`にあり、software resetでは戻りません。
+  戻さないとROMのloaderは、自分が動かさないcontrollerにpadがつながったまま起動し、connectorには何も出ません。
+  `rebootToBootloader()`は再起動の前にPHYをUSB Serial/JTAGへ戻します。
+  そのため同じcableに`303a:1001`が出て、そのまま`esptool`を使えます。
+- **S3のROM DFUにはeFuseが要ります。** ROMは起動時に`USB_PHY_SEL` eFuseでpadをつなぎ、applicationが残した設定は使いません。
+  このeFuseを焼くと、そのboardはUSB Serial/JTAGを永久に失います。
+  S3でDFUを使いたいなら`EspUsbDeviceDfu`（[3.5](#35-dfu-function)）を使います。eFuseは関係しません。
+- **P4はUSB Serial/JTAGで書き込みます。** EspressifはP4 v3.1以降でROM DFUのdownloadに不具合があるとしています。
+  USB Serial/JTAGは、専用のPHYを持つHSのOTG connectorとは別の口です。
+  そのためP4のHS deviceでは「同じcableがloaderとして戻る」ことはありません。P4のFS PHYはS3と同じくUSB Serial/JTAGと共有です。
 
-**resetしただけでは戻りません。** 選択は `RTC_CNTL_USB_CONF_REG` にあり、これは
-RTCドメインなのでsoftware resetを生き延びます。pinはROMが駆動していないcontrollerに
-繋がったままになり、**connectorは沈黙します**——hostには何も現れず、その間chipは
-download loaderで平然と待っています。native USBが唯一のケーブルであるS3で実測:
-hostからUSB portが消え、別系統のUARTからは `esptool --before no-reset` が接続しました。
-
-`EspUsbDevice::rebootToBootloader()` は再起動の前にPHYを返します。「1本のケーブルで
-焼ける」話が成立するのはこれがあるからです。同じboard・同じケーブルでの実測:
-
-| | そのconnectorにhostが見るもの |
-|---|---|
-| スケッチ動作中 | `303a:4095`、スケッチが名乗ったdevice |
-| `rebootToBootloader()` 後 | `303a:1001`、ROMのUSB Serial/JTAG |
-
-そして `esptool --port COM12` がその上でstub flasherを転送して実行します。ケーブル1本、
-buttonもeFuseも2本目のportも不要——ただし、ライブラリがpinを返しているからです。
-
-**S3のROM DFUにはeFuseが要り、回避策はありません。** ROMは起動時にpinを
-`USB_PHY_SEL` から決めるので、applicationが何を残していようと関係ありません。
-USB-OTG上のROM DFU deviceを出すにはそのeFuseを焼くしかなく、焼けばUSB-Serial-JTAGを
-永久に失います。恒久的でない方のROM persist flagは、ROMにDFUを*実行*させはしますが、
-届く場所には置いてくれません
-([2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3))。実測済みです。S3でDFUが
-欲しいなら答えは [3.5](#35-dfu-function) です。applicationが実装し、eFuseは関係ありません。
-
-**P4ではUSB-Serial-JTAGを使ってください。** P4 v3.1以降はROM DFUのdownload機能に
-不具合があり、書き込みにはUSB-Serial/JTAGを使うこと、というのがEspressif自身の
-案内です。P4のROM DFUは使えないものとして、USB-Serial-JTAG portを前提に設計して
-ください。なお、これはdeviceが載っているであろう高速OTG connectorとは**別のport**
-です。P4のhigh-speed controllerは専用PHYを持つため、S3のような「同じケーブルが
-loaderとして戻ってくる」効果はHS deviceにはありません。ただし*full-speed* port上の
-P4 deviceでは効きます。こちらのPHYはS3と同じくUSB-Serial-JTAGと共有だからです
-([ガイド 3.2節](usb-device-guide.ja.md#32-esp32-p4のfshs選択))。
-`examples/P4FullSpeedDevice` から始める方が楽な理由がもう1つ増えたことになります。
-
-### 2.4 スケッチからboot modeへ入る
-
-button不要の確実な経路がこれで、呼び出し1つです。
+### 2.4 sketchからboot modeに入る
 
 ```cpp
-device.rebootToBootloader();   // 戻らない
+device.rebootToBootloader();   // S2/S3/P4では戻らない
 ```
 
-USB deviceをdetachし（hostには「消えた」ではなく切断として記録されます）、target の
-download-bootフラグを立てて再起動します。ROMはstrapping pinに加えてこのフラグも見るので、
-BOOTを押していたのと同じようにdownload loaderへ落ちます。
+USBから切り離してHostに切断を記録させ、chipのdownload-boot flagを立てて再起動します。
+ROMはstrapping pinに加えてこのflagも見るので、BOOTを押したときと同じくloaderに入ります。
+ROMは通過時にflagを消します。`esptool`で書いてresetした後は、applicationが普通に起動します。
 
-スケッチに4行書くのではなくライブラリの呼び出しにしてあるのは、その4行がchipごとに
-違うからです。S2/S3ではflagは `RTC_CNTL_OPTION1_REG` のbit 0で、このregisterは他に
-何も持たないためregister全体への書き込みで安全です(Arduino-ESP32自身がそうしています)。
-P4ではRTC controllerが無くなり、flagは `LP_SYSTEM_REG_SYS_CTRL_REG` のbit 2です。
-このregisterはsoftware resetのbit、`DIG_FIB` field、`IO_MUX_RESET_DISABLE` も
-抱えているので、**書き込むのではなくsetしなければなりません**。S3向けの手順をP4に
-コピーすると無関係な3つのfieldを潰します。この呼び出しはそれを防ぐためにあります。
+ライブラリの関数にしてあるのは、registerがchipごとに違うからです。
+S2/S3ではflagは`RTC_CNTL_OPTION1_REG`の唯一のbitなので、register全体を書いても安全です。
+P4では`LP_SYSTEM_REG_SYS_CTRL_REG`のbit 2で、同じregisterにsoftware resetのbit、`DIG_FIB`、`IO_MUX_RESET_DISABLE`があります。
+書き込むのではなく、bitを立てる必要があります。S3の手順をP4へ写すと、これらのfieldを壊します。
 
-`esptool` ではなく `dfu-util` を使うhost向けには `device.rebootToRomDfu()` が同等品ですが、
-ESP32-S2か、eFuseを焼いたESP32-S3でしか動かず、それ以外では再起動せず拒否します
-（[2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3)）。改造していないboardに
-`dfu-util` を使うなら [3.5](#35-dfu-function) が答えです。
+使うときの決まりは3つです。
 
-EspUsbDevice自身のUSB stackが動いている状態で実機確認済みです。ESP32-S3 (rev v0.2)
-とESP32-P4 (rev v1.3) の両方がdownload loaderに入り、buttonにもDTR/RTS resetにも
-触らずに `esptool --before no-reset chip-id` が接続しました。スケッチは
-[`examples/FirmwareBootMode`](../examples/FirmwareBootMode/) です。
-
-**このflagは残りません。** `esptool` が書き込んでhard resetした後、applicationは
-通常どおり起動しました。ROMが通過時にclearします。loaderへ入り続けるboardになる
-心配はありません。
-
-この4行の周りで外してはいけない点が3つあります。
-
-- **USB callbackからではなく、スケッチ自身のtaskから呼ぶこと。** このライブラリの
-  class callbackはすべてusbd task上で動きます
-  ([応用ガイド 8節](usb-device-advanced.ja.md#8-コールバックのコンテキスト))。callbackでは
-  flagを立て、`loop()` から `rebootToBootloader()` を呼びます。callbackの中で再起動すると、
-  hostがまだ終えていないcontrol transferを切ってしまいます。
-- **意図的な操作の後ろに置くこと。** CDC portに紛れ込んだ1バイトでユーザーの作業が
-  飛ぶべきではありません。hostが既に話せる作法は1200bps touchです。Arduino IDEと
-  `arduino-cli` は、boardにloaderへ入るよう頼むとき、portを1200bpsで開いてDTRを
-  落とします。`EspUsbDeviceCdcSerial` はその要求をそのまま渡してくれます。
+- **USBのcallbackではなく、sketchのtaskから呼ぶ。** callbackはUSB worker上で動きます。そこではflagを立て、`loop()`で実行します。
+  callbackの中で再起動すると、Hostがまだ終えていないcontrol転送を途中で切ります。
+- **意図した操作の後だけにする。** 紛れ込んだ1 byteで利用者をloaderへ落としてはいけません。Hostにはすでに2つの合図があります。
+  - **1200 baudのtouch**：Arduino IDEや`arduino-cli`は、loaderを求めるときにportを1200 baudで開きます。
+  - **`dfu-util -e`**：Runtime modeの`EspUsbDeviceDfu`が`DFU_DETACH`を受けます。
+    handlerがなければ、要求の完了から約100 ms後に自分でROMのloaderへ再起動します。
+- vendor interfaceなら専用のcontrol要求、data用の口がないdeviceならbuttonの長押しを使います。
 
 ```cpp
-EspUsbDeviceCdcSerial serial(device);
-volatile bool rebootRequested = false;
+EspUsbDeviceCdcSerial port(device, "Console");
+EspUsbDeviceDfu dfu(device, EspUsbDeviceDfuMode::Runtime, "Bootloader");
+volatile bool bootloaderRequested = false;
 
-serial.onLineCoding([](const EspUsbDeviceCdcLineCoding &coding) {
-  if (coding.baud == 1200) {
-    rebootRequested = true;   // usbd task。flagを立てるだけ
-  }
-});
+void setup() {
+  // device.begin()の前に登録する。後からだとESP_ERR_INVALID_STATEになる。
+  port.onLineCoding([](const EspUsbDeviceCdcLineCoding &coding) {
+    if (coding.baud == 1200) bootloaderRequested = true;   // USB worker：flagだけ
+  });
+  dfu.setDetachHandler([]() { bootloaderRequested = true; });
+  device.begin();
+}
 
 void loop() {
-  if (rebootRequested) {
-    device.rebootToBootloader();
-  }
+  if (bootloaderRequested) device.rebootToBootloader();
 }
 ```
 
-  hostが既に持っているもう1つの作法が `dfu-util -e` です。`EspUsbDeviceDfu` を
-  `Runtime` modeで足すと、hostは `DFU_DETACH` で要求し、classがloaderへの再起動で
-  応えます。vendorやWebUSB interfaceなら専用のcontrol requestを使います。
-  data portを持たないdeviceならbuttonの長押しで十分です。要は意図的であること。
+`dfu.onDetach()`は、SETUPの時点で`DFU_DETACH`を受け付けるかを決めます（`false`でSTALL）。
+`setDetachHandler()`は、受け付けた後の既定の再起動を置き換えます。受け付けた後は、`end()`やbus resetでも取り消されません。
+[`FirmwareBootMode`](../examples/FirmwareBootMode/)を参照してください。
 
-### 2.5 `usb_persist_restart()` はこのライブラリではlinkできない
+### 2.5 `usb_persist_restart()`は使わない
 
-Arduino-ESP32はまさにこの用途に `usb_persist_restart(RESTART_BOOTLOADER)` を用意して
-おり、どのtutorialもこれを使います。**EspUsbDeviceのスケッチからは使えません。**
-呼ぶと `esp32-hal-tinyusb.c` がlinkに引き込まれ、そのfileはこのライブラリが定義して
-いるのと同じTinyUSB callbackを2つ定義しています。
+Arduino-ESP32の`usb_persist_restart(RESTART_BOOTLOADER)`は、Core自身のUSB stackのための関数で、
+EspUsbDeviceのsketchではそのstackは動いていません。またP4では何もしません（実装はS2/S3にしかありません）。
+`rebootToBootloader()`を使ってください。
 
-```
-esp32-hal-tinyusb.c:405: multiple definition of `tud_descriptor_bos_cb';
-  EspUsbDevice.cpp:451: first defined here
-esp32-hal-tinyusb.c:417: multiple definition of `tud_vendor_control_xfer_cb';
-  EspUsbDevice.cpp:759: first defined here
-```
-
-`USB.begin()` と同じ排他性
-([ガイド 3.5節](usb-device-guide.ja.md#35-arduino-esp32標準usbスタックとは排他))
-が、実行時の衝突ではなくlink errorとして出てきているだけです。
-`EspUsbDevice::rebootToBootloader()`（[2.4](#24-スケッチからboot-modeへ入る)）を
-使ってください。`usb_persist_restart()` がやっているのと同じことをします。差分は
-core自身のstackにしか意味のない処理だけです。
-
-もう1つ知っておくべきこと。`usb_persist_restart()` は素のArduinoスケッチでも
-**P4では何もしません**。実装全体が
-`#if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3` の中にあります。
-P4でこれを呼べと書いてある資料は間違いです。
-
-### 2.6 ROM serial loaderではなくROM DFUへ入る (S2/S3)
-
-`esptool` ではなく `dfu-util` を使いたい場合、S2/S3のROMはdownload boot flagに加えて
-persist flagを受け付けます。これを立てると、`USB_PHY_SEL` を焼かずに、ROMがserial
-loaderではなくUSB-OTG上のDFU deviceとして立ち上がります。
+### 2.6 ROMのserial loaderではなくROM DFUを使う（S2/S3）
 
 ```cpp
-device.rebootToRomDfu();   // 実質ESP32-S2のみ。下記参照
+device.rebootToRomDfu();
 ```
 
-中身は `chip_usb_set_persist_flags(USBDC_BOOT_DFU)` と、同じdownload-bootフラグ＋
-再起動です。どちらもS2/S3のESP-IDF buildが公開しているROM symbolです。
+ROMのpersist flag（`chip_usb_set_persist_flags(USBDC_BOOT_DFU)`）とdownload-boot flagを立てて再起動し、
+ROMをUSB OTG上のDFU deviceとして起動させます。Host側は`dfu-util`か`idf.py dfu-flash`で、
+`idf.py dfu`で作ったimageを使います。普通の`.bin`ではありません。
 
-**ESP32-S3ではpersist flagだけでは足りず、この呼び出しは拒否します。** 実測: flagを
-立てるとchipはdownload loaderに入り（UART経由で `esptool --before no-reset` が接続）、
-**USB connectorには何ひとつ現れません**。ROMは共有PHYを起動時に `USB_PHY_SEL` eFuseから
-決めるため、DFU stackがpinの無いcontrollerに載るからです。そこで `rebootToRomDfu()` は
-そのeFuseを読み、焼かれていなければ**再起動せず** `ESP_ERR_NOT_SUPPORTED` で `false` を
-返します。connectorが1つしかないboardでは、それでも再起動することは「この呼び出しは
-何もしなかった」と「このboardは誰かがBOOTを押さないと戻らない」の差になります。
+- **ESP32-S3：** `USB_PHY_SEL` eFuseを読み、焼いていなければ`false`と`ESP_ERR_NOT_SUPPORTED`を返し、**再起動しません**。
+  再起動するとROMのDFUがpadのないcontrollerで動き、connectorに何も出なくなるからです。ライブラリがeFuseを焼くことはありません。
+- **ESP32-S2：** ROMのUSBはUSB OTGだけなので、そのまま進みます。実機では未確認です。
+- **ESP32-P4：** `false`と`ESP_ERR_NOT_SUPPORTED`を返し、何も再起動しません。
 
-`USB_PHY_SEL` を焼けば動きますが、USB-Serial-JTAGを恒久的に失います
-（[2.7](#27-これらを無効化するもの)）。ライブラリが代わりに焼くことはしません。
+`dfu-util`を使いたいだけなら、どのchipでも同じに動く`EspUsbDeviceDfu`（[3.5](#35-dfu-function)）を使います。
 
-ESP32-S2にはこのmuxがありません（ROMの唯一のUSBが*USB-OTG*です）ので、そちらでは
-呼び出しは進みます。ただしこの経路は**end-to-endでは未検証**です。テスト環境にS2が
-ありません。P4に相当するものはそもそもありません。P4のESP-IDF buildはROM USB headerを
-一切公開しておらず、そこでのROM DFUは
-[2.3](#23-romがどのusb-interfaceで応答するか)の不具合のある経路なので、この呼び出しは
-`false` を返して何もしません。
+### 2.7 これらを無効にするもの
 
-**`dfu-util` を使いたいだけなら [3.5](#35-dfu-function) を使ってください。**
-applicationがDFUを実装し、eFuseは関係なく、どのtargetでも同じように動きます。
+- **Secure Bootかflash暗号化**を有効にすると、ROMのUSB OTG stack（serialとDFU）が使えなくなります。UARTとUSB Serial/JTAGは残ります。
+- **Secure Download Mode**はDFUを無効にし、serial loaderのcommandを少数に絞ります。
+- **`USB_PHY_SEL`は一度しか焼けないeFuseです。** S3で焼くと、USBでのROMのserial loaderを含め、USB Serial/JTAGがなくなります。
 
-host側は `dfu-util` か `idf.py dfu-flash` で、対象は `idf.py dfu` が作るDFU imageです。
-素の `.bin` ではありません。
-
-### 2.7 これらを無効化するもの
-
-- **Secure Bootまたはflash暗号化はROMのUSB-OTG stackを無効化します。** そのport上の
-  serial emulationもDFUも止まります。UARTとUSB-Serial-JTAGは残ります。
-- **Secure Download ModeはDFUを完全に無効化し**、serial loaderも小さなcommand集合に
-  制限されます。
-- **`USB_PHY_SEL` は一方向のeFuseです。** S3でROM DFUに到達するために焼くと、
-  USB-Serial-JTAGを — ROMのUSB serial loaderも含めて — 永久に失います。製品で
-  この取引をする前によく考えてください。
-
-製品でSecure Bootを有効にするなら、USB経由の経路Aは復旧手段になりません。
-UARTのheaderが復旧手段です。
+製品でSecure Bootを有効にするなら、USBでの経路Aは復旧手段になりません。UARTのheaderを用意します。
 
 ---
 
-## 3. 経路B: スケッチが次のapplicationを書く
+## 3. 経路B：sketchが次のapplicationを書く
 
 ### 3.1 partition
 
-経路Bにはapplication partitionが2つと `otadata` partitionが必要です。Arduinoの既定の
-partition schemeには既にあります。
+経路Bには2つのapplication partitionと`otadata`が要ります。Arduinoの既定のschemeにはあります。
 
 ```
 otadata,  data, ota,     0xe000,  0x2000,
@@ -302,163 +184,151 @@ app0,     app,  ota_0,   0x10000, 0x140000,
 app1,     app,  ota_1,   0x150000,0x140000,
 ```
 
-1 slotあたり1.25MB。規模感として、EspUsbDeviceのHIDスケッチが約320KB、web serverと
-`HTTPUpdateServer` を積んだCDC-NCMスケッチが約540KBなので、既定schemeで余裕があります。
-`huge_app` は**使えません**。application partitionが1つしかないため、経路Bはそもそも
-成立しません。早めに確認してください。`esp_ota_get_next_update_partition(NULL)` が
-`NULL` を返すのがその症状です。
+1 slotあたり1.25 MBです。`huge_app`はapp partitionが1つなので、経路Bはまったく使えません。起動時に確かめます。
 
-### 3.2 書き込み側はどの経路でも同じ
+```cpp
+if (!EspUsbDeviceFirmwareUpdate::available()) {
+  // 2つ目のapp partitionがない。最後のblockではなく、今のうちに知らせる。
+}
+Serial.printf("%s, %u bytes\n", EspUsbDeviceFirmwareUpdate::targetLabel(),
+              unsigned(EspUsbDeviceFirmwareUpdate::capacity()));
+```
 
-どのUSB functionがバイトを運んできたかに関わらず、flash側は
-`EspUsbDeviceFirmwareUpdate` です。
+### 3.2 書く側はいつも同じ
+
+どのFunctionでbyte列を運んでも、flash側は`EspUsbDeviceFirmwareUpdate`です。USBのFunctionではなく、deviceに何も登録しません。
 
 ```cpp
 EspUsbDeviceFirmwareUpdate update;
 
-if (!EspUsbDeviceFirmwareUpdate::available()) { /* 2つ目のapp partitionが無い */ }
-
-update.begin();                       // 長さが分かっているなら begin(imageSize)
-update.write(chunk, chunkLength);     // 到着順に繰り返し
-if (update.end()) {                   // 検証してから boot partition を移す
+update.begin(imageSize);              // 大きさが分からなければ begin()
+update.write(chunk, chunkLength);     // 順番に繰り返す
+if (update.end()) {                   // 検証してから起動先を切り替える
   esp_restart();
+} else {
+  Serial.println(update.lastErrorName());
 }
 ```
 
-手書きの `esp_partition_write()` loopが忘れがちな3つを、これはやってくれます。
+自分で`esp_partition_write()`のloopを書くと抜けやすい点を、これが受け持ちます。
 
-- `end()` はboot partitionを移す前にimage header・宣言された長さ・checksumを検証
-  します。途中で切れたり壊れたりしたuploadは、次回起動時ではなくここで落ちます。
-- `write()` はpartitionの末尾を1バイトでも超えた時点で拒否します。送り続けるhostが
-  長いuploadの最後で気づくのではなく、その場で止まります。
-- `begin()` はsequential eraseでpartitionを開くので、flashは書き込みの進行に合わせて
-  eraseされます。先頭でpartition全体を要求すると数秒かかり、USB callbackはそれを
-  費やす場所として不適切です。
+- `end()`は、起動先を切り替える前にimageのheader、長さ、checksumを確かめます。
+  途中で切れたimageや壊れたimageは、次の起動ではなくここで失敗します。実行中のfirmwareは再起動まで変わりません。
+- `begin()`に大きさを渡すと、`write()`はそれを超える最初のbyteで断ります。長い転送の最後まで待ちません。partitionを超える分も断ります。
+- 消去は書込みの進みに合わせて行い、一度に全部は消しません。1.25 MBのpartitionの消去には数秒かかり、USBのcallbackで使う時間ではありません。
+- `beginRandomAccess(imageSize)`と`writeAt(offset, ...)`は、順不同の書込みを受けます。
+  順不同の書込みの周りだけを消すことはflashではできないので、imageの長さ分を最初に消します。UF2がこれを使います（[3.6](#36-firmware-drive)）。
+- `abort()`は中止し、起動先は変えません。
 
-`available()` / `capacity()` / `targetLabel()` は、uploadを始める前にそもそも成立
-するかを答えます。application partitionが1つだけのschemeには新しいimageの置き場所が
-無く、それは最後のblockではなく起動時に言うべきことです。
+**rollback。** `end()`は新しいimageを次の起動先にし、ライブラリはそれを自分では元に戻しません。
+壊れたimageから立ち直るには、bootloaderを`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`でbuildし、
+新しいfirmwareが動くと確かめた後で`EspUsbDeviceFirmwareUpdate::markValid()`を呼びます。
+たとえば`device.ready()`が初めてtrueになった後で、`setup()`の中ではありません。
+通常のArduinoのbuildにはrollbackがなく、`markValid()`はtrueを返すだけです。
+`rollback()`は前のimageへ戻して再起動し、`cancelPendingBoot()`は再起動前に成功した`end()`を取り消します。
+`markValid()`は真正性の確認ではありません。sketchが確かめない限り、更新の経路に届く人は誰でもimageを入れられます。
 
-不正なimageを踏んでも生き残らせたいなら、新firmwareが自分の正しさを示した後
-（列挙が済んだ後であって `setup()` ではありません）に
-`EspUsbDeviceFirmwareUpdate::markValid()` を呼び、bootloaderを
-`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` 付きでビルドします。この組み合わせが無いと、
-ゴミとして起動する新imageからの復旧は経路Aだけになります。戻る手段は `rollback()` と
-`cancelPendingBoot()` です。
+### 3.3 転送の手段
 
-### 3.3 今日そのまま使える転送路
+| 手段 | Host側 | endpoint（非control IN） | 特徴 | example |
+| --- | --- | --- | --- | --- |
+| **DFU**（`EspUsbDeviceDfu`） | `dfu-util` | **0**（EP0だけ） | 標準のprotocolと道具。ライブラリが全体を実装 | [`FirmwareDFU`](../examples/FirmwareDFU/) |
+| **MSC**（`EspUsbDeviceMscFirmwareDisk`） | file manager（drag and drop） | 1 | 操作が一番簡単。Hostによる差も一番大きい | [`FirmwareMSC`](../examples/FirmwareMSC/) |
+| **CDC ACM**（`EspUsbDeviceCdcSerial`） | serialの道具、Python script | 2 | 一番書きやすい。長さを送ってからbyte列を送る | [`FirmwareCDC`](../examples/FirmwareCDC/) |
+| **Vendor / WebUSB**（`EspUsbDeviceVendor`） | PyUSB、libusb、browserのpage | 1 | control要求をcommandに、bulk OUTをdataに使う。HSで一番速い | [`FirmwareVendor`](../examples/FirmwareVendor/) |
+| **CDC-NCM＋HTTP**（`EspUsbDeviceNet`） | browser | 2 | boardがUSBのnetwork adapterになり、`HTTPUpdateServer`が`/update`を出す | [`FirmwareHTTP`](../examples/FirmwareHTTP/) |
 
-以下の4つはすべて、ライブラリが既に提供しているclassだけで今すぐ書けます。
-ライブラリの変更は要りません。
+CDCとVendorのexampleにはHost用のscript（`firmware_cdc.py`、`firmware_vendor.py`）があります。
+v3では各手段のbufferをその`configure()`で決めます。たとえば`FirmwareCDC`は8 KB、`FirmwareVendor`は16 KBのRX ringを使い、
+sectorを消している間もHostが送り続けられるようにしています。
 
-| 転送路 | host側 | endpoint消費 | 形 |
-|---|---|---|---|
-| **CDC-ACM** (`EspUsbDeviceCdcSerial`) | 任意のserial tool、Pythonスクリプト | 2 (notif IN + bulk duplex) | 最も単純。長さを送り、バイトを流し、chunkごとに `Update.write()`。full-speed bulkの上限は理論値1.216MB/sで、CDCのframingとchunkごとのflash書き込みでそれを大きく下回ります。300KBのimageなら十分、1MBなら遅い。 |
-| **Vendor / WebUSB** (`EspUsbDeviceVendor`) | PyUSB、WinUSB、WebUSB経由のブラウザ | 1 (bulk duplex) | 専用updaterに最も合います。control requestがbulk dataと並行した綺麗なcommand channel (`START`、size、`COMMIT`) になります。P4 HSでは断然最速で、ライブラリ既定の4096/4096 FIFOで片方向21.5MB/sの実測があります ([応用ガイド 6.3節](usb-device-advanced.ja.md#63-実測スループット))。 |
-| **CDC-NCM + HTTP** (`EspUsbDeviceNet`) | ブラウザ | 2 (notif IN + bulk duplex) | deviceがDHCP server付きのUSB network adapterになり、`HTTPUpdateServer` が `http://192.168.7.1/update` に標準のuploadフォームを出します。driverもhost toolもライブラリのコードも不要。S3で既定app partitionの40%にbuildできることを確認済み。 |
-| **MSC** (`EspUsbDeviceMscFirmwareDisk`) | drag and drop | 1 (bulk duplex) | UXは最良で、host依存の挙動が最も多い経路。[3.6](#36-ファームウェアドライブ)。 |
-| **DFU** (`EspUsbDeviceDfu`) | `dfu-util` | **0** | 標準のhost toolと標準のprotocolがEP0上で動きます。経路全体をライブラリが実装し、スケッチはcallbackを渡すだけ。[3.5](#35-dfu-function)。 |
+NCMは、Host側にbrowser以外が要らない唯一の手段です。v3ではDHCP serverが既定でoffなので、
+exampleは`net.beginNetwork()`の前に`net.dhcpServer(true)`を呼びます。pageは`http://192.168.7.1/update`です。
+`HTTPUpdateServer`はArduinoの`Update` libraryで同じOTA partitionへ書きます。
+利用者が開発者でないならHost側のsoftwareが要らないこの手段、開発者ならcommand 1つでendpointも使わないDFUが向きます。
 
-5つすべてexampleとして同梱しています。
-[`FirmwareCDC`](../examples/FirmwareCDC/)、
-[`FirmwareVendor`](../examples/FirmwareVendor/)、
-[`FirmwareHTTP`](../examples/FirmwareHTTP/)、
-[`FirmwareMSC`](../examples/FirmwareMSC/)、
-[`FirmwareDFU`](../examples/FirmwareDFU/) です。
+### 3.4 byte列を書いてはいけない場所
 
-NCM経路には補足が要ります。**hostにブラウザ以外のソフトが一切要らない唯一の経路**です。
-利用者が開発者でないならこれを、開発者ならDFU（1コマンド、endpoint消費ゼロ）を
-選ぶとよいでしょう。
-
-### 3.4 バイトを書いてはいけない場所
-
-flashのeraseは遅く (4KB sectorあたり数ミリ秒)、このライブラリのclass callbackは
-すべて最高優先度のusbd task上で動きます
-([応用ガイド 8.1節](usb-device-advanced.ja.md#81-全部-usbd-タスクで走る))。
-`onRx()` やMSCの `write10` callbackから直接 `Update.write()` を呼ぶと、その間
-device全体が — composite deviceなら他のfunctionも含めて — 止まります。
-
-bulk転送路なら通常は耐えられます (hostにはNAKが見えて減速するだけ) が、無料では
-ありません。audioやHIDのcompositeでは聴こえますし見えます。成立するパターンは
-こうです。
+flashの消去は4 KBのsectorあたり数msかかり、class callbackはすべてUSB worker上で、既定ではFreeRTOSの最高priorityで動きます。
+`onRx()`から直接`update.write()`を呼ぶと、その間device全体が止まります。複合deviceのほかのFunctionもです。
+bulk転送ならHostはNAKを受けて遅くなるだけですが、AudioやHIDとの複合では音や動きに出ます。うまくいく形は次のとおりです。
 
 ```
-USB callback  ->  queue / ring bufferへ押し込む  ->  即座にreturn
-スケッチのtask ->  取り出して Update.write()、繰り返し
+USBのcallback  ->  dataはFunctionのRX ring（または自分のqueue）に残す  ->  すぐ戻る
+sketchのtask   ->  read()、update.write()、繰り返す
 ```
 
-MSCだけは例外で、たいてい遅延できません。`write10` は成否を同期的に返す必要があるため、
-flashへの書き込みはcallbackの中で起きます。このライブラリの
-`CFG_TUD_MSC_EP_BUFSIZE` は4096で、flashのsector sizeと一致するため、1 callbackあたり
-erase 1回 + write 1回に停止時間を抑えられます。
+CDCやVendorのstreamなら、`loop()`でringを読むだけで足ります。ringが満杯になるとライブラリはbulk OUTの受付を止めます。
+これはUSBの流量制御で、dataは失われません。
+
+次の2つは、意図してcallbackの中で書きます。
+
+- **MSC**はWRITE(10)ごとに結果を同期で返す必要があるので、flashへの書込みはcallbackの中で行います。
+  1回のcallbackはMSCの`transferBytes`までです。`FirmwareMSC`は4096（flashの1 sector）にして、
+  1回のcallbackでの停止を消去1回と書込み1回に抑えています（4096は512の倍数なのでHSでも使えます）。
+- **DFU**には、まさにこのための`bwPollTimeout`があります。deviceがHostに、次に問い合わせるまで待つ時間を伝えます（[3.5](#35-dfu-function)）。
 
 ### 3.5 DFU function
 
-`EspUsbDeviceDfu` は経路Bを標準protocolと標準host toolで行うもので、このライブラリで
-いちばん安いfunctionです。
-
 ```cpp
 EspUsbDevice device;
-EspUsbDeviceHidKeyboard keyboard(device);
+EspUsbDeviceHidKeyboard keyboard(device);      // ほかのFunctionと一緒に使える
 EspUsbDeviceDfu dfu(device, EspUsbDeviceDfuMode::Download, "Firmware");
+
+void setup() {
+  EspUsbDfuConfig config;
+  config.transferBytes = 4096;                 // wTransferSize。既定1024
+  if (dfu.configure(config) != ESP_OK) return;
+  dfu.onProgress([](size_t written) { /* これまでに受け付けたbyte数 */ });
+  dfu.onError([](EspUsbDfuStatus status) { /* 失敗の理由 */ });
+  device.begin();
+}
 ```
 
 ```sh
 dfu-util -D firmware.bin
 ```
 
-**endpointを消費しません。** DFUはinterface descriptor、functional descriptor、
-control requestの集合で、すべてEP0を通ります。endpoint予算がcomposite deviceの
-上限を決めているS3（[ガイド 3.3節](usb-device-guide.ja.md#33-endpoint予算)）では、
-これが「いつでも足せる唯一のfunction」であることを意味します。上のdeviceは
-endpoint 2本のkeyboardとendpoint 0本のDFU interfaceで、peerテストが実際にそれを
-確認しています。
+**endpointを使いません。** DFUはinterface descriptor、functional descriptor、control要求だけで、すべてEP0を通ります。
+IN endpointの数で複合deviceが制限されるS3でも、いつでも追加できる唯一のFunctionです。
 
-2つのmode:
+2つのmode（USB DFU 1.1）：
 
-| Mode | 応答するもの | 既定の動作 |
-|---|---|---|
-| `Download` | DFU downloadの全体 | imageを書き、検証し、そのimageで再起動 |
-| `Runtime` | `DFU_DETACH` のみ | `rebootToBootloader()` — ROM loader、経路A |
+| mode | 答えるもの | 既定の動作 |
+| --- | --- | --- |
+| `Download`（既定） | download全体 | `EspUsbDeviceFirmwareUpdate`でimageを書き、検証し、再起動して切り替える |
+| `Runtime` | `DFU_DETACH` | 要求の完了から約100 ms後に`rebootToBootloader()`（経路A） |
 
-`Runtime` は小さい話ですが単体で価値があります。`dfu-util -e` を「任意の
-EspUsbDevice deviceにboot modeへ入るよう頼む標準手段」にでき、独自protocolが
-要りません（[2.4](#24-スケッチからboot-modeへ入る)）。
+設定（`EspUsbDfuConfig`。停止中に`configure()`で渡す）：
 
-PC 相手に end-to-end で確認済みです。このclassを載せたESP32-P4がhigh speedでDFU
-deviceとして列挙され、host toolが `wTransferSize=1024`、`bcdDFU=0x0110`、
-`canDnload`、`manifestationTolerant=0` をwireから読み取り、385KBのimageが376 blockで
-2.7秒（139 KiB/s）通りました。すべてEP0上で、deviceは自分のendpointを1本も持って
-いません。その後deviceは `dfuMANIFEST-WAIT-RESET` を返し、boot partitionを移し、
-受け取ったばかりのimageで再起動しました。
+| 項目 | 既定 | 意味 |
+| --- | --- | --- |
+| `transferBytes` | 1024 | 1 block（1回の`DFU_DNLOAD`）の最大。64〜65535。`wTransferSize`として宣言する |
+| `transferBuffer` | `nullptr` | Download用のblock bufferを自分で渡す。`transferBytes`以上。CPUがcopyするのでDMAの境界合わせは要らない |
+| `detachTimeoutMs` | 1000 | `wDetachTimeOut`。RuntimeがappDETACHにとどまる最大時間 |
+| `downloadPollMs` | 1 | blockを書いている間に返す`bwPollTimeout` |
+| `manifestPollMs` | 250 | imageの検証と反映の間に返す`bwPollTimeout` |
+| `manifestationTolerant` | `false` | `false`：manifestの後はUSB resetを待つ（再起動するため）。`true`：dfuIDLEへ戻る |
 
-`Download` modeで知っておくべきこと:
+Download modeで知っておくこと：
 
-- **送ったimageが動作中のスケッチを置き換えます。** DFU interfaceを持つビルドを
-  送ってください。そうしないと次の更新は経路Aになります。
-- **失敗はstallではなくDFU status codeとして返ります。** ESP applicationでない
-  ファイルは最初のblockでstatus 3（`errWRITE`）、検証を通らないimageは最後に
-  status 7（`errVERIFY`）です。どちらもboot partitionを動かさないので、間違った
-  ファイルを送っても失うのは時間だけです。`CLRSTATUS`（`dfu-util` が自分で送ります）で
-  idleに戻ります。
-- **block sizeは `CFG_TUD_DFU_XFER_BUFSIZE`**（既定1024 byte）で、functional
-  descriptorが宣言する `wTransferSize` でもあります。大きなimageでは `build_opt.h`
-  から `-DCFG_TUD_DFU_XFER_BUFSIZE=4096` のように上げてください。descriptorも
-  追随します。代償は全スケッチが抱える静的bufferで、既定をflash sector丸ごとに
-  していないのはそのためです。
-- **manifestation-intolerantを宣言します。** 新しいimageで再起動するからで、
-  これがhostに「deviceは戻ってこず消える」と伝えます。`restartWhenComplete(false)`
-  にするとスケッチが動き続け、再起動はスケッチの責任になります。
-- callbackは他のclassと同じくusbd task上で動きますが、ここではflash書き込みを
-  その場で行うのが*正しい*です。DFUには `bwPollTimeout` がまさにこのために
-  あり、hostは推測ではなく「待て」と伝えられます
-  （[3.4](#34-バイトを書いてはいけない場所)はそのfieldを持たない転送路の話です）。
+- **imageは動いているsketchを置き換えます。** DFUのinterfaceを持つbuildを送らないと、次の更新は経路Aになります。
+- **失敗はSTALLではなくDFUのstatusで返ります。** ESPのapplicationでないfileは、最初のblockで
+  `EspUsbDfuStatus::Write`（`errWRITE`、3）として断ります。検証に通らないimageは最後に`EspUsbDfuStatus::Verify`（`errVERIFY`、7）で失敗します。
+  どちらも起動先を変えません。`dfu-util`が自動で送る`CLRSTATUS`でidleへ戻ります。
+  `onComplete()`で`false`を返すと、検証済みのimageを断り、起動先を元に戻します。
+- **blockを書く時点。** blockはdata段とstatus段、続く`GETSTATUS`が終わった後で保存します。
+  flashへの書込みはUSB worker上で行い、`bwPollTimeout`（`downloadPollMs`）でHostに待ってもらいます。
+- **再起動。** `restartWhenComplete(true)`（既定）では、manifestの成功から約500 ms後に再起動します。`false`ならsketchが好きな時点で再起動します。
+- **保存先を自分で決める。** `setBackend()`で`download`と`manifest`のcallbackを渡すと、内蔵のOTAの代わりに使います（外部flash、別のprocessorなど）。
+  このとき検証、反映、再起動はbackendの責任で、`onComplete()`と`restartWhenComplete()`は効きません。
+- DFU interfaceは複数置けますが、内蔵のOTAで書けるのは同時に1つだけです。
+- setterはすべて`esp_err_t`を返し、停止中だけ使えます。
 
-### 3.6 ファームウェアドライブ
+### 3.6 firmware drive
 
-`EspUsbDeviceMscFirmwareDisk` は、**データ領域が OTA partition そのもの**である小さな
-FAT ボリュームを提供します。host がドライブへ `.bin` をコピーすると、device は届いた
-sector から順に flash へ書き、検証し、そのイメージで再起動します。
+`EspUsbDeviceMscFirmwareDisk`は、**data領域がOTA partitionそのもの**である小さなFAT volumeを見せます。
+Hostが`.bin`をdriveへcopyすると、deviceはsectorが届くたびにflashへ書き、検証し、再起動して切り替えます。
 
 ```cpp
 EspUsbDevice device;
@@ -466,221 +336,152 @@ EspUsbDeviceMsc msc(device);
 static uint8_t diskStorage[16 * 1024];
 EspUsbDeviceMscFirmwareDisk disk(diskStorage, sizeof(diskStorage));
 
-disk.begin("ESPUSB");
-disk.addTextFile("README.TXT", "Copy a firmware .bin here.\r\n");
-disk.attach(msc);
+void setup() {
+  if (!disk.begin("ESPUSB")) return;          // OTA partitionがない、または領域が小さい
+  disk.addTextFile("README.TXT", "Copy a firmware .bin here.\r\n");
+  disk.onError([](esp_err_t error) { /* ... */ });
+
+  EspUsbMscConfig mscConfig;
+  mscConfig.transferBytes = 4096;             // flashの1 sector。FSでもHSでも有効
+  if (msc.configure(mscConfig) != ESP_OK) return;
+  if (!disk.attach(msc)) return;              // device.begin()の前
+  device.begin();
+}
 ```
 
-**イメージはRAMに載りません。** `diskStorage` が抱えるのは boot sector、FAT 2部、
-root directory、スクラッチ領域だけで、数KBです。それより後ろの sector はすべて
-partition そのもので、read は `esp_partition_read()`、write は
-`EspUsbDeviceFirmwareUpdate` を通ります。RAM 320KB のボードが 1.25MB のイメージを
-受け取れるのはこれが理由で、この経路が成立する唯一の条件でもあります。
+**imageはRAMに置きません。** `diskStorage`に入るのは、boot sector、FAT、root directory、作業領域で、数KBです。
+それより後ろのsectorはpartitionそのもので、`esp_partition_read()`で読み、`EspUsbDeviceFirmwareUpdate`で書きます。
+だから320 KBのRAMのboardが1.25 MBのimageを受け取れます。
 
-classが決めていること。どれも見落としではなく判断です。
+`attach()`は、RAM diskのhelperと違い、媒体ありと書込み可を設定します。
+`begin()`と`addTextFile()`は`attach()`の前に、これらすべては`device.begin()`の前に呼びます。
 
-- **cluster size。** FAT12 が扱えるのは 4084 cluster なので、`begin()` は partition
-  全体がその上限に収まる最小の cluster（4KB 以上）を選びます。4KB は flash の sector
-  size でもあるため、cluster 境界が erase 境界になります。（Arduino-ESP32 の
-  `FirmwareMSC` は 0xFF4 sector を超えると FAT16 へ切り替えます。cluster を大きくする
-  のはその取引の簡単な側です。）
-- **何をファームウェアと見なすか。** firmware 領域への書き込みで先頭バイトが ESP image
-  magic の `0xE9` なら更新を開始します。それ以外はそこにあっても捨てます。ユーザーが
-  間違って置いたファイルか、スクラッチ領域から溢れた host のメタデータであり、
-  どちらも flash に届くべきではありません。
-- **いつ終わりか。** 2つあり、早い方を採ります。ファイルの directory entry が示す長さに
-  バイト数が達したとき、または host がドライブを eject したとき。通常は directory entry
-  が先に来ます。eject は、このコードが読める directory entry を書かない host のための
-  保険です。
-- **素の `.bin` にできないこと。** 書き込みは昇順でなければなりません。素のイメージは
-  「このバイトがどこに属するか」を何も言わないので、判断できるのは書き込み位置だけ
-  です。逆戻りや穴あきは `ESP_ERR_INVALID_STATE` で拒否し、`onError()` を呼んで
-  更新を中止します。中途半端に書かれた状態が「完成」に見えることはありません。
+このclassが決めていることと、その理由：
 
-**`.uf2` を渡せば、その最後の制約が消えます。** UF2ファイルは自己記述的な512 byte
-blockの列で、各blockが自分のtarget address、block index、総数を持ちます。このドライブは
-それも受け付けます。形式は最初に届いたバイトから自動判別するので、同じドライブが
-どちらも扱えます。コンテナで得られるもの:
+- **clusterの大きさ。** FAT12が扱えるclusterは4084個なので、`begin()`はpartition全体を覆える最小のclusterを4 KBから選びます。
+  4 KBはflashのsectorと同じなので、clusterの境界が消去の境界になります。
+- **firmwareとみなすもの。** firmware領域への書込みで、最初のbyteがESPのimageのmagic `0xE9`なら更新を始めます。
+  それ以外は捨てます。誤ってcopyされたfileや、作業領域からあふれたHostのmetadataです。
+- **終わりの判定。** 先に来たほうで決めます。fileのdirectory entryが示す長さにbyte数が届いたとき、またはHostがdriveを取り出したとき。
+- **生の`.bin`は昇順で届く必要があります。** 生のimageは、自分のbyteがどこに入るかを持っていません。
+  後ろへ戻る書込みや穴を空ける書込みは断り、`onError()`に`ESP_ERR_INVALID_STATE`を渡して更新を中止します。
+  途中まで書いて完了したように見える状態にはしません。
 
-| | 素の `.bin` | `.uf2` |
-|---|---|---|
-| 書き込み順 | 昇順のみ | **任意**。各blockが行き先を持つ |
-| hostのメタデータ | `0xE9` heuristicで無視 | block magicで拒否 |
-| 長さ | FATのdirectory entryから | headerから |
-| 完了判定 | バイト数がその長さに達する、またはeject | 正確。全block indexを見たとき |
-| 同じblockの二重書き込み | 進捗と区別できない | 1回として数える |
-| 別chip向けのイメージ | 受理し、後の検証で落ちる | 最初のblockで拒否 |
+**`.uf2`ならこの制限はありません。** UF2の512 byteのblockは、それぞれ書込み先のaddress、block番号、総数を持ちます。
+driveはどちらの形式も受け、最初に届いたbyteで判断します。
 
-後ろ2つは強調する価値があります。hostがblockを書き直すのは普通のことで、素のイメージ
-ではそれがバイト数を水増しして早すぎるcommitに向かいます。UF2では「見たblock」の
-bitmapがあるので数が正確です。そしてfamily IDは、ESP32-S3向けイメージをESP32-P4へ
-という間違いを**flashに触れる前に**捕まえられる唯一の検査です。
-`EspUsbDeviceMscFirmwareDisk::uf2FamilyId()` がこのビルドの期待値を返します。
-`uf2conv.py --family` に渡すのがこの値です。
+| | 生の`.bin` | `.uf2` |
+| --- | --- | --- |
+| 書込みの順 | 昇順だけ | 順不同 |
+| Hostのmetadata | `0xE9`の判定で無視 | blockのmagicで拒否 |
+| 長さ | FATのdirectory entryから | blockのheaderから |
+| 完了 | byte数が長さに届くか、取り出し | すべてのblock番号がそろったとき |
+| 同じblockを2回書く | 進みと区別できない | 1回と数える |
+| 別のchip用のimage | 受け取り、後で検証に失敗 | 最初のblockで拒否 |
 
-内部では、UF2のときだけwriterが
-`EspUsbDeviceFirmwareUpdate::beginRandomAccess()` / `writeAt()` に切り替わります。
-headerがイメージ長を教えるので、最初のblockが届く前にその分だけpartitionをeraseでき、
-以降のblockはその中のどこへでも書けます。素のstreamでは最後まで長さが分からないので
-これができません。
+`EspUsbDeviceMscFirmwareDisk::uf2FamilyId()`は、このbuildが受け付けるfamily IDを返します。
+`uf2conv.py --family <id> --base 0x0`に渡します。Arduinoは`.uf2`を作らないので、この変換が手間になります。
 
-実機確認済み: UF2 block 8個を**逆順**に書いても同じイメージになること、重複blockが
-カウントを進めないこと、無印ESP32のfamily IDを持つblockが何も書かれる前に拒否される
-こと。
+**作業領域の大きさは意識して決めます。** `System Volume Information`、`.fseventsd`、`.Spotlight-V100`を受け止める場所で、
+ここが埋まるとHostはfirmware領域の中にclusterを割り当て始めます。16 KBなら余裕があり、8 KBが最小です。
 
-摩擦はhost側にあります。Arduinoのbuildから `.uf2` を作るには変換の一手間
-(`uf2conv.py --family <id> --base 0x0`) が要り、Arduinoはやってくれません。そこが
-取引です。素の `.bin` はIDEがそのまま出してくれます。
+**driveかDFUか。** 操作はdriveのほうが簡単です。保証はDFUのほうが強く、費用も少なくて済みます。DFUはendpointを使わず、driveはbulkを1組使います。
+`.uf2`なら正しさは同程度で、生の`.bin`ではHostが順に書くことに頼ります。
+更新する人がterminalを使えるならDFU、使えないならdrive、分からないなら両方を出荷します。
 
-意識してサイズを決めるべきはスクラッチ領域です。`System Volume Information`、
-`.fseventsd`、`.Spotlight-V100` を吸収するのがここで、埋まると host は firmware 領域の
-cluster を割り当て始めます。`storage` が 16KB あればスクラッチに余裕があり、8KB が下限です。
+### 3.7 WindowsはINFなしでdriverを付ける
 
-[3.5](#35-dfu-function) との比較: UX はドライブが上、保証は DFU が少ないコストで上です。
-DFU は endpoint を消費せず、ドライブは bulk 1 対を使います。`.uf2` を渡せば正しさでは
-両者は近く、素の `.bin` を渡すとドライブは host の行儀を信じることになります。更新する人が
-端末を使えるなら DFU、使えないならドライブ、分からないなら両方。DFU は足すのが無料です。
+DFU（interface class 0xFE）を受け持つWindows標準のdriverはありません。
+そこでライブラリは、DFUとVendorの各interfaceについて、WinUSBを求めるMicrosoft OS 2.0 descriptorを、設定なしで出します。
 
-### 3.7 Windows が自分でdriverを当てる
+- **対象のinterfaceが1つ：平ら（flat）。** compatible IDをsetのheader直下に置きます。
+  function subsetはusbccgp.sys経由でしか解決されず、Windowsはそれを複合deviceにしか読み込みません。
+- **2つ以上：interfaceごとにfunction subsetを1つ。**
+- DFUのinterfaceにはcompatible IDだけを付け、`DeviceInterfaceGUIDs`は付けません。libusb（つまり`dfu-util`）はこれなしでWinUSBのdeviceを見つけます。
+- BOS descriptorがあるときは`bcdUSB`を0x0201にします。HostがBOSを読みに来る基準の値です。
 
-DFUにはWindows標準のdriverがありません。interface class 0xFEを要求するものが何も
-無いので、DFU deviceはデバイスマネージャで黄色い印が付き、ユーザーは
-[Zadig](https://zadig.akeo.ie/)へ案内されることになります。それは配れるものでは
-ありません。
-
-代わりにdevice側からWinUSBを要求します。Microsoft OS 2.0 descriptor setで、
-ライブラリはそれを必要なinterfaceすべて（vendorとDFU）について組み立てます。
-設定は要りません。
-
-setの形を決める規則は2つあり、どちらも推測ではなく実測で決めました。
-
-- **interfaceが1本なら flat。** compatible IDをset headerの直下に置きます。
-  configuration / function subsetは、compositeの*function*にcompatible IDを結び付ける
-  ためのもので、Windowsはそれを`usbccgp.sys`経由で解決します。そして`usbccgp.sys`は
-  compositeにしか載りません。単一interfaceのdeviceではsubsetsは結び付く先を持たず、
-  Windowsは何も当てません。
-- **2本以上なら、WinUSBが要るinterfaceごとにfunction subsetを1つずつ。** 一部しか
-  指していないsubsetは、指されなかったinterfaceをdriver無しのまま残します。
-
-ESP32-P4をWindows 11に繋いで実測しました。同じboard、同じcomposite、変えたのは
-descriptor setの中身だけです。
-
-| 構成 | DFU interface | vendor interface |
-|---|---|---|
-| DFU単体、Microsoft descriptor無し | `Error`、driver無し | — |
-| DFU + vendor、function subsetが1つ（vendorのみ） | `problem=28` | `WINUSB` |
-| **DFU単体、flat set** | **`WINUSB`** | — |
-| **DFU + vendor、function subsetが2つ** | **`WINUSB`** | **`WINUSB`** |
-
-DFU側にはcompatible IDだけを与え、`DeviceInterfaceGUIDs`は**付けていません**。
-libusb（つまり`dfu-util`）はWinUSB deviceをper-function GUIDではなくUSB device
-interface classで見つけますし、上の実測でbindingにGUIDが要らないことが確認できて
-います。おかげでDFU単体のsetは30 byteで済みます。
-
-`bcdUSB`はBOSを出すときだけ0x0201に上げます。これがhostがそもそもBOSを要求し始める
-閾値です。0x0210にはしていません。それは実装していないUSB 2.1準拠を主張することに
-なりますし、0x0201のままWindows 11でWinUSBが当たることを実測しています。
-
-LinuxとmacOSにはこれは要りません（classで当てるか、libusbが直接claimします）。
-それでも30 byteでWindowsだけが抱える「何かをインストールさせる」問題が消えるので、
-出す価値があります。
+これらの規則は、同じdescriptor setを作るv2でWindows 11を使って実測したものです。v3はWindowsでは未確認です。
+LinuxとmacOSはclassでdriverを付けるかlibusbがinterfaceを直接取るので、このsetは要りません。
 
 ---
 
 ## 4. 経路の比較
 
-| 経路 | chip | boot mode必要 | host tool | brickしうるか | 現在のライブラリ対応 |
-|---|---|---|---|---|---|
-| USB経由のROM serial loader | S2 (OTG CDC)、S3 / P4 (USB-Serial-JTAG) | 要 | `esptool`、ブラウザの `esptool-js` | しない | ✅ `rebootToBootloader()` — [2.4](#24-スケッチからboot-modeへ入る) |
-| USB-OTG経由のROM DFU | S2。S3は `USB_PHY_SEL` eFuseを焼いた場合のみ。P4は不具合 | 要 | `dfu-util` | しない | ⚠ 未焼成のS3では `rebootToRomDfu()` が拒否 — [2.6](#26-rom-serial-loaderではなくrom-dfuへ入る-s2s3) |
-| **device自身が実装するDFU** | 全部 | 不要 | `dfu-util` | rollback無しならしうる | ✅ `EspUsbDeviceDfu` — [3.5](#35-dfu-function) |
-| CDC経由の自力OTA | 全部 | 不要 | 任意のserial tool | rollback無しならしうる | ✅ class + `EspUsbDeviceFirmwareUpdate` |
-| Vendor / WebUSB経由の自力OTA | 全部 | 不要 | PyUSB / ブラウザ | rollback無しならしうる | ✅ class + `EspUsbDeviceFirmwareUpdate` |
-| CDC-NCM + HTTP経由の自力OTA | 全部 | 不要 | ブラウザ | rollback無しならしうる | ✅ [`FirmwareHTTP`](../examples/FirmwareHTTP/) |
-| MSC経由の自力OTA (drag and drop) | 全部 | 不要 | ファイルマネージャ | rollback無しならしうる | ✅ `EspUsbDeviceMscFirmwareDisk` — [3.6](#36-ファームウェアドライブ) |
-| MSC経由の自力OTA (UF2 コンテナ) | 全部 | 不要 | ファイルマネージャ | rollback無しならしうる | ✅ 同じ class、書き込み順は任意 — [3.6](#36-ファームウェアドライブ) |
-| UF2 *bootloader* (TinyUF2) | S2 / S3 | — | drag and drop | しない | ❌ 対象外 — [6.1](#61-uf2-を-bootloader-として使う) |
+| 経路 | chip | boot mode | Hostの道具 | 動かないimageを入れうるか | API |
+| --- | --- | --- | --- | --- | --- |
+| USBでのROMのserial loader | S2（OTG）、S3/P4（USB Serial/JTAG） | 要る | `esptool` | いいえ | `rebootToBootloader()`（[2.4](#24-sketchからboot-modeに入る)） |
+| USB OTGでのROM DFU | S2。S3は`USB_PHY_SEL`を焼いたときだけ。P4は不可 | 要る | `dfu-util` | いいえ | `rebootToRomDfu()`（[2.6](#26-romのserial-loaderではなくrom-dfuを使うs2s3)） |
+| applicationのDFU | すべて | 不要 | `dfu-util` | rollbackなしなら、はい | `EspUsbDeviceDfu`（[3.5](#35-dfu-function)） |
+| firmware drive（`.bin`/`.uf2`） | すべて | 不要 | file manager | rollbackなしなら、はい | `EspUsbDeviceMscFirmwareDisk`（[3.6](#36-firmware-drive)） |
+| CDC ACM | すべて | 不要 | serialの道具 | rollbackなしなら、はい | `EspUsbDeviceCdcSerial`＋`EspUsbDeviceFirmwareUpdate` |
+| Vendor / WebUSB | すべて | 不要 | PyUSB、browser | rollbackなしなら、はい | `EspUsbDeviceVendor`＋`EspUsbDeviceFirmwareUpdate` |
+| CDC-NCM＋HTTP | すべて | 不要 | browser | rollbackなしなら、はい | `EspUsbDeviceNet`＋`HTTPUpdateServer` |
+
+applicationの経路では、動かないimageを入れてしまうことがあります。そのときも経路Aは残ります。ROMのloaderは上書きできないからです。
 
 ---
 
-## 5. ライブラリ機能かスケッチ側のコードか
+## 5. ライブラリの機能か、sketchのコードか
 
-このライブラリが他所で既に使っている境界線はこうです。**descriptorやendpoint予算で
-正しくなければならないものはライブラリが持ち、方針はスケッチが持つ。**
-ファームウェア更新に当てはめると:
+分け方：**descriptor、protocolの状態、chipのregisterのように正しくなければならないものはライブラリ、方針はsketch。**
 
-**ライブラリに入るもの**（上3つは実装済み）
+**ライブラリにあるもの**
 
-- ✅ DFU / DFU-runtimeの**class**。interface descriptor、functional descriptor、
-  状態機械、control requestの集合 — まさにスケッチに手書きさせてはいけないもので、
-  `EspUsbDeviceClass` が存在する理由そのものです。`EspUsbDeviceDfu`、
-  [3.5](#35-dfu-function)。
-- ✅ `rebootToBootloader()` を正式なAPIとして。小さいですが、target別のregister知識で
-  あり、放っておけば全スケッチがS3向けtutorialからP4へ誤ってコピーします。
-  [2.4](#24-スケッチからboot-modeへ入る)。
-- ✅ firmware sink。「このバイトをもう一方のOTA partitionへ入れて、検証して、
-  切り替えて」。`EspUsbDeviceFirmwareUpdate` として
-  [3.3](#33-今日そのまま使える転送路)の全経路で共有され、size clamp、sequential erase、
-  「commitの前に検証」のルールが住む場所です。
-- ✅ ドライブ上にファイルが現れたことを検知するFAT層。filesystemの解析であり、繊細で、
-  幾何を間違えても特定のhostがマウントするまで気づけません。
-  `EspUsbDeviceMscFirmwareDisk`、[3.6](#36-ファームウェアドライブ)。
+- DFUのclass：descriptor、DFU 1.1の状態遷移とcontrol要求。sketchで手作りすべきものではありません。
+- `rebootToBootloader()`：chipごとのregisterの知識。ないと、S3の解説をP4へ誤って写すことになります。
+- `EspUsbDeviceFirmwareUpdate`：大きさの上限、順次消去、検証してから切り替える決まりを、全経路で共有します。
+- firmware driveのFAT層：geometryの誤りは、特定のHostがmountするまで見えません。
 
-**サンプルスケッチに入るもの**
+**sketchに書くもの**
 
-- boot modeへ**いつ**入るか。1200bps touch、button、vendor command、メニュー項目。
-  これは製品の方針で、機器ごとに違います。
-  [`FirmwareBootMode`](../examples/FirmwareBootMode/) が3通り示します。
-- host側の相方。Pythonのuploader、WebUSBのページ、HTMLフォーム。どの意味でも
-  ライブラリのコードではありません。
-  [`FirmwareHTTP`](../examples/FirmwareHTTP/) はhost側がブラウザで、書くものが
-  何も無い場合です。
-- vendor独自updaterのwire protocol — framing、checksum、ack。サンプルは良い例を
-  *1つ*示すべきで、ライブラリが押し付けるべきではありません。DFUがライブラリに入り
-  vendor protocolが入らないのはこれが理由です。DFUは他人の標準なので、実装しても
-  ライブラリは何も約束しません。
-- rollback方針、進捗表示、更新中にdeviceが何をするか。
-  [`FirmwareDFU`](../examples/FirmwareDFU/) がcallbackと `markValid()` の置き場所を
-  示します。
+- いつboot modeに入るか：1200 baudのtouch、button、vendorのcommand。[`FirmwareBootMode`](../examples/FirmwareBootMode/)に3つの例があります。
+- Host側：Pythonのuploader、WebUSBのpage、HTMLのform。
+- vendor独自のupdaterのwire protocol（区切り、checksum、応答）。
+  DFUをライブラリに入れてvendorのprotocolを入れない理由はこれです。DFUは既存の規格なので、実装してもライブラリ独自の約束を増やしません。
+- rollbackの方針、imageの真正性の確認、進み具合の表示。
 
 ---
 
-## 6. 未実装のもの
+## 6. 実機での確認範囲
 
-このドキュメントの初版が挙げていたものは、すべてライブラリに入りました。
-`EspUsbDeviceDfu`、`EspUsbDeviceMscFirmwareDisk`（素の `.bin` と UF2）、
-`EspUsbDeviceFirmwareUpdate`、`EspUsbDevice::rebootToBootloader()`、そして
-Zadig なしで Windows が DFU interface に WinUSB を当てるための Microsoft OS 2.0
-descriptor（[3.7](#37-windows-が自分でdriverを当てる)）です。以下は意図的に対象外に
-しているものだけです。
+| 項目 | v3での状態 |
+| --- | --- |
+| DFUのprotocol（64〜65535 byteのblock、GETSTATUSとblockの順、CLRSTATUS、ABORT、manifest、複数interface）をRAMのbackendで | S3 ↔ S3、P4のFS loopback、P4 ↔ P4XのHS直結で確認 |
+| DFUの`DFU_DETACH`の時間と拒否 | P4X → Linux PC（HS）でpyusbを使って確認 |
+| MSCのBOTと媒体の変更をwireの段階で | P4X → Linux PC（HS）でpyusbを使って確認（OSのmountはしていない） |
+| 内蔵のOTAでのDFU Downloadと、新しいimageへの再起動 | v3では未確認 |
+| OSがmountしたfirmware drive、生の`.bin`と`.uf2` | v3では未確認 |
+| `rebootToBootloader()`、`rebootToRomDfu()` | v3では未確認 |
+| `FirmwareCDC`、`FirmwareVendor`、`FirmwareHTTP`の通し | v3では未確認 |
+| `dfu-util`、Windows、macOS | v3では未確認 |
+| ESP32-S2 | compileのみ |
 
-### 6.1 UF2 を bootloader として使う
-
-[TinyUF2](https://github.com/adafruit/tinyuf2) は second-stage bootloader を
-UF2 ドライブを出すものに置き換えます。Espressif の
-[`esp_tinyuf2`](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_device/esp_tinyuf2.html)
-はそれと application 側の版を ESP-IDF 向けにまとめたものです。
-
-application 側の版は [3.6](#36-ファームウェアドライブ) で、これはライブラリに入りました。
-bootloader 版は**対象外**です。bootloader を置き換えるものであり、Arduino のライブラリ
-ではなく ESP-IDF component であり、その利点である「application が壊れていても動く」は
-[経路A](#2-経路a-chipをromに明け渡す) が mask ROM から、入れるものも壊れるものも無しで
-既に提供しているからです。
+`EspUsbDeviceFirmwareUpdate`、firmware driveのFATとUF2の処理、`rebootToBootloader()`はv2と同じコードで、v2では実機で確認しています。
+ESP32-P4のHSでのDFU download（385 KBを2.7秒、その後新しいimageで再起動）、逆順に書いたUF2 block、
+ESP32-S3とESP32-P4での`rebootToBootloader()`です。v3ではその下のUSB転送（MSC、DFU、controllerのdriver）が新しくなっています。
 
 ---
 
-## 関連ドキュメント
+## 7. 対象外：bootloaderとしてのUF2
 
-- [USB Device開発ガイド](usb-device-guide.ja.md) — 基礎、コネクタ、立ち上げ
-- [USB Device開発ガイド (応用)](usb-device-advanced.ja.md) — callbackのcontext、endpoint予算、classの追加
-- [トラブルシューティング](troubleshooting.ja.md) — 症状から引ける対処
-- [examples/FirmwareDFU](../examples/FirmwareDFU/) — 動作中のスケッチを `dfu-util` で更新する
-- [examples/FirmwareHTTP](../examples/FirmwareHTTP/) — USBネットワーク越しにブラウザからアップロード
-- [examples/FirmwareMSC](../examples/FirmwareMSC/) — ボードが見せるドライブにファームウェアを放り込む
-- [examples/FirmwareBootMode](../examples/FirmwareBootMode/) — ROM loaderを要求する3通りの方法
-- [examples/UsbNetwork](../examples/UsbNetwork/) — HTTP経路の土台になるCDC-NCM + web server
-- [tests/peer/usb_dfu](../tests/peer/usb_dfu/) — ここでのDFUの主張を支える2台構成テスト
-- [tests/single/msc_firmware_disk](../tests/single/msc_firmware_disk/) — ファームウェアドライブの主張を支えるテスト
+[TinyUF2](https://github.com/adafruit/tinyuf2)は2段目のbootloaderを、UF2のdriveを見せるものに置き換えます。
+Espressifの[`esp_tinyuf2`](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_device/esp_tinyuf2.html)は、
+これをapplication側の版と一緒にESP-IDF向けにまとめています。application側の版は[3.6](#36-firmware-drive)にあたります。
+bootloaderの版は対象外です。bootloaderを置き換えること、Arduino libraryではなくESP-IDFのcomponentであること、
+そしてその利点（applicationが壊れていても動く）は、経路Aがmask ROMですでに提供しているからです。
+
+---
+
+## 関連文書
+
+- [USBデバイス開発ガイド](usb-device-guide.ja.md)
+- [USBデバイス開発ガイド（応用）](usb-device-advanced.ja.md)
+- [トラブルシューティング](troubleshooting.ja.md)
+- [DFU class](classes/dfu.ja.md)、[MSC class](classes/msc.ja.md)
+- example：[`FirmwareDFU`](../examples/FirmwareDFU/)、[`FirmwareMSC`](../examples/FirmwareMSC/)、
+  [`FirmwareCDC`](../examples/FirmwareCDC/)、[`FirmwareVendor`](../examples/FirmwareVendor/)、
+  [`FirmwareHTTP`](../examples/FirmwareHTTP/)、[`FirmwareBootMode`](../examples/FirmwareBootMode/)
+- [USB DFU 1.1](https://www.usb.org/sites/default/files/DFU_1.1.pdf)
 - [ESP-IDF: Device Firmware Upgrade via USB](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/dfu.html)
 - [esptool: Boot Mode Selection (ESP32-S3)](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/boot-mode-selection.html) / [(ESP32-P4)](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/advanced-topics/boot-mode-selection.html)
-- [ESP-IoT-Solution: USB-OTG peripheral introduction](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_overview/usb_otg.html) — P4 v3.1のDFU不具合
+- [ESP-IoT-Solution: USB-OTG peripheral introduction](https://docs.espressif.com/projects/esp-iot-solution/en/latest/usb/usb_overview/usb_otg.html)（P4 v3.1のROM DFUの不具合）

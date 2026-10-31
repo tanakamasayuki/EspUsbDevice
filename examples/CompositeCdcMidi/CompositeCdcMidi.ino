@@ -14,11 +14,14 @@ void setup() {
   midiConfig.inCables = midiConfig.outCables = 1;
   midiConfig.rxPackets = midiConfig.txPackets = 16;
   midiConfig.transferPackets = 4;
-  if (console.configure(serialConfig) != ESP_OK ||
-      midi.configure(midiConfig) != ESP_OK) return;
+  // Failures are reported on the separate debug connection.
+  Serial.begin(115200);
+  esp_err_t configured = console.configure(serialConfig);
+  if (configured == ESP_OK) configured = midi.configure(midiConfig);
+  if (configured != ESP_OK) { Serial.printf("configure failed: %s\n", esp_err_to_name(configured)); return; }
   EspUsbDeviceConfig config;
   config.product = "CDC and MIDI echo";
-  device.begin(config);
+  if (!device.begin(config)) Serial.printf("begin failed: %s\n", device.lastErrorName());
 }
 
 void loop() {

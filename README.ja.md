@@ -2,104 +2,98 @@
 
 > English: [README.md](README.md)
 
-ESP32 Arduino向けの、必要な機能を明示して使うUSB Deviceライブラリです。
-DeviceへFunctionを登録し、資源を設定して`begin()`します。
-USB workerはライブラリが起動するため、loopからUSB taskを呼ぶ必要はありません。
-
-このブランチは**v3開発版**です。metadataは3.0.0ですが、v3のrelease/tagは公開していません。
-TinyUSBのクラス・共通coreを置き換え、容量と転送方式をinstanceごとのAPIへ移しました。
-一部の2.x APIには互換性がありません。[移行ガイド](docs/V3_MIGRATION.ja.md)を参照してください。
+EspUsbDevice は、どんな USB device にするかをスケッチで明示する、ESP32 Arduino 向けの
+USB Device ライブラリです。使う Function を Device に付け、容量を決めて `begin()` します。
+USB の処理はライブラリの worker が行うので、スケッチから USB の task を呼ぶ必要はありません。
+リンクされるのは、使う Function だけです。
 
 ```cpp
 #include <EspUsbDevice.h>
 
 EspUsbDevice device;
-EspUsbDeviceCdcSerial console(device);
+EspUsbDeviceCdcSerial console(device);   // USB serial port と
+EspUsbDeviceHidKeyboard keyboard(device); // keyboard を 1 つの device に
 
 void setup() {
   EspUsbBulkStreamConfig buffers;
   buffers.rxCapacity = 256;
-  buffers.txCapacity = 512;
-  buffers.transferBytes = 64;
-  if (console.configure(buffers) != ESP_OK) return;
-  if (!device.begin()) return;
+  buffers.txCapacity = 1024;
+  console.configure(buffers);
+  if (!device.begin()) {
+    // 理由は device.lastErrorName() で分かる（例："ESP_ERR_INVALID_SIZE"）
+  }
 }
 
 void loop() {
-  while (console.available() && console.writeAvailable()) {
-    const int value = console.read();
-    if (value >= 0) console.write(uint8_t(value));
+  if (device.ready() && console.available()) {
+    const int c = console.read();
+    console.write(uint8_t(c));
+    if (c == '!') keyboard.tapKey('a');
   }
   delay(1);
 }
 ```
 
-`begin()`は資源を確保してUSBを開始します。そのlifecycleは`started()`、Hostによる構成完了は
-`ready()`で確認します。容量などを変更するときは`end()`の成功後、再設定してbeginします。
-Hostからは切断・再列挙に見えます。Functionの容量・個数を指定する`build_opt.h`は不要です。
+## 対応 chip と class
 
-## 基本方針
+| chip | 速度 | [HID](docs/classes/hid.ja.md) | [CDC](docs/classes/cdc.ja.md) | [Vendor](docs/classes/vendor.ja.md) | [MIDI](docs/classes/midi.ja.md) | [MSC](docs/classes/msc.ja.md) | [Audio](docs/classes/audio.ja.md) | [Video](docs/classes/video.ja.md) | [NCM](docs/classes/ncm.ja.md) | [CCID](docs/classes/ccid.ja.md) | [DFU](docs/classes/dfu.ja.md) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ESP32-S3 | FS（12 Mbps） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-P4 v1.x と P4X（v3.1 以降） | HS（480 Mbps）と FS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-S2 | FS（12 Mbps） | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
-- 必要なFunctionだけを選びます。全クラスをglobal driver表で参照せず、未使用クラスの実装や
-  最大instance数分のbufferを一括で持ちません。
-- 選択した資源を開始時に確保し、失敗時は戻します。通常の転送でheap確保を繰り返しません。
-  対応クラスでは外部bufferやDMA領域の借用転送も選べます。
-- descriptor、port、speed、endpoint packet size、raw reportを明示的に扱います。
-  controllerのendpoint数・FIFO容量・帯域による物理上限は残ります。
-- クラス、共通core、controller境界を本体で管理します。DWC2は
-  [由来とライセンス](third_party/tinyusb/PROVENANCE.ja.md)を保持した保守forkです。
-  vendored TinyUSB stack/configやSDK内のstackへのfallbackは持ちません。
-- Arduino-ESP32/ESP-IDFのSoC・PHY・FreeRTOS・heap/cacheは利用します。
-  Arduino標準USB Deviceの起動とは排他です。network・storage・firmware helperは任意とし、
-  AudioへI2Sやcodecの実装を必須にしません。
+✅ = `validation/` の試験で、実機の転送を確かめています。ESP32-S3 二台の FS、P4 と P4X を HS で
+直結した両方向、P4 一台の HS と FS controller の結線、P4X と Linux PC です。
+○ = ビルドできます。実機ではまだ動かしていません。ESP32-S31 にはまだ対応していません。
 
-HID Keyboard/Mouse/Gamepad/Consumer/System/Custom、CDC ACM、MIDI 1.0、Vendor bulk/control、
-MSC、UAC1/UAC2 Audio、UVC Video、CDC-NCM、CCID、DFUを実装しています。
-controllerのendpoint予算内で組み合わせられ、ライブラリ共通の4 Function制限はありません。
-実装の有無と実機で確認した範囲は分けて扱います。下の「機種ごとの確認状況」を参照してください。
+class：HID（NKRO 付き keyboard、mouse、gamepad、consumer control、system control、custom・vendor
+report）、CDC ACM、vendor の bulk と control（WebUSB、WinUSB）、MIDI 1.0、MSC（RAM・FAT・SD card・
+firmware の disk）、UAC1/UAC2 audio、UVC video、CDC-NCM の network、CCID の smart card reader、DFU 1.1。
+自由に組み合わせて 1 つの複合 device にできます。上限は controller の endpoint と FIFO だけで、
+収まらない構成は `begin()` が拒否します。
 
-## ビルドと試験
+## 必要なもの
 
-開発の基準は**Arduino-ESP32 3.3.12**です。exampleの`sketch.yaml`もこの版に固定しています。
-過去のCore互換表は当時のlibrary versionの記録です。v3の動作保証には使いません。
+- Arduino-ESP32 **3.3.12**（例の `sketch.yaml` で固定しています）。
+- ESP32-S3 と ESP32-S2：**ツール > USB Mode** を **USB-OTG (TinyUSB)**（`USBMode=default`）にします。
+  ESP32-S3 の既定は Hardware CDC and JTAG です。
+- ESP32-P4：**ツール > Chip Variant** で revision を選びます。v1.x は `prev3`、v3.1 以降（P4X）は `postv3` です。
+- core 自身の USB CDC・MSC・DFU を起動時に有効にしたり、`USB.begin()` を呼んだりしないでください。
+  USB OTG controller はこのライブラリが使います。
 
-### 機種ごとの確認状況（2026-10-31）
+## 特長
 
-| 機種 | 実機での確認 | 主な内容 |
-| --- | --- | --- |
-| ESP32-S3 | 済み（FS） | S3二台のpeer試験。列挙、各クラスの転送、所有権、reset/回復、故障注入 |
-| ESP32-P4（旧P4 v1.3）とP4X（v3.2） | 済み（HS 480 Mbpsと FS） | 旧P4とP4XをHSで直結し、両方向でS3 peer試験39本とHS用の試験（PSRAMを保存先/ringに使う試験を含む）を実行。一台のloopback（FS）で両controller・全10クラス・Audio・借用DMA・PSRAM。P4XはLinux PCへのHS直結でDFU/MSCも確認 |
-| ESP32-S2 | compileのみ | 実機は調達中 |
-| ESP32-S31 | 未対応 | 機材は調達中。ビルドにArduino-ESP32 4.0.0-RC1が必要 |
+- **明示的で、使う分だけ。** 容量、転送方式、buffer は instance ごとに、実行時に `configure()` で
+  決めます。`build_opt.h` は要りません。`begin()` が確保し、`end()` が解放し、失敗したときは何も残しません。
+- **所有権がはっきりしている。** コピー、callback、借用 DMA の転送。借りた buffer は、取消しや
+  bus reset、`end()` のときも含めて、必ず一度だけ返ります。ring や保存先は PSRAM に置けます。
+- **ESP32-P4 の HS。** 512 byte の bulk、1024 byte の interrupt、480 Mbps での isochronous の
+  audio と video。`device.speed()` と TEST_MODE。
+- **規格どおり。** descriptor、control 要求、class の動作は USB 2.0 と各 class の規格に従います。
+  ライブラリが選んだところは、[class の文書](docs/classes/)に規格の箇所を書いています。
+- **原因が分かる。** `begin()` は bus に触る前に endpoint と FIFO の予算を確かめ、
+  `device.lastErrorName()` が理由を示します。
 
-まだ確認していない主なものは、S2/S31の実機、Arduino-ESP32 4系、Windows/macOSを含むPC OSとの互換性です。
-残作業は[TODO](TODO.ja.md)、現在の状況は[引き渡し](docs/V3_HANDOFF.ja.md)にまとめています。
+## 文書
 
-### 試験の実行
+| 文書 | 内容 |
+| --- | --- |
+| [USB device ガイド](docs/usb-device-guide.ja.md) | USB の基礎、電源と connector、ESP32 固有の注意、立ち上げ |
+| [class の文書](docs/classes/) | class ごとの使い方、全設定、動作、Host OS 側の注意 |
+| [詳細ガイド](docs/usb-device-advanced.ja.md) | task モデル、descriptor の詳細、control 転送、FIFO、DMA と PSRAM |
+| [サンプル](examples/README.ja.md) | 40 本以上の完結したスケッチ。2.x の例もすべて含む |
+| [トラブルシューティング](docs/troubleshooting.ja.md) | `begin()` のエラー、列挙の問題、OS ごと・class ごとの問題 |
+| [USB 経由の OTA](docs/ota-over-usb.ja.md) | ファームウェア更新の経路：ROM loader、DFU、drive、serial、vendor、browser |
+| [v2 からの移行](docs/migrating-from-v2.ja.md) | EspUsbDevice 2.x のスケッチを 3.0 へ |
+| [Arduino-ESP32 USB からの移行](docs/migrating-from-arduino-esp32-usb.ja.md) | `USBHIDKeyboard`、`USBCDC`、`USBMSC` などから |
+| [変更履歴](CHANGELOG.md) | 版ごとの変更 |
 
-試験は独立した[validation環境](validation/README.ja.md)で、plugin標準の`--combo all`を使って実行します。
-`--combo all`は、結線済みとして登録した組（S3二台、P4 loopback、P4/P4XのHS直結、P4XとPC）を順に実行します。
-`--noconftest`を使い、旧2.x試験とは独立しています。
-検証記録には対象commitと範囲を書いています。全OS・全control順序・全機種での確認を意味するものではありません。
+## まだ確かめていないこと
 
-[サンプル一覧](examples/README.md)に基本例、複合構成、同じbinaryでの容量変更を用意しています。
-ビルド例:
+Windows と macOS の Host、ESP32-S2 の実機、実際の SD card と OTA の書込み、Arduino-ESP32 4.x。
+試験の Host は ESP32 と Linux PC です。[試験](docs/development/testing.ja.md)を参照してください。
 
-```sh
-arduino-cli compile --profile esp32s3 examples/CdcConsole
-python3 tools/build_check.py esp32s3
-python3 tools/verify_usb_backend.py
-```
+## ライセンス
 
-## v3 APIガイド
-
-- [開始・停止、worker設定、移行](docs/V3_MIGRATION.ja.md)
-- [Vendor・借用転送](docs/V3_VENDOR_API.ja.md)、[CDC](docs/V3_CDC_API.ja.md)
-- [HID](docs/V3_HID_API.ja.md)、[MIDI](docs/V3_MIDI_API.ja.md)、[MSC](docs/V3_MSC_API.ja.md)
-- [Audio](docs/V3_AUDIO_API.ja.md)、[Video](docs/V3_VIDEO_API.ja.md)
-- [NCM](docs/V3_NCM_API.ja.md)、[CCID](docs/V3_CCID_API.ja.md)、[DFU](docs/V3_DFU_API.ja.md)
-- [CH32RVとのAPI調整メモ](docs/V3_CH32RV_API_ALIGNMENT.ja.md)
-- [API変更の判断](docs/V3_API_DECISIONS.ja.md)、[開発計画](docs/V3_DEVELOPMENT_PLAN.ja.md)
-
-2.xのexamples/testsは[legacy/v2](legacy/v2/README.md)へ保管しています。
-`V3_`以外の文書にも2.xの記述が残っています。過去版の参照資料として扱い、v3のAPIや合否基準には使いません。
+MIT です。[LICENSE](LICENSE) を参照してください。DWC2 controller の driver は TinyUSB（MIT）と
+ST のコード（BSD-3-Clause）に由来します。[third_party/tinyusb](third_party/tinyusb/PROVENANCE.ja.md) を参照してください。

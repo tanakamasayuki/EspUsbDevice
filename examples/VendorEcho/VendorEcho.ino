@@ -7,8 +7,11 @@ void setup() {
   EspUsbBulkStreamConfig config;
   config.rxCapacity = config.txCapacity = 256;
   config.transferBytes = 64;
-  if (vendor.configure(config) != ESP_OK) return;
-  device.begin();
+  // Failures are reported on the separate debug connection.
+  Serial.begin(115200);
+  const esp_err_t configured = vendor.configure(config);
+  if (configured != ESP_OK) { Serial.printf("configure failed: %s\n", esp_err_to_name(configured)); return; }
+  if (!device.begin()) Serial.printf("begin failed: %s\n", device.lastErrorName());
 }
 void loop() {
   if (!device.ready()) { length = sent = 0; delay(1); return; }

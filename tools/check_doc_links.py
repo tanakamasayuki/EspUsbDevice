@@ -11,7 +11,7 @@ to it.
 
 Exits non-zero when something is broken, so it can gate a release. Run it after
 editing headings, after adding a document, and before tagging - see
-`docs/RELEASE_CHECKLIST.md`.
+`docs/development/release.ja.md`.
 
   python3 tools/check_doc_links.py           # whole repository
   python3 tools/check_doc_links.py docs      # one subtree

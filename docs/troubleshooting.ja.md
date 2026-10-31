@@ -2,287 +2,441 @@
 
 > English: [troubleshooting.md](troubleshooting.md)
 
-EspUsbDeviceで起きる問題を「症状から引ける」形で1か所に集めたものです。
-基礎と立ち上げ手順の全体は [USB Device開発ガイド](usb-device-guide.ja.md)、
-ライブラリ内部は [応用ガイド](usb-device-advanced.ja.md) を参照してください。
+EspUsbDevice v3で起きる問題を、症状から引けるようにまとめた文書です。
+基本は[USBデバイス開発ガイド](usb-device-guide.ja.md)、ライブラリの内部は[応用ガイド](usb-device-advanced.ja.md)、
+各classの詳細は[classes/](classes/)の各ページにあります。
 
-ホストを繋ぐ前に、次の2つのスケッチでほとんどの疑問に答えが出ます。
+Hostを調べる前に、次の3つのsketchで多くのことが分かります。
 
-| ツール | 分かること |
-|--------|-----------|
-| [`EspUsbDeviceBringUpCheck`](../examples/Info/EspUsbDeviceBringUpCheck/) | `begin()`が成功したか、ホストが列挙したか、どの速度か |
-| [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/) | ライブラリが組んだ全ディスクリプタとendpoint予算。ホスト不要 |
+| sketch | 分かること |
+| --- | --- |
+| [`EspUsbDeviceBringUpCheck`](../examples/Info/EspUsbDeviceBringUpCheck/) | `begin()`が成功したか、Hostが構成したか、どの速度か |
+| [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/) | ライブラリが作ったdescriptorの全体とendpointの予算。Hostは不要（`DUMP_DESCRIPTORS_ONLY 1`） |
+| [`EspUsbDeviceConsole`](../examples/Info/EspUsbDeviceConsole/) | 現在の状態（`ready`、`suspended`、keyboardのLED、HIDのprotocol）と、HID/Vendorの手動送信 |
 
 ## 目次
 
-1. [begin()が失敗する](#1-beginが失敗する)
-2. [begin()は成功するがホストに何も出ない](#2-beginは成功するがホストに何も出ない)
+1. [begin() が失敗する](#1-begin-が失敗する)
+2. [begin() は成功するがHostに何も出ない](#2-begin-は成功するがhostに何も出ない)
 3. [列挙は始まるが途中で失敗する](#3-列挙は始まるが途中で失敗する)
-4. [ビルドと書き込み](#4-ビルドと書き込み)
-5. [ホストOS別の観測](#5-ホストos別の観測)
-6. [クラス別の問題](#6-クラス別の問題)
+4. [buildと書込み](#4-buildと書込み)
+5. [Host OS別の注意](#5-host-os別の注意)
+6. [class別の問題](#6-class別の問題)
 7. [安定性](#7-安定性)
-8. [チップ別の注意](#8-チップ別の注意)
+8. [chip別の注意](#8-chip別の注意)
 9. [それでも解決しないとき](#9-それでも解決しないとき)
 
-## 1. begin()が失敗する
+## 1. begin() が失敗する
 
-### `ESP_ERR_INVALID_SIZE`
+### 1.1 まず理由を読む
 
-構成がcontrollerのendpoint予算またはディスクリプタのサイズ上限を超えています。
-チェックはPHY開始前に走るので、ホストには何も見えません。
+失敗の理由は必ず`esp_err_t`で記録されます。読む場所は3つです。
 
-1. 同じクラス構成（`DUMP_ENABLE_*` define）で
-   [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/)
-   をビルドし、末尾のendpoint予算を読みます。ホスト不要です。
-2. クラスを減らすか入れ替えます。ESP32-S2/S3の実質上限は**非control IN 4本**で、
-   HID + CDC + MSC（1+2+1）で既に埋まります
-   （[ガイド3.3](usb-device-guide.ja.md#33-endpoint予算)）。
-3. ESP32-P4ならHS controllerを選びます。予算が大幅に広がります
-   （[ガイド3.2](usb-device-guide.ja.md#32-esp32-p4のfshs選択)）。
-4. endpoint予算に収まっている場合は、configuration descriptorが704バイト以内、
-   各HID report descriptorが256バイト以内かを確認します
-   （[ガイド3.4](usb-device-guide.ja.md#34-その他のライブラリ側の上限)）。
+| 場所 | 返すもの |
+| --- | --- |
+| `Function.configure(config)` | `esp_err_t`を直接返す。`ESP_OK`なら設定を保存した |
+| `device.begin(config)` | `bool`。理由は`device.lastError()` |
+| `Function.startError()` | 直近の`begin()`で、そのFunctionが開始を断った理由 |
 
-### `ESP_ERR_NOT_SUPPORTED`
+```cpp
+if (vendor.configure(vendorConfig) != ESP_OK) { /* 設定そのものが誤り */ }
+if (!device.begin(config)) {
+  Serial.printf("begin: %s, vendor: %s\n",
+                esp_err_to_name(device.lastError()),
+                esp_err_to_name(vendor.startError()));
+}
+```
 
-1. ターゲットがESP32-S2 / S3 / P4かを確認します。無印ESP32、C3、C6などは
-   USB-OTG device controllerを持たず、このライブラリは動きません
-   （[ガイド3.1](usb-device-guide.ja.md#31-対応チップとcontroller)）。
+- `device.lastErrorName()`は、`device.lastError()`の`esp_err_to_name()`の名前を返します。
+  どのコードでも名前が出ます（HID送信の`ESP_ERR_TIMEOUT`も）。
+  Functionの`startError()`はただの`esp_err_t`なので、`esp_err_to_name()`で表示します。
+- Functionが失敗したとき、`device.lastError()`はそのFunctionの`startError()`と同じです。
+  すでに開始したFunctionは終了し直され、確保したものは残りません。
+- 失敗した`begin()`の後、deviceは停止状態です。設定を直して`begin()`を呼び直せます。resetは要りません。
 
-### その他の`begin()`失敗
+### 1.2 errorコードごとの原因
 
-1. `device.lastErrorName()`を出力します。すべての失敗経路が理由を名乗ります。
-2. Core Debug Levelを`Verbose`に上げてESP-IDFログを読みます
-   （[ガイド3.6](usb-device-guide.ja.md#36-ログ)）。
+確認は次の順に行います。deviceの設定、descriptorとendpointの予算、各Functionの資源、最後にPHY・controller・USB worker。
+PHYより前の段階ではbusに触れないので、Hostには何も見えません。
 
-## 2. begin()は成功するがホストに何も出ない
+#### `ESP_ERR_INVALID_SIZE`（0x104）：入りきらない
 
-上から順に確認してください。どれもよくある原因で、前半2つはコードと無関係です。
+| 原因 | 対処 |
+| --- | --- |
+| 非controlのIN endpointがcontrollerの数を超えた。ESP32-S2/S3とESP32-P4のFS controllerは4本、P4のHS controllerは7本。endpoint番号にも上限がある（S2/S3は1〜6） | DescriptorDumpで数える（Host不要）。下の[予算の表](#endpointの予算)を参照。Functionを減らすか、P4のHS controllerを使う |
+| `bulkInBuffering = EspUsbBulkInBuffering::Double`で、すべてのbulk INに2 packet分のTX FIFOを取れない | `Auto`（全部入るときだけ倍にする）か`Single`にする |
+| 構成全体のIN endpointが、controllerのTX FIFOに入らない（S2/S3/P4 FSは256 word、P4 HSは1024 word。EP0とRX FIFOと共有）。P4のHS controllerでは、既定のVendor（bulk IN 512 byte）は5個まで入り、6個目は入らない | IN endpointを減らすか、packetを小さくする（Audio/Videoのisochronous packet、`EspUsbDeviceHidCustom`の`inputReportSize`） |
+| MSCの`transferBytes`がbulkのMPS（FSは64、HSは512）の倍数でない | 512の倍数にする。FSでもHSでも使える |
+| CCIDの`messageBytes`を、Bulk-OUTのMPS（HSでは512）未満の値で明示した | 0（自動：`max(271, MPS)`）のままにするか、512以上にする |
+| Vendorのfull speed endpoint長が8、16、32、64のどれでもない（64を超える値は64として扱う。Functionの`startError()`に出る） | このどれかにする（USB 2.0 §5.8.3） |
+| HID：まとめたHIDのinterrupt packetがFSで64、HSで1024 byteを超えた。report IDが足りない。まとめたreport descriptorが65535 byteを超えた。`EspUsbDeviceHidVendor`の`reportSize`が`maxReportSize()`を超えた | HID Functionを減らすか小さくする |
+| descriptorの文字列がUTF-16で126単位を超えた。WebUSB URLが`http(s)://`を除いて252 byteを超えた | 短くする |
+| Audio：外部ring（`playbackBuffer`/`captureBuffer`）が「frame数×最大のPCM frame」より小さい | `playbackBufferBytes`/`captureBufferBytes`に実際の`sizeof()`を渡すか、ライブラリに確保させる |
+| `taskStackBytes`がFreeRTOSの最小値より小さい | 増やす（既定4096） |
+| 1つのdeviceに251を超えるFunction | - |
 
-1. **コネクタ違い。** 多くのボードにはOTG controllerに繋がっていないUARTや
-   USB-Serial/JTAGのコネクタもあります。回路図を確認します
-   （[ガイド1.2](usb-device-guide.ja.md#12-どのコネクタがデバイス側か)）。
-2. **充電専用ケーブル。** データ通信できると分かっているケーブルに替えます。
-3. **`USB Mode`が"Hardware CDC and JTAG"でビルドされている。** D+/D-が
-   Serial/JTAGペリフェラルへ配線され、OTG controllerからバスが見えません。
-   "USB-OTG (TinyUSB)"でビルドします
-   （[ガイド3.5](usb-device-guide.ja.md#35-arduino-esp32標準usbスタックとは排他)）。
-4. **ESP32-P4のみ: controllerとコネクタの不一致。** P4では`Auto`はHighSpeedに
-   解決されます。FSピン（GPIO26/27）に繋いだ場合は
-   `config.controller = EspUsbController::FullSpeed`を、ボードのHSコネクタなら
-   HighSpeedを指定します
-   （[ガイド3.2](usb-device-guide.ja.md#32-esp32-p4のfshs選択)）。
-5. その上でBringUpCheckを実行し、[ホスト側のログ](#5-ホストos別の観測)を
-   読みます。ここから先の原因はホスト側からしか見えません。
+範囲外の値には`configure()`自身が`ESP_ERR_INVALID_SIZE`を返します。[1.3](#13-configure-が設定を拒否する)を参照。
+
+#### `ESP_ERR_INVALID_ARG`（0x102）：設定どうしが矛盾している
+
+| 原因 | 対処 |
+| --- | --- |
+| `config.deviceInterfaceGuid`が波括弧付きの`{8-4-4-4-12}`（38文字）でない | GUIDを直す |
+| `manufacturer`/`product`/`serialNumber`、Functionの名前、WebUSB URLが正しいUTF-8でない。URLが`http(s)://`の後で空 | 文字列を直す |
+| `msOs20Layout = ESP_USB_DEVICE_MS_OS_20_FLAT`で、WinUSBを使うinterfaceが2つ以上ある（VendorとDFUがそれぞれ1つ） | `ESP_USB_DEVICE_MS_OS_20_AUTO`にする |
+| `taskPriority`や`taskCoreId`が範囲外。未知の`startMode` | -1（既定）か有効な値にする |
+| bulkのFunctionが`EspUsbBulkRxMode::Callback`なのに`onRxData()`がない、`Borrowed`なのに`onDirectRxComplete()`がない。MIDIが`EspUsbMidiRxMode::Callback`なのに`onPacket()`がない | `begin()`の前にcallbackを登録する |
+| MIDIの容量や`transferBytes`が4 byteの倍数でない | packet単位で数える |
+| MSCに保存先がない。`attach()`を呼んでいない（容量か`onRead`がない） | `device.begin()`の前に`disk.attach(msc)`、または`onRead`と`msc.begin(blockCount, blockSize)` |
+| Audio：streamがない、formatのないstreamがある、同じ向きでchannel数が違う、共通clockでsample rateの組が違う | formatをそろえる（[Audio](classes/audio.ja.md)を参照） |
+| `EspUsbDeviceHidCustom`のreport descriptorがない、または解析できない | descriptorのbyte列を確かめる |
+| Videoのframeの大きさ、rate、最大frame長が範囲外 | `setFrameSize()`は4096x4096まで |
+| 外部bufferどうしが重なっている。DMA可能でなければならないbuffer（Videoの`payloadBuffer`、NCMのbuffer）がそうでない | 別々の内部RAMの領域を渡すか、`nullptr`にする |
+
+#### `ESP_ERR_INVALID_STATE`（0x103）：順序の誤り、または使用中
+
+| 原因 | 対処 |
+| --- | --- |
+| 開始中に`begin()`を呼んだ | 先に`end()` |
+| 別の`EspUsbDevice` objectが動いている | controllerごとにdeviceは1つ |
+| deviceの稼働中にFunctionを作った（登録した） | Functionは`begin()`の前に宣言する。または`end()`→作成→`begin()` |
+| CCIDが`removable = false`で、cardを挿していない | `begin()`の前に`insertCard()` |
+| PHYやcontrollerが使用中（Core自身のUSB stackなど） | [4. buildと書込み](#4-buildと書込み)を参照 |
+
+Function自身の`begin()`、`afterDeviceStarted()`、`prepareToStop()`はprotectedです。
+呼ぶのは`device.begin()`と`device.end()`だけです。
+sketchで`console.begin()`や`keyboard.begin()`を書くとcompile errorになります。
+容量を設定するだけの`msc.begin(blockCount, blockSize)`と、helper自身の`begin()`（`EspUsbDeviceMscSdCard::begin()`など）は公開のままです。
+
+#### `ESP_ERR_NO_MEM`（0x101）
+
+- Functionのbuffer、descriptorの領域、USB workerを確保できなかった。確保済みのものは戻します。
+  容量（`rxCapacity`、`txCapacity`、ringのframe数、`messageBytes`、NTBの大きさ）を減らしてください。
+- TX FIFOが足りないときは、このコードではなく`ESP_ERR_INVALID_SIZE`です。
+
+#### `ESP_ERR_NOT_SUPPORTED`（0x106）
+
+- USB OTG controllerのないchip。対応はESP32-S2、ESP32-S3、ESP32-P4だけで、ESP32、C3、C6、H2、S31は対象外です。
+- HS controllerのないchip（S2/S3）で`config.controller = EspUsbController::HighSpeed`を指定した。
+
+#### `ESP_FAIL`とその他
+
+- `ESP_FAIL`：controllerの初期化に失敗した。またはcontrollerの開始後にFunctionが失敗した。
+  Core Debug LevelをVerboseにしてESP-IDFのlogを読んでください。
+- ESP-IDFのPHY driver（`usb_new_phy()`）のerrorは、そのまま返します。
+
+### 1.3 configure() が設定を拒否する
+
+`configure()`は渡された設定だけを検証します。この時点では速度が決まっていないので、
+速度で変わる確認（MPSの倍数など）は`begin()`で行います。
+
+| Function | `ESP_ERR_INVALID_SIZE` | `ESP_ERR_INVALID_ARG` |
+| --- | --- | --- |
+| CDC / Vendor（`EspUsbBulkStreamConfig`） | - | `rxCapacity`は`Stream`では0以外、ほかのmodeでは0が必要。TX ringがあるのに`transferBytes`が0。未知のmode。外部bufferの重なりやaddressのあふれ |
+| MIDI（`EspUsbMidiConfig`） | `transferPackets`が16383を超える | cableが1〜16の外。`Queue`以外のmodeで`rxPackets`/`rxBuffer`を指定 |
+| MSC（`EspUsbMscConfig`） | `transferBytes`が0、65535超、または64の倍数でない | `transferBuffer`が64 byte境界でない、またはDMA可能な内部RAMでない（PSRAMは拒否） |
+| CCID（`EspUsbCcidConfig`） | `messageBytes`が0以外で64〜65535の外 | - |
+| NCM（`EspUsbNetConfig`） | NTBの大きさが2048〜65535の外、`maxFrameBytes + 28`がNTBより大きい、`maxDatagrams`が0か大きすぎる | 外部bufferを渡したのに個数やbyte数がない |
+| Audio（`EspUsbAudioConfig`） | 大きさの計算があふれる | buffer pointerとbyte数の片方だけを指定。未知のoverflow方針 |
+| Video（`EspUsbVideoConfig`） | `payloadBytes`が3〜65535（isochronousは3〜1024）の外。`isochronousPacketBytes`が3〜1024の外 | 未知のtransport |
+| DFU（`EspUsbDfuConfig`） | `transferBytes`が64〜65535の外。poll時間が0xFFFFFFを超える | `transferBuffer`のaddressがあふれる |
+
+どれもdeviceの開始中は`ESP_ERR_INVALID_STATE`を返します。
+
+### 1.4 callbackの登録や設定がESP_ERR_INVALID_STATEになる
+
+callbackの登録（`onRx`、`onLineCoding`、`onOutputReport`、`onPacket`、`onRead`、`onProgress`など）と、
+`vendorID()`、`setName()`、`macAddress()`などの設定は、**deviceの停止中だけ**使えます。
+`device.begin()`の後は`ESP_ERR_INVALID_STATE`を返し、何も変えません。
+戻り値を見ないsketchでは、callbackが呼ばれないだけに見えます。
+すべて`begin()`の前に登録するか、`end()`→登録→`begin()`の順にしてください。
+
+## 2. begin() は成功するがHostに何も出ない
+
+`begin()`が`true`を返すのは、構成が正しく資源を確保できたという意味です。Hostが列挙したという意味ではありません。
+次の順に確かめます。
+
+1. **connectorが違う。** USB-UARTやUSB Serial/JTAGのconnectorを別に持つboardが多く、それはOTG controllerにつながっていません。
+   印刷ではなく回路図で確かめます。
+2. **充電専用のcable。** data通信できると分かっているcableに替えます。
+3. **ESP32-S2/S3のUSB Mode。** *USB Mode: USB-OTG (TinyUSB)*（FQBNでは`USBMode=default`）でbuildします。
+   ESP32-S3のIDEの既定は「Hardware CDC and JTAG」で、共有のPHYをUSB Serial/JTAGに渡してしまいます。
+   [4. buildと書込み](#4-buildと書込み)を参照。
+4. **ESP32-P4：controllerとconnectorが合っていない。** `Auto`はHS controllerを選びます。
+   cableがFSの口なら`config.controller = EspUsbController::FullSpeed`、HSのconnectorなら`Auto`か`HighSpeed`にします。
+5. **Functionを1つも登録していない、または`DescriptorsOnly`。** Functionがない場合や
+   `config.startMode = EspUsbDeviceStartMode::DescriptorsOnly`では、`begin()`は成功して`started()`もtrueですが、
+   controllerは起動せず、`ready()`はfalseのままです。
+6. **VBUS検出のないboardで`config.vbusSensing = true`。** boardがVBUSをcontrollerへ配線していないなら`false`のままにします。
+7. ここまで確かめたら、BringUpCheckを動かし、[Host側のlog](#5-host-os別の注意)を読みます。
+   この先の原因はHost側からしか見えません。
 
 ## 3. 列挙は始まるが途中で失敗する
 
-### Windowsに「Unknown USB Device (Device Descriptor Request Failed)」と出る
+### Windowsに「不明なUSBデバイス（デバイス記述子要求の失敗）」と出る
 
-ディスクリプタ段階で失敗しています。
+descriptorを読む段階で失敗しています。
 
-1. [USB Device Tree Viewer](https://www.uwe-sieber.de/usbtreeview_e.html)で
-   生のディスクリプタバイト列とWindowsの正確なエラーを読みます。
-2. DescriptorDumpの出力と突き合わせます。Linuxなら
-   [`tests/manual/device_inspect`](../tests/manual/device_inspect/)でも
-   照合できます（`--json`でdiffが楽になります）。
+1. [USB Device Tree Viewer](https://www.uwe-sieber.de/usbtreeview_e.html)で、descriptorの生のbyte列とWindowsのerrorを読みます。
+2. そのbyte列をDescriptorDumpの出力と比べます。Linuxでは`lsusb -v`で、Hostが解釈したdescriptorを見られます。
 
-### 変更したのにホストで古いデバイスのまま見える
+### 変更したのにHostに古いdeviceが見える
 
-**WindowsはVID/PIDごとにディスクリプタをキャッシュします。** デバイス開発で
-「変更が反映されない」の原因第1位です。
+**WindowsはVID/PID/serialごとにdescriptorとpropertyを記憶します。** 「変更が効かない」の一番の原因です。
 
-1. 開発中にディスクリプタを変えるたびPIDを変えます（このリポジトリのInfo系
-   スケッチがPIDを分けているのはこのためです）。
-2. または`config.serialNumber`を変えます。
-3. またはデバイスマネージャーでデバイスを削除して挿し直します。
+1. 開発中にdescriptorを変えるときはPIDを変える。
+2. または`config.serialNumber`を変える。
+3. またはDevice Managerでdeviceを削除して挿し直す。
 
-### `SET_CONFIGURATION`まで進むがドライバがバインドしない
+Microsoft OS 2.0 descriptorは`wVendorRevision`が変わったときだけ読み直されます。
+既定の`msOs20VendorRevision = 0`はsetのbyte列から値を作るので、setが変われば自動で変わります。
 
-ディスクリプタの構造は正しいものの、class / subclass / protocolの組み合わせが
-ホストOSのドライバ対応表に載っていない状態です。
+### `SET_CONFIGURATION`は通るがdriverが付かない
 
-1. 同じクラスの市販デバイスを並べてディスクリプタをdiffします
-   （[ガイド5.5](usb-device-guide.ja.md#55-うまくいっている機器と比べる)）。
-   インターフェースの並び、IADの有無、`bInterfaceProtocol`、エンドポイントの
-   intervalが定番の差分です。
+descriptorの形は正しいものの、class/subclass/protocolの組がOSのdriverに対応していません。
+同じclassの市販品と比べてください。interfaceの順、IAD、`bInterfaceProtocol`、endpointのintervalがよく違う点です。
 
-### 登録したはずのクラスがディスクリプタに現れない
+### 複合deviceが1つの機能としか見えない
 
-1. 登録できるのは4クラスまでで、5個目の`addClass()`は**黙って**失敗します。
-   DescriptorDumpでインターフェース一覧を確認します
-   （[ガイド3.4](usb-device-guide.ja.md#34-その他のライブラリ側の上限)）。
+Windowsが機能ごとにdriverを付けるのは、usbccgp.sysが親になったときだけです。
+それには`bDeviceClass/SubClass/Protocol = 0xEF/0x02/0x01`が必要で、ライブラリは構成にInterface Association Descriptorがあると自動で設定します
+（CDC ACM、NCM、Audio、VideoがIADを出します）。
+それでも1つに見えるなら、以前のfirmwareの記憶が残っている可能性が高いです。上の「古いdevice」の項を参照してください。
+`config.msOs20CcgpDevice = true`にすると、interfaceが1つのdeviceも複合deviceとして扱うようWindowsへ求めます。
 
-## 4. ビルドと書き込み
+## 4. buildと書込み
 
-1. **arduino-esp32 core 3.3.9以降を使います。** バージョン別のビルド結果は
-   このディレクトリの[`COMPATIBILITY.<version>.md`](.)として公開しています。
-2. **`USB.begin()`を呼ばない**でください。`USBHIDKeyboard`、`USBHIDMouse`、
-   `USBCDC`との併用もできません。2つのスタックが1つのcontrollerを取り合います
-   （[ガイド3.5](usb-device-guide.ja.md#35-arduino-esp32標準usbスタックとは排他)）。
-3. **`USB CDC On Boot`は無効のまま**にします。有効だとcoreが自前のCDCを
-   もう1本立ち上げようとします。
-4. この構成では`Serial`はUART側に出ます。ボードのコネクタがOTGの1つだけの
-   場合、ログとデバイス役が同じ差し込み口を取り合うので、開発中は2コネクタの
-   ボードかUARTアダプタを使います
-   （[ガイド2.3](usb-device-guide.ja.md#23-開発中のコネクタ構成)）。
-5. **ヘッダは見つかっているのに `undefined reference to EspUsbDeviceVendor::write`
-   などが出る。** `sketch.yaml` の `libraries: - dir:` が**シンボリックリンク**を
-   指していると、arduino-cliはinclude pathだけはたどるのに、その先の `.cpp` を
-   コンパイル対象として集めません。結果、全メソッドがリンク時に消えます。実パスを
-   指すか、Library Manager経由（`- EspUsbDevice (2.2.0)`）にしてください。
-6. **`build_opt.h` に書いたフラグが効いていないように見える。** クラスのバッファ
-   サイズは `#ifndef` で囲ってあるので `-DCFG_TUD_VENDOR_TX_BUFSIZE=8192` は
-   ライブラリまで届きます。ただし `build_opt.h` は `.ino` と同じ場所に必要で、
-   Arduinoはクリーンビルドのときしか読み直しません。変更したら `--clean` を付けて
-   ビルドしてください。32768を超える値は、mountしないデバイスではなくビルドエラーに
-   なります（[上級編5.4](usb-device-advanced.ja.md#54-バッファのサイズ)）。
+1. **Arduino-ESP32 3.3.12**を基準にしています。examplesの`sketch.yaml`はこの版に固定しています。
+2. **USB Mode。** ESP32-S2/S3は*USB-OTG (TinyUSB)*（`USBMode=default`）でbuildします。
+   ESP32-P4のHS controllerは専用のPHYを持ちます。P4Xでは、EspUsbDeviceをHS口で動かしたまま、
+   *Hardware CDC and JTAG*（`USBMode=hwcdc`、`CDCOnBoot=cdc`）でlogをUSB Serial/JTAGへ出して使っています。
+   P4のFS controllerを使うときは`USBMode=default`にします。FSのPHYはUSB Serial/JTAGと共有で、hwcdcとの組合せは未確認です。
+3. **CoreのUSB device stackを同じsketchで使わない。** `USB.begin()`、`USBHIDKeyboard`、`USBCDC`、`USBMSC`などを使わず、
+   *USB CDC On Boot*、*USB MSC On Boot*、*USB DFU On Boot*をOTG controllerに対して有効にしません。
+   どちらも同じcontrollerを動かそうとします。[Arduino-ESP32標準USB APIからの移行](migrating-from-arduino-esp32-usb.ja.md)を参照。
+4. **`Serial`はOTGの口に出ない。** 上の設定では`Serial`はUART（hwcdcならUSB Serial/JTAG）に出ます。
+   OTGのconnectorしかないboardでは、logとdeviceが同じ口になります。開発中はconnectorが2つあるboardか、UART adapterを使います。
+5. **`#error "Remove TinyUSB build flags..."`。** v3にはbuild時の容量flagがありません。
+   `CFG_TUD_*`のbuffer長やv2の`ESP_USB_DEVICE_*` flagはcompile errorになります。`build_opt.h`から消し、
+   容量は各Functionの`configure()`で指定します。`ESP_USB_DEVICE_CCID_BUFFER_SIZE`も同様で、`EspUsbCcidConfig::messageBytes`へ移します。
+6. **headerは見つかるのに`undefined reference to EspUsbDeviceVendor::...`。** `sketch.yaml`の`libraries: - dir:`がsymlinkを指していると、
+   arduino-cliがheaderは見つけても、その先の`.cpp`をcompileしないことがあります。実際のpathかLibrary Managerを使います。
 
-## 5. ホストOS別の観測
+## 5. Host OS別の注意
 
-観測方法の全体は[ガイド5章](usb-device-guide.ja.md#5-ホストosから自分を観測する)
-にあります。要点だけ:
+v3はESP32のHost（EspUsbHost）とLinux PCで確認しています。WindowsとmacOSはv3では未確認です。
+下のWindowsの注意はv2での確認に基づきます。Microsoft OS 2.0の構成はv3でも変えていません。
 
 ### Linux
 
 ```sh
-sudo dmesg -w          # 挿す前に起動。拒否理由が名指しで出る
-lsusb -v -d 303a:      # ホストが解釈したディスクリプタ
+sudo dmesg -w          # 挿す前に始める。拒否の理由が出る
+lsusb -v -d 303a:      # Hostが解釈したdescriptor（自分のVIDを指定）
 ```
 
-- `dmesg`はディスクリプタが弾かれた理由と、どのドライバがバインドしたかを
-  示します。
-- libusb / PyUSB系ツールのpermissionエラーはudevルール（応急なら
-  `sudo chmod a+rw /dev/bus/usb/<bus>/<dev>`）で解決します。
-  [tests/manual/README.ja.md](../tests/manual/README.ja.md)参照。
+- `dmesg`は、descriptorを拒否した理由と、付いたdriverを表示します。
+- libusb/PyUSBの道具が権限errorで失敗するときは、そのVID/PIDのudev規則が要ります。
+- `dmesg`で足りないときは、`usbmon`とWiresharkでcontrol転送を見ます。
 
-### Windows
+### Windows（v3では未確認）
 
-- USB Device Tree Viewerが生ディスクリプタとエラーの両方を表示します。
-- デバイスマネージャー:「Device Descriptor Request Failed」ならディスクリプタ
-  段階、Code 10 / Code 43（「!」バッジ）ならドライババインドの失敗です。
-- [ディスクリプタキャッシュ](#変更したのにホストで古いデバイスのまま見える)に
-  注意してください。
-- vendorインターフェースはWinUSBがバインドして初めて開けます。
-  `config.webusbEnabled = true`でMS OS 2.0 descriptorを返すか、Zadigで手動
-  バインドします。
-- **vendorインターフェースに Code 28（`CM_PROB_FAILED_INSTALL`）が出て、
-  `setupapi.dev.log` には何も書かれていない。** この「何も書かれない」が手掛かりです。
-  インストールがそもそも始まっておらず、compatible IDがdevice nodeへ届いていません。
-  デバイスがMS OS 2.0のvendor requestに正しく答えているなら
-  （Linuxから `bmRequestType=0xC0, bRequest=<bMS_VendorCode>, wIndex=7` で確認するか、
-  デバイス側で `EspUsbDevice::onAnyControlRequest()` を使って観測する）、
-  バイト列は正しく**構造**がこのデバイスに合っていません。function subsetを解決するのは
-  usbccgp.sysだけで、Windowsがそれを読み込むのはcomposite deviceのときだけなので、
-  単一インターフェースのデバイスではcompatible IDをset headerの直下に置く必要があります。
-  ライブラリはインターフェース数で自動的に選びますが、`config.msOs20Layout` で強制もできます
-  （[上級編3.7](usb-device-advanced.ja.md#37-bosとmicrosoft-os-20)）。
-- **複数機能のデバイスなのに1機能しか出ない、COMポートが2つのはずが1つしか出ない。**
-  Windowsが機能ごとにドライバをバインドするのは、親としてusbccgp.sysがロードされた
-  ときだけで、その条件が `bDeviceClass/SubClass/Protocol = 0xEF/0x02/0x01` です。
-  コンフィグレーションにIADが含まれていればライブラリが自動で立てるので、この症状が
-  出るときは同じVID/PIDの古いファームウェアのバインドがキャッシュに残っているのが
-  典型です。削除するか、開発中はPIDを変えてください。
-- **同名のCOMポートが2つ並んで区別できない。** Windowsは子デバイス名にIADの
-  `iFunction` 文字列を使います。機能ごとに名前を付けてください:
-  `EspUsbDeviceCdcSerial(device, "Console")`。
-- **挿すUSBポートを変えるとCOMポート番号が変わる。** WindowsはVID/PID/シリアルの組で
-  番号を覚えます。`config.serialNumber` をボードごとに固有の値で設定してください。
+- USB Device Tree Viewerで生のdescriptorとerrorを見ます。Device Managerの「デバイス記述子要求の失敗」はdescriptorの段階、
+  Code 10/Code 43はdriverの段階の失敗です。
+- [descriptorの記憶](#変更したのにhostに古いdeviceが見える)に注意します。
+- **INFなしでWinUSBが付きます。** ライブラリはVendorとDFUの各interfaceに対して、Microsoft OS 2.0 descriptorを自動で出します。
+  `config.webusbEnabled`はWebUSBの能力を足すだけで、WinUSBのためには要りません。
+- **vendor interfaceがCode 28（`CM_PROB_FAILED_INSTALL`）で、`setupapi.dev.log`に何も出ない。** compatible IDがdevice nodeへ届いていません。
+  function subsetはusbccgp.sys経由でしか解決されず、Windowsはそれを複合deviceにしか読み込みません。
+  interfaceが1つのdeviceでは、compatible IDをsetのheader直下に置く必要があります。
+  既定の`ESP_USB_DEVICE_MS_OS_20_AUTO`はinterface数で正しい形を選びます。`device.microsoftOs20UsesSubsets()`で確かめられます。
+  Hostの要求を見るには`device.onAnyControlRequest()`を使います。ライブラリが自分で答える要求も見えます。
+- **同じ名前のCOM portが2つ並ぶ。** Windowsは複合deviceの子に、その機能の`iFunction`文字列で名前を付けます。
+  Functionごとに名前を付けます：`EspUsbDeviceCdcSerial serial(device, "Console");`
+- **差すportでCOM番号が変わる。** WindowsはVID/PID/serialで番号を決めます。boardごとに違う`config.serialNumber`を付けます。
+- **Host側のアプリが無関係なdeviceまで見つける。** 製品ごとに`config.deviceInterfaceGuid`を付けます。
 
-### macOS
+### macOS（v3では未確認）
 
-- システム情報 → USBでツリーを、`ioreg -p IOUSB -l -w 0`で詳細を確認します。
+- システム情報→USBで木構造、`ioreg -p IOUSB -l -w 0`で詳細を見ます。
 
-## 6. クラス別の問題
+## 6. class別の問題
 
-### HID の連続送信
+### HID（全HID Function共通）
 
-- `sendHidReport()` とマウスの `move()` / `press()` / `release()` などは、
-  前の転送で IN endpoint が使用中なら `timeoutMs`（既定 100 ms）まで待ちます。
-  `0` は待たずに判定し、使用中なら `false` と `ESP_ERR_TIMEOUT` を返します。
-  成功はレポートをコピーして送信予約したことを表し、ホストの受信完了は保証しません。
-  未構成・切断中は `ESP_ERR_INVALID_STATE` を返します。
-- USB コールバック内では `timeoutMs = 0` を指定してください。
-  待機は通常のスケッチタスクで行います。キーボードの `write()` のキー保持時間や
-  キー間隔は入力の間隔であり、送信完了の確認ではありません。
+- 1つのdeviceのHID Functionはすべて、report IDを付けて**1つのHID interface**にまとめます。IN endpointは1本です。
+- 送信（`sendReport()`、`move()`、`tapKey()`など）は、IN endpointが空くまで`timeoutMs`（既定100 ms）待ちます。
+  `0`は1回だけ試します。空かなければ`false`で`ESP_ERR_TIMEOUT`、Hostが構成していなければ`ESP_ERR_INVALID_STATE`です。
+  成功はreportをcopyして送信待ちに入れたという意味で、Hostが読んだという意味ではありません。
+- **USBのcallbackの中では`timeoutMs = 0`にします。** USB worker上で0以外を指定すると、すぐに`ESP_ERR_INVALID_STATE`で失敗します。
+  そこで待つと、endpointを空けるはずのworker自身が止まるためです。
 
 ### HID keyboard
 
-- **違う文字が入力される** - ホストは自分のレイアウトでscancodeを解釈します。
-  `keyboard.setLayout()`で合わせます。
-- **何も届かない** - 送信前に`device.ready()`を確認します。未マウント中の
-  送信は捨てられます。
-- **BIOS / UEFIで効かない** - ホストがboot protocolへ切り替えています。NKROは
-  そこでは6キーに畳まれます。
-  [`EspUsbDeviceConsole`](../examples/Info/EspUsbDeviceConsole/)で
-  `HOST_HID_PROTOCOL`を観測します。
-- **Lock LED** - `onOutputReport()`コールバックを付けていなくても
-  `ledState()`で読めます。
+- **違う文字が出る。** Hostは自分のlayoutでキーの位置を文字に直します。`keyboard.setLayout()`をHostに合わせます。
+- **`write()`が途中で止まる。** layoutで打てない文字があると、そこで`false`（`ESP_ERR_NOT_SUPPORTED`）を返し、残りは送りません。
+  `pressKey()`、`tapKey()`、`releaseKey()`も同じです。
+- **7つ目のキーが失敗する。** `pressUsage()`/`pressKey()`は、押しているキーと修飾キーに足し込みます。
+  NKROなしのreportは、修飾キー以外を6つまで持てます（HID 1.11 Appendix B.1）。
+  7つ目は`false`（`ESP_ERR_INVALID_SIZE`）で、状態は変わりません。もっと押すには、`begin()`の前に`enableNkro()`を呼びます。
+  NKROでは、bitmapで表せないusage（0xDFより上で修飾キーでないもの）が`ESP_ERR_INVALID_ARG`です。
+- **tapの前から押していたキーは押したまま。** `tapUsage()`/`tapKey()`は、そのtapで足したキーと修飾キーだけを離します。
+  ほかのキーを離すには`releaseUsage()`、`releaseKey()`、`releaseAll()`を使います。
+- **BIOS/UEFIで効かない。** Hostがboot protocolに切り替えています。NKROはそこで6キーにまとめられます。
+  `onProtocol()`か`protocol()`で確かめます。
+- **Lock系のLED。** `ledState()`は`onOutputReport()`がなくても更新され、bus resetで消えます。
+
+### HID mouse
+
+- `move(x, y)`は、`press()`で押したbuttonを保ちます。`press()`の後に`move()`でdragになります。
+  4番目の引数の既定は`EspUsbDeviceHidMouse::KeepButtons`（-1）です。0〜255を渡すと、押しているbuttonをその値に置き換えます。
+  それ以外の値は`ESP_ERR_INVALID_ARG`です。
+
+### HID consumer controlとsystem control
+
+- Consumerのusageが0x3FF（reportのLogical Maximum）を超えると、`false`（`ESP_ERR_INVALID_ARG`）で、何も送りません。
+- System Controlが受け付けるのは0x81、0x82、0x83と、離すための0だけです。ほかの値も同じく失敗します。
+
+### CDC ACM
+
+- **`print()`が1秒止まる。** TX ringが満杯のとき（Hostが読んでいない、terminalを開いていない）、
+  `write()`/`print()`はTX timeout（既定1000 ms）まで待ちます。`setTxTimeoutMs(0)`にすると、送れた分だけですぐ戻ります。
+- `connected()`がtrueになるのは、Hostがportを開いてDTRを立てている間だけです。
+- CDCのportはsketchのdata用で、`Serial`ではありません。
+
+### Vendor bulk
+
+- **Hostのreadが終わらない。** streamの書込みは、既定では短いpacketで終わりません。MPSの倍数の書込みにZLPも付けません。
+  Host側で長さを決めて読むか、`streamTermination = EspUsbStreamTermination::EndWithShortPacket`にします。
+- `writeDirect()`/`readDirect()`のbufferは、64 byte境界の、DMA可能な内部RAMが必要です。PSRAMのbufferは`NotDmaCapable`で拒否します。
+  `rxBuffer`/`txBuffer`で渡すringはPSRAMでもかまいません。
 
 ### USB MIDI
 
-- ホストがEspUsbHostの場合、cable数は方向あたり5本以下にします。それを超えると
-  configuration descriptorがホスト側の256バイトcontrol transfer上限を超え、
-  ホスト側で列挙に失敗します。
+- **channelが先頭で、0始まり**です（`noteOn(channel, note, velocity, cable)`）。cable番号は最後で、`inCableCount()`未満にします。
+- **messageが送られない。** channelが15超、data byteが127超、pitch bendが16383超のときは丸めません。
+  `false`（`ESP_ERR_INVALID_ARG`）を返し、何も送りません。
+- Callback modeでは、`begin()`の前に`onPacket()`を登録します。
 
 ### MSC
 
-- **マウントされない** - まず `msc.mediaPresent(true)` を `device.begin()` 前に
-  呼んでいるか確認します。`EspUsbDeviceMscRamDisk` / `EspUsbDeviceMscFatRamDisk` の
-  `attach()` はコールバックと容量を設定しますが、メディア有無・書き込み許可は変更しません。
-  初期値はメディアなし・書き込み可です。読み取り専用なら `msc.isWritable(false)` を指定します。
-  `EspUsbDeviceMscFirmwareDisk::attach()` はメディアあり・書き込み可に設定します。
-- **MSC を追加すると複合デバイスの列挙が完了しない** - TinyUSB のホスト実装によっては、
-  メディアなしの TEST UNIT READY 失敗を上限なく再試行します。その間、MSC より後の
-  インターフェース初期化とデバイス全体のマウント完了通知が進みません。
-- メディアありでもマウントされない場合は FAT イメージやブロックサイズを、既知の正常な
-  最小イメージである[`MSCFatRamDisk`](../examples/MSCFatRamDisk/)と
-  比較します。
+- **driveが出ない。** `EspUsbDeviceMscRamDisk`と`EspUsbDeviceMscFatRamDisk`は媒体なしで始まります。
+  `device.begin()`の前に`msc.mediaPresent(true)`を呼びます。`EspUsbDeviceMscFirmwareDisk::attach()`は媒体ありと書込み可を自分で設定します。
+- `attach()`は`device.begin()`の前に呼びます。呼ばないと`begin()`が`ESP_ERR_INVALID_ARG`で失敗します。
+- **挿し直した直後の最初のcommandが失敗する。** Hostが構成済みのときに`mediaPresent(true)`にすると、
+  SCSIの決まりどおりUNIT ATTENTION（sense 06/28/00）を1回返します。次のTEST UNIT READYは成功します。
+- **媒体ありでもmountできない。** FATのimageとblock長を、動作が確かな最小imageの[`MSCFatRamDisk`](../examples/MSCFatRamDisk/)と比べます。
+- **Hostが「書込み禁止」と言う。** `msc.isWritable(false)`や`EspUsbDeviceMscSdCard::readOnly(true)`は、書込み禁止としてHostへ伝えます。
+  MODE SENSEのWPが立ち、WRITEはDATA PROTECT（sense 07/27/00）で失敗します。
+- **`EspUsbDeviceMscSdCard::attach()`が`false`。** cardがmountされていない、sectorが512 byteでない、callbackを登録できない、またはdeviceが稼働中です。
 
 ### USB Audio
 
-- **音が途切れる** - `playback.read()` / `capture.write()`を一定周期で呼び、
-  stream statsを観測します。FIFOは有限です。
-- defaultはUAC1で、UAC2は`EspUsbAudioFunction` constructorで明示選択します。
-  sample rateは方向ごとに1つ宣言します。
+- **`begin()`が`ESP_ERR_INVALID_ARG`。** streamの設定が食い違っています。[1.2](#esp_err_invalid_arg0x102設定どうしが矛盾している)の表を参照。
+- **`begin()`が`ESP_ERR_INVALID_SIZE`。** isochronous INのendpoint（capture、またはUAC2のfeedback）とほかのIN endpointが、合わせてTX FIFOに入りません。
+- **音が途切れる。** `playback.read()`/`capture.write()`を一定の間隔で呼び、`stats()`を見ます。
+  playbackのringがあふれると、既定の`DropOldest`は古い未読のPCMを捨てます。
+- 既定はUAC1です。UAC2は`EspUsbAudioFunction`のconstructorで選びます。
+  UAC2のfeedbackは、FSでは10.14形式の3 byte、HSでは16.16形式の4 byteです（USB 2.0 §5.12.4.2）。
 
-### CDC-NCMネットワーク
+### USB Video
 
-- **ホストにネットワークが生えない** - まずホストOSがNCMドライバをバインド
-  したかを[`tests/manual/usb_ncm`](../tests/manual/usb_ncm/)で確認します。
-  [`UsbNetwork`](../examples/UsbNetwork/) exampleではデバイス側が
-  `192.168.7.0/24`でDHCPを提供します（デバイス = `192.168.7.1`）。
-- **2.0.xで通信し続けると再起動まで死ぬ** - 2.1.0で修正済みです（DWC2
-  driverをDMAモードで駆動）。ライブラリを更新してください。
+- format、frameの大きさ、rate、最大frame長は`begin()`で決まり、その後の設定は拒否されます。
+- FSのisochronous endpointは1 ms frameあたり最大1023 byte（約1 MB/s）です。小さな試験画像より大きいものはMJPEGにします。
+
+### CDC-NCM network
+
+- **Hostにaddressが配られない。** DHCP serverは既定でoffです。`net.beginNetwork()`の前に`net.dhcpServer(true)`を呼び、
+  `beginNetwork()`は`device.begin()`の後に呼びます。既定のaddressは`192.168.7.1/24`です。
+  指定しない限り、gatewayもDNSも通知しません。
+- PCのOSのNCM driverとの相互接続は、v3では未確認です。
+
+### CCID
+
+- `messageBytes = 0`（既定）は`max(271, Bulk-OUTのMPS)`になります。FSでは271、HSでは512です。MPS未満を明示すると`begin()`が失敗します。
+- `removable = false`では、`begin()`の前に`insertCard()`が必要です。
+
+### DFU
+
+- `onDetach()`と`setDetachHandler()`はRuntime mode専用です。Download modeでは`ESP_ERR_INVALID_ARG`を返します。
+- Downloadの失敗はDFUのstatus（`EspUsbDfuStatus`）で、`onError()`に届きます。[USB経由のファームウェア更新](ota-over-usb.ja.md)を参照。
 
 ## 7. 安定性
 
-- **抜き差しを繰り返すと動かなくなる** - 再列挙をまたいで残る状態があります。
-  [`tests/manual/enumeration_soak`](../tests/manual/enumeration_soak/)で
-  再現し、`onBusDetached()` / `onBusAttached()`で状態を落とします。
-- **`begin()`直後にログが死ぬ** - 1コネクタのボードではログの口とデバイスの
-  口が同じです（[ガイド2.3](usb-device-guide.ja.md#23-開発中のコネクタ構成)）。
+- **`end()`が`ESP_ERR_INVALID_STATE`を返す。** USBのcallbackから呼んでいます。callbackではflagを立て、`loop()`から`end()`を呼びます。
+- **`end()`が`ESP_ERR_TIMEOUT`を返す。** USB workerが、実行中のcallbackを`config.stopTimeoutMs`（既定5000 ms）のうちに終えませんでした。
+  停止の要求は残り、資源も保持します。DMAがまだbufferに触るかもしれないためです。
+  callbackが戻ったら、もう一度`end()`を呼びます。`stopTimeoutMs = 0`は無期限に待ちます。
+  destructorとFunctionの`end()`は、停止が終わるまで必ず待ちます。
+- **動作中に設定を変えたい。** `end()`→`configure()`→`begin()`の順です。Hostからは抜いて挿し直したように見え、deviceを開き直す必要があります。
+  接続したままdescriptorは変えられません。
+- **挿し直しても状態が残る。** VBUS検出がないと、抜いたことは次の列挙まで分かりません。
+  Hostに関する状態は、`ready()`がfalseになったときではなく、再びtrueになったときに消してください。
+- **busがsuspendしている。** suspend中も`ready()`はtrueのままです。`suspended()`で確かめます。suspendしても構成は失われません。
+  `remoteWakeup()`は、`remoteWakeupSupported = true`で、Hostが許可したときだけ使えます。
+- **callbackが重い。** class callbackはすべてUSB worker上で動き、既定ではFreeRTOSの最高priorityです。
+  そこで長い処理をすると、ほかのFunctionがすべて遅れます。自分のtaskへ渡してください。
+  callbackでたくさん表示するなら`taskStackBytes`を増やします。
+- **`begin()`の直後にlogが止まる。** connectorが1つのboardでは、logの口とdeviceの口が同じです。
 
-## 8. チップ別の注意
+## 8. chip別の注意
 
-| チップ | 注意点 |
-|--------|--------|
-| ESP32-S2 | FS controller 1つ。endpoint予算はS3と同クラス（EP番号最大5、非control IN 4本） |
-| ESP32-S3 | FS controller 1つ。実機検証の主対象。IN 4本の予算が複合構成の実質上限 |
-| ESP32-P4 | FS（rhport 0）と HS（rhport 1）の2つ。`Auto`はHSを選択。FS PHYはUSB-Serial/JTAGとピンを共有し、`usb_wrap_ll_phy_select()`でGPIO24/25へ切り替えると、Serial/JTAGがGPIO26/27へ移る。どのコネクタがどのPHYに繋がるかはボードごとに異なる |
-| ESP32 / C3 / C6 / … | USB-OTG device controller非搭載。非対応 |
+| chip | USB controller | 注意 |
+| --- | --- | --- |
+| ESP32-S2 | FS | endpointの予算はS3と同じ。**現時点ではcompileのみ**で、v3の実機確認はしていない |
+| ESP32-S3 | FS | 実機確認の中心。PHYは1つでGPIO19/20、USB Serial/JTAGと共有 |
+| ESP32-P4（v1.x） | HS（480 Mbps、専用のUTMI PHY）とFS | `Auto`はHS。`ChipVariant=prev3`でbuild |
+| ESP32-P4X（v3.x） | HSとFS | USBの予算はv1.xと同じ。`ChipVariant=postv3`でbuild。SDKの対応はv3.1以上 |
+| ESP32-S31 | - | まだ対応していない |
+| ESP32、C3、C6、H2など | なし | USB OTG controllerがない |
 
-controllerとは別に、1デバイスに登録できるのは最大**4クラス**で、この上限は
-黙って失敗します（[ガイド3.4](usb-device-guide.ja.md#34-その他のライブラリ側の上限)）。
+### endpointの予算
+
+| controller | endpoint番号 | 非controlのIN endpoint | TX/RX FIFO |
+| --- | --- | --- | --- |
+| S2 / S3 / P4 FS | 1〜6 | 4 | 256 word |
+| P4 HS | 1〜15 | 7 | 1024 word |
+
+Functionごとの非control IN endpointの数：
+
+| Function | IN | Function | IN |
+| --- | --- | --- | --- |
+| HID（全HID Functionで合わせて） | 1 | NCM | 2 |
+| CDC ACM | 2 | CCID（`removable = true`） | 2 |
+| Vendor、MIDI、MSC、Video | 各1 | CCID（`removable = false`） | 1 |
+| Audioのcapture | 1 | DFU | 0 |
+| AudioのUAC2 playback（feedback） | 1 | Audioのplayback（OUT） | 0 |
+
+S3では、HID＋CDC＋MSC（1＋2＋1）で4本を使い切ります。DFUはEP0だけを使うので、いつでも追加できます。
+
+### High Speed（P4）で変わる値
+
+| 項目 | FS | HS |
+| --- | --- | --- |
+| bulkのMPS | 8/16/32/64 | 512 |
+| MSCの`transferBytes` | 64の倍数 | 512の倍数 |
+| CCIDの自動`messageBytes` | 271 | 512 |
+| 借用RX（`readDirect`）の容量 | 64の倍数 | 512の倍数 |
+| HIDのinterrupt packet | 64まで | 1024まで |
+| UAC2のfeedback | 10.14、3 byte | 16.16、4 byte |
+
+CDC、Vendor、MIDIの`transferBytes`はMPS未満でも受け付けます。FSで動く構成がHSでは`begin()`で失敗することがあるので、戻り値を確かめてください。
+P4で`Auto`か`HighSpeed`を選ぶと、linkがFSに落ちてもHSの制約がかかります。HSのdescriptorも正しくなければならないためです。
+Hostと決まった速度は`device.speed()`で分かります（`EspUsbBusSpeed::Full`か`High`。最初のbus resetの前は`None`）。
+
+### 実機での確認範囲
+
+| 構成 | 状態 |
+| --- | --- |
+| S3 ↔ S3（FS） | 主な試験環境。全10 class |
+| 1枚のP4でHS ↔ FSのloopback | 全10 class、両controller |
+| P4 ↔ P4XのHS直結（両方向） | 確認済み |
+| P4X → Linux PC（HS） | MSCとDFUをpyusbでwireの段階まで確認 |
+| ESP32-S2 | compileのみ |
+| Windows、macOS | 未確認 |
 
 ## 9. それでも解決しないとき
 
-1. まずホストのログを読みます。`dmesg -w`、USB Device Tree Viewer、
-   Console.app。ホストが何を嫌がったかが最大の情報源です
-   （[ガイド5章](usb-device-guide.ja.md#5-ホストosから自分を観測する)）。
-2. 同じクラスの市販デバイスとdiffします
-   （[ガイド5.5](usb-device-guide.ja.md#55-うまくいっている機器と比べる)）。
-3. issueを報告するときは、ライブラリとcoreのバージョン、チップ、
-   BringUpCheckの出力、DescriptorDumpの出力、ホストOSのログ抜粋を
-   添えてください。この5点でほとんどの問題は一目で再現できます。
+1. まずHostのlogを読みます。`dmesg -w`、USB Device Tree Viewer、Console。Hostが何を拒んだかが、一番役に立つ情報です。
+2. 同じclassの市販品と比べます。
+3. 問題を報告するときは次を添えてください。ライブラリとCoreの版、chipとrevision、BringUpCheckの出力、DescriptorDumpの出力、
+   `esp_err_to_name(device.lastError())`と各Functionの`startError()`、Hostのlogの抜粋。

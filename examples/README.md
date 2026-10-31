@@ -1,100 +1,108 @@
-# v3 examples / サンプル
+# EspUsbDevice examples
 
-v3の公開APIだけを使う利用例です。`build_opt.h`、内部header、TinyUSBの呼出しは使いません。
-容量は各Functionの`configure()`で、USBの開始は`device.begin()`で指定します。
-実機試験用のprobeは[validation](../validation/README.ja.md)にあり、これらの例とは別物です。
+> 日本語: [README.ja.md](README.ja.md)
 
-These examples use only the v3 public API: no `build_opt.h`, internal headers or
-TinyUSB calls. Capacities are set with each Function's `configure()`, and USB
-starts with `device.begin()`. Hardware validation probes live separately in
-[validation](../validation/README.ja.md).
+Every example is a complete sketch with its own README and a `sketch.yaml` that
+pins Arduino-ESP32 3.3.12. Start with the README of the example closest to what
+you want to build; each one says what it shows, what you need and how to check
+it from the host.
 
-| Example | 内容 | What it demonstrates | API guide |
-| --- | --- | --- | --- |
-| [Keyboard](Keyboard/Keyboard.ino) | debug serialから入力した文字をキーとして送る | Debug serial input → HID key taps | [HID](../docs/V3_HID_API.ja.md) |
-| [CdcConsole](CdcConsole/CdcConsole.ino) | CDCを`Stream&`として渡し、送信の空きを確かめてecho | CDC passed directly to a `Stream` consumer | [CDC](../docs/V3_CDC_API.ja.md) |
-| [VendorEcho](VendorEcho/VendorEcho.ino) | Vendor bulkのecho。一部しか書けなかった残りを保持して送る | Vendor bulk echo, retaining partial writes | [Vendor](../docs/V3_VENDOR_API.ja.md) |
-| [MidiEcho](MidiEcho/MidiEcho.ino) | MIDI 1.0 packetのecho（cable 0） | MIDI 1.0 packet echo | [MIDI](../docs/V3_MIDI_API.ja.md) |
-| [CompositeCdcMidi](CompositeCdcMidi/CompositeCdcMidi.ino) | CDCとMIDIを同時に公開。容量はFunctionごと | CDC + MIDI with independent resources | [CDC](../docs/V3_CDC_API.ja.md), [MIDI](../docs/V3_MIDI_API.ja.md) |
-| [MscCdcBlocks](MscCdcBlocks/MscCdcBlocks.ino) | RAMのraw block deviceとCDC。callbackの回数を表示 | RAM-backed raw blocks + CDC callback counts | [MSC](../docs/V3_MSC_API.ja.md), [CDC](../docs/V3_CDC_API.ja.md) |
-| [AudioPlayback](AudioPlayback/AudioPlayback.ino) | UAC2のplayback。選ばれたformatを表示し、PCMを読み出す | UAC2 playback; reports the selected format | [Audio](../docs/V3_AUDIO_API.ja.md) |
-| [ReconfigureVendor](ReconfigureVendor/ReconfigureVendor.ino) | `end → configure → begin`で、再ビルドせずringの容量を切り替える | Switches ring sizes at run time | [Vendor](../docs/V3_VENDOR_API.ja.md) |
+## Building
 
-## ビルドと書込み / Build and upload
+Each `sketch.yaml` declares the boards it supports:
+
+| Profile | Board |
+| --- | --- |
+| `esp32s3` | ESP32-S3, USB Mode "USB-OTG (TinyUSB)" (`USBMode=default`) |
+| `esp32s2` | ESP32-S2 |
+| `esp32p4` | ESP32-P4 revision v1.x (`ChipVariant=prev3`) |
+| `esp32p4x` | ESP32-P4 revision v3.1 or later, "P4X" (`ChipVariant=postv3`) |
 
 ```sh
-arduino-cli compile --profile esp32s3 examples/CdcConsole
-arduino-cli upload --profile esp32s3 --port <debug-port> examples/CdcConsole
-python3 tools/build_check.py esp32s3   # 全exampleをまとめてbuild
+arduino-cli compile --profile esp32s3 examples/Serial
+arduino-cli upload  --profile esp32s3 --port <port> examples/Serial
+python3 tools/build_check.py esp32s3        # every example declaring a profile
 ```
 
-- 各`sketch.yaml`はArduino-ESP32 3.3.12に固定し、このcheckoutのlibraryを読み込みます。profileは`esp32s3`（既定）、`esp32s2`、`esp32p4`です。
-- `tools/build_check.py`の生成物は`build/examples/<profile>/<sketch>/`に置かれます。
-- このlibraryが使うOTG controllerでは、CoreのUSB CDC/MSC/DFU on bootを有効にしないでください。
+Plug the board's USB OTG connector into the host. Examples that print a log use
+`Serial` on a separate debug connection (USB-UART or USB Serial/JTAG), so the
+USB device under test and the log never share a cable. On ESP32-P4 the
+examples use the high-speed controller unless they say otherwise; see
+[P4HighSpeedDevice](P4HighSpeedDevice/) and [P4FullSpeedDevice](P4FullSpeedDevice/).
 
-Each `sketch.yaml` pins Arduino-ESP32 3.3.12 and loads the library from this
-checkout. Profiles: `esp32s3` (default), `esp32s2`, `esp32p4`. Do not enable the
-Core's USB CDC/MSC/DFU-on-boot features on the OTG controller this library uses.
+## HID
 
-## 結線 / Connections
+| Example | What it shows | Class guide |
+| --- | --- | --- |
+| [Keyboard](Keyboard/) | Boot keyboard: typing text, layouts, raw usages, combined keys, LED state | [HID](../docs/classes/hid.md) |
+| [KeyboardNKRO](KeyboardNKRO/) | N-key rollover with a boot-protocol fallback | [HID](../docs/classes/hid.md) |
+| [Mouse](Mouse/) | Boot mouse: movement, wheel, buttons, dragging | [HID](../docs/classes/hid.md) |
+| [KeyboardMouse](KeyboardMouse/) | Keyboard and mouse merged into one composite HID interface | [HID](../docs/classes/hid.md) |
+| [Gamepad](Gamepad/) | Axes, hat switch and buttons | [HID](../docs/classes/hid.md) |
+| [MediaKeys](MediaKeys/) | Consumer Control and System Control | [HID](../docs/classes/hid.md) |
+| [CustomHID](CustomHID/) | A sketch-defined report descriptor | [HID](../docs/classes/hid.md) |
+| [VendorHID](VendorHID/) | Vendor-defined Input, Output and Feature reports | [HID](../docs/classes/hid.md) |
 
-- boardの**native USB OTG**のdata口をHostへつなぎます。USB-UART bridgeは書込みとdebug用で、ここで作るFunctionの通信には使いません。
-- Keyboard、ReconfigureVendor、AudioPlayback、MscCdcBlocksは、別のdebug接続で`Serial`（115200）も使います。
-- pin配置とVBUS回路はboardと使うcontrollerに合わせてください。
+## Serial, MIDI and vendor bulk
 
-Connect the board's **native USB OTG** data port to the Host. A USB-UART bridge
-is only for programming and debug output. Keyboard, ReconfigureVendor,
-AudioPlayback and MscCdcBlocks also print to `Serial` at 115200 on that separate
-connection.
+| Example | What it shows | Class guide |
+| --- | --- | --- |
+| [Serial](Serial/) | CDC ACM with line coding, DTR/RTS and break | [CDC](../docs/classes/cdc.md) |
+| [CdcConsole](CdcConsole/) | Passing the CDC port to code that takes a `Stream&` | [CDC](../docs/classes/cdc.md) |
+| [SerialMulti](SerialMulti/) | Several CDC ports on one device | [CDC](../docs/classes/cdc.md) |
+| [MIDI](MIDI/) | Sending notes and control changes, decoding received packets | [MIDI](../docs/classes/midi.md) |
+| [MidiEcho](MidiEcho/) | Packet echo that keeps a packet the host has not taken yet | [MIDI](../docs/classes/midi.md) |
+| [MIDIController](MIDIController/) | ADC and buttons to MIDI | [MIDI](../docs/classes/midi.md) |
+| [MIDIInterface](MIDIInterface/) | UART MIDI (31250 baud) to USB MIDI bridge | [MIDI](../docs/classes/midi.md) |
+| [USBVendor](USBVendor/) | Vendor bulk interface, control requests, WebUSB, WinUSB | [Vendor](../docs/classes/vendor.md) |
+| [VendorEcho](VendorEcho/) | Minimal bulk echo that keeps a partial write | [Vendor](../docs/classes/vendor.md) |
+| [ReconfigureVendor](ReconfigureVendor/) | Changing buffer sizes at run time with `end()`, `configure()`, `begin()` | [Vendor](../docs/classes/vendor.md) |
 
-## 各exampleの動作 / Behavior
+## Storage and firmware update
 
-**CdcConsole / CompositeCdcMidi**：serial terminalで開けます。local echoを切ると、返ってきた文字が見えます。
-CompositeCdcMidiはCDCとMIDIを同時に公開します。
-CDC opens in a serial terminal; turn off local echo to see the returned bytes.
+| Example | What it shows | Class guide |
+| --- | --- | --- |
+| [MSC](MSC/) | Raw block device in RAM | [MSC](../docs/classes/msc.md) |
+| [MSCFatRamDisk](MSCFatRamDisk/) | FAT12 RAM disk with files placed by the sketch | [MSC](../docs/classes/msc.md) |
+| [MSCSdCard](MSCSdCard/) | SD card over SPI as a USB drive | [MSC](../docs/classes/msc.md) |
+| [FirmwareMSC](FirmwareMSC/) | Update by copying a `.bin` or `.uf2` onto a drive | [OTA over USB](../docs/ota-over-usb.md) |
+| [FirmwareDFU](FirmwareDFU/) | Update with `dfu-util` while the sketch keeps running | [DFU](../docs/classes/dfu.md) |
+| [FirmwareHTTP](FirmwareHTTP/) | Update from a browser over a USB network link | [OTA over USB](../docs/ota-over-usb.md) |
+| [FirmwareCDC](FirmwareCDC/) | Update over a serial port with a small host script | [OTA over USB](../docs/ota-over-usb.md) |
+| [FirmwareVendor](FirmwareVendor/) | Update over a vendor interface with a host script | [OTA over USB](../docs/ota-over-usb.md) |
+| [FirmwareBootMode](FirmwareBootMode/) | Entering the ROM loader or ROM DFU from the sketch | [OTA over USB](../docs/ota-over-usb.md) |
 
-**MidiEcho**：cable 0で受けたUSB MIDI packetをそのまま返します。音は鳴りません。Host側でMIDIを送受信するアプリを使ってください。
-Echoes USB MIDI packets on cable 0; it does not synthesize sound.
+## Audio, video and other classes
 
-**VendorEcho / ReconfigureVendor**：汎用のbulk interfaceです。serial terminalでは開けないので、Host側のアプリ（libusb、pyusbなど）でinterfaceとendpointを選んで生のbyteを送受信します。
-streamはメッセージの区切りを保たず、MPSの倍数の書込みに自動でZLPも付けません。Host側は長さを決めて読んでください。
-自動で通信する相手側の例は、validationのVendor probeを参照してください。
-A serial terminal cannot open the vendor interface; use a Host application.
-The stream does not preserve message boundaries or add ZLPs; use length-framed reads.
+| Example | What it shows | Class guide |
+| --- | --- | --- |
+| [AudioSpeaker](AudioSpeaker/) | UAC1 playback, rate/mute/volume events | [Audio](../docs/classes/audio.md) |
+| [AudioPlayback](AudioPlayback/) | UAC2 playback with several formats and rates | [Audio](../docs/classes/audio.md) |
+| [AudioMicrophone](AudioMicrophone/) | UAC1 capture of a generated tone | [Audio](../docs/classes/audio.md) |
+| [AudioHeadset](AudioHeadset/) | Playback and capture in one function | [Audio](../docs/classes/audio.md) |
+| [AudioSpeakerM5](AudioSpeakerM5/), [AudioMicrophoneM5](AudioMicrophoneM5/), [AudioHeadsetM5](AudioHeadsetM5/) | The same with M5Stack speaker and microphone | [Audio](../docs/classes/audio.md) |
+| [VideoCamera](VideoCamera/) | UVC camera streaming a generated test pattern | [Video](../docs/classes/video.md) |
+| [UsbNetwork](UsbNetwork/) | CDC-NCM network device with DHCP and a web server | [NCM](../docs/classes/ncm.md) |
+| [SmartCardReader](SmartCardReader/) | CCID reader with a card implemented in the sketch | [CCID](../docs/classes/ccid.md) |
 
-**ReconfigureVendor**：debug portへ`r`を送ると、RX/TX ringを128 byteと2048 byteの間で切り替えます。`end()`の成功を確かめてから設定を変え、実際の容量を表示します。
-Hostからは切断と再列挙に見えるので、interfaceを開き直してください。古いstreamのデータは捨てられます。記述子は変わらず、アプリのsessionも引き継ぎません。
-Send `r` on the debug port to alternate 128/2048-byte rings. The Host sees a
-disconnect and re-enumeration and must reopen the interface.
+## Composite devices and controllers
 
-**Keyboard**：Hostで入力先のeditorを選び、debug portへ文字を送るとキーを送ります。起動時に勝手に入力はしません。
-Sends keys only in response to debug serial input.
+| Example | What it shows |
+| --- | --- |
+| [CompositeHidCdcMsc](CompositeHidCdcMsc/) | Keyboard, serial port and FAT disk in one device |
+| [CompositeCdcMidi](CompositeCdcMidi/) | Serial port and MIDI in one device |
+| [MscCdcBlocks](MscCdcBlocks/) | Block device and serial port, the staging size valid at full and high speed |
+| [P4HighSpeedDevice](P4HighSpeedDevice/) | The ESP32-P4 high-speed (480 Mbps) controller |
+| [P4FullSpeedDevice](P4FullSpeedDevice/) | The ESP32-P4 full-speed controller and its pins |
+| [Info](Info/) | Bring-up check, interactive console and descriptor dump |
 
-**AudioPlayback**：UAC2のplaybackだけを公開します。formatはstereoの16 bit/2 byteと24 bit/3 byte、rateは24 kHzと16 kHzです。
-受け取ったPCMを読み捨て、選ばれたformatと読んだ量をdebug portへ表示します。音を出すには、読んだPCMをアプリでcodec/DACへ渡してください。
-ringは最大の1 frame（6 byte）×32 frame＝192 byteで、event queueは使いません（`eventCapacity = 0`）。
-Consumes PCM and reports the selected format; route `read()` data to your codec/DAC for sound.
+## What has been checked
 
-**MscCdcBlocks**：8 KiB（512 byte×16 block）のRAMを**raw block device**として公開し、CDCでread/write callbackの呼出し回数を表示します。
-初期内容は0で、filesystemはなく、resetで消えます。永続storageを使うときはcallbackを置き換えてください。
-MSCの`transferBytes`は512で、FSでもHSでも使える値です（HSでは512の倍数が必要）。RAMの保存領域とこの512 byteのstagingは別に確保します。
-CDC consoleを開くと毎秒、または`?`を送ると回数を返します。USBのpacket数ではありません。debug `Serial`はsetupエラーの表示用です。
-Exposes 8 KiB of zero-filled RAM as a raw block device without a filesystem.
-The MSC `transferBytes` of 512 is valid at both FS and HS.
+Every example compiles for each profile its `sketch.yaml` declares. The library
+behaviour the examples rely on is tested on hardware by the separate
+`validation/` probes (ESP32-S3 at full speed, ESP32-P4 and P4X at full and high
+speed, a P4X against a Linux PC); see [testing](../docs/development/testing.ja.md).
+The examples themselves have not each been run against Windows or macOS hosts.
 
-これらは基本の使い方を示す例で、全クラスの一覧や、protocol・所有権の試験の代わりではありません。
-開始に失敗した場合はUSBを止めたままにします。エラー処理は[開始と移行のガイド](../docs/V3_MIGRATION.ja.md)、
-借用転送、callback、他のクラス、詳しい設定は[API guides](../README.md#api-documentation)を参照してください。
-
-These are focused examples, not a catalog of every class or a substitute for the
-protocol and ownership tests. See the [API guides](../README.md#api-documentation).
-
-## 確認の範囲 / What has been checked
-
-- 例そのものは**compileだけ**を確認しています。USB実機での動作確認は、例とは別のvalidation probeで行っています（S3 FS、P4/P4X FS・HSの状況は[README](../README.md#hardware-status-by-target-2026-10-31)）。
-- 最初の6例はCDCのStream化の後、Core 3.3.12でS3/S2/P4の18 buildを確認しました。
-- AudioPlaybackはPCM alternate対応の後に3 profileでbuildし、ELF、FQBN、未選択クラスがリンクされないことも確認しました。
-- MscCdcBlocksも3 profileでcompileし、ELF/FQBN/依存を確認しました。未選択のAudio/NCM/Video/CCID/keymapやFAT helperはリンクされていません。記録は`validation/.pytest-results/msc-cdc-example*`。
-
-The examples themselves are compile-checked only. USB behavior is covered by the
-separate validation probes; see the [hardware status](../README.md#hardware-status-by-target-2026-10-31).
+Coming from EspUsbDevice 2.x? Every 2.x example exists here under the same name;
+see [Migrating from v2](../docs/migrating-from-v2.md).

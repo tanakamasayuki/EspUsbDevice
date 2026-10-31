@@ -5,7 +5,7 @@ v3 の実機試験の入口です。仕組み、bench、確認済みの範囲は
 - conftest も独自の pytest plugin も置きません。`--noconftest` で conftest を読みません。
 - 標準 plugin（pytest-embedded-arduino-cli 1.10.0 以降）の combo、`dut`、`peers` だけを使います。
 - `--maxfail=1` が既定です。最初の失敗の後は、次の実機 case を実行しません。
-- v2 の試験（`legacy/v2/tests/`）と `examples/` は読み込みません。
+- `examples/` は読み込みません。
 
 ## 使い方
 

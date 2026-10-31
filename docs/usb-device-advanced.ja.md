@@ -2,1038 +2,1241 @@
 
 > English: [usb-device-advanced.md](usb-device-advanced.md)
 
-[USB Device開発ガイド](usb-device-guide.ja.md)の続きです。入門編が「ホストに認識させるまで」を扱うのに対し、こちらは**なぜそう動くのか、限界はどこか、限界にぶつかったときに何を測るのか**を扱います。
+[USB Device開発ガイド](usb-device-guide.ja.md)の続きです。
+入門編は「Hostに認識させるまで」を扱います。この文書は、全classに共通する仕組みを扱います。
+なぜそう動くのか、限界はどこか、限界に当たったら何を見ればよいかを書きます。
 
-対象読者は、すでにデバイスを1つ以上動かしたことがあり、次のいずれかに直面している人です。
+次のような人を想定しています。
 
-- ディスクリプタをバイト単位で書く／読む必要がある
-- endpoint予算に収まらない、スループットが足りない、転送が止まる
-- コールバックのどこで何をしてよいのかを正確に知りたい
-- ライブラリが対応していないクラスを自分で足す
-- TinyUSBの設定を変えたい、または変えられない理由を知りたい
+- descriptorをbyte単位で読みたい、確かめたい
+- endpointやFIFOの予算に収まらない、転送が止まる、思ったより遅い
+- callbackの中で何をしてよいかを正確に知りたい
+- copyなしの借用転送（`readDirect`/`writeDirect`）を使いたい
+- PSRAM、cache、HSとFSの違いを理解したい
+
+各classの詳しい使い方は、class別の文書（[HID](classes/hid.ja.md)、[CDC](classes/cdc.ja.md)、
+[Vendor](classes/vendor.ja.md)、[MIDI](classes/midi.ja.md)、[MSC](classes/msc.ja.md)、[Audio](classes/audio.ja.md)、
+[Video](classes/video.ja.md)、[NCM](classes/ncm.ja.md)、[CCID](classes/ccid.ja.md)、[DFU](classes/dfu.ja.md)）に任せます。
+
+この文書はv3を対象にします。v2との違いは[14章](#14-v2との違い)にまとめました。
 
 ## 目次
 
-1. [アーキテクチャとタスクモデル](#1-アーキテクチャとタスクモデル)
-2. [TinyUSBとの関係](#2-tinyusbとの関係)
-3. [ディスクリプタをバイト単位で書く](#3-ディスクリプタをバイト単位で書く)
-4. [コントロール転送を受ける側](#4-コントロール転送を受ける側)
-5. [エンドポイント資源：採番とFIFO](#5-エンドポイント資源採番とfifo)
-6. [転送のタイミングと帯域](#6-転送のタイミングと帯域)
-7. [エラーとリカバリ](#7-エラーとリカバリ)
-8. [コールバックのコンテキスト](#8-コールバックのコンテキスト)
-9. [新しいクラスを実装する](#9-新しいクラスを実装する)
-10. [計測とデバッグ](#10-計測とデバッグ)
+1. [層の構成と依存の範囲](#1-層の構成と依存の範囲)
+2. [taskモデルとcallbackの文脈](#2-taskモデルとcallbackの文脈)
+3. [開始と停止](#3-開始と停止)
+4. [descriptorの生成](#4-descriptorの生成)
+5. [control転送](#5-control転送)
+6. [endpoint番号とFIFO](#6-endpoint番号とfifo)
+7. [HSとFS](#7-hsとfs)
+8. [cacheとDMA](#8-cacheとdma)
+9. [copy転送と借用転送](#9-copy転送と借用転送)
+10. [PSRAMの使い方](#10-psramの使い方)
+11. [suspendとremote wakeup](#11-suspendとremote-wakeup)
+12. [独自のFunctionを足す](#12-独自のfunctionを足す)
+13. [計測とデバッグ](#13-計測とデバッグ)
+14. [v2との違い](#14-v2との違い)
+15. [確認した範囲](#15-確認した範囲)
+
+用語：
+
+| 用語 | 意味 |
+| --- | --- |
+| Device | `EspUsbDevice`。USB device全体。同時に動かせるのは1つだけ |
+| Function | `EspUsbDeviceCdcSerial`などのclass object。Deviceに登録して使う |
+| MPS | wMaxPacketSize。1 packetの最大長 |
+| FS / HS | Full Speed（12 Mbps）/ High Speed（480 Mbps） |
+| ZLP | Zero Length Packet。長さ0のpacket |
+| USB worker | ライブラリが作るFreeRTOS task。USBのeventとclass処理を受け持つ |
+| 借用転送 | アプリのbufferをcopyせずにDMAへ渡す転送 |
 
 ---
 
-## 1. アーキテクチャとタスクモデル
+## 1. 層の構成と依存の範囲
 
-### 1.1 層構造
+### 1.1 層
 
-```
-スケッチ（loop / setup）
-  ↕ コールバック登録・送信API
-EspUsbDevice + クラス群      … ディスクリプタ生成、クラス状態、バッファ
-  ↕ tud_* API / tud_*_cb() の実装
-TinyUSB device stack (usbd)  … 標準要求の処理、クラスドライバ、EP0
-  ↕ dcd_*
-dcd_dwc2                     … endpoint、FIFO、DMA記述子
-  ↕ esp_private/usb_phy
-USB OTGコントローラ + PHY
-```
-
-Host側との一番大きな違いはここです。Host側では下2層（ESP-IDF USB Host LibraryとHCD）がArduino-ESP32のビルド済みバイナリで、**設定を変えられませんでした**。Device側では、**このライブラリがTinyUSBを自分でビルドしています**。したがって下の層も自分のもので、`CFG_TUD_*` は自分で決めた値です（[2章](#2-tinyusbとの関係)）。
-
-Arduino-ESP32から使うのは、SoC定義、PHY初期化（`usb_new_phy()`）、FreeRTOS、ボードサポートまでです。切ったのは Arduino の USB Device 統合であって、コア全体ではありません。
-
-### 1.2 タスクは1本
-
-`begin()` が作るFreeRTOSタスクは**1本だけ**です。Host側が2本（デーモンとクライアント）だったのと対照的です。
-
-| 項目 | 値 |
-|------|-----|
-| タスク名 | `espusb-device` |
-| スタック | 4096バイト |
-| 優先度 | `configMAX_PRIORITIES - 1`（**最高優先度**） |
-| コア | 固定なし |
-
-ループの中身は2つだけです。
-
-```cpp
-while (true) {
-  tud_task_ext(1, false);      // 1msの上限つきでUSBイベントを処理
-  espUsbDeviceNetDrainTx();    // キューに積まれたNCMフレームを送る
-}
+```text
+sketch（setup / loop / 自分のtask）
+  ↓ configure()、begin()、送受信API、callbackの登録
+EspUsbDevice と Function群         … 構成、descriptor生成、classごとのring・状態
+  ↓ class driver表（選んだclassだけ）
+device core（EspUsbDeviceCore）    … EP0、標準要求、event queue、世代の管理
+  ↓ controller境界（EspUsbController.h）
+DWC2 driver（EspUsbDwc2*）          … register、FIFO、DMA、割込み
+  ↓ ESP-IDF：usb_phy、esp_intr、esp_cache、heap_caps、FreeRTOS
+USB OTG controller と PHY
 ```
 
-`tud_task()` ではなく `tud_task_ext(1, false)` を使っているのは、**バスが静かな間もこのタスクを回す必要がある**ためです。`tud_task()` は次のUSBイベントまでブロックするので、その間にキューへ積まれたネットワークフレームがTinyUSBへ渡りません。1msの上限つき待ちにすることで、アイドル時のコストを抑えつつドレインの周期に下限を与えています。
+| 層 | 主なfile | 役割 |
+| --- | --- | --- |
+| Device / Function | `src/EspUsbDevice.h`、`src/*.cpp` | 公開API。構成の検証、descriptorの生成、classの処理 |
+| runtime | `src/internal/EspUsbRuntime.*` | PHYの取得、controllerの選択、USB workerの起動と停止 |
+| device core | `src/internal/EspUsbDeviceCore.*` | EP0、標準要求、event queue、busと構成の世代 |
+| controller境界 | `src/internal/EspUsbController.h` | coreとDWC2の間の型付きの入口 |
+| DWC2 | `src/internal/EspUsbDwc2Device.c`、`EspUsbDwc2Phy.c`、`EspUsbDwc2Registers.h`、`EspUsbDwc2Hardware.h` | endpoint、FIFO、DMA、割込み |
+| platform | `src/internal/EspUsbDwc2Platform.*` | SoCごとのport表、IRQの登録、cache同期 |
+| wire型 | `src/internal/EspUsbWire.h` | SETUP（8 byte）、interface（9 byte）、endpoint（7 byte）のlayout |
 
-タスクのスタックと優先度は現状 `EspUsbDeviceConfig` から変えられません。優先度が最高なのは、USBのタイミング要求（ホストのポーリングに対する応答）が他の処理に負けないようにするためです。**スケッチ側の重い処理がこのタスクを止めることはありませんが、逆にこのタスクの中で重い処理をすると、システム全体が止まります**（[8章](#8-コールバックのコンテキスト)）。
+`src/internal/`は利用者APIではありません。名前や中身は予告なく変わります。
 
-### 1.3 TinyUSB APIは usbd タスクから呼ぶ
+### 1.2 TinyUSBとの関係
 
-TinyUSBの規約として、device APIは `tud_task()` と同じコンテキストから呼ぶ必要があります。**これはライブラリ内部の実装制約ではなく、守らないと実際に壊れます。**
+v3は、TinyUSBのdevice stack（`usbd.c`）もclass driverも使いません。
+EP0、標準要求、class処理は、このライブラリのcoreとFunctionが行います。
 
-このライブラリで実測された壊れ方が記録されています。`tud_network_xmit()` を lwIP の tcpip タスクから呼んでいた頃、送信中の完了処理と呼び出しが重なり（測定で**転送完了の約70%が呼び出しの内側に入った**）、IN endpointが「送るパケットはあるがFIFOは空」という状態に落ちました。完了割り込みが二度と来ず、NTBがプールへ戻らず、`tud_network_can_xmit()` が永久に false のまま。**再起動するまでUSBネットワークが死にます。**
+DWC2 driverだけは、TinyUSBのDWC2 driverを由来とする保守forkです。
+clean-roomで書き直したものではありません。
+このライブラリがsourceを持ち、修正も行います。upstreamの変更は内容を読んでから取り込みます。
+snapshotを自動で置き換える仕組みはありません。
+由来、license、保守の方法は[PROVENANCE.ja.md](../third_party/tinyusb/PROVENANCE.ja.md)にあります。
 
-そのため現在は、フレームを送る側は**プールされたバッファへコピーしてキューに積むだけ**で、TinyUSBの呼び出しは全部 usbd タスクの `espUsbDeviceNetDrainTx()` が行います。
+| 項目 | v3の状態 |
+| --- | --- |
+| TinyUSB device stack / class driver | 使わない。buildにも含めない |
+| DWC2 driver | TinyUSB由来の保守fork（MIT。register定義はST由来のBSD-3-Clause） |
+| `tusb_config.h`、`CFG_TUD_*`、`CFG_TUSB_*` | ない。旧flagを定義するとcompile errorになる（`EspUsbLegacyFlags.h`）。0を指定しても拒否する |
+| Arduino-ESP32同梱のTinyUSB | 使わない |
+| TinyUSBの内部API（`tud_*`など）に依存するコード | v3では動かない |
 
-| 定数 | 値 | 理由 |
-|------|-----|------|
-| `NET_TX_FRAME_MAX` | 1600 | Ethernetフレーム1本 |
-| `NET_TX_SLOTS` | 4（約6.4KB） | usbdタスクの2周回の間にlwIPが渡してくるバーストを吸収する。深くしすぎるとTCPがフィードバックを失う |
-| `NET_TX_ACQUIRE_TIMEOUT` | 20ms | 空きが出なければ**フレームを捨てる**。TCPが再送するので、tcpipタスクを止めるより正しい |
-
-この形（producerはコピーしてキューへ、TinyUSBは1タスクから）は、自分でクラスを足すときにもそのまま使える設計です（[9章](#9-新しいクラスを実装する)）。
-
-### 1.4 起動と停止の順序
-
-`begin()` の順序には意味があります。
-
-1. `buildDescriptors()` — ディスクリプタを組み立て、**endpoint予算を検証する**。ここで落ちればPHYは起動しない
-2. 各クラスの `begin()` — 失敗したら、それまでに開始したクラスを逆順で `end()`
-3. `startTinyUsbRuntime()` — PHY生成 → `tusb_init(rhport)` → タスク生成
-4. 各クラスの `afterDeviceStarted()`
-
-つまり、**構成が不正なら電気的に何も起きません**。ホスト側から見ると「挿しても無反応」で、原因はボード内にあります。入門編のBringUpCheckが `BEGIN` の成否を先に表示するのはこのためです。
-
-`config.startTinyUsb = false` にすると、**3以降を行わずディスクリプタだけを組み立てます**。ハードウェアもホストも要らないので、`tests/single/descriptor` や `tests/single/composite_constraints` はこれでディスクリプタを検証しています。自分の構成を自動テストしたいときにも使えます。
-
-停止は `stopTinyUsbRuntime()` で、タスク削除 → `tusb_deinit()` → `usb_del_phy()` の逆順です。`end()` の後、同じオブジェクトで `begin()` を再開できます。
-
----
-
-## 2. TinyUSBとの関係
-
-Device側で最も重要な構造上の事実は、**このライブラリがTinyUSBのソースを同梱して自分でビルドしている**ことです。Arduino-ESP32がprebuildした `libarduino_tinyusb` は使いません。
-
-### 2.1 何を同梱しているか
-
-固定commitのTinyUSBから、**必要な43ファイル（ソース12、ヘッダ31）だけ**を `src/` 以下へ機械的にコピーしています。上流ファイルへのパッチはありません。
-
-| 区分 | ファイル |
-|------|---------|
-| コア | `tusb.c`, `common/tusb_fifo.c`, `device/usbd.c` |
-| クラス | `hid`, `cdc`, `midi`, `msc`, `vendor`, `net/ncm`, `audio` の各 `*_device.c` |
-| コントローラ | `portable/synopsys/dwc2/dcd_dwc2.c`, `dwc2_common.c` |
-
-Host、Type-C、DFU、Video、Printer、MTP、MIDI 2.0、ECM/RNDIS、FreeRTOS以外のOSAL、ESP32以外のportableファイルは**コピーしていません**。この一覧はS2/S3/P4のクリーンビルドで生成したコンパイラ依存関係から求めた最小構成です。
-
-由来（リポジトリ、full commit SHA、TinyUSBバージョン、選定理由）は [`third_party/tinyusb/UPSTREAM.json`](../third_party/tinyusb/UPSTREAM.json)、経緯と検証方法は [PROVENANCE.ja.md](../third_party/tinyusb/PROVENANCE.ja.md) にあります。検証スクリプトは固定commitのtarballを取得し、マニフェストの43ファイルだけを展開して**byte-for-byteで比較**します。通常のビルドは何もダウンロードしません。
+保守対象のfileがそろっていること、旧vendor経路が残っていないことは、次のcommandで確かめられます。
+これはfileの点検で、USBの正しさを証明するものではありません。
 
 ```sh
-python tools/verify_tinyusb_vendor.py
+python3 tools/verify_usb_backend.py
 ```
 
-`src/tusb_config.h` と `src/internal/EspUsbTinyUsbConfig.h` だけがEspUsbDevice独自の統合ファイルです。
+### 1.3 ESP-IDFから使うもの
 
-### 2.2 tusb_config.h を所有した結果
+| 使うもの | 用途 |
+| --- | --- |
+| `esp_private/usb_phy.h`（`usb_new_phy`） | PHYの取得と解放 |
+| `esp_intr_alloc` | controllerの割込み登録 |
+| `esp_cache_msync` | P4のcache同期 |
+| `heap_caps_aligned_alloc` | DMA用の内部RAMの確保 |
+| FreeRTOS | USB worker、event queue、critical section |
 
-`src/tusb_config.h` は `internal/EspUsbTinyUsbConfig.h` を include するだけで、実体はそちらです。主な値:
-
-| 設定 | 値 | 意味 |
-|------|-----|------|
-| `CFG_TUSB_MCU` | S2 / S3 / P4 で切り替え | 対象外のターゲットは `#error` |
-| `CFG_TUSB_OS` | `OPT_OS_FREERTOS` | |
-| `CFG_TUD_MAX_SPEED` | P4: `HIGH_SPEED` / それ以外: `FULL_SPEED` | |
-| `CFG_TUD_ENDPOINT0_SIZE` | 64 | |
-| `CFG_TUD_CDC/MSC/HID/MIDI/AUDIO/VENDOR/NCM` | すべて 1 | **全クラスを常にコンパイルする** |
-| `CFG_TUD_CDC_RX/TX_BUFSIZE` | 512 / 512 | |
-| `CFG_TUD_MSC_EP_BUFSIZE` | 4096 | SCSIの読み書き単位 |
-| `CFG_TUD_HID_EP_BUFSIZE` | 64 | HID endpoint MPSの上限 |
-| `CFG_TUD_MIDI_RX/TX_BUFSIZE` | 512 / 512 | |
-| `CFG_TUD_VENDOR_RX/TX_BUFSIZE` | 512 / 512 | |
-| `CFG_TUD_NCM_IN_NTB_N` | 3 | 上流の既定は1。1だと送信NTBが1本しかなく、毎フレームが前の転送完了を待つ。上流の計測では2で最大50%改善、3で「request blocked」が消える。3200バイト×3で約9.6KB |
-| `CFG_TUD_NCM_OUT_NTB_N` | 2 | |
-
-**全クラスを1でコンパイルしている**のが重要な点です。デバイスにどのクラスが現れるかは、Arduino-ESP32のKconfigではなく**ディスクリプタの構成が決めます**。使わないクラスのコードはリンカが落とします。
-
-Audioは「Audio Cardの固定トポロジ」ではなく**コンパイル時の容量**として設定されています。
-
-| 設定 | 値 |
-|------|-----|
-| `CFG_TUD_AUDIO_MAX_N_CHANNELS` | 2 |
-| `CFG_TUD_AUDIO_MAX_N_BYTES_PER_SAMPLE` | 4 |
-| 最大サンプルレート | P4: 192000 / それ以外: 96000 |
-| ソフトバッファのパケット数 | P4: 8 / それ以外: 4 |
-
-endpointバッファのサイズは、FSとHSの両方の最大パケットから大きい方を取ります。P4のHSコントローラは**Full Speedでネゴシエートすることがある**ため、コンパイル時の確保は両方をカバーし、どのレートが実際に合法かはディスクリプタ検証と実行時判定に任せる、という設計です。
-
-### 2.3 DMAモードとslaveモード
-
-DWC2には2つの転送モードがあり、このライブラリは**対応する全ターゲットでDMAモードを使います**。slaveモードはサポート構成ではなく、ビルドの選択肢でもありません。2つのうち片方はここでは動かないからです（理由は下記）。slaveモードだと思って読むと、FIFOから先の説明がすべてずれます。
-
-```c
-#define CFG_TUD_DWC2_DMA_ENABLE 1
-#define CFG_TUD_DWC2_SLAVE_ENABLE 0
-```
-
-slaveモードはCPUが1パケットずつコントローラのTxFIFOへ押し込み、FIFO emptyの割り込みで補充します。その割り込みは最後のバイトを書いた時点で解除されるため、**バルクINを流し続けると「endpointは有効、パケットは残っている、FIFOは空、割り込みは解除済み」という、誰も再開できない状態**に落ちることがあります。CDC-NCMのdevice→host通信が数秒で死んだ実例がこれです。DMAモードはこの経路を通りません。
-
-**2つのモードは排他です。好みの問題ではありません。** `tusb_option.h` は `CFG_TUD_EDPT_DEDICATED_HWFIFO` を `CFG_TUD_DWC2_SLAVE_ENABLE` から導出し、そのフラグが「共有の `tu_edpt_stream` 層（CDC、MIDI、Vendor）がドライバへ実バッファを渡すか `tu_fifo` を渡すか」を決めます。実際にはDMAで動いているのにslaveモードを有効なままにすると、これらのクラスが `usbd_edpt_xfer_fifo()` を呼び、その `xfer->buffer` は NULL なので、**endpointがアドレス0からDMAしてホストにゴミが届きます**。必ずどちらか一方だけを有効にしてください。
-
-P4のキャッシュ整合性は上流が解決しています。3ターゲットのうちL1データキャッシュ越しに内部SRAMへ届くのはP4だけで、`tusb_mcu.h` は**DMAが有効なときだけ** dcache maintenance を有効にします（ラインサイズ64 = `CONFIG_CACHE_L1_CACHE_LINE_SIZE`）。`TUD_EPBUF_TYPE_DEF` が各endpointバッファをキャッシュライン単位でアラインしてパディングするので、DMAバッファが他のデータとラインを共有することはありません。S2/S3にはそのキャッシュがなく、何も要りません。
-
-### 2.4 rhportを実行時に決める
-
-`CFG_TUSB_RHPORT0_MODE` / `CFG_TUSB_RHPORT1_MODE` は**あえて定義していません**。定義すると `TUD_OPT_RHPORT` が固定され、**P4のコントローラ選択がビルド時の決定になってしまう**からです。
-
-代わりに実行時に選びます。
-
-```cpp
-// EspUsbTinyUsbRuntime.cpp
-g_rhport = highSpeed ? 1 : 0;
-const tusb_rhport_init_t init = {
-    .role  = TUSB_ROLE_DEVICE,
-    .speed = highSpeed ? TUSB_SPEED_HIGH : TUSB_SPEED_FULL,
-};
-tusb_init(g_rhport, &init);
-```
-
-PHYも同じ分岐で作ります。
-
-| controller | `usb_phy_config_t.target` | `otg_speed` | rhport |
-|---|---|---|---|
-| FullSpeed | `USB_PHY_TARGET_INT`（内蔵PHY） | `USB_PHY_SPEED_FULL` | 0 |
-| HighSpeed | `USB_PHY_TARGET_UTMI`（外部UTMI PHY） | `USB_PHY_SPEED_HIGH` | 1 |
-
-P4以外で `HighSpeed` を要求すると、PHYを作る前に `ESP_ERR_NOT_SUPPORTED` で返ります。
-
-### 2.5 TinyUSBが持たないクラスを足す
-
-同梱したTinyUSBは上流そのままなので、**TinyUSBが実装していないクラスをその driver table に足すことはできません**。CCIDがこれに当たります。
-
-TinyUSBには `usbd_app_driver_get_cb()` という weak hook があり、`tusb_init()` が一度だけ読みます。ライブラリはこれを強い定義で上書きし、登録済みのテーブルを返します。
-
-```cpp
-// EspUsbDeviceAppDriver.cpp
-extern "C" usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
-{
-  *driver_count = g_appDriverCount;
-  return g_appDrivers;
-}
-```
-
-ここで**間接参照になっているのはフットプリントのため**です。`usbd_app_driver_get_cb` は `usbd.c` から到達可能なので常にリンクされます。もしこの関数がCCIDドライバを直接名指ししていたら、**CCIDを使わないスケッチにもCCIDドライバ全体がリンクされてしまいます**。ポインタを読むだけにしておけば、ドライバへの到達経路は「そのクラスを実体化したスケッチ」だけになり、使わなければリンカが落とします。
-
-登録は各クラスの `begin()` から、**スタック起動前に**行います。
-
-```cpp
-espUsbDeviceRegisterAppDrivers(drivers, count);  // drivers はスタック稼働中ずっと有効であること
-```
+Arduino-ESP32のUSB統合（`USB.h`、`USBCDC`など）は使いません。同じcontrollerを二つのUSB stackで同時に使うことはできません。
 
 ---
 
-## 3. ディスクリプタをバイト単位で書く
+## 2. taskモデルとcallbackの文脈
 
-[`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/) が出す生バイトを読むための表です。USBの多バイト値は**すべてリトルエンディアン**です。Host側の入門編と違い、ここでの関心は「**どのフィールドを自分が決めていて、どれをライブラリが決めているか**」です。
+### 2.1 USB worker
 
-### 3.1 デバイスディスクリプタ（18バイト）
+`begin()`がUSBを開始すると、FreeRTOS taskを1本作ります。これがUSB workerです。
 
-| オフセット | サイズ | フィールド | 誰が決めるか |
-|-----------|--------|-----------|------------|
-| 0 | 1 | bLength | 18 固定 |
-| 1 | 1 | bDescriptorType | 0x01 |
-| 2 | 2 | bcdUSB | ライブラリ（WebUSB有効時は0x0201、通常0x0200） |
-| 4 | 1 | bDeviceClass | IADがあれば0xef、なければ0x00 |
-| 5 | 1 | bDeviceSubClass | IADがあれば0x02、なければ0x00 |
-| 6 | 1 | bDeviceProtocol | IADがあれば0x01、なければ0x00 |
-| 7 | 1 | bMaxPacketSize0 | 64（`CFG_TUD_ENDPOINT0_SIZE`） |
-| 8 | 2 | idVendor | **`config.vid`** |
-| 10 | 2 | idProduct | **`config.pid`** |
-| 12 | 2 | bcdDevice | ライブラリ |
-| 14–16 | 各1 | iManufacturer / iProduct / iSerialNumber | **`config.manufacturer` / `product` / `serialNumber`** の有無 |
-| 17 | 1 | bNumConfigurations | 1 |
+| 項目 | 既定値 | 設定 |
+| --- | --- | --- |
+| task名 | `espusb-device` | 変更不可 |
+| stack | 4096 byte | `EspUsbDeviceConfig::taskStackBytes` |
+| priority | `configMAX_PRIORITIES - 1`（最高） | `taskPriority`（-1で既定） |
+| core | 固定しない | `taskCoreId`（-1で既定） |
+| event queueの深さ | 16 | `eventQueueDepth` |
 
-押さえておく点が2つあります。
+workerは次の処理をくり返します。
 
-**`bcdUSB` が上がるのはWebUSB有効時だけです。** BOSディスクリプタを持つと宣言するにはUSB 2.01以上が必要で、ここを変えずにBOSだけ足してもホストは取りに来ません。このライブラリが返すのは 0x0201 です（WebUSB仕様自体は 0x0210 を求めていますが、ホストはBOS取得の可否を「2.01以上か」で判断するため、実際には取りに来ます）。
+1. event queueを最大1 ms（最低1 tick）待つ。
+2. 届いたeventを、最大`eventQueueDepth`件まで処理する。bus resetの処理中は、終わるまで続ける。
+3. reset処理が済んでいれば、Functionが登録した内部jobを実行する（NCMの送信など）。
 
-**bDeviceClass は「IADを出したかどうか」で決まります。** 「何であるか」は基本的にインターフェース側にあり、複数機能のまとめ方はコンフィグレーションディスクリプタ内のIAD（型 0x0b）が担います。CDC・NCM・Audioは自分のディスクリプタの一部としてIADを出すので、それらを含むデバイスにはIADが入ります。
+`device.task()`のようなpollは要りません。v3にはその関数もありません。
 
-IADを使うデバイスは、デバイスレベルでも **0xef / 0x02 / 0x01**（Miscellaneous / Common Class / Interface Association）を宣言することがIAD ECNで求められています。`buildDescriptors()` は組み上げたコンフィグレーションディスクリプタを走査し、IADが1つでもあればこの3バイトを立てます。**これはWindowsで効きます。** usbccgp.sys が親としてロードされ、IADの区切りごとに子デバイスが作られて、機能ごとにドライバがバインドされるからです。宣言が無いと、たとえばCDCを2つ持つデバイスで1つのドライバが4インターフェース全体を掴み、ポートが1つしか（それも壊れた形でしか）出てこないことがあります。
+### 2.2 ISRがすること
 
-IADを出さない構成（HID、MSC、MIDI、bulk Vendor）は 0x00 のままです。この場合はクラスがインターフェースディスクリプタだけで完結しているので、デバイスレベルで言うことがありません。
+controllerの割込み処理（ISR）は、最小限の仕事だけをします。
 
-### 3.2 コンフィグレーションディスクリプタ（9バイト＋後続）
+- registerを読み、eventを作ってqueueへ入れる。
+- bus resetの始まり（USBRST）で、coreの世代を進め、構成を無効にする。
+- suspend/resumeの状態を更新する。
+- ISO OUTが目標のframeを逃したとき、同じbufferのまま偶奇を反転してarmし直す（[8.4](#84-iso-outの取りこぼし)）。
 
-| オフセット | フィールド | 誰が決めるか |
-|-----------|-----------|------------|
-| 2–3 | wTotalLength | ライブラリ（上限704バイト） |
-| 4 | bNumInterfaces | 登録クラスから算出 |
+class処理と利用者callbackは、ISRでは実行しません。
+現在のclassは、ISRで呼ばれるSOF処理を使っていません。
+
+### 2.3 callbackが呼ばれる場所
+
+ライブラリが呼ぶ利用者callbackは、すべてUSB workerで呼ばれます。
+
+| callbackの例 | 契機 |
+| --- | --- |
+| `onDirectTxComplete` / `onDirectRxComplete` | 借用転送の完了・取消し・reset・停止 |
+| `onRx` / `onRxData` / `onTxComplete` | bulkの受信、copy送信の完了 |
+| `onControlRequest`（Vendor） | vendor要求のSETUP/DATA/ACK |
+| `onLineCoding` / `onLineState` / `onBreak`（CDC） | CDCの制御要求 |
+| HIDの`onOutputReport`など | HostからのOUT/FEATURE report、protocolの変更 |
+| MSCの`onRead` / `onWrite`など | SCSI command |
+| `onAnyControlRequest`（Device） | 全control要求の観測 |
+| Audio、Video、NCM、CCID、DFUのcallback | 各classの契機 |
+
+workerはpriorityが最高です。callbackで時間を使うと、その間USBの応答が止まり、低いpriorityのtaskも動きません。
+
+| callbackの中でしてよいこと | callbackの中でしてはいけないこと |
+| --- | --- |
+| dataのcopy、flagの設定、queueへの投入、他taskへの通知 | `delay()`、長いloop、完了やtimeoutの待ち |
+| 準備済みの次のbufferの投稿（`writeDirect`/`readDirect`） | `device.end()`、`begin()`、`configure()`、callbackの登録 |
+| 短いlog | Functionの破棄、大きなheap確保、file I/O |
+
+- callbackに渡されるpointer（`onRxData`のdata、HIDのreportなど）は、callbackの間だけ有効です。残すならcopyします。
+- ライブラリは、内部のlockを持ったまま利用者callbackを呼びません。
+- `end()`をworkerから呼ぶと`ESP_ERR_INVALID_STATE`で拒否します。
+- callbackがblockし続けると、`end()`は`stopTimeoutMs`の後に`ESP_ERR_TIMEOUT`を返します（[3.2](#32-endの順序)）。
+
+### 2.4 どこから何を呼べるか
+
+| 呼出し元 | 呼べるもの |
+| --- | --- |
+| 通常のtask（`setup()`、`loop()`、自分のtask） | すべての公開API。`begin()`/`end()`/`configure()`/callbackの登録もここから |
+| USB worker（callbackの中） | 送受信APIを待たずに使う。借用転送の投稿と取消し、`remoteWakeup()`。CDCの`write()`は待たずに受け付けた分だけ返す。HIDの`sendHidReport`は`timeoutMs = 0`で |
+| ISR | 公開APIを呼ばない。task通知などでtaskへ渡す |
+
+- ISRからの呼出しには対応していません。`remoteWakeup()`は`ESP_ERR_INVALID_STATE`、`remoteWakeupEnabled()`はfalse、CDCの`write()`は0を返します。他のAPIは結果を保証しません。
+- 同じDeviceに対する設定とlifecycleの操作（`configure()`、`begin()`、`end()`、callbackの登録）は、1つのtaskにまとめてください。ライブラリはこれらを互いに排他しません。
+- 投稿したAPIの中で、callbackを直接呼ぶことはありません。ただしworkerが別のcoreで動いていると、投稿関数が戻る前に完了callbackが走ることがあります。
+  callbackが使うcontextは投稿の前に準備してください。戻り値の`id`を変数へ代入し終えていることに頼らないでください。
+
+### 2.5 event queueとあふれ
+
+ISRが作ったeventは、`eventQueueDepth`件のqueueでworkerへ渡ります。
+この件数とは別に、hardware event用の予備を1件確保します。
+
+workerが長く止まるとqueueがあふれます。このとき、ライブラリは黙ってeventを捨てません。
+完了eventを捨てると、借用bufferが永久に戻らなくなるからです。代わりに次の手順で回復します。
+
+1. 割込みを止め、Hostから切断し、全endpointのDMAを止める。
+2. 各classを初期化し、借用bufferを返す（`BusReset`）。`onBusDetached`も呼ぶ。
+3. queueに残った古いeventを捨てる。
+4. 約20 ms待ってから接続し直す。Hostは再列挙します。
+
+利用者から見ると「一度抜けて、また挿さった」ように見えます。
+これが起きるなら、callbackが重いか、workerのpriorityが低すぎます。`eventQueueDepth`を増やすのは最後の手段です。
+
+### 2.6 workerの設定
+
+```cpp
+EspUsbDeviceConfig config;
+config.taskStackBytes = 8192;   // callbackでprintfや大きなlocal変数を使うなら増やす
+config.taskPriority = -1;       // 既定：最高
+config.taskCoreId = 0;          // 既定：-1（固定しない）
+config.eventQueueDepth = 16;    // 既定：16。0は不可
+config.stopTimeoutMs = 5000;    // 既定：5000。end()がworkerの停止を待つ時間。0は期限なし
+if (!device.begin(config)) Serial.println(device.lastErrorName());
+```
+
+| 設定 | 制約 | 違反したとき |
+| --- | --- | --- |
+| `taskStackBytes` | byte単位。FreeRTOSの最小値以上 | `ESP_ERR_INVALID_SIZE` |
+| `taskPriority` | -1、または0〜`configMAX_PRIORITIES - 1` | `ESP_ERR_INVALID_ARG` |
+| `taskCoreId` | -1、または実在するcore番号（single coreでは0だけ） | `ESP_ERR_INVALID_ARG` |
+| `eventQueueDepth` | 1以上（`uint16_t`） | `ESP_ERR_INVALID_SIZE`。大きすぎると`ESP_ERR_NO_MEM` |
+
+- 検証はPHYを取る前に行います。
+- 利用者callbackはworkerのstackで動きます。stackを小さくする、priorityを下げる場合は、callbackの重さを見積もってください。
+- priorityを下げると、他のtaskがUSBの応答を遅らせます。queueのあふれと再列挙（[2.5](#25-event-queueとあふれ)）の原因になります。
+- coreの固定は、同じcoreで重いtaskと競合する場合に効くことがあります。効果は構成によるので、測ってから決めてください。
+- 設定は`begin()`の時に読みます。変えるには`end()`の後、次の`begin()`で渡します。
+- `DescriptorsOnly`ではworkerを作らないので、これらの値は使いません（範囲の検証もしません）。
+
+---
+
+## 3. 開始と停止
+
+### 3.1 begin()の順序
+
+`begin()`は、検証と確保を全部終えてから、最後にHostへ接続します。
+途中で失敗したら、取得したものを逆順に戻して`false`を返します。理由は`lastError()`で読めます。
+
+| 段階 | 内容 | 主な失敗 |
+| --- | --- | --- |
+| 1. 状態の確認 | 開始済みでないか。別のDeviceが動いていないか。登録を拒否されたFunctionが残っていないか。Functionが251個以下か。`startMode`が正しいか | `INVALID_STATE`、`INVALID_SIZE`、`INVALID_ARG` |
+| 2. 設定の確認 | `deviceInterfaceGuid`の形式 | `INVALID_ARG` |
+| 3. Function一覧 | 登録順のpointer一覧を、実数分だけ確保 | `NO_MEM` |
+| 4. descriptorの生成 | 各Functionの設定の検証、番号の割当て、configuration（FS、HS）、文字列、BOS/MS OS 2.0。endpoint数の上限も検査（[4章](#4-descriptorの生成)） | `INVALID_SIZE`、`INVALID_ARG`、`NO_MEM` |
+| 5. FIFOの予算 | bulk INの二重buffer（[6.4](#64-bulk-inの二重buffer)）。全IN endpointの送信FIFOの予算（[6.5](#65-送信fifoの予算)） | `INVALID_SIZE` |
+| 6. Functionの開始 | 登録順に各Functionの開始処理。ring、DMA用buffer、class driverの登録 | 各Functionの理由 |
+| 7. USBの開始 | worker設定の検証 → PHYの取得 → controllerの設定 → coreの開始 → workerの作成 | `INVALID_ARG`、`INVALID_SIZE`、`NOT_SUPPORTED`、`NO_MEM`、`FAIL` |
+| 8. 開始後の処理 | 各Functionの開始後の処理 | `FAIL` |
+
+Functionの開始・停止の処理（`begin()`、`afterDeviceStarted()`、`prepareToStop()`）はprotectedです。`device.begin()`／`device.end()`だけが呼びます。sketchから`console.begin()`のように呼ぶとcompile errorになります。
+
+段階7の「coreの開始」は、さらに次の順に進みます。
+
+1. 選んだ構成からinterface数、endpoint番号、方向を数える。
+2. core状態、endpoint表、interface表、event queue、EP0用の64 byte、DWC2の転送recordを、**1つの内部DMA領域**にまとめて確保する。
+3. EP0のSETUP領域をcache同期する（P4）。失敗したら`ESP_FAIL`。
+4. class driverを初期化し、controllerを初期化する。
+5. 割込みを登録して有効にする。登録に失敗したら`ESP_FAIL`。
+
+段階1〜6で失敗した場合、PHY、割込み、workerは一度も動きません。Hostからは何も起きないように見えます。
+「挿しても無反応」なら、まず`begin()`の戻り値と`lastErrorName()`を見てください。
+
+`begin()`の成功は「列挙に成功した」という意味ではありません。Hostが構成を済ませたかは`ready()`で見ます。
+
+### 3.2 end()の順序
+
+`end()`は、新しい受付を閉じてから、DMAを止め、bufferを返し、資源を解放します。
+
+1. workerから呼ばれていたら`ESP_ERR_INVALID_STATE`で拒否する。
+2. 各Functionの停止準備。新しい投稿を受け付けなくする。
+3. workerへ停止を伝え、workerが終わるまで`config.stopTimeoutMs`（既定5000 ms、0は期限なし）待つ。workerは次を行ってから終わる。
+   1. 割込みを止め、Hostから切断する。
+   2. controllerを止める。進行中のDMAを止める。
+   3. 各class driverを終了する。借用bufferは`Stopped`で返す（このcallbackもworkerで呼ぶ）。
+   4. 構成済みだったら`onBusDetached`を呼ぶ。
+   5. 割込みの登録を解放し、coreの領域を解放する。
+4. PHYを解放する。
+5. 各Functionの`end()`を登録の逆順に呼ぶ。ringなどを解放する。
+6. descriptorとFunction一覧を解放する。
+
+`end()`が`ESP_OK`で戻った後は、callbackもDMAもbufferに触れません。bufferやFunctionを破棄してよくなります。
+
+- callbackがblockしてworkerが期限内に終わらないと、`end()`は`ESP_ERR_TIMEOUT`を返します。手順4以降は行いません。停止の要求は残るので、callbackが戻った後にもう一度`end()`を呼ぶと停止が終わります。
+- DeviceとFunctionのdestructorは、期限なしで停止の完了を待ちます。破棄した領域をworkerが使い続けないためです。
+- `end()`の後、同じobjectで`configure()`をやり直し、もう一度`begin()`できます。
+- 稼働中にFunctionを破棄すると、destructorがDeviceを止めます。通常は`end()`→Functionの破棄→Deviceの破棄の順にします。
+
+### 3.3 資源の確保と解放
+
+| 資源 | 確保する時 | 解放する時 | 置き場所 |
+| --- | --- | --- | --- |
+| Function一覧 | `begin()`（または停止中のdescriptor照会） | `end()`、開始失敗 | heap |
+| descriptor（configuration、HID report、BOS、MS OS 2.0、文字列、WebUSB URL） | `begin()`。使うものだけ、実際の長さで | `end()`、開始失敗 | heap |
+| classのring | 各Functionの開始（`device.begin()`の中）。利用者が`rxBuffer`などを渡せばそれを借りる | `end()` | 自動確保はheap。利用者bufferはPSRAMも可 |
+| classのDMA用buffer、copy送信のstaging | 各Functionの開始（`device.begin()`の中） | `end()` | 内部RAM（DMA可能、64 byte境界） |
+| core領域（queue、EP0、DWC2 record） | USBの開始 | `end()` | 内部RAM（DMA可能、1つの領域） |
+| PHY、割込み、worker | USBの開始 | `end()` | ESP-IDF |
+
+- 転送の途中、取消し、queueあふれの回復では、heapを確保しません。
+- DWC2の転送recordは、全alternateのdescriptorに現れるendpoint方向と、EP0の2方向の分だけ作ります。使わない方向の分は作りません。
+- Functionを1つも登録しない`begin()`は、controllerを起動せず、core領域も確保しません。このとき`started()`はtrue、`ready()`はfalseです。
+
+### 3.4 状態の照会
+
+| 関数 | trueの条件 |
+| --- | --- |
+| `started()` | `begin()`が成功してから`end()`まで。資源を持っている。接続待ちやreset中もtrue |
+| `ready()` | HostがSET_CONFIGURATIONを済ませている |
+| `suspended()` | busが休止している。休止中も`ready()`はtrueのまま |
+
+`speed()`は、Hostが最後のbus resetで決めた速度（`EspUsbBusSpeed::Full`／`High`）を返します（USB 2.0 §7.1.7.5）。USB開始前、`DescriptorsOnly`、`end()`後、最初のbus resetの前は`None`です。HS controllerでも、FSのHostやhubにつなぐと`Full`です。
+
+照会してから次の操作までに、busの状態は変わります。`ready() && !suspended()`は、次の転送の成功を約束しません。
+転送の結果は、各APIの戻り値と完了通知で判断してください。
+
+### 3.5 DescriptorsOnlyでの事前検証
+
+`startMode = DescriptorsOnly`にすると、PHY、割込み、workerを使わずに`begin()`を通せます。
+Hostもcableも要りません。自分の構成を自動試験したいときに使います。
+
+```cpp
+EspUsbDeviceConfig config;
+config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
+if (!device.begin(config)) {
+  Serial.println(device.lastErrorName());   // 構成の誤りはここで分かる
+  return;
+}
+const uint8_t *fs = device.configurationDescriptorForSpeed(0, false);
+const uint8_t *hs = device.configurationDescriptorForSpeed(0, true);
+// ここでbyte列を読む・copyする。pointerはend()まで有効
+device.end();
+```
+
+| 検証すること | 検証しないこと |
+| --- | --- |
+| 各Functionの設定、descriptorの長さと内容、文字列とURL | PHY、割込み、DMA、cacheの動作 |
+| endpoint番号と非control IN endpointの数 | Hostとの列挙、標準要求の応答 |
+| bulk IN二重bufferと送信FIFOの予算 | workerの設定（stack、priority、core、queue） |
+| 各Functionのring/DMA bufferの確保 | 実際の転送 |
+
+- P4（`controller = Auto`）では、HS controllerの予算で検証します。
+- S2/S3でもHS用のdescriptorを照会できます（`configurationDescriptorForSpeed(0, true)`）。予算はFS controllerの物理的な値のままです。
+- USBを動かしている間、FS専用の機種ではHSの照会は`nullptr`を返し、`lastError()`は`ESP_ERR_NOT_SUPPORTED`です。
+- 停止中にdescriptorを照会すると、必要なら作り直します。受け取ったpointerを、次の照会や構成変更をまたいで持たないでください。
+
+[`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/)はこの方法で全descriptorを表示します。
+
+---
+
+## 4. descriptorの生成
+
+USBの多byte値は、すべてlittle endianです。この章では「どのfieldを利用者が決め、どれをライブラリが決めるか」を示します。
+規格はUSB 2.0 §9.6（Standard USB Descriptor Definitions）です。
+
+### 4.1 Functionの登録と番号の割当て
+
+Functionはconstructorで、Deviceの登録listに入ります。登録にheapは使いません。
+
+- 登録の順番は保たれます。Function数の上限は251です（文字列indexが5〜255のため）。
+- 稼働中の登録は`ESP_ERR_INVALID_STATE`で拒否します。拒否されたFunctionが残ったままだと、次の`begin()`も拒否します。
+  停止後に`device.addClass(&function)`で登録し直すか、作り直してください。
+- DeviceはFunctionを所有しません。DeviceはFunctionより長く生かします。DeviceもFunctionもcopy/moveできません。
+
+interface番号とendpoint番号は、`begin()`が次の規則で割り当てます。手で決めることはできません。
+
+1. interface番号は0から、endpoint番号は1から数える。
+2. HIDを先に置く。HID Functionが2つ以上なら、1つのHID interface（interface 0、endpoint 1のINとOUT）にまとめる（[4.5](#45-hid-reportの結合)）。
+3. 次に、HID以外のFunctionを登録順に置く。
+4. 各Functionは、自分の`interfaceCount()`個のinterface番号と、`endpointCount()`個の連続したendpoint番号を受け取る。INとOUTは同じ番号を使えます。
+
+| Function | interface | endpoint番号 | 非control IN |
+| --- | --- | --- | --- |
+| HID（1つ） | 1 | 1 | 1 |
+| HID（2つ以上をまとめたもの） | 1 | 1 | 1 |
+| CDC ACM | 2 | 2（通知IN、data IN/OUT） | 2 |
+| Vendor | 1 | 1（IN/OUT） | 1 |
+| MIDI | 2 | 1（IN/OUT） | 1 |
+| MSC | 1 | 1（IN/OUT） | 1 |
+| NCM | 2 | 2（通知IN、data IN/OUT） | 2 |
+| CCID | 1 | 1（IN/OUT）。`removable`なら2（通知INを追加） | 1または2 |
+| Video | 2 | 1 | 1 |
+| DFU | 1 | 0 | 0 |
+| Audio | 構成による | 構成による | 構成による |
+
+登録の順番を変えると、番号も変わります。Host側のprogramはendpoint addressを決め打ちせず、descriptorから読んでください。
+
+### 4.2 device descriptor（18 byte）
+
+| offset | field | 値・誰が決めるか |
+| --- | --- | --- |
+| 0 | bLength | 18 |
+| 1 | bDescriptorType | 0x01 |
+| 2 | bcdUSB | 0x0200。BOSを出すときは0x0201 |
+| 4 | bDeviceClass | IADがあれば0xEF、なければ0x00 |
+| 5 | bDeviceSubClass | IADがあれば0x02、なければ0x00 |
+| 6 | bDeviceProtocol | IADがあれば0x01、なければ0x00 |
+| 7 | bMaxPacketSize0 | 64（FS/HSとも） |
+| 8 | idVendor | `config.vid`（既定0x303A） |
+| 10 | idProduct | `config.pid`（既定0x4000） |
+| 12 | bcdDevice | `config.deviceVersion`（既定0x0100） |
+| 14 | iManufacturer | `config.manufacturer`があれば1 |
+| 15 | iProduct | `config.product`があれば2 |
+| 16 | iSerialNumber | `config.serialNumber`があれば3 |
+| 17 | bNumConfigurations | 1 |
+
+- **bcdUSBが0x0201になるのは、BOSを出すときだけです。** HostはbcdUSBが0x0201以上のときにBOSを要求します。
+  0x0210にすると、実装していないUSB 2.1の機能を主張することになるので使いません。
+- **bDeviceClassはIADの有無で決まります。** configurationの中にIAD（type 0x0B）が1つでもあれば、0xEF/0x02/0x01を立てます。
+  これはUSB-IFのIAD ECN（Interface Association Descriptors）の要求です。
+  CDC、NCM、Audio、VideoはIADを出します。HID、MSC、Vendor、MIDI、CCID、DFUだけの構成では0x00のままです。
+- VID/PIDの既定値は試作用です。製品では自分のVID/PIDを使ってください（[入門編](usb-device-guide.ja.md)）。
+
+### 4.3 configuration descriptor（9 byte＋続き）
+
+| offset | field | 値・誰が決めるか |
+| --- | --- | --- |
+| 2 | wTotalLength | 実際の長さ（上限はUSBの16 bit） |
+| 4 | bNumInterfaces | 割り当てたinterfaceの数 |
 | 5 | bConfigurationValue | 1 |
-| 7 | bmAttributes | bit7=1固定、bit6=**`config.selfPowered`** |
-| 8 | bMaxPower | **`config.maxPowerMilliamps` ÷ 2** |
+| 6 | iConfiguration | 0 |
+| 7 | bmAttributes | bit7=1、bit6=`config.selfPowered`、bit5=`config.remoteWakeupSupported` |
+| 8 | bMaxPower | `config.maxPowerMilliamps`を2 mA単位へ切り上げ。上限250（500 mA） |
 
-この9バイトの後ろに、インターフェース／エンドポイント／クラス固有ディスクリプタが連結します。走査は「先頭バイトが長さ、2バイト目が型」の繰り返しだけです。
+続いて、IAD、interface、endpoint、class固有descriptorが並びます。
+読み方は「先頭byteが長さ、2 byte目が型」のくり返しだけです。
 
-### 3.3 インターフェースとエンドポイント
+v3は長さを先に数え、その長さだけ確保して書きます。固定の上限（v2の704 byte）はありません。
+長さを数える処理と書く処理は同じ構成から作ります。食い違えば`begin()`が`ESP_ERR_INVALID_SIZE`で拒否します。
 
-インターフェース番号とエンドポイント番号は、**登録順に一括採番されます**（[5.1](#51-採番規則)）。手で決めるものではありません。
+### 4.4 interfaceとendpoint
 
-エンドポイントディスクリプタ（7バイト）で自分の設計が出るのは3つです。
+endpoint descriptor（7 byte）で設計に関わるのは、次のfieldです。
 
-| オフセット | フィールド | 備考 |
-|-----------|-----------|------|
-| 2 | bEndpointAddress | bit7=方向、bit3:0=番号。ライブラリが採番 |
-| 3 | bmAttributes | 転送タイプ。クラスが決める |
-| 4 | wMaxPacketSize | 速度とクラスで決まる（[6.2](#62-最大パケットサイズ)） |
-| 6 | bInterval | ポーリング間隔の**要求**。保証ではない（[6.1](#61-bintervalは要求であって保証ではない)） |
+| offset | field | 備考 |
+| --- | --- | --- |
+| 2 | bEndpointAddress | bit7=方向（1=IN）、bit3..0=番号。ライブラリが割り当てる |
+| 3 | bmAttributes | 転送の種類。classが決める |
+| 4 | wMaxPacketSize | 速度とclassで決まる（[7.1](#71-最大packet長)） |
+| 6 | bInterval | polling間隔の要求。保証ではない |
 
-### 3.4 HIDディスクリプタとレポートディスクリプタ
+bIntervalの意味はUSB 2.0 §9.6.6に従います。
 
-コンフィグレーションディスクリプタの中のHIDディスクリプタ（型 0x21、9バイト）は、**レポートディスクリプタの長さしか持ちません**。中身はホストが `GET_DESCRIPTOR(type=0x22)` で別途取りに来ます。
+| 速度・種類 | bIntervalの解釈 | ライブラリが受け付ける範囲 |
+| --- | --- | --- |
+| FS interrupt | そのままms | 1〜255 |
+| FS isochronous | 2^(bInterval-1) frame | 1〜16 |
+| HS interrupt / isochronous | 2^(bInterval-1) microframe（125 µs） | 1〜16 |
+| bulk | 使わない | 無視 |
 
-| オフセット | フィールド |
-|-----------|-----------|
-| 2–3 | bcdHID |
-| 5 | bNumDescriptors |
-| 6 | bDescriptorType（0x22） |
-| 7–8 | **wDescriptorLength**（レポートディスクリプタのバイト数） |
+範囲外の値は、endpointを開く前（FIFOを確保する前）に拒否します。
+実際のpolling間隔を決めるのはHostです。小さい値を書いても、Hostの都合とbusの混み具合には勝てません。
 
-DescriptorDumpがレポートディスクリプタの長さをここから読んでいるのはこのためです。
+### 4.5 HID reportの結合
 
-### 3.5 複合HIDのレポートID結合
+HID Functionが2つ以上あると、1つのHID interfaceにまとめます。
+interfaceは増えず、report IDが増えます。endpointはIN 1本とOUT 1本です（endpoint 1）。
 
-複合HID（キーボード＋マウスなど）では、各クラスのレポートディスクリプタが**1本に連結されます**。連結の規則は次のとおりです。
+report descriptorは、各Functionのdescriptorを次の形で連結します。
 
-```
-[クラスAの先頭6バイト] [0x85 レポートID_A] [クラスAの残り]
-[クラスBの先頭6バイト] [0x85 レポートID_B] [クラスBの残り]
-...
-```
-
-先頭6バイトは Usage Page / Usage / Collection にあたり、その直後に `0x85`（Report ID）アイテムを挿入します。レポートIDは固定です。
-
-| クラス | レポートID |
-|--------|-----------|
-| Keyboard | 1 |
-| Mouse | 2 |
-| Gamepad | 3 |
-| Consumer Control | 4 |
-| System Control | 5 |
-| Vendor | 6 |
-
-結果として、複合HIDは**インターフェースが増えるのではなく、1つのHIDインターフェース上のレポートIDが増えます**。エンドポイントはEP1の1本（OUT=0x01 / IN=0x81）を共有する双方向構成です。
-
-上限は `MAX_HID_REPORT_DESCRIPTOR` = 256バイトで、超えると `begin()` が失敗します。
-
-### 3.6 文字列ディスクリプタ
-
-`index=0` は言語IDリストで、このライブラリは 0x0409（en-US）を1つだけ返します。`index=1,2,3` が manufacturer / product / serialNumber、`index=4` はネットワーク機能があるときのMACアドレス文字列です。
-
-実体はUTF-16LEですが、**ライブラリはASCIIを1文字ずつ16bitへ拡張するだけ**です。上限63文字で、超えると切り詰められます。非ASCII文字を製品名に入れても、そのままでは正しく出ません。
-
-### 3.7 BOSとMicrosoft OS 2.0
-
-Windows標準ドライバが当たらないインターフェース——vendorインターフェースかDFUインターフェース——が構成に含まれるとき、または `config.webusbEnabled = true` のときに生成されます。
-
-| ディスクリプタ | サイズ | 内容 |
-|---------------|--------|------|
-| BOS | 33または57バイト | Microsoft OS 2.0 platform capability、`webusbEnabled` のときは WebUSB のものも |
-| MS OS 2.0 | 36／168／218バイト | WinUSBが要るインターフェースごとの compatible ID、vendor revision、vendorインターフェースに対する device interface GUID |
-
-**Windowsでこれらのインターフェースを開けるようにするのがMS OS 2.0の役割**です。これがないと `0xff` やDFUのインターフェースはドライバなしのまま残り、ユーザーはZadigへ案内されます。製品として配れるものではありません。
-
-3つのサイズは、DFUインターフェース単体が36（set header + vendor revision + compatible ID 1つ）、vendorインターフェース単体が168（それに registry property）、両方で218（configuration subsetの中にfunction subsetが2つ、それぞれが自分のrevisionを持つ）です。**DFU側には `DeviceInterfaceGUIDs` を付けていません。** libusb（つまり `dfu-util`）はWinUSB deviceをper-function GUIDではなくUSB device interface classで見つけますし、GUIDなしでWindowsがbindすることを実測しています。
-
-**`config.deviceInterfaceGuid` は、host アプリがデバイスを探すときの GUID** です（`SetupDiGetClassDevs` に渡すもの）。どのドライバが当たるかを決めるのは compatible ID だけで、こちらは関係ありません（実測済み）。ただし**誰が見つけるか**は決めます。既定値は世界中の EspUsbDevice 製 vendor インターフェースで共通なので、自分の製品を探すアプリが無関係なデバイスまで拾います。自分の製品には自分の GUID を与えてください。形式は `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`（波括弧込み）で、それ以外は `begin()` が `ESP_ERR_INVALID_ARG` で false を返します。registry property は長さを固定値で書くので、形式が違うと Windows が拒否する set ができあがり、しかも理由がどこにも出ないためです。
-
-**変えた GUID を実際に効かせるのが `wVendorRevision`** です。Windows は VID/PID/serial ごとに、最初に列挙したときの registry property をキャッシュしていて、この値が変わったときだけ読み直します。つまりこれが無いと、一度そのデバイスを見た PC は古い GUID を永久に使い続けます。既定では完成した descriptor set のチェックサムから導出するので、set の中身が変われば——GUID を変えた、function が増えた、レイアウトが変わった——自動的に動きます。上げ忘れる余地がありません。独自のリリース番号に合わせたいときは `config.msOs20VendorRevision` で上書きでき、実際に使われた値は `microsoftOs20VendorRevision()` が返します。flat な set では set header の直下に1つ、subset 構成では function subset ごとに1つ入ります。
-
-`bcdUSB` はBOSを出すときだけ0x0201、出さないときは0x0200です。0x0201はhostがそもそもBOSを要求し始める閾値で、0x0210にすると実装していないUSB 2.1準拠を主張することになります。
-
-**2つのサイズは2つの構造であり、選び間違えるとドライバが当たりません。** descriptor setは、compatible IDをset headerの直下に置くことも、configuration subsetとfunction subsetで包むこともできます。
-
-```
-Set header (10)                      Set header (10)
-  Compatible ID (20)                   Configuration subset (8)
-  Registry property (132)                Function subset (8, bFirstInterface)
-= 162、"flat"                                Compatible ID (20)
-                                             Registry property (132)
-                                           Function subset (8, bFirstInterface)
-                                             Compatible ID (20)
-                                     = 206、"subsets"
+```text
+[Push] [Functionのitem … 最初のCollectionの直後に Report ID(0x85, id) … 残り] [Pop]
 ```
 
-function subsetはWinUSBが要るインターフェースごとに1つずつ、`bFirstInterface` の昇順で出します。**一部しか指していないsubsetは、指されなかったインターフェースをドライバなしのまま残します。** 実測: DFU + vendor のdeviceでvendorインターフェースだけを指すsetを出したところ、vendorの子にはWinUSBが当たり、DFUの子は `problem=28` のままでした。
+- Push/Popで囲むので、あるFunctionのglobal item（単位、範囲、report size）が次のFunctionへ漏れません。
+- report IDは、まず各Functionが希望するID（`hidReportId()`）を予約し、重なったものと希望のないものに空いているIDを割り当てます。
+  v2のような型ごとの固定IDではありません。実際のIDは`compositeReportId()`で読めます。
+- 結合したdescriptorの長さに固定の上限はありません（USBの16 bitまで）。
+- まとめたHIDのendpoint MPSは、既定16 byteです。各Functionが要求する大きさの最大を取ります。`EspUsbDeviceHidCustom`の`inputReportSize`と`EspUsbDeviceHidVendor`のreport長も反映します（FSは64、HSは1024 byteまで）。
+- 実際に決まったMPSは、各HID Functionの`inputPacketSize()`で読めます。Hostが速度を決めてからの値で、bus resetの前と`end()`の後は0です。
 
-subsetは**composite deviceの「1つのfunction」を指すため**の入れ子で、Windowsがこれを解決するのは **usbccgp.sys** ——composite deviceに対してだけ読み込む親ドライバ——を通したときだけです。単一インターフェースのデバイスにfunction subsetを付けると、compatible IDは結び付く先を持ちません。`USB\MS_COMP_WINUSB` はdevice nodeに届かず、どのドライバも一致せず、デバイスマネージャーは `CM_PROB_FAILED_INSTALL`（コード28）を出します。しかも **`setupapi.dev.log` には1行も書かれません**——インストールが始まらないので、記録すべきものが無いからです。その間デバイスはvendor requestに正しく答え続けているので、ドライバの要らないLinux側からは見えません。
+HID descriptor（type 0x21、9 byte）には、report descriptorの長さ（wDescriptorLength、offset 7〜8）だけが入ります。
+中身は、Hostが`GET_DESCRIPTOR(0x22)`で別に読みます。詳しくは[HID](classes/hid.ja.md)を参照してください。
 
-そのため既定では `bNumInterfaces` に従って構造を決め、`config.msOs20Layout` で上書きできます。
+### 4.6 文字列descriptor
+
+| index | 内容 |
+| --- | --- |
+| 0 | 言語ID。0x0409だけ |
+| 1〜3 | `config.manufacturer` / `product` / `serialNumber` |
+| 4 | 予約 |
+| 5〜 | Function名（登録順に1つずつ） |
+| その後 | Function固有の補助文字列（NCMのMAC addressなど） |
+
+- 入力はNUL終端のUTF-8です。`begin()`がUTF-16LEへ変換してcopyします。成功した後は、元の配列を変えても応答は変わりません。
+- 1文字列は126 UTF-16 code unitまで（headerを含めて254 byte）。超えると`ESP_ERR_INVALID_SIZE`です。
+- 不正なUTF-8（overlong、surrogate、U+10FFFF超、途中で切れた列）は`ESP_ERR_INVALID_ARG`です。置換や切り詰めはしません。
+- `nullptr`を渡した項目は省略します（indexは0）。空文字は長さ0の文字列descriptorになります。Function名の空文字は省略です。
+- 文字列をすべて省略すれば、文字列用のheapは確保しません。
+- 0x0409以外のLANGIDの要求には、STALLで答えます。
+
+### 4.7 BOS、WebUSB、Microsoft OS 2.0
+
+BOSは、WebUSBかMicrosoft OS 2.0を使うときだけ出します。どちらも使わなければ、pointerも長さも0です。
+
+| 条件 | BOSの中身 |
+| --- | --- |
+| `config.webusbEnabled = true` | WebUSB platform capability（24 byte） |
+| Vendor/DFU Functionがある | Microsoft OS 2.0 platform capability（28 byte） |
+
+BOSの長さは、5 byte＋上の合計（29、33、57 byte）です。
+
+**Microsoft OS 2.0 descriptor set**は、Windowsが.infなしでWinUSBを当てるための情報です。
+Vendor/DFUのinterfaceがあるときに作ります。
+
+| 要素 | 内容 |
+| --- | --- |
+| compatible ID | `WINUSB`。Vendor/DFUの各interfaceに1つ |
+| registry property | `DeviceInterfaceGUIDs`。Vendorだけに付ける。値は`config.deviceInterfaceGuid` |
+| vendor revision | `config.msOs20VendorRevision`。0（既定）ならset全体のCRCから作る |
+| CCGP device | `config.msOs20CcgpDevice = true`のとき、Windowsに複合deviceとして扱わせる |
+
+setの形は2通りあります。
+
+```text
+flat（interfaceが1つ）              subsets（interfaceが2つ以上）
+Set header (10)                    Set header (10)
+  Vendor revision (6)                Configuration subset (8)
+  Compatible ID (20)                   Function subset (8, bFirstInterface)
+  Registry property (132)                Vendor revision (6)
+                                         Compatible ID (20)
+                                         Registry property (132)
+                                       Function subset (8, bFirstInterface)
+                                         …
+```
 
 | `msOs20Layout` | 結果 |
-|----------------|------|
-| `ESP_USB_DEVICE_MS_OS_20_AUTO`（既定） | インターフェースが2本以上ならsubsets、1本ならflat |
-| `ESP_USB_DEVICE_MS_OS_20_FLAT` | 常にflat |
+| --- | --- |
+| `ESP_USB_DEVICE_MS_OS_20_AUTO`（既定） | interfaceが2つ以上、または`msOs20CcgpDevice`ならsubsets。それ以外はflat |
+| `ESP_USB_DEVICE_MS_OS_20_FLAT` | 常にflat。WinUSB対象が2つ以上あると`begin()`が`ESP_ERR_INVALID_ARG` |
 | `ESP_USB_DEVICE_MS_OS_20_SUBSETS` | 常にsubsets |
 
-実際にどちらで組まれたかは `EspUsbDevice::microsoftOs20UsesSubsets()` が返し、バイト列は `examples/Info/EspUsbDeviceDescriptorDump` が出力します。
+形を間違えると、driverが当たりません。理由は次のとおりです。
 
-### 3.8 複数機能デバイスをWindowsにどう見せるか
+- function subsetは、複合deviceの1機能を指すための入れ子です。Windowsは、複合deviceにだけ読み込む`usbccgp.sys`を通して解決します。
+- 単一interfaceのdeviceにsubsetを付けると、compatible IDの行き先がありません。driverが当たらず、Device Managerはcode 28を出します。
+- 複合deviceで一部のinterfaceしか指さないと、指されなかったinterfaceはdriverなしのまま残ります。
 
-Linux と macOS は、コンフィグレーションディスクリプタのIADを見て機能ごとにドライバをバインドします。**Windows は device descriptor も見ます。** 順番はこうです。
+**`deviceInterfaceGuid`は、Hostのapplicationがdeviceを探すときのGUIDです。** どのdriverが当たるかは、compatible IDだけで決まります。
+既定値はこのライブラリの全Vendor interfaceで共通なので、製品では自分のGUIDを付けてください。
+形式は`{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`（波括弧を含めて38文字）です。違えば`begin()`が`ESP_ERR_INVALID_ARG`です。
 
-1. `bDeviceClass` が **0xef / 0x02 / 0x01** なら、まず **usbccgp.sys**（USB Generic Parent Driver）が親としてロードされる
-2. usbccgp が IAD の区切りごとに子デバイス（PDO）を作る
-3. 子デバイスごとに、その機能のクラスに応じたドライバがバインドされる。CDC ACM なら **usbser.sys** で、1機能につき1つのCOMポートになる
+**vendor revisionは、Windowsに読み直させるための値です。** Windowsは、最初に列挙したときのregistry propertyをVID/PID/serialごとに覚え、この値が変わったときだけ読み直します。
+既定ではset全体から計算するので、GUIDやFunctionを変えると自動で変わります。実際の値は`microsoftOs20VendorRevision()`で読めます。
 
-このライブラリはIADを出したときに 1. を自動でやります（[3.1](#31-デバイスディスクリプタ18バイト)）。CDCを2つ持つデバイスなら、Windows側にCOMポートが2つ出ます。
+**WebUSB**の動作：
 
-残りは設計側でやることです。
+| `webusbUrl` | 動作 |
+| --- | --- |
+| `nullptr` | landing pageなし（iLandingPage=0） |
+| `https://…` | scheme 1。prefixを除いて保存 |
+| `http://…` | scheme 0。prefixを除いて保存 |
+| それ以外 | scheme 255。全文をそのまま保存 |
 
-| やること | 理由 |
-|---|---|
-| **ポートごとに名前を付ける**（`EspUsbDeviceCdcSerial(device, "Console")`） | Windows はIADの `iFunction` を子デバイス名に使います。無いと同名のポートが並び、どちらがどちらか分かりません |
-| **`config.serialNumber` を設定する。ボードごとに固有の値で** | Windows は VID/PID/シリアルの組でCOMポート番号を記憶します。シリアルが無いと、挿すUSBポートを変えるたびに番号が振り直され、同じ機種を2台挿すと衝突します |
-| **descriptorを変えたら PID も変える（開発中）** | Windows は VID/PID 単位でドライバのバインド結果をキャッシュします。descriptor構成を変えたのに同じ VID/PID のままだと、古いバインドが残って「1ポートしか出ない」といった症状になります。`pnputil /enum-devices /connected` と デバイスマネージャの「非表示のデバイスの表示」で古い項目を消せます |
+prefixを除いて最大252 byteのUTF-8です。空、prefixだけ、不正なUTF-8は`ESP_ERR_INVALID_ARG`、長すぎると`ESP_ERR_INVALID_SIZE`です。
 
-**INFファイルは要りません。** Windows 10 以降は CDC ACM（class 0x02 / subclass 0x02）に usbser.sys を自動でバインドします。Windows 7 では `.inf` が必要でしたが、対象外と考えて構いません。
+**ライブラリが使うvendor code：**
 
-**bulk Vendor と併用する場合**は、そのインターフェース側だけ別の話になります。WinUSB を当てるには MS OS 2.0 descriptor が必要で、これは `config.webusbEnabled = true` のときに出ます（[3.7](#37-bosとmicrosoft-os-20)）。CDC側のCOMポートとは独立に効きます。
+| bRequest | 用途 | 注意 |
+| --- | --- | --- |
+| 0x01 | WebUSB（bVendorCode） | `webusbEnabled`のとき、GET_URL（bmRequestType 0xC0、wIndex 2）だけをライブラリが受け取る。wValueがURLの番号1でなければSTALL |
+| 0x02 | Microsoft OS 2.0（bMS_VendorCode） | setがあるとき、bmRequestType 0xC0、wValue 0、wIndex 7（MS_OS_20_DESCRIPTOR_INDEX）の要求はライブラリが答える |
 
-確認は `tests/manual/device_inspect/device_inspect.py` が早いです。ホストが実際に受け取ったdescriptorを表示するので、`bDeviceClass=0xef` とIADの本数・`iFunction` 文字列をその場で見られます。
+上の組合せに当たらない要求は、bRequestが同じでも、Vendorの`onControlRequest`へ届きます。上の組合せそのものは届きません。
+
+### 4.8 Device QualifierとOther Speed Configuration
+
+USB 2.0 §9.6.2と§9.6.4の扱いです。
+
+| 機種・設定 | Device Qualifier | Other Speed Configuration |
+| --- | --- | --- |
+| S2 / S3（FS専用） | 返さない（STALL） | 返さない（STALL） |
+| P4、`controller = FullSpeed` | 返さない（STALL） | 返さない（STALL） |
+| P4、`controller = Auto` / `HighSpeed` | 10 byte | 今の速度でない方のconfiguration。typeを0x07にしたもの |
+
+- FS専用のdeviceは、Device Qualifierの要求にrequest error（STALL）で答えると規格が定めています（§9.6.2）。
+- HS対応のcontrollerでは、`begin()`がFS用とHS用の両方のconfigurationを作ります。Other Speed用の領域（大きい方の長さ）も先に確保します。
+- Device Qualifierは、bcdUSB、class code、bMaxPacketSize0（64）、bNumConfigurations（1）をdevice descriptorと合わせます。
+
+### 4.9 複数機能のdeviceをWindowsにどう見せるか
+
+Linux/macOSは、configurationの中のIADを見て、機能ごとにdriverを当てます。Windowsはdevice descriptorも見ます。
+
+1. bDeviceClassが0xEF/0x02/0x01なら、`usbccgp.sys`が親としてloadされる。
+2. usbccgpが、IADの区切りごとに子deviceを作る。
+3. 子deviceごとにclassのdriverが当たる。CDC ACMなら`usbser.sys`で、1機能に1つのCOM portになる。
+
+ライブラリは、IADを出したときに1.を自動で行います（[4.2](#42-device-descriptor18-byte)）。残りは設計側の仕事です。
+
+| すること | 理由 |
+| --- | --- |
+| Functionに名前を付ける（`EspUsbDeviceCdcSerial cdc(device, "Console")`） | WindowsはIADのiFunctionを子deviceの名前に使う。ないと同じ名前が並ぶ |
+| `config.serialNumber`をboardごとに固有の値にする | WindowsはVID/PID/serialでCOM port番号を覚える。ないと、挿すportを変えるたびに番号が変わる |
+| 開発中にdescriptorを変えたら、PIDも変える | WindowsはVID/PIDごとにdriverの結果を覚えている。古い結果が残ると「portが1つしか出ない」などになる |
+
+この節のWindowsの挙動は、v2で実測したものです。v3のdescriptorは同じ構造ですが、v3でのWindows実機確認はしていません。
 
 ---
 
-## 4. コントロール転送を受ける側
+## 5. control転送
 
-### 4.1 setupパケットの8バイト
+### 5.1 SETUP packet（8 byte）
 
-Host側では「送る側」として読んだ表を、こちらは「受ける側」として読みます。
-
-| バイト | フィールド | 内容 |
-|--------|-----------|------|
-| 0 | bmRequestType | bit7=方向(1=IN) / bit6:5=型(0:標準 1:クラス 2:ベンダー) / bit4:0=宛先(0:デバイス 1:インターフェース 2:エンドポイント) |
-| 1 | bRequest | 要求番号 |
+| byte | field | 内容 |
+| --- | --- | --- |
+| 0 | bmRequestType | bit7=方向（1=IN）、bit6..5=種類（0:標準 1:class 2:vendor）、bit4..0=宛先（0:device 1:interface 2:endpoint） |
+| 1 | bRequest | 要求の番号 |
 | 2–3 | wValue | 要求ごとの意味 |
-| 4–5 | wIndex | インターフェース番号やエンドポイントアドレス |
-| 6–7 | wLength | データステージのバイト数 |
+| 4–5 | wIndex | interface番号やendpoint address |
+| 6–7 | wLength | data段階のbyte数 |
 
-### 4.2 どの要求がどのコールバックに来るか
+### 5.2 EP0の処理
 
-標準要求（`SET_ADDRESS`、`GET_DESCRIPTOR`、`SET_CONFIGURATION` など）はTinyUSBの `usbd.c` が処理し、必要な内容だけをライブラリのコールバックへ聞きに来ます。
+control転送は、SETUP →（DATA）→ STATUSの3段階です（USB 2.0 §8.5.3）。coreが段階を管理します。
 
-| ホストの要求 | 呼ばれるもの |
-|-------------|-------------|
-| `GET_DESCRIPTOR(DEVICE)` | `tud_descriptor_device_cb()` |
-| `GET_DESCRIPTOR(CONFIGURATION)` | `tud_descriptor_configuration_cb(index)` |
-| `GET_DESCRIPTOR(STRING)` | `tud_descriptor_string_cb(index, langid)` |
-| `GET_DESCRIPTOR(BOS)` | `tud_descriptor_bos_cb()` |
-| `GET_DESCRIPTOR(DEVICE_QUALIFIER)` | `tud_descriptor_device_qualifier_cb()` |
-| `GET_DESCRIPTOR(OTHER_SPEED_CONFIG)` | `tud_descriptor_other_speed_configuration_cb(index)` |
-| `GET_DESCRIPTOR(HID REPORT)` | `tud_hid_descriptor_report_cb(instance)` |
-| `SET_CONFIGURATION n` | `tud_mount_cb()` → 各クラスの `onBusAttached()` |
-| `SET_CONFIGURATION 0` / 切断 | `tud_umount_cb()` → 各クラスの `onBusDetached()` |
-| HID `SET_REPORT` | `tud_hid_set_report_cb()` → クラスの `onHidSetReport()` |
-| HID `GET_REPORT` | `tud_hid_get_report_cb()` |
-| HID `SET_PROTOCOL` | `tud_hid_set_protocol_cb()` → `onHidSetProtocol()` |
-| CDC `SET_LINE_CODING` | `tud_cdc_line_coding_cb()` |
-| CDC `SET_CONTROL_LINE_STATE` | `tud_cdc_line_state_cb()` |
-| vendor / WebUSB のクラス・ベンダー要求 | `tud_vendor_control_xfer_cb()` → `onControlRequest()` |
-| MSC の各SCSIコマンド | `tud_msc_*_cb()` 群 |
+- EP0のMPSは64 byteです。data段階は64 byteずつ、coreの内部bufferを通してcopyします。
+- 新しいSETUPが来たら、前の要求は捨てます。SETUPの通し番号とbusの世代で区別するので、古いdataが新しい要求に混ざりません。
+- 要求に答えられないときはSTALLします。STALLは故障ではなく、「その要求には対応しない」という正しい答えです。
 
-つまり、**EP0の処理は書かなくてよいが、答える内容は全部こちらが持っている**という構造です。
+### 5.3 標準要求の扱い
 
-#### ライブラリ自身が answer した要求を観測する
+標準要求はcoreが処理します。方向、値、index、長さを検査し、合わない要求はSTALLします。
 
-`EspUsbDeviceVendor::onControlRequest()` に来るのは「残り」だけです。WebUSBとMicrosoft OS 2.0のvendor code、そして標準descriptorの経路は、このcallbackより先にライブラリが処理します。ホストがドライバを当ててくれないとき、**そもそも要求が来ているのかどうか**を知るために見たいのは、まさにそこです。
+| 要求 | 扱い |
+| --- | --- |
+| GET_STATUS（device） | self-powered bitと、remote wakeupの許可bitを返す |
+| SET_FEATURE / CLEAR_FEATURE（DEVICE_REMOTE_WAKEUP） | remote wakeupを広告していて、Address状態かConfigured状態のときに受け付ける（USB 2.0 §9.4.1、§9.4.9） |
+| SET_FEATURE（TEST_MODE） | HSで動いているときだけ受け付ける。test selector（wIndexの上位byte）は1〜4（Test_J、Test_K、Test_SE0_NAK、Test_Packet）。STATUS段階の後に入り、電源を入れ直すまで抜けない（USB 2.0 §7.1.20、§9.4.9）。FSと、それ以外のselectorはSTALL |
+| SET_ADDRESS | 構成済みのときは拒否する |
+| GET_DESCRIPTOR | device、configuration、string、device qualifier、other speed、BOS（[4章](#4-descriptorの生成)） |
+| GET_CONFIGURATION / SET_CONFIGURATION | 値は0か1。SET_CONFIGURATIONは同じ値でも全endpointを閉じ、classを初期化し直す |
+| GET_INTERFACE / SET_INTERFACE | classに渡す。classが扱わなければ、alternate 0だけを受け付ける |
+| GET_STATUS（endpoint） | halt bitを返す |
+| SET_FEATURE / CLEAR_FEATURE（ENDPOINT_HALT） | EP0とisochronous endpointは拒否。それ以外は実行してから、classへ知らせる |
 
-`EspUsbDevice::onAnyControlRequest()` はその全部を観測できます。純粋な観測用で、戻り値でデバイスの応答は変わりません。
+- SET_CONFIGURATIONで構成を解除・再選択すると、DMAを止め、借用bufferを返し（`BusReset`）、classを初期化します。
+  未対応の値の要求は拒否しますが、動いている構成は解除しません。
+- SET_INTERFACEやENDPOINT_HALTで転送がどうなるかは、classごとに違います（[9.5](#95-reset標準要求endとの関係)と各class文書）。
 
-```cpp
-device.onAnyControlRequest([](const EspUsbDeviceControlRequestInfo &r) {
-  Serial.printf("%s type=0x%02x req=0x%02x val=0x%04x idx=0x%04x len=%u -> %u%s\n",
-                r.stage == ESP_USB_DEVICE_CONTROL_STAGE_SETUP ? "SETUP" : "ACK",
-                r.bmRequestType, r.bRequest, r.wValue, r.wIndex, r.wLength,
-                r.responseLength, r.handled ? "" : " (unhandled)");
-});
-```
+### 5.4 class要求とvendor要求の行き先
 
-| フィールド | 意味 |
-|-----------|------|
-| `stage` | vendor requestは全て `SETUP`、完了した control transfer は全て `ACK` |
-| `responseLength` | ライブラリがスタックへ渡したバイト数（`wLength` で切り詰められる前）。descriptor、WebUSB URL、MS OS 2.0 setのときだけ非ゼロ |
-| `handled` | `SETUP` では「ライブラリが認識した」、`ACK` では「転送が完了した」 |
+| 要求 | 行き先 |
+| --- | --- |
+| class要求、宛先interface | wIndexの下位byteのinterfaceを持つFunction |
+| class要求、宛先endpoint | そのendpointを持つFunction |
+| vendor要求（宛先によらず） | まずライブラリ（WebUSB、MS OS 2.0）、次に各Functionの順 |
 
-vendor requestを `ACK` ではなく `SETUP` で報告するのには理由があります。**STALLした要求はstatus stageに到達しない**ためで、「来たが断った」と「そもそも来ていない」は別の診断です。したがって *「WindowsはMS OS 2.0の要求を投げているのか」* は、ログに `type=0xC0 req=<bMS_VendorCode> idx=0x0007` が出るかどうかで決まります。
-
-このcallbackはusbdタスク上で動くので、カウンタかキューに留めてください（[1.3](#13-tinyusb-apiは-usbd-タスクから呼ぶ)）。
-
-### 4.3 3つのステージとSTALL
-
-コントロール転送は Setup →（Data）→ Status の3ステージです。要求を扱えないときは**STALL**を返します。
-
-**STALLは故障ではなく「その要求はサポートしていない」という正当な回答です。** ホスト側は標準要求以外については、STALLを想定して作られています。`onControlRequest()` で `false` を返すとSTALLになります。
-
-`EspUsbDeviceVendor::onControlRequest()` は `stage` 付きで呼ばれるので、ステージごとの処理が書けます。IN方向なら `sendControlResponse(request, data, length)` でデータステージを返し、OUT方向なら `sendControlResponse(request)` でstatusステージだけを成功させます。
+Vendor Functionは、`onControlRequest`でvendor要求を受け取ります。callbackはSETUP、DATA、ACKの各段階で呼ばれます。
 
 ```cpp
 vendor.onControlRequest([](const EspUsbDeviceVendorControlRequest &r) {
-  if ((r.bmRequestType & 0x80) && r.bRequest == 0x01) {
-    return vendor.sendControlResponse(r, info, min<size_t>(r.wLength, sizeof(info) - 1));
+  if (r.bmRequestType == 0xC0 && r.bRequest == 0x10) {         // IN、vendor、device宛
+    if (r.stage == ESP_USB_DEVICE_CONTROL_STAGE_SETUP)
+      return vendor.sendControlResponse(r, info, sizeof(info)); // wLengthで切り詰められる
+    return true;
   }
-  return false;   // → STALL
+  return false;   // STALL
 });
 ```
 
-`wLength` を超えて返そうとしないこと、そして**要求されたバイト数より少なく返すのは正当**（short packetでデータステージが終わる）であることを押さえておいてください。
+callbackの登録は、停止中に行います。詳しくは[Vendor](classes/vendor.ja.md)を参照してください。
 
----
+### 5.5 応答の規則
 
-## 5. エンドポイント資源：採番とFIFO
+| 状況 | 動作 |
+| --- | --- |
+| INで、要求長より短い応答 | 正常。short packetでdata段階を終える |
+| INで、要求長より長い応答 | wLengthで切り詰める |
+| INで、要求長が1以上、応答の長さが0 | 長さ0のdata段階（ZLP）を送る |
+| 要求長が0（no-data） | STATUS段階だけを返す |
+| OUTで、受信先が要求長より小さい | 拒否する |
 
-### 5.1 採番規則
+要求長が1以上のINに長さ0で答えるとき、STATUSへ飛ばずにZLPを送ります。Hostがdata段階を待ち続けないためです。
 
-`buildDescriptors()` が、インターフェース番号0・エンドポイント番号1から**登録順に**割り当てます。
+### 5.6 要求を観測する
 
-1. **HIDが先**。複合HIDなら1インターフェース＋EP1の双方向1本（`0x01` / `0x81`）。単独HIDならクラスごとに1インターフェース＋IN 1本
-2. 続いて非HIDクラスを登録順に。各クラスの `interfaceCount()` と `endpointCount()` の分だけ番号が進む
-
-クラスごとの実際のアドレスの取り方は、たとえばCDCなら次のとおりです。
-
-```cpp
-epNotification = 0x80 | n;      // 通知用 IN
-epOut          = n + 1;         // データ OUT
-epIn           = 0x80 | (n + 1) // データ IN
-```
-
-つまり**CDCはエンドポイント番号を2つ消費します**（通知とデータで別番号）。NCMも同じ形です。Vendorは1番号をIN/OUT両方に使います（`n` と `0x80 | n`）。
-
-**実際に割り当てられた番号は必ずDescriptorDumpで確認してください。** クラスの登録順を変えると番号が変わり、ホスト側のスクリプトがエンドポイントアドレス直書きなら壊れます。
-
-登録順で変わるのは番号だけです。HIDクラスの裏にいるTinyUSBのインスタンスは常に0で（このビルドのHIDインターフェースは、単独クラスでも複合でも1本）、ライブラリは登録テーブル上の位置に関係なくそれをHIDクラスへ解決します。2.4.0 以前はインスタンス番号でテーブルを直接引いていたため、vendor / CDC / MSC の後に登録したHIDクラスは違うスロットを見に行っていました。`hidReportDescriptor(0)` が null を返し、TinyUSB は `GET_DESCRIPTOR(Report)` に応答も STALL もせず（コピー関数が null 元を拒否し、HIDクラスがその戻り値を見ない）、ホストは control のタイムアウトまで待たされます。Windows 11 での実測は、到着から約6秒後に `HidUsb` が Code 10 で失敗、さらに `usbccgp` は複合デバイスの子を順番に開始するので、隣の WinUSB function はその失敗を待ってから開始し、device interface を有効化しませんでした。descriptor はバイト単位で同一のまま、登録順だけで同じ2 functionが動いたり動かなかったりしていたわけです。
-
-### 5.2 controller上限の実際
-
-`validateControllerEndpoints()` が、組み立てた**ディスクリプタを走査して**チェックします。クラスの申告ではなく実際に書き出されたエンドポイントを数えるので、見落としはありません。
-
-| controller | endpoint番号 | control以外のIN | control以外のOUT |
-|---|---|---|---|
-| ESP32-S2 / S3 | 5 | 4 | 5 |
-| ESP32-P4 rhport 0（FS） | 6 | 4 | 6 |
-| ESP32-P4 rhport 1（HS） | 15 | 7 | 15 |
-
-ソース中の注記によれば、P4のrhport 0はエンドポイント番号が全7・IN 5本（EP0含む）、rhport 1は全16・IN 8本（EP0含む）です。上の表はそこからEP0を引いた値です。
-
-超えると `begin()` は `ESP_ERR_INVALID_SIZE` を返します。**PHYを起動する前に落ちる**ので、ホスト側には何も起きません。
-
-#### endpoint 本数より先に枯れる送信 FIFO
-
-予算はエンドポイント番号だけではありません。DWC2 は小さな FIFO SPRAM を、受信 FIFO、IN エンドポイントごとの送信 FIFO、DMA 管理用のエンドポイントあたり 2 ワードで共有します。S2・S3 と P4 の full speed 側で 256 ワード（1 KB）、P4 の high speed 側で 1024 ワードです。`dcd_edpt_open()` は上から下へ割り当て、空きが尽きると拒否します。bulk や interrupt なら、それは列挙の失敗として表に出ます。
-
-S3 で大きなエンドポイント 1 本に残る量を、ホストが構成した後にコントローラのレジスタから実測した値:
-
-| | ワード |
-|---|---|
-| SPRAM | 256 |
-| DMA endpoint info（エンドポイントあたり 2）を引く | 242 |
-| EP0 IN の送信 FIFO を引く | 226 |
-| 受信 FIFO を引く | 164 |
-
-164 ワード＝656 バイトです。つまり full speed の isochronous エンドポイントを上限の 1023 バイトでは取れず、カメラの隣にもう 1 つ isochronous function を置くこともできません。
-
-**isochronous のエンドポイントは、はっきりとは失敗しません。** `usbd_edpt_iso_alloc()` で前もって割り当てられ、S3 に 1023 バイトを要求したときは `DIEPTXF1` に 256 ワード＠オフセット 512——使用可能な 242 ワードの外——が拒否されずに設定されました。デバイスは列挙され、ホストはカメラドライバを当て、デバイスは宣言どおりのレートで失敗ゼロと報告し、ホストには何も届きません。数十秒後、無関係な EP0 の経路でクラッシュします。そのため `begin()` は、isochronous IN エンドポイントを持つ構成に限りこの計算を自分で行い、起動せずに `ESP_ERR_NO_MEM` を返します。実測は `tests/manual/windows_uvc` にあります。
-
-### 5.3 なぜIN方向が先に枯れるのか
-
-DWC2では、**IN endpointごとに専用のTxFIFOが必要**です。OUTは共有のRxFIFOを使います。したがってIN方向の本数がハードウェアの資源に直接縛られ、実際にS2/S3では control以外のINが4本で頭打ちになります。
-
-これが「HID + CDC + MSC でちょうど上限」の理由です。IN の内訳は HID 1 + CDC 2（通知＋データ）+ MSC 1 = 4。ここに何を足しても入りません。
-
-回避の順序は次のようになります。
-
-1. **クラスを減らす。** CDCは通知用INを1本使うので、単にバイト列を流したいだけならVendor（IN 1本）の方が安い
-2. **複合HIDにまとめる。** キーボード＋マウス＋ゲームパッドはIN 1本で済む
-3. **ESP32-P4のHSコントローラを使う。** IN 7本まで増える
-
-### 5.3.1 CDCを複数並べる
-
-`EspUsbDeviceCdcSerial` は複数登録できる唯一のクラスです。ホストからはシリアルポートが複数見え、それぞれが独立したバッファ・line coding・DTR状態を持ちます。
+`EspUsbDevice::onAnyControlRequest()`で、ライブラリが自分で答えた要求も含めて観測できます。
+callbackは観測だけで、deviceの応答は変わりません。
 
 ```cpp
-EspUsbDevice device;
-EspUsbDeviceCdcSerial Console(device, "Console");
-EspUsbDeviceCdcSerial DataLink(device, "Data Link");
-```
-
-**何本入るかは、クラス数ではなくIN endpointで決まります。** 1ポートにつきIN 2本なので、
-
-| controller | CDC単独の上限 | HID＋Vendorと併用したときの上限 |
-|---|---|---|
-| ESP32-S2 / S3 | 2ポート（IN 4本＝使い切り） | **1ポート**（HID 1 + Vendor 1 + CDC 2 = 4） |
-| ESP32-P4 rhport 0（FS） | 2ポート | 1ポート |
-| ESP32-P4 rhport 1（HS） | 3ポート（IN 6本） | **2ポート**（1 + 1 + 4 = 6） |
-
-`CFG_TUD_CDC` はこの上限に合わせてターゲットごとに決め打ちしてあります（S2/S3は2、P4は3）。列挙できないポートをコンパイルしても意味がないからです。上限を超えて登録した場合は `begin()` が `ESP_ERR_INVALID_SIZE` で落ちます——PHYを起動する前なので、ホスト側には何も起きません。
-
-インスタンス配列は常に確保されるので、CDCを1本しか使わないスケッチにも静的コストがかかります（実測: S3 で +1416 byte、P4 で +4600 byte。P4はHSのbulk endpoint bufferが512 byteのため大きくなります）。減らしたい場合は、ライブラリをビルドする前に `CFG_TUD_CDC` を定義すれば上書きできます。
-
-**ポート番号はディスクリプタ上の並び順です。** `port()` が返す値は、そのオブジェクトが駆動するTinyUSBのインスタンス番号でもあります。登録順を変えるとポート番号もエンドポイントアドレスも変わるので、ホスト側スクリプトが直書きしているなら注意してください。
-
-**名前は必ず付けてください。** 2つのACM機能は descriptor 上まったく同じ形なので、名前が無いとホスト側でどちらがどちらか区別できません。コンストラクタの第2引数はIADの `iFunction` とcontrolインターフェースの `iInterface` の両方に入ります（[3.1](#31-デバイスディスクリプタ18バイト)のとおり、複数機能があるとデバイスは自動的に 0xef/0x02/0x01 を宣言します）。
-
-### 5.4 バッファのサイズ
-
-Host側のFIFO分割に相当する調整はDevice側にはありません（`dcd_dwc2` が確保します）。代わりに効いてくるのは `CFG_TUD_*_BUFSIZE` です（[2.2](#22-tusb_configh-を所有した結果)）。
-
-| 症状 | 見るところ |
-|------|----------|
-| CDCで取りこぼす | `CFG_TUD_CDC_RX_BUFSIZE`（512） |
-| MSCが遅い | `CFG_TUD_MSC_EP_BUFSIZE`（4096）。SCSIの読み書き1回の単位 |
-| NCMのスループットが出ない | `CFG_TUD_NCM_IN_NTB_N`（3）と `NET_TX_SLOTS`（4） |
-| HIDのレポートが大きくて入らない | `CFG_TUD_HID_EP_BUFSIZE` がHID endpoint MPSとレポートサイズの上限 |
-| `vendor.write()` が0を返し続ける | `CFG_TUD_VENDOR_TX_BUFSIZE` が送信FIFOそのもの |
-
-**これらはライブラリ固定値ではありません。** すべて `#ifndef` で囲ってあるので、スケッチ側の `build_opt.h` から上げられます。フラグはライブラリ自身の翻訳単位にも届きます。
-
-```c
-// .ino と同じ場所に置く build_opt.h
--DCFG_TUD_VENDOR_TX_BUFSIZE=16384
-```
-
-これが `tusb_config.h` を自前で持っていることの対価です（[2.2](#22-tusb_configh-を所有した結果)）。coreのビルド済みTinyUSBでは、これらは同梱 `sdkconfig` に焼かれていてスケッチからは届きません。
-
-既定値はターゲットごとに違います。full speedとhigh speedでは問題が同じではないからです。
-
-| | ESP32-S2 / S3 | ESP32-P4 |
-|---|---|---|
-| `CFG_TUD_VENDOR_TX_BUFSIZE` | 512 | **4096** |
-| `CFG_TUD_VENDOR_TX_EPSIZE` | TinyUSB の既定（1 packet） | **4096** |
-| `CFG_TUD_HID_EP_BUFSIZE` | 64 | **512** |
-
-**真ん中の行が、誰も触らないのに一番効く値です。** FIFOは「スケッチがどれだけ積めるか」ですが、`CFG_TUD_VENDOR_TX_EPSIZE` は「その FIFO のどれだけを**1 回の転送が運ぶか**」で、TinyUSB はこれを bulk 1 packet に既定しています。vendor class は endpoint ごとに 1 転送しか投げず完了 callback で再 arm するので、1 packet ずつだと 512 バイトごとに完了割り込み・event queue・usbd タスクの往復が入ります——線上時間 46 us に対して往復が約 52 us です。DWC2 は 1 転送で複数 packet を扱えます。止めていたのはこの既定値だけでした。
-
-ESP32-P4 rev 1.3、usbip 経由、1 run 4 MiB、9 回の median、パターンはホスト側で検証:
-
-| FIFO | 転送長 | MB/s（median） | min-max | global RAM |
-|-----:|-------:|---------------:|---------|-----------:|
-| 512 | 512 | 9.83 | 8.33-10.21 | 74,008 |
-| 8192 | 512 | 10.76 | 10.50-11.06 | 81,688 |
-| 8192 | 2048 | 18.64 | 18.11-19.74 | 83,224 |
-| **4096** | **4096** | **21.12** | **20.27-22.31** | **81,176** |
-| 8192 | 8192 | 22.81 | 21.63-24.20 | 89,368 |
-| 8192 | 16384 | 22.78 | 20.75-23.40 | 97,560 |
-| 16384 | 8192 | 23.28 | 20.93-24.05 | 97,560 |
-| 32768 | 8192 | 23.34 | 20.98-23.92 | 113,936 |
-
-8192 あたりで飽和し、4096/4096 はその 93% を、**FIFO だけ上げたときより少ない RAM** で出します。ホスト側の URB 深さを 2 より増やしても、読み出しサイズを変えても動かないので、約 23 MB/s はホストではなく device 側の天井です。`CFG_TUD_HID_EP_BUFSIZE` と合わせて、P4 の既定は full speed 版より 7,168 バイト多く RAM を使います。TinyUSB がバッファを静的に確保するので、そのクラスを使わないスケッチでも消費します。
-
-**既定を 4096/4096 で止めているのは、最後の 8% の値段のためです。** もっと上げれば効かない、という話ではありません。8192/8192 は静的 RAM +8 KB で約 +8%、32768/8192 は +33 KB で約 +11% です。このチップ上の全スケッチに課すには割に合わず、連続して流し続けるスケッチには割に合う——この 2 つのフラグはそのためにあります。PARLIO の 2ch capture を同時に走らせた別の測定でも同じ形（既定 21.97 MB/s に対し 32768/8192 で 23.69）が出ているので、FIFO の前に生産側がいても傾向は変わりません。
-
-**`write()` に渡す塊は `writeCapacity()` から取ってください。** スケッチ側で 4096 を定数で持つと、FIFO をどれだけ深くしても転送は 4096 のままです。`write()` は差し出された以上を受け取らないので、`CFG_TUD_VENDOR_TX_BUFSIZE` を上げても何も変わらず、フラグが無視されたように見えます。
-
-**`tu_fifo` を使うバッファは32768バイトを超えられません。** 理由はRAMではなく、`tu_edpt_stream_init()` がサイズを `uint16_t` で受け取り、`tu_fifo` が読み書きindexを `[0, 2*depth)` で回すためです。65536はdepth 0として届き、デバイスはreadyを報告したまま一度もmountしません。原因のフラグを指すものは何も出ません。ヘッダ側でビルドエラーにしてあります。
-
-### 5.5 endpointごとの送信FIFO
-
-5.4は**クラスが持つ**バッファ（RAM）の話でした。ここは**コントローラが持つ**バッファの話で、資源も壊れ方も別物です。
-
-IN endpointはDWC2コアのdata FIFOの一部を割り当てられ、既定ではそれが**1パケット分**です。1パケット分だと、今のパケットがコントローラから出ていくまで次を用意できないので、device→hostの連続ストリームは毎microframeの一部をバスではなくendpoint待ちに使います。2パケット分あれば、1つを送出しながらもう1つをスタックが埋められます。
-
-ESP32-P4 high speed、一方向bulk IN、1回32 MiB、3回の最良で実測:
-
-| 送信FIFO | スループット |
-|---|---|
-| 1パケット（コントローラの既定） | 22.98 MB/s |
-| **2パケット** | **28.93 MB/s** |
-
-回ごとのばらつきも ±0.7 MB/s から ±0.1 に縮みます。
-
-**代償はRAMではありません。** このFIFOはコントローラ内部の固定ブロックで、ESP32-S2/S3とP4のfull-speedコントローラが256ワード（32ビット）、P4のhigh-speedコントローラが1024ワード。受信FIFOと全IN endpointがこれを分け合います。足りないと `dcd_edpt_open()` が失敗し、endpointが開かず、deviceが列挙に失敗します。遅いdeviceではなく**壊れたdevice**になります。
-
-そのため `config.bulkInBuffering` の既定は `EspUsbBulkInBuffering::Auto` で、PHYを起動する前にconfiguration descriptorから収支を計算し、**全部のbulk IN endpointが収まるときだけ**2パケットにします。
-
-```
-available = fifo_depth - 2 * endpoint_count        （buffer DMAのendpoint info領域）
-receive   = 14 + 2 * (largest_out_packet / 4 + 1) + 2 * endpoint_count
-needed    = ceil(64/4) + IN endpointごとの ceil(packet/4) の総和
-          + bulk IN endpointごとの ceil(packet/4) の総和
-```
-
-全部か無しかにしているのは、一部だけ2パケットにする規則だとスループットがfunctionの登録順に依存してしまうからです。具体的には:
-
-- **ESP32-S2 / ESP32-S3: 必ず収まります。** 64バイトのbulk IN 4本を全部2倍にしても128ワード、EP0と受信FIFOを足して242中206。
-- **ESP32-P4 high speed: bulk IN 2本までは収まり、3本は収まりません。** 512バイトのパケットが128ワード、受信FIFOが304を取るのでIN用に残るのは672。2本を2倍で512、3本だと768。
-
-`EspUsbBulkInBuffering::Single` はコントローラの既定のままにします。`Double` は要求で、収まらない場合は endpointが開かないdeviceを起動する代わりに `begin()` が `ESP_ERR_INVALID_SIZE` で失敗します。実際に適用されたビットマップは `EspUsbDevice::bulkInDoubleBuffered()` が返します。ストリームが思ったより遅いときに最初に見る値です。
-
-上の計算はコントローラと突き合わせて確認しています。ESP32-P4 high speed で vendor interface 1 本（512 byte の bulk pair）のとき、DWC2 のレジスタは GRXFSIZ 304 words、EP0 の IN FIFO が offset 976 に 16 words、bulk IN endpoint が offset 720 に 256 words でした。buffer DMA のぶんを引いた 992 words のうち 576 words で、**256 words はちょうど 512 byte パケット 2 個分**です。同じデバイスで `bulkInDoubleBuffered()` は `0x0002` を返します。
-
-**これらのレジスタは、`begin()` の直後ではなく host がデバイスを configure したあとに読んでください。** FIFO が切り分けられるのは `dcd_edpt_open()`、つまり SET_CONFIGURATION の時点で、`begin()` が戻ったずっとあとです。それより早く読むと割り当て前の値が返り、**もっともらしいが間違った答え**になります。ここでは GRXFSIZ 1024、endpoint FIFO 512 words と読め、合計がコントローラの持つ RAM の 2 倍になりました。global 側のレジスタ（`GAHBCFG` / `GHWCFG2` / `GHWCFG3`）は core 初期化時に確定するのでその時点でも正しく読め、**ダンプの半分だけが正しい**のがこの罠のたちの悪いところです。
-
-対照として、同じデバイス・同じ host・読み 8 本 in flight、27,136 と 65,024 byte の direct 転送では、既定の 2 packet 化で 46.4 / 46.3 MB/s、`EspUsbBulkInBuffering::Single` では 27.0 / 27.0 MB/s でした。**+72%** で、既定がこうなっている理由がこれです。
-
-### 5.6 usbd taskをどのcoreで走らせるか
-
-`config.taskCoreId` はUSB device taskをcoreに固定します。**既定は -1、つまり固定しません。** これまでのリリースと同じ挙動です。
-
-既定がこうなのは見落としではありません。[5.5](#55-endpointごとの送信fifo)と同じ一方向bulk IN harness（producerは静的バッファからの`memcpy`だけ）を使い、ESP32-P4 high speedで実測しました。
-
-| usbd task | スループット |
-|---|---|
-| 固定しない | 28.61 MB/s |
-| core 0に固定、loopはcore 1 | 28.90 MB/s |
-
-差がありません。producerがほぼ何もしていないので、スケジューラが分離すべきものが無く、固定はtaskの配置の自由を奪うだけになります。
-
-**効くのはproducerが本物のときです。** core 1で数十Msppsの取り込みをしながらcore 0から流すスケッチは重いtaskが2つ競合している状態で、そこを分離するのは測る価値があります。[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols)は、この変更だけで取り込みpipelineが44→52 Mspsになったと実測しています。そういう形のときに手を伸ばすもので、**そのときも測ってください**。どのcoreが効くかは、残りの仕事がすでにどこにいるかで決まります。
-
-`begin()` は通常core 1のArduino loop taskから呼ばれ、固定しないusbd taskはその隣に落ち着きがちです。「そのままにする」が答えでないときの答えは、たいてい `taskCoreId = 0` です。single coreのターゲットでは何もしません。
-
-### 5.7 direct転送経路（opt-in）
-
-ここまでは全部buffered経路の話です。`write()` がclass FIFOへcopyし、TinyUSBがそのFIFOからcontrollerのendpoint bufferへcopyし、controllerが送ります。1 byteあたりcopy 2回で、FIFOがあるおかげでスケッチは所有権を考えずにデータを渡せます。
-
-すでにメモリ上にある大きなblockを流すスケッチなら、この2回とも省けます。`EspUsbDeviceVendor::writeDirect()` はbulk IN endpointをclaimして、**呼び出し側自身のbuffer**で転送を1本armします。
-
-```cpp
-static uint8_t __attribute__((aligned(64))) stage[2][27136];
-
-Vendor.onTxComplete([](size_t sent) {   // usbd task。短く保つこと
-  fill(stage[next]);
-  Vendor.writeDirect(stage[next], sizeof(stage[next]));
-  next ^= 1;
+device.onAnyControlRequest([](const EspUsbDeviceControlRequestInfo &r) {
+  // USB workerで呼ばれる。counterやqueueに留める
 });
 ```
 
-**ビルドが要求しない限り無効です。** スケッチの `build_opt.h` に `-DCFG_TUD_VENDOR_TXRX_BUFFERED=0` を入れ、`arduino-cli compile --clean` でビルドします。`--clean` が無いとスケッチだけが再ビルドされ、**ライブラリは前のオブジェクトのまま**です。`build_opt.h` は応答ファイル経由で全translation unitのコマンドラインに乗りますが、stale buildではライブラリを再コンパイルしないので、スケッチはマクロを見てライブラリは見ない状態になります。このフラグが違う2つのビルドはサイズが違うはずで、ESP32-P4ではclass FIFOが消えて静的RAMが136,728→131,872 byteになります。**サイズが同じなら効いていません。** `EspUsbDeviceVendor::directWriteSupported()` はライブラリ自身の視点を返すので、スケッチは自分のマクロではなくこちらをassertできます。
+| 段階 | 報告される要求 |
+| --- | --- |
+| `SETUP` | すべてのvendor要求（ライブラリが答えるかどうかに関係なく） |
+| `ACK` | STATUS段階まで終わったすべてのcontrol転送 |
 
-このビルドで失うもの: class FIFOが無いので `available()` と `read()` は0を返し、`flush()` は何もしません。受信は `onRxData(data, length)` でcontrollerのbufferから直接渡り、**ポインタはcallbackの間だけ有効**です。`write()` は動きますがendpoint bufferへ1回1 buffer分copyする経路で、同じinterfaceで `writeDirect()` と混ぜてはいけません（同じendpointをclaimするため）。
+| field | 意味 |
+| --- | --- |
+| `responseLength` | ライブラリが用意した応答の長さ（wLengthで切り詰める前）。descriptor、WebUSB URL、MS OS 2.0 setのときだけ0以外 |
+| `handled` | SETUPでは「ライブラリが認識して答えた」、ACKでは「転送が終わった」 |
 
-呼び出し側の契約。最初の1つ以外はすべて検査します。
+STALLした要求は、STATUS段階に届きません。vendor要求をSETUPで報告するのは、「来たが断った」と「来ていない」を区別するためです。
+例えば「WindowsがMS OS 2.0 setを要求しているか」は、`type=0xC0 req=0x02 idx=0x0007`が出るかで分かります。
 
-| 規則 | 拒否理由 |
-|---|---|
-| `onTxComplete()` が報告するまでbufferを生かし、触らない | 検査不能 |
-| 先頭アドレスが64 byte整列 | `NotAligned` |
-| DMA可能なメモリ（PSRAMは不可。自分で退避すること） | `NotDmaCapable` |
-| 1〜65535 byte | `BadArgument` |
-
-**キャッシュ操作が入っていないのは意図的です。** TinyUSBが転送をarmするときにbufferをcleanしており、ESP32-P4のL1データキャッシュは2つのcoreで共有です（命令キャッシュはcoreごとに2つあるのに対し、`CACHE_L1_DCACHE_*` の制御レジスタは1つしかありません）。したがってそのcleanは、どちらのcoreで作ったデータでも対象になります。呼び出し側で `esp_cache_msync(..., C2M)` を掛けるのは冗長で、転送ごとにやるとstreamに見える分だけ遅くなります。ESP32-S2 / S3 はそもそもデータキャッシュを介さずに internal SRAM へ届きます。
-
-**長さには整列の規則を意図的に置いていません。** runの最後のblockやstatus行は短くて半端で、それは普通に送ってよいものです。単にhost側のtransferがshort packetで終わるだけです。`lastDirectError()` が理由を返し、`Busy`（転送がまだin flight）は間違いではなく**通常のbackpressure**です。
-
-**なぜruntimeの選択ではなくbuild flagなのか。** bufferedビルドでは、長さが `wMaxPacketSize` の倍数だった転送の完了後にvendor classが自前のZLPをarmし、そのZLPがendpointのclaimを取ります。ESP32-P4 high speed・27,136 byte stageでの実測では、`onTxComplete()` の中でarmすればapplication側がclaimを取れてstreamは流れ、**別のtaskからarmすると**ZLPが勝って次の `writeDirect()` が拒否され、**1本で止まります**。どのtaskから呼んだかに正しさが乗るAPIを出すより、directビルドではその経路自体をcompileしない、という形にしました。そうすればarmするtaskは問題でなくなります。
-
-ESP32-P4 high speed、一方向bulk IN、送るデータは事前に用意済み、hostは同じもので測りました。「in flightの読み」はhostが同時に投げている bulk read の本数です。1本ずつだとURBの間でendpointが遊ぶ——これはdeviceではなくhost側の限界なので、両方を載せます。
-
-| 経路 | stage | 読み 1本 | 読み 8本 |
-|---|---|---|---|
-| buffered `write()` ＋ `waitWritable()` | - | 21.8 MB/s | 33.9 MB/s |
-| direct `writeDirect()` | 8,192 | - | 39.7 MB/s |
-| direct `writeDirect()` | 27,136 | 27.4 MB/s | 41.1 MB/s |
-| direct `writeDirect()` | 65,024 | 30.4 MB/s | **42.6 MB/s** |
-
-条件を揃えると（読み8本、同じhost、同じデータ）、directはbufferedに対して65,024で**+26%**、27,136で+24%です。依頼元が同じfirmwareをより良いhostハーネス（1 MiB URB、深さ8）で測った値は46.6〜48.3 MB/sで、**独自にTinyUSBへpatchを当てた版の数字と数%差**でした。このライブラリは同梱ツリーを無改変のままそこへ届いています。
-
-完了callbackではなく別taskからarmすると、directビルドでは数%落ちます（読み1本で26.8対27.2 MB/s）。bufferedビルドでは「動くか止まるか」の差になり、それがこのflagの存在理由です。
-
-このリポジトリのテストとは別に、[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) がこの経路を 2.4.0 に対して 3 系列の実験——stream data path の移植、codec fast 部の書き換え、命令スケジューリングの掃引——で走らせ、**全 run で `arm_failures=0` / `last_direct_error=None`**、host 側の pattern 全照合も数十万 block 規模で一致、と報告しています。こちらの peer テストは経路を押さえるものですが、あちらは負荷をかけて、より長く、別のワークロードで押さえています。
-
-directビルドでは完了callbackからのarmは必須ではありませんが、スケジューリングの隙間でendpointを遊ばせないのはこの形です。[5.5](#55-endpointごとの送信fifo)のbulk IN送信FIFOの2 packet化は影響を受けず、両ビルドとも既定で有効のままです。
-
-**callbackには「すでに埋まったbuffer」を渡してください。** 素直な書き方——`onTxComplete()` の中でbufferを埋めてからarmする——は、データを作るコストをusbd taskの、しかも「転送が完了してから次をarmするまで」の区間に置くことになり、endpointはその間ちょうど遊びます。同じリンク・同じ27,136 byte stageで、バイトの出どころだけを変えた実測です。
-
-| stage | callback内で埋める | 事前に埋めてcallbackはarmだけ |
-|---|---|---|
-| 27,136 | 22.8 MB/s | **27.4 MB/s** |
-| 65,024 | 23.6 MB/s | **30.4 MB/s** |
-
-片方がin flightの間にもう片方を作り、callbackはarmだけにしてください。stageを長くすると効くのも同じ理屈で、この2点に `t = a + b×bytes` を当てるとper-transferのoverheadは約170 µsになります。stageが倍なら、その分が倍のデータに薄まります。
+登録は停止中に行ってください。`onAnyControlRequest()`は`esp_err_t`を返し、稼働中は`ESP_ERR_INVALID_STATE`で拒否します（workerが参照しているため）。
 
 ---
 
-## 6. 転送のタイミングと帯域
+## 6. endpoint番号とFIFO
 
-### 6.1 bIntervalは要求であって保証ではない
+### 6.1 controllerの能力表
 
-デバイスは「この間隔でポーリングしてほしい」と申告できますが、**実際の間隔を決めるのはホスト**です。
+数値は`src/internal/EspUsbDwc2Platform.cpp`の`espusb_dwc2_ports`です。
+descriptorの検査、bulk IN二重buffer、送信FIFOの予算は、すべてこの表を使います。
 
-| 速度・種別 | bIntervalの解釈 |
-|-----------|----------------|
-| FS interrupt | そのままミリ秒（1〜255） |
-| FS iso | `2^(bInterval-1)` フレーム |
-| HS interrupt / iso | `2^(bInterval-1)` マイクロフレーム（bInterval=4 → 8×125µs = 1ms） |
+| SoC / controller | 速度 | endpoint番号（EP0を除く） | 非control IN | 非control OUT | FIFO（32 bit word） |
+| --- | --- | --- | --- | --- | --- |
+| ESP32-S2 / S3 | FS | 1〜6 | 4本 | 6本 | 256 |
+| ESP32-P4 FS controller | FS | 1〜6 | 4本 | 6本 | 256 |
+| ESP32-P4 HS controller | HS | 1〜15 | 7本 | 15本 | 1024 |
 
-「HIDの反応が遅い」と感じたときは、まず自分のbIntervalを確認し、次に**ホスト側の実測**を見てください。Linuxなら `evtest` のタイムスタンプ、あるいは `usbmon` のキャプチャで実際の間隔が出ます。デバイス側でいくら小さく申告しても、ホストのスケジューリングとバスの混雑には勝てません。
+上限を超えると、`begin()`が`ESP_ERR_INVALID_SIZE`で拒否します。PHY、割込み、workerは動きません。
+1つのendpoint番号の同じ方向を、別々のinterfaceで使うこともできません。
 
-### 6.2 最大パケットサイズ
+### 6.2 IN endpointが先に尽きる
+
+DWC2では、IN endpointごとに専用の送信FIFOが要ります。OUTは共有の受信FIFOを使います。
+そのため、S2/S3とP4 FSでは、非control INの4本が先に上限になります。
+
+例（S3）：
+
+| 構成 | IN | 結果 |
+| --- | --- | --- |
+| HID + CDC + MSC | 1 + 2 + 1 = 4 | 入る |
+| CDC + CDC | 2 + 2 = 4 | 入る |
+| CDC + CDC + CDC | 6 | `INVALID_SIZE` |
+| CDC + Vendor + HID + MSC | 2 + 1 + 1 + 1 = 5 | `INVALID_SIZE` |
+
+減らし方：
+
+1. 単にbyte列を流すだけなら、CDC（IN 2本）でなくVendor（IN 1本）にする。
+2. HIDをまとめる。複数のHID Functionは、1つのinterfaceとIN 1本にまとまる。
+3. P4のHS controllerを使う（IN 7本）。
+
+### 6.3 FIFOの配分
+
+DWC2は、小さなFIFO SPRAMを次の用途で分け合います。
+
+| 用途 | 大きさ（word） |
+| --- | --- |
+| DMAのendpoint情報 | endpoint数 × 2（S2/S3/P4 FSは14、P4 HSは32） |
+| 受信FIFO | 14 + 2 × (最大OUT MPS / 4 + 1) + endpoint数 × 2 |
+| EP0の送信FIFO | 16（64 byte） |
+| IN endpointごとの送信FIFO | ceil(MPS / 4)。bulk INの二重bufferなら2倍 |
+
+- 送信FIFOの番号は、USBのendpoint番号ではなく、使っているIN endpointの中での順位です。EP0は常にFIFO 0です。
+  endpoint番号に空きがあっても、FIFOは詰めて割り当てます。
+- FIFOは、SET_CONFIGURATIONでendpointを開くたびに割り当てます。`begin()`の直後のregisterは、割当て前の値です。
+
+S3で、最大OUT MPSが64 byteの構成の例：256 − 14（DMA情報）− 16（EP0 IN）− 62（受信FIFO）= 164 word（656 byte）がIN endpointに残ります。
+そのため、FSのisochronous INを上限の1023 byteでは取れません。
+
+P4 HSの例：Vendor（bulk IN 512 byte＝128 word）は5個まで入ります。6個は非control INの本数（7本）には収まりますが、受信FIFO、EP0とあわせると1024 wordを超えるので、`begin()`が`ESP_ERR_INVALID_SIZE`で拒否します。
+
+### 6.4 bulk INの二重buffer
+
+送信FIFOが1 packet分だと、今のpacketが出ていくまで次を用意できません。2 packet分あれば、1つを送りながら次を用意できます。
+代償はRAMではなく、controller内の固定のFIFOです。足りないとendpointが開かず、列挙に失敗します。
+
+`config.bulkInBuffering`で選びます。
+
+| 値 | 動作 |
+| --- | --- |
+| `Auto`（既定） | **全部の**bulk INを2 packet分にしても収まるときだけ2倍にする。収まらなければ何も変えない |
+| `Single` | 1 packet分のまま |
+| `Double` | 全部を2倍にする。収まらなければ`begin()`が`ESP_ERR_INVALID_SIZE` |
+
+「全部か無しか」にしているのは、一部だけ2倍にする規則だと、速度がFunctionの登録順で変わってしまうからです。
+
+| controller | 目安 |
+| --- | --- |
+| S2 / S3 / P4 FS | 64 byteのbulk INなら、4本とも2倍にできる |
+| P4 HS | 512 byteのbulk INは、2本まで2倍にできる。3本以上はAutoでは2倍にしない |
+
+実際に2倍にしたendpointのbitmapは、`device.bulkInDoubleBuffered()`で読めます。streamが思ったより遅いときに、最初に見る値です。
+
+### 6.5 送信FIFOの予算
+
+`begin()`は、構成にある全IN endpointについて、受信FIFO、EP0、各IN endpoint、二重bufferを合わせたFIFOの予算を計算します（[6.3](#63-fifoの配分)の式）。
+収まらなければ`ESP_ERR_INVALID_SIZE`で拒否します。PHYに触る前なので、Hostには何も起きません。`DescriptorsOnly`でも同じ検査をします。
+
+- 同じendpoint番号をalternate settingで使い回すときは、最大のpacketで1回だけ数えます。
+- 前もって検査するのは、FIFOに入らない構成は、SET_CONFIGURATIONでendpointを開けないからです。
+- isochronousのendpointは、足りなくても気付きにくい壊れ方をします（Hostはdriverを当て、deviceは送ったと報告し、Hostには何も届かない）。AudioのcaptureとVideoでは特に大事です。
+
+---
+
+## 7. HSとFS
+
+### 7.1 最大packet長
 
 | 転送 | FS | HS |
-|------|----|----|
-| Control | 8/16/32/64（このライブラリは64） | 64 |
-| Bulk | 8/16/32/64（このライブラリは64） | **512固定** |
-| Interrupt | ≤64 | ≤1024 |
-| Isochronous | ≤1023 | ≤1024 |
+| --- | --- | --- |
+| control | 64（このライブラリ） | 64 |
+| bulk | 8 / 16 / 32 / 64 | 512 |
+| interrupt | 1〜64 | 1〜1024 |
+| isochronous | 1〜1023 | 1〜1024 |
 
-このライブラリのHS用コンフィグレーションディスクリプタは、FS版をコピーしてから**すべてのbulkエンドポイントのMPSを512へ書き換え**、さらにhigh speedで大きなパケットを要求したHID function（`hidHighSpeedEndpointSize()`。現状 `EspUsbDeviceHidVendor` だけ）のinterruptエンドポイントを書き換えて作られます。Audioは方向とレートから別途計算されます。
+endpointを開くとき、coreはこの範囲を検査します。HSのbulkは512以外を拒否します（USB 2.0 §5.8.3）。
 
-ディスクリプタ種別ではなくfunction単位なのは、両者が同じ問いではないからです。vendor HIDの隣にあるキーボードは8バイトのエンドポイントのままでなければなりません。interruptエンドポイントは帯域を**予約**するので、8バイトしか送らないものを膨らませると、その予約をバス上の他から奪うことになります。
+### 7.2 HSで変わる値
 
-HIDのMPSは構成で変わります。
+P4の既定（`controller = Auto`）は、HS controllerを使います。HSでは次が変わります。
 
-| 構成 | HID endpoint MPS |
-|------|-----------------|
-| 単独HID | 8 |
-| 複合HID | 16 |
-| 複合HIDにNKROキーボードを含む | そのクラスが要求する大きさ（`CFG_TUD_HID_EP_BUFSIZE` が上限） |
-| `EspUsbDeviceHidVendor` | `reportSize + 1`。FS側は64、HS側は `CFG_TUD_HID_EP_BUFSIZE` で頭打ち |
+| 対象 | FS | HS |
+| --- | --- | --- |
+| bulk MPS | 64（Vendorは8/16/32も可） | 512 |
+| 借用RX（`readDirect`）の容量 | 64の倍数 | 512の倍数 |
+| `EndWithShortPacket`でZLPが付く長さ | 64の倍数 | 512の倍数 |
+| MSCの`transferBytes` | 64の倍数 | 512の倍数（それ以外は`begin()`が`INVALID_SIZE`） |
+| CCIDの`messageBytes`の既定（0=自動） | 271 | 512 |
+| HIDのinterrupt MPS | 64まで | 1024まで |
+| 非control IN | 4本 | 7本 |
 
-NKROキーボードはビットマップレポートが1パケットに収まらないと分割されるため、`hidInEndpointSize()` でより大きなMPSを要求します。複合HIDの共有エンドポイントは、**含まれるクラスの要求の最大値**を取ります。
+CDC/Vendor/MIDIの`transferBytes`は、MPS未満でも受け付けます。
+FSで動いていた設定が、HSでは`begin()`で失敗することがあります。戻り値と`lastError()`を確かめてください。
 
-**high speedでは「HIDは帯域が小さいクラス」ではありません。** その理解はfull speed前提の事実で、64バイト×1 msは64 KB/sです。high speedのinterruptエンドポイントは125 usごとに最大1024バイトを運ぶので、511バイトのレポートを8,000回/秒で約4 MB/s——しかもbulkと違い、その帯域は余りではなく予約です。P4での実測は 4.03 MB/s、7,866 report/s、sequenceの欠落0で、1 microframeに1 reportという天井の98%です。ただしこのレートは**ホスト側**が URB を複数 in-flight にして初めて出ます。同期読み1本ずつでは、device が何をしようと約1,100 report/s です。どのホストOSでもドライバが要らない唯一のクラスでもあるので、Windowsのドライバ結合そのものを避けたいときは、エンドポイント予算を割く価値があります。
+### 7.3 controllerの選び方とFSへの切替え
 
-### 6.3 実測スループット
+| `config.controller` | 動作 |
+| --- | --- |
+| `Auto`（既定） | HS controllerがあればHS（P4）、なければFS（S2/S3） |
+| `FullSpeed` | FS controllerを使う。P4ではFS用のportになる |
+| `HighSpeed` | HS controllerを使う。ない機種では`begin()`が`ESP_ERR_NOT_SUPPORTED` |
 
-| | 条件 | 実測 |
-|---|---|---|
-| ESP32-P4 HS bulk | `tests/manual/p4_hs_bulk`、512バイト同期echo | スクリプトが MiB/s を表示 |
-| ESP32-P4 HS bulk IN、一方向 | 1回32 MiB、3回の最良、usbip経由 | **送信FIFOが1パケットで22.98 MB/s、2パケットで28.93**（[5.5](#55-endpointごとの送信fifo)） |
+- HS controllerにFSのHostやhubをつなぐと、FSで動きます。そのため、HS controllerを使うときは、FS用とHS用の両方のdescriptorを`begin()`で作ります。
+- FSで動いたときの値（bulk MPS 64など）は、つながってから決まります。借用RXの容量など、MPSに依存する検査は、実際の速度で行います。
+- 未知のSoCを、既存のportに割り当てることはしません。ESP32-S31は現在のSDKでは未対応です。
 
-**デバイスを疑う前に、ホスト側プログラムが転送完了時に何をしているかを見てください。** libusbの完了callbackの中で自前の処理——解析・検証・探索——を走らせるホストは、その間URBを再投入しません。数百ミリ秒を超えると、ストリームは「約200 msの穴が繰り返す」状態に落ちて回復しません。デバイス側からはコントローラが転送を落としているようにしか見えません（arm済みの転送の完了が数百ミリ秒来ない）。[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols)の実測で、解析をcallbackの外——取り込み後の走査——へ出したところ、止まっていた187 Mbpsのストリームが間隙なしのsoakになりました。測定用ホストはcallbackではbufferを溜めて再投入するだけにしてください。
+---
 
-`p4_hs_bulk` が表示する値は**パケットごとの同期echoを含む健全性確認値であり、最大帯域のベンチマークではありません**。1パケット送って1パケット受けるたびにバスが空くので、実運用のストリーミングより低く出ます。設計の見積りに使うなら、自分の転送パターンで測り直してください。
+## 8. cacheとDMA
 
-なお、512バイトちょうどの転送を `flush()` するとTinyUSBは終端のZLPを送ります。チェッカがこの正規の0バイトパケットを数えて読み飛ばしているのは、それが**プロトコル上正しい**からです（[7.2](#72-zlp)）。
+### 8.1 DMAの方式
 
-片方向のストリームで効くのは送出ループではなく、送信FIFOの深さと転送長です。P4では同じ4 MiBの転送が、TinyUSB既定のFIFOと転送長で9.83 MB/s、このライブラリがP4に設定する4096/4096で21.5 MB/sになります（[5.4](#54-バッファのサイズ)）。データを作りながら流すスケッチは、`write()` が0を返すのをspinするのではなく `EspUsbDeviceVendor::waitWritable()` を使ってください。実測で帯域は同じ21 MB/sのまま、spinの回数が4 MiBあたり約25,000回から0になり、1転送につき1回だけblockする形になります。ここで得られるのは帯域ではなく、spinがデータの生産側から奪っていたCPUです。P4で2chのcaptureを流しながら測ると、spinループではUSB側が7〜16%落ちていたものが、blockする待ちでは落ちません。
+全機種で、DWC2のbuffer DMA modeを使います。CPUがFIFOへ1 packetずつ書くslave modeは使いません（内部DMAのないcontrollerは、初期化を拒否します）。
 
-**1 packetに満たない書き込みは、それだけでは出て行きません。** TinyUSBはFIFOに`wMaxPacketSize`分たまってから転送をarmするので、16 byteの返信は`flush()`するまで——または後続の書き込みで合計が1 packetを超えるまで——FIFOに留まります。ストリーミングするスケッチは気づきませんが、要求に答えるスケッチは答えるたびに`flush()`が要ります。`waitWritable()`が待つ前にflushするのはこのためで、空きを待って止まっている呼び出し側が、端数を切り上げるバイトを追加してくれることはないからです。
+DMAが触る領域は、すべて内部RAMです。
 
-**可能ならpacketの整数倍で書いてください。** `write()` はFIFOに空いているぶんしか受け取らないので、少し空くたびに残り全部を差し出す書き方だと4032 byteのような半端な長さが積まれ、TinyUSBは1 packet分溜まった時点で転送をarmします。packet sizeの倍数でない転送は短いpacketで終わるため、ホストの実行中URBがそこで早期完了し、再投入の往復が入ります。倍数ぶんの空きを待って、ちょうどその量を書けば、どの転送も満杯のままです。
+| 領域 | 確保 |
+| --- | --- |
+| core領域（EP0のSETUP/data、DWC2 record） | ライブラリ。内部RAM、DMA可能、64 byte境界 |
+| classのDMA用buffer、copy送信のstaging | ライブラリ。同上 |
+| 借用転送のbuffer | 利用者。DMA可能な内部RAM、先頭64 byte境界 |
+
+### 8.2 P4のcache同期
+
+P4は、CPUがL1 data cache越しに内部RAMへ触ります（cache lineは64 byte）。S2/S3にはこのcacheがなく、同期の処理は空です。
+cacheの操作はライブラリが行います。利用者がSoCごとに`esp_cache_msync`を呼ぶ必要はありません。
+
+| 時点 | 処理 | 理由 |
+| --- | --- | --- |
+| IN DMAの開始前 | 送るbufferをclean（cacheからmemoryへ書き戻す） | DMAが古いdataを送らないため |
+| OUT DMAの開始前 | 受信bufferもclean | DMAの途中にdirtyな行が追い出されると、受信dataを上書きするため |
+| OUT DMAの完了後 | 受け取った範囲をinvalidate | CPUが古いcacheを読まないため |
+| 開始時 | SETUP領域をclean→invalidate | 初期化で残ったdirtyな行を、DMAの前に片付けるため。失敗したら`begin()`が`ESP_FAIL` |
+
+OUTの前のcleanは、P4XのHS借用RXで実際に起きた破損を直したものです。
+（65535 byteの受信で途中から後ろが書き込まれず、完了は成功と報告していた。）
+
+利用者が守ること：
+
+- 借用bufferは、完了callbackが返るまでCPUから読み書きしない。P4では、DMA中の書込みが失われたり、受信dataを壊したりします。
+- 借用RXの容量は64の倍数にする（ライブラリが検査します）。先頭も64 byte境界なので、bufferが他の変数とcache lineを共有しません。
+
+### 8.3 DMAの分割
+
+1回のDMA設定で運べる量は、controllerのcounterの幅で決まります。
+例えばS3のpacket counterは7 bitで、MPS 64なら1回8128 byteまでです。
+
+借用転送は、この制限を利用者に見せません。ライブラリが内部で分割します。
+
+- 途中の区切りはMPSの倍数にする。途中にshort packetやZLPは入らない。
+- 完了は、転送全体に対して1回だけ返る。
+- 長さの上限は`maxDirectTransfer()`で読める（32 bitのESPでは2147483647 byte）。これは表現できる上限で、確保できる量ではありません。
+
+controlとisochronousの1回の投稿は、これまでどおり16 bitまでです。
+
+### 8.4 ISO OUTの取りこぼし
+
+DWC2のISO OUTは、armするときに「次のframe（HSではmicroframe）が偶数か奇数か」を指定します。
+Hostが1 intervalを空けて送ると偶奇が合わず、incomplete ISO OUT割込みになります。
+
+ライブラリはISRの中で、同じDMA bufferのまま偶奇を反転してarmし直します。dataは受け取っていないので、古いdataを渡す心配はありません。
+workerを通してarmし直すと、HSの125 µsのmicroframeに間に合わず、次のpacketも失うためです。
+この割込みは、ISO OUTを開いたときだけ有効にします。
+
+---
+
+## 9. copy転送と借用転送
+
+CDCとVendorには、2つの経路があります。MIDIはcopy経路（packet API）だけです。
+
+| 経路 | API | bufferの持ち主 | 向いている用途 |
+| --- | --- | --- | --- |
+| copy | `write()`、`read()`、`available()` | 呼出しが戻ればアプリへ戻る | 普通の送受信 |
+| 借用 | `writeDirect()`、`readDirect()` | 完了callbackまでライブラリ | 大きなdata、copyを避けたいとき |
+
+### 9.1 copy経路
+
+- `write()`はringへcopyし、受け付けたbyte数を返します。Hostに届いたことは意味しません。ringが足りなければ一部だけ受け付けます。
+- 受信はringに入ります。ringが満ちたら、bulkの受信を止めてHostを待たせます（backpressure）。黙って上書きしません。
+- bulkはbyte streamです。1回の`write()`とHostの1回のreadの境界は一致しません。区切りはprotocolで持ってください。
+
+容量や終端（ZLP）の設定は、classごとです。[CDC](classes/cdc.ja.md)、[Vendor](classes/vendor.ja.md)を参照してください。
+
+### 9.2 借用転送の条件
+
+| 条件 | 違反したとき（`EspUsbTransferError`） |
+| --- | --- |
+| 完了callback（`onDirectTxComplete`/`onDirectRxComplete`）を`begin()`の前に登録している | `BadArgument` |
+| 先頭が64 byte境界 | `NotAligned` |
+| 全域がDMA可能な内部RAM（PSRAMは不可） | `NotDmaCapable` |
+| 長さが1以上、`maxDirectTransfer()`以下 | `BadArgument` |
+| RXの容量が64の倍数で、かつ今のMPSの倍数 | `BadArgument` |
+| RXは`rxMode = Borrowed`のときだけ | `NotSupported` |
+| Hostが構成済みで、endpointが開いている | `NotMounted` |
+| 同じ方向に進行中の転送がない（TXは、copy送信の残りもない） | `Busy` |
+| controllerが受け付けた | `TransferFailed` |
+
+- `writeDirect`/`readDirect`は`EspUsbTransferSubmission`を返します。`if (submission)`で受理を確かめます。
+- 拒否されたときは、bufferを借りず、callbackも来ません。
+- 受理されたときは、0でない`id`が付きます。`id`は`begin`/`end`をまたいでも増え続けます。
+- 1つのFunctionで同時に進められる借用転送は、方向ごとに1つです。`Busy`は異常ではなく、普通のbackpressureです。
+- TXの長さには、64 byteやMPSの倍数という条件はありません。
+- `writeDirect`の終端は、`Continue`（ZLPを付けない）か`EndWithShortPacket`（長さがMPSの倍数ならZLPまで送ってから完了）です。
+
+### 9.3 返却（完了callback）
+
+完了callbackはUSB workerで、受理した転送ごとにちょうど1回呼ばれます。
+`EspUsbTransferResult`には、`buffer`、`requestedBytes`、`actualBytes`、`actualBytesKnown`、`status`、`id`が入ります。
+
+| `status` | 意味 | `actualBytes` |
+| --- | --- | --- |
+| `Success` | 完了した。Hostのapplicationが処理したことまでは意味しない | 有効 |
+| `BusReset` | bus reset、構成の解除・再選択、queueあふれの回復で破棄した | 不明（`actualBytesKnown=false`） |
+| `Stopped` | `end()`でDMAを止めてから返した | 不明 |
+| `TransferError` | 下位の転送エラー、またはENDPOINT_HALT | 分かる範囲だけ |
+| `Cancelled` | 取消し、SET_INTERFACE、CLEAR_FEATURE(HALT)で返した | 不明 |
+
+- RXは、bufferが満ちるか、short packet / ZLPを受けると完了します。次の受信には、`readDirect()`をもう一度呼びます。
+  投稿していない間はOUTを受け付けず、Hostを待たせます。
+- callbackの中で、準備済みの次のbufferを投稿できます。次のbufferをcallbackの中で作ると、その間endpointが遊びます。
+  片方を送っている間にもう片方を作り、callbackは投稿だけにしてください。
+
+### 9.4 取消し
 
 ```cpp
-while (sent < total) {
-  const size_t chunk = min(EspUsbDeviceVendor::writeCapacity(), total - sent);
-  if (!vendor.waitWritable(chunk, 1000)) { break; }   // 抜き差しでfalse
-  sent += vendor.write(data + sent, chunk);
+auto s = vendor.writeDirect(buffer, length);
+// …
+vendor.cancelDirectTx(s.id);   // id=0なら今の借用が対象
+// bufferは、onDirectTxCompleteでCancelledなどとして返るまで触らない
+```
+
+- `cancelDirectTx(id)`/`cancelDirectRx(id)`の`ESP_OK`は、「取消しを受け付けた」という意味です。bufferはまだ戻っていません。
+- ライブラリはDMAを止め、queueにfenceを置いて古い完了eventを片付けてから、完了callbackでbufferを返します。DMAが止まる前には返しません。
+- 完了と取消しが競合しても、結果は1つだけです。`Success`で返ることもあります。
+- 対象がない、または`id`が違えば`ESP_ERR_INVALID_STATE`です。古い`id`で新しい転送を取り消すことはありません。
+- 同じ転送への2回目の取消しは`ESP_OK`です。resetや`end()`と重なると、`BusReset`/`Stopped`で返ることがあります。
+- 待ちを打ち切っても（timeout）、bufferの返却にはなりません。必ず完了callbackを待ってください。
+- 取消しはHostへSTALLせず、DATA PIDも変えません。
+
+### 9.5 reset、標準要求、endとの関係
+
+| 出来事 | 借用中の転送 | copyのring |
+| --- | --- | --- |
+| bus reset | `BusReset` | 捨てる |
+| SET_CONFIGURATION（解除・再選択） | `BusReset` | 捨てる |
+| SET_INTERFACE（alt 0、data interface） | `Cancelled`。両方向をDATA0へ | 対象方向を捨てる |
+| SET_FEATURE(ENDPOINT_HALT) | 対象endpointだけ`TransferError`。HALTのまま | 対象方向を捨てる |
+| CLEAR_FEATURE(ENDPOINT_HALT) | 対象endpointだけ`Cancelled`。DATA0へ | 対象方向を捨てる |
+| queueあふれの回復 | `BusReset` | 捨てる |
+| `end()` | `Stopped` | 解放する |
+
+- bus resetの始まり（ISR）で、coreは構成を無効にし、新しい投稿とDMAの登録を拒否します。workerがreset処理を終えるまで続きます。
+- 構成を作り直すたびに、「構成の世代」を進めます。queueに残った古い世代の完了eventは捨てます。
+  同じendpoint番号を再利用しても、古い完了が新しい借用を返すことはありません。
+- `write()`で受け付けたが未送信のdataは、上の出来事で失われることがあります。確実に届ける必要があるなら、アプリ側で確認と再送をしてください。
+- 上の表はCDC/Vendorの動作です。他のclassは各class文書を参照してください。
+
+### 9.6 ZLPと転送の終わり
+
+bulkの転送は、MPS未満のpacket（short packet）で終わります（USB 2.0 §5.8.3）。
+長さがMPSのちょうど倍数だと、受け手は「まだ続く」と解釈します。終わりを示すにはZLPが要ります。
+
+| 経路 | 終端の指定 |
+| --- | --- |
+| 借用TX | 転送ごとに`EspUsbTransferTermination`（`Continue` / `EndWithShortPacket`） |
+| copy TX | `streamTermination`（Vendorの既定は`Continue`、CDCの既定は`EndWithShortPacket`） |
+
+「特定の長さのときだけHostのreadが返らない」「ときどき空のreadが返る」は、ここが原因であることが多いです。
+Host側は、ZLPが来る場合と来ない場合の両方を前提にしてください。isochronousには、bulkのZLPの規則を使いません。
+
+---
+
+## 10. PSRAMの使い方
+
+PSRAMは、CPUが読み書きする保存先として使えます。USBのDMAが触る領域は、内部RAMのままです。
+
+| 領域 | PSRAM |
+| --- | --- |
+| CDC/Vendorのring（`rxBuffer`/`txBuffer`に利用者が渡す） | 使える。境界の条件もない |
+| 自動確保のring | `malloc`で確保する。置き場所はsdkconfigのmalloc設定による |
+| MSCの保存先（RAM disk、callbackの先） | 使える |
+| classのDMA用buffer、copy送信のstaging | 使わない（ライブラリが内部RAMに確保） |
+| 借用転送のbuffer | 使えない（`NotDmaCapable`） |
+| MSCの`transferBuffer`など、DMAへ渡す利用者buffer | 使えない（`configure()`が`ESP_ERR_INVALID_ARG`） |
+
+- 利用者が渡したringは、ライブラリが解放しません。`begin()`から`end()`まで保持してください。
+- PSRAMのdataを借用転送で送りたいときは、アプリが内部RAMの借用bufferへcopyしてから投稿します。ライブラリは黙ってbounce copyしません。
+
+確認した範囲：P4のFS loopbackとP4/P4XのHS直結で、Vendorのring（各8 KiB）とMSCの保存先をPSRAMに置いた試験に成功しています。
+
+---
+
+## 11. suspendとremote wakeup
+
+### 11.1 suspend
+
+busが3 ms以上idleになると、deviceは休止（suspend）に入ります（USB 2.0 §7.1.7.6）。
+
+- `suspended()`がtrueになります。構成は保たれ、`ready()`もtrueのままです。
+- 休止はresetではありません。借用bufferは自動では返りません。完了、取消し、reset、`end()`のどれかで返ります。
+- 復帰（resume）は、controllerのresume割込みか、SOFの再開で検出します。
+- 最初のSETUPを受ける前の休止は、休止として扱いません。
+- 休止中の消費電流（§7.2.3）を抑えるのは、boardとアプリの仕事です。ライブラリはSoCのsleepや周辺回路を制御しません。
+
+### 11.2 remote wakeup
+
+休止中のHostを、Device側から起こす機能です。次の3つを分けて扱います。
+
+| 段階 | 誰が決めるか | API |
+| --- | --- | --- |
+| 能力の広告 | アプリ（`begin()`の前） | `config.remoteWakeupSupported`（既定false）。configurationのbmAttributes bit5になる |
+| 使用の許可 | Host（SET_FEATURE / CLEAR_FEATURE） | `remoteWakeupEnabled()`で照会 |
+| 起こす要求 | アプリ | `remoteWakeup()` |
+
+```cpp
+EspUsbDeviceConfig config;
+config.remoteWakeupSupported = true;
+device.begin(config);
+
+// loop()などのtaskで、外部のeventがあったとき
+if (device.suspended() && device.remoteWakeupEnabled()) {
+  esp_err_t result = device.remoteWakeup();
+  // ESP_OKは「要求をqueueへ受け付けた」という意味。復帰はsuspended()がfalseになることで確かめる
 }
 ```
 
-効くのは、スケッチが差し出せる量を何かが制限している場合だけです。データが手元に揃っているスケッチはFIFOの容量より多く差し出すので、`write()` は毎回きっちり容量ぶん受け取り、どの転送も自然とpacketの整数倍になります。しかも空きができた瞬間に埋め直すので、転送が完了した時点でFIFOが空になることもなく、ZLPも出ません。前段に生産側を置くと両方変わります。半端な書き込みが半端な長さの転送を作り、FIFOが枯れると長さ0の転送を作ります。
+| `remoteWakeup()`の戻り値 | 条件 |
+| --- | --- |
+| `ESP_OK` | 要求を受け付けた。復帰の完了ではない |
+| `ESP_ERR_INVALID_STATE` | 開始前・停止中、`DescriptorsOnly`、未構成、休止していない、Hostが許可していない、ISRから呼んだ、要求が保留中 |
+| `ESP_ERR_TIMEOUT` | event queueに空きがない |
+| `ESP_ERR_NOT_SUPPORTED` | USB OTGのない機種 |
 
-この2つは向きが逆なので、区別する価値があります。半端な長さは「スケッチがFIFOに端数しか差し出していない」ことを示し、整数倍で書けば消えます。長さ0のほうは「FIFOが枯れた」＝生産側が追いついていないことを示します。つまり半端を潰したあとでホスト側の短いURBが増えるなら、デバイスはバスではなくデータを待っています。
-
----
-
-## 7. エラーとリカバリ
-
-### 7.1 NAKとSTALLを返す側
-
-- **NAK** … 「今は用意がない」。ホストが再試行するのでエラーではありません。デバイス側では、送るデータがないIN endpointが自動的にNAKを返します
-- **STALL** … 「その要求／転送は扱えない」。コントロール転送では正当な回答です（[4.3](#43-3つのステージとstall)）。バルク／インタラプトのendpointでSTALLすると halt 状態になり、ホストが `CLEAR_FEATURE(ENDPOINT_HALT)` を送るまで通りません
-
-### 7.2 ZLP
-
-バルク転送は**MPS未満のパケット（short packet）**で終わります。転送長がMPSの倍数ちょうどのとき、受け手は「まだ続く」と解釈するので、プロトコルによっては**ZLP（長さ0パケット）**が終端として必要です。
-
-TinyUSBは、ちょうどMPSの倍数の転送を `flush()` したときにZLPを送ります。ホスト側のスクリプトを書くときは、**この0バイトパケットが来ることを前提にしてください**。「特定サイズでだけ止まる」「たまに空の読み出しが返る」はここが原因です。
-
-### 7.3 バスリセット、サスペンド、デコンフィグレーション
-
-デバイス側の状態は、次の3つで無効になります。
-
-| 出来事 | 起きること |
-|--------|-----------|
-| `SET_CONFIGURATION 0` | `tud_umount_cb()` → `onBusDetached()` |
-| 切断（VBUS検出があるボードのみ） | 同上 |
-| `SET_CONFIGURATION n` | `tud_mount_cb()` → `onBusAttached()` |
-
-**フックが2つある理由**が重要です。素のバスリセットは `onBusDetached()` に届きません。VBUSセンシングを配線していないボード（大半のESP32ボード）では、抜線も届きません。したがって**挿し直しは検出されないまま再列挙へ進みます**。常に発火するのは `onBusAttached()`（`SET_CONFIGURATION n`）の方で、これが穴を塞いでいます。mount時点ではホストは「何も押されていない」「LEDは設定していない」と認識しているので、ここで状態を捨てるのはどちらにせよ正しい動作です。
-
-自分でクラスを書くときも、**ホストが知っていると信じている状態は両方のフックで捨ててください**。
-
-### 7.4 未mount時の送信
-
-`device.ready()`（= `tud_mounted()`）が false のときの送信は、キューに積まれず**捨てられます**。送信APIは `false` を返します。
-
-これが「送っているのに届かない」の最も多い原因です。入門編のConsoleが送信前に `ready()` を確認して明示的なエラーを出すのは、`false` という戻り値だけでは理由がわからないからです。
+- Hostの許可は、bus resetと`end()`で消えます（§9.4.5）。アプリが自分で許可を立てるAPIはありません。
+- 受け付けた後にresume、CLEAR_FEATURE、reset、再構成、停止が起きたら、その要求は実行しません。
+- 規格は、busが5 ms以上idleになってからresumeを要求するよう定めています（§7.1.7.7）。workerは5 ms＋1 tick待ってから状態を確かめ直し、信号を出します。
+- resume信号の長さは1〜15 msです（§7.1.7.7）。ライブラリはcontrollerのlockの中で2 ms待ちます（`esp_rom_delay_us`）。
+  `vTaskDelay(1 ms)`は、tickの途中で呼ぶと1 ms未満になり得るためです。代償として、その間、実行しているcoreの割込みが約2 ms遅れます。
+- 使わなければ、timer、task、待ちは増えません。
 
 ---
 
-## 8. コールバックのコンテキスト
+## 12. 独自のFunctionを足す
 
-### 8.1 全部 usbd タスクで走る
+### 12.1 まず既存のFunctionの上に載せる
 
-**ライブラリが呼ぶコールバックは、すべて `espusb-device` タスク（usbdタスク）で走ります。** `loop()` とは別タスクで、しかも**優先度は最高**です。
+新しい機能の多くは、既存のFunctionの上に自分のprotocolを載せれば作れます。
 
-| コールバック | 契機 |
-|-------------|------|
-| `keyboard.onOutputReport()` | ホストのLEDレポート |
-| `keyboard.onProtocol()` | boot / report protocol の切り替え |
-| `cdc.onRx()` / `onLineCoding()` / `onLineState()` | CDCの受信・制御 |
-| `vendor.onRx()` / `onControlRequest()` | vendor bulk OUT・コントロール要求 |
-| `hidVendor.onOutputReport()` / `onFeatureReport()` | HIDのOUT/FEATUREレポート |
-| MSCのSCSIコールバック | ホストの読み書き |
-| Audioのイベント、Netのフレーム受信 | 各クラス |
+| やりたいこと | 使うもの |
+| --- | --- |
+| driverなしで独自dataを流す | `EspUsbDeviceHidVendor`（固定長report）、`EspUsbDeviceHidCustom`（自分のreport descriptor） |
+| 帯域の要る独自protocol | `EspUsbDeviceVendor`（bulk IN/OUT＋vendor control、WinUSB/WebUSB） |
+| serialとして見せる | `EspUsbDeviceCdcSerial` |
+| control要求の観測 | `device.onAnyControlRequest()` |
 
-制約は明確です。
+### 12.2 EspUsbDeviceClassの公開範囲
 
-| してよいこと | してはいけないこと |
-|-------------|------------------|
-| データをコピーする、フラグを立てる、キューに積む | `delay()`、長いループ、完了待ち |
-| 短いログ出力 | 大きなヒープ確保、ファイルI/O、ネットワーク処理 |
-| 状態変数の更新 | 別タスクのロック待ち |
+全Functionの基底`EspUsbDeviceClass`は公開されています。ただし公開されているのは、**descriptorを書く部分**までです。
 
-**このタスクが最高優先度で動いていることを忘れないでください。** ここで100ms待つと、その間USBの応答が全部止まるだけでなく、優先度の低いタスクは一切走りません。
+| 公開されているもの | 内容 |
+| --- | --- |
+| `configurationDescriptor(dst, itf, ep, packet)` | 必須。割り当てられた番号でdescriptorを書き、長さを返す |
+| `configurationDescriptorForSpeed(dst, capacity, itf, ep, highSpeed)` | 速度で内容が変わる場合 |
+| `interfaceCount()` / `endpointCount()` | 必須。使うinterface数とendpoint番号の数 |
+| `functionName()`、`auxiliaryStringCount()`/`auxiliaryString()` | 文字列 |
+| `descriptorConfigurationError()` | 設定の誤りを`begin()`へ返す |
+| `isHid()`など種類の判定 | 既定はすべてfalse。`isHid()`がtrueなのはHID Function（`EspUsbHidFunction`）だけ |
 
-正しい形は Host側と同じです。
+writerの契約：
+
+- `dst == nullptr`のときは、長さだけを返し、何も書かない。
+- 非nullのときは、`capacity`を超えて書かない。
+- 構成を変えるまで、数えた長さと書いた長さを一致させる。一致しなければ`begin()`が`ESP_ERR_INVALID_SIZE`で拒否します。
+- 渡された番号をそのまま使う。自分で番号を決めない。
 
 ```cpp
-volatile bool workRequested = false;
-
-vendor.onRx([](size_t available) {
-  vendor.read(rxBuffer, min(available, sizeof(rxBuffer)));  // コピーだけ
-  workRequested = true;                                      // 処理は loop() で
-});
-
-void loop() {
-  if (workRequested) {
-    workRequested = false;
-    doSomethingExpensive();
+class MyFunction : public EspUsbDeviceClass {
+public:
+  explicit MyFunction(EspUsbDevice &device) : EspUsbDeviceClass(device) {}
+  uint8_t interfaceCount() const override { return 1; }
+  uint8_t endpointCount() const override { return 0; }
+  uint16_t configurationDescriptor(uint8_t *dst, uint8_t itf, uint8_t, uint16_t) override {
+    const uint8_t bytes[] = {9, 4, itf, 0, 0, 0xff, 0, 0, 0};
+    if (dst) memcpy(dst, bytes, sizeof(bytes));
+    return sizeof(bytes);
   }
-}
+};
 ```
 
-**データポインタの寿命**も同じです。`onOutputReport()` などが渡す `data` はライブラリ内部のバッファで、戻ると再利用されます。後で使うならコピーしてください。
+**制限：** endpointの開閉、転送、class要求への応答を行う「class driver」の登録は内部API（`src/internal/`）で、v3では公開していません。
+coreはSET_CONFIGURATIONのとき、すべてのinterfaceをどれかのclass driverに受け持たせます。受け持つdriverのないinterfaceがあると、SET_CONFIGURATIONは失敗します。
+そのため、`EspUsbDeviceClass`を直接継承しただけのFunctionは、Hostとの通信には使えません。
+用途は、`DescriptorsOnly`でのdescriptorの検証などに限られます。新しいUSB classを実装するには、ライブラリ本体の変更が要ります。
 
-### 8.2 なぜ高頻度I/Oがpolling APIなのか
+### 12.3 本体にclassを足す場合の手順
 
-Audio と Network の本体データは、**コールバックではなく polling API** になっています。
+ライブラリ本体にclassを足すときは、次の順で進めると、原因を切り分けやすくなります。
 
-```cpp
-// Audio: コールバックではなく、自分の周期で読む
-int n = playback.available();
-size_t got = playback.read(buffer, sizeof(buffer));
+1. `DescriptorsOnly`でdescriptorだけを作り、byte列とendpoint予算を確かめる。
+2. 実機で列挙させ、Host側の`lsusb -v`などと照らし合わせる。
+3. data経路を1方向ずつ確かめる。
+4. reset、構成の再選択、HALT、取消し、`end()`の各経路で、bufferが1回だけ返ることを確かめる。
+5. `validation/`の標準試験（`--combo all`）を通す。
 
-// Network: 生フレームは sendFrame() / onFrame()
-```
-
-理由は8.1の裏返しです。48kHz/2ch/16bitのオーディオは1msあたり192バイト来ます。これをコールバックで渡すと、**アプリケーションのDSPやI2S書き込みがusbdタスクの中で走る**ことになり、USBのタイミングと競合します。境界をFIFOで切り、アプリは自分のタスクの都合で読み書きする、という設計です。
-
-その代わり、**読み書きが遅れればオーバーラン／アンダーランになります**。これは隠さずカウントされます。
-
-```cpp
-EspUsbAudioStreamStats s = playback.stats();
-// s.transferredBytes / s.overrunCount / s.overrunBytes
-//                     / s.underrunCount / s.underrunBytes
-```
-
-`overrunCount` が増えるなら読み出しが遅い、`underrunCount` が増えるなら書き込みが間に合っていません。**音が途切れるときは、まずこの数字を見てください。** 「なんとなく途切れる」を「1秒あたり何回、何バイト落ちている」に変えられます。
-
-Networkの送信側も同じ思想で、キューが埋まればフレームを捨ててTCPの再送に任せます（[1.3](#13-tinyusb-apiは-usbd-タスクから呼ぶ)）。
+内部の設計は[docs/development/architecture.ja.md](development/architecture.ja.md)を参照してください。
 
 ---
 
-## 9. 新しいクラスを実装する
+## 13. 計測とデバッグ
 
-### 9.1 EspUsbDeviceClass を継承する
-
-ライブラリのクラスはすべて `EspUsbDeviceClass` の派生です。コンストラクタが `device.addClass(this)` を呼ぶので、**オブジェクトを作るだけで登録されます**（6個まで）。
-
-実装すべきものは次のとおりです。
-
-| メンバ | 役割 |
-|--------|------|
-| `configurationDescriptor(dst, interfaceNumber, endpointNumber, endpointSize)` | **必須。** 割り当てられた番号を使って自分のディスクリプタを書き、書いたバイト数を返す |
-| `interfaceCount()` / `endpointCount()` | **必須。** 採番を進める量 |
-| `isHid()` / `isCdc()` / `isMsc()` / `isVendor()` / `isAudio()` / `isNet()` / `isMidi()` | 種別。既定は `isHid()` が true |
-| `begin()` / `end()` | スタック起動前の準備と後始末 |
-| `afterDeviceStarted()` | スタック起動後の処理 |
-| `configurationDescriptorForSpeed(dst, capacity, ..., highSpeed)` | 速度で内容が変わる場合。既定はMPSを64/512で切り替えて `configurationDescriptor()` を呼ぶ |
-| `hidReportDescriptor()` / `hidReportDescriptorLength()` / `hidReportId()` / `hidInEndpointSize()` | HIDの場合 |
-| `functionName()` / `assignFunctionIds(instance, stringIndex)` | 複数登録できるクラス用。公開する名前と、ビルダーがディスクリプタ順に割り当てるインスタンス番号・string index |
-| `onBusAttached()` / `onBusDetached()` | ホスト側の認識が無効になったときに状態を捨てる（[7.3](#73-バスリセットサスペンドデコンフィグレーション)） |
-
-**`configurationDescriptor()` は渡された番号をそのまま使うこと**が重要です。自分で番号を決めると採番が壊れ、`validateControllerEndpoints()` の検査もすり抜けます。
-
-### 9.2 TinyUSBが持っているクラスなら
-
-CDC、HID、MIDI、MSC、Vendor、NCM、Audioは**すでにコンパイルされています**（[2.2](#22-tusb_configh-を所有した結果)）。したがって新しい機能は、多くの場合「既存クラスの上にプロトコルを載せる」だけで済みます。
-
-- 独自データをドライバなしで流したい → `EspUsbDeviceHidVendor`（レポートは最大 `CFG_TUD_HID_EP_BUFSIZE - 1`。S2/S3で63、P4で511）または `EspUsbDeviceHidCustom`（自前のレポートディスクリプタ）
-- 帯域が要る独自プロトコル → `EspUsbDeviceVendor`（bulk IN/OUT ＋ control）
-- シリアルに見せる → `EspUsbDeviceCdcSerial`
-
-### 9.3 TinyUSBが持っていないクラスなら
-
-CCIDが実例です。手順は次のようになります。
-
-1. `usbd_class_driver_t` を実装する（`init` / `reset` / `open` / `control_xfer_cb` / `xfer_cb` / `sof`）
-2. クラスの `begin()` から `espUsbDeviceRegisterAppDrivers(drivers, count)` を呼ぶ。**スタック起動前**であること
-3. `configurationDescriptor()` でクラス固有ディスクリプタを含めて書き出す
-4. ドライバのテーブルは**スタックが動いている間ずっと有効**でなければならない（staticにする）
-
-`usbd_app_driver_get_cb` を直接名指ししないこと（[2.5](#25-tinyusbが持たないクラスを足す)）。フットプリントのための間接参照を壊すと、そのクラスを使わないスケッチにもドライバがリンクされます。
-
-### 9.4 実装の順序
-
-1. **`config.startTinyUsb = false` でディスクリプタだけ作る。** ハードウェア不要。`tests/single/descriptor` と同じやり方で、バイト列が意図どおりか先に固める
-2. **DescriptorDumpに載せて、endpoint予算を確認する**
-3. **実機で列挙させ、`device_inspect` でホスト側と突き合わせる**
-4. **データ経路を1方向ずつ確認する**（まずデバイス→ホスト、次にホスト→デバイス）
-5. **`enumeration_soak` を回す。** 再列挙で状態が壊れないか
-6. **エラー経路を試す**（未mountでの送信、抜線、ホストのサスペンド）
-
-### 9.5 参考にする実装
-
-| やりたいこと | 参考 |
-|-------------|------|
-| 最小のクラス実装 | `EspUsbDeviceHidMouse`（1インターフェース、IN 1本） |
-| 複数インターフェース＋クラス固有ディスクリプタ | `EspUsbDeviceCdcSerial`（IAD＋機能ディスクリプタ） |
-| bulk双方向＋control | `EspUsbDeviceVendor` |
-| TinyUSB外のクラスドライバ | `EspUsbDeviceCcid` と `internal/EspUsbDeviceAppDriver.*` |
-| 速度で内容が変わるディスクリプタ | `EspUsbAudioFunction` |
-| usbdタスクとの受け渡し | `EspUsbDeviceNet` のTXキュー |
-
----
-
-## 10. 計測とデバッグ
-
-### 10.1 何を測るか
+### 13.1 何で確かめるか
 
 | 知りたいこと | 手段 |
-|-------------|------|
-| 自分が宣言している構成 | [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/) |
-| endpoint予算に収まるか | 同上（ホスト接続不要） |
-| ホストが受け取った内容 | [`device_inspect`](../tests/manual/device_inspect/) と `lsusb -v` |
-| 任意の転送を試す | [`EspUsbDeviceConsole`](../examples/Info/EspUsbDeviceConsole/) |
-| 再列挙耐性 | [`enumeration_soak`](../tests/manual/enumeration_soak/) |
-| HSの実効速度 | [`p4_hs_bulk`](../tests/manual/p4_hs_bulk/) |
-| Audioの取りこぼし | `stats()` の overrun / underrun |
-| ディスクリプタの自動検証 | `config.startTinyUsb = false` ＋ [`tests/unit/`](../tests/unit/) |
-| 2台構成での自動テスト | [`tests/peer/`](../tests/peer/) |
-| P4のポート特定 | [`tests/manual/`](../tests/manual/) |
+| --- | --- |
+| `begin()`の失敗理由 | `device.lastError()` / `lastErrorName()` |
+| 自分が出しているdescriptor、endpoint予算 | [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/)（Host不要） |
+| 列挙までの段階 | [`EspUsbDeviceBringUpCheck`](../examples/Info/EspUsbDeviceBringUpCheck/) |
+| Hostが受け取った内容 | `lsusb -v`（Linux）、USB Device Tree Viewer（Windows） |
+| Hostが送ったcontrol要求 | `device.onAnyControlRequest()` |
+| bulk INの二重buffer | `device.bulkInDoubleBuffered()` |
+| Hostが決めた速度（FS／HS） | `device.speed()` |
+| 2台構成の自動試験 | `validation/`（`pytest --combo all`） |
 
-`tests/manual/` は正式な回帰テストではなく、**人が要るスケッチの置き場**です（ホストOSを見る、ケーブルを挿し替える、ブラウザを開く）。同じ用途の新しい調査を始めるときは、ここに追加するのが既存の作法です。
+### 13.2 切り分けの原則
 
-### 10.2 ログを読む
+1. **`begin()`が成功したかを先に見る。** 失敗しているなら、Hostは関係ありません。
+2. **Hostにつながずにdescriptorを読む。** 意図どおりでなければ、その先を調べても無駄です。
+3. **自分の出力とHostの受け取りを比べる。** 一致していれば、問題はdescriptorの上か下に絞れます。
+4. **Functionを1つずつ外す。** 複合deviceの問題が単機能で消えるなら、原因は予算か並び順です。
+5. **予期しない再列挙は、queueのあふれを疑う。** callbackが重くないか、workerのpriorityを下げていないか（[2.5](#25-event-queueとあふれ)）。
+6. **一度に複数を変えない。** class構成、MPS、buffer容量は1つずつ。
 
-Core Debug Level を `Verbose` にすると、ESP-IDF側（PHY、コントローラ）のログが出ます。TinyUSB自身のログは既定で切ってあります（`CFG_TUSB_DEBUG 0`）。
+### 13.3 速度について
 
-TinyUSBのログを出したい場合は `CFG_TUSB_DEBUG` を 1〜3 に上げてビルドし直します。**ただし出力量が多く、USBのタイミングそのものに影響します。** 列挙が通らない原因の切り分けでは、まずホスト側のログ（`dmesg -w` / USB Device Tree Viewer）の方が情報量が多いことがほとんどです。
+帯域は、Host側の作り方に大きく左右されます。
 
-### 10.3 切り分けの原則
+- Hostが同時に投げるreadの数（in-flightのURB）を増やす。1本ずつだと、URBの間にendpointが遊びます。
+- Hostの完了callbackでは、bufferの再投入だけをする。解析などの重い処理をcallbackの中で行うと、streamに穴が空きます。
+- device側では、bulk INの二重buffer（[6.4](#64-bulk-inの二重buffer)）、大きな転送長、借用転送のcallbackで投稿だけをすることが効きます。
 
-1. **`begin()` が成功したかを先に見る。** 失敗しているなら、ホストは一切関係ありません
-2. **ホストにつながずにDescriptorDumpを読む。** ディスクリプタが意図どおりでなければ、その先を調べても無駄です
-3. **自分の出力とホストの受け取りを突き合わせる。** 一致していれば、問題はディスクリプタより下か上のどちらかに絞れます
-4. **クラスを1つずつ外す。** 複合デバイスの問題は、単機能に戻すと消えることが多く、消えたなら原因は予算か並び順です
-5. **別のホストOSで試す。** Windowsだけ、macOSだけで起きる問題は珍しくありません。OSごとの癖は[入門編5章](usb-device-guide.ja.md#5-ホストosから自分を観測する)にまとめています
-6. **同時に複数変えない。** クラス構成、MPS、バッファサイズは1つずつ
+v3での帯域の基準値は、まだ測っていません。
 
 ---
 
-## 関連ドキュメント
+## 14. v2との違い
 
-- [USB Device開発ガイド（入門編）](usb-device-guide.ja.md) — 基礎、コネクタ、実験手順、ホストOSからの観測
-- [USB経由のファームウェア更新](ota-over-usb.ja.md) — chip別のboot mode、スケッチからの入り方、OTA経路
-- [README.ja.md](../README.ja.md) — APIリファレンスとクラス対応状況
-- [third_party/tinyusb/PROVENANCE.ja.md](../third_party/tinyusb/PROVENANCE.ja.md) — 同梱TinyUSBの由来と検証方法
-- [docs/DESIGN_NOTES.ja.md](DESIGN_NOTES.ja.md) — 設計の背景
-- [docs/V2_ARCHITECTURE.ja.md](V2_ARCHITECTURE.ja.md) — v2のアーキテクチャ
-- [tests/manual/README.ja.md](../tests/manual/README.ja.md) — マニュアルテスト一覧
-- [tests/TEST_PLAN.ja.md](../tests/TEST_PLAN.ja.md) — テスト戦略
-- [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) — ホスト側。[USB Host開発ガイド（上級編）](https://github.com/tanakamasayuki/EspUsbHost/blob/main/docs/usb-host-advanced.ja.md)
+| v2 | v3 |
+| --- | --- |
+| TinyUSBのdevice stackとclass driverを同梱してbuild | 使わない。本体のcoreとFunctionが処理し、DWC2 driverだけTinyUSB由来の保守fork |
+| `tusb_config.h`と`build_opt.h`の`CFG_TUD_*`で容量を調整 | 各Functionの`configure()`で、停止中に指定。旧flagはcompile error |
+| `config.startTinyUsb = false` | `config.startMode = EspUsbDeviceStartMode::DescriptorsOnly` |
+| `device.task()` | 削除。USB workerが処理する |
+| workerのstack/priorityは固定 | `taskStackBytes`/`taskPriority`/`taskCoreId`/`eventQueueDepth` |
+| Function（class）は6個まで | 251個まで（endpoint/FIFOの予算は別に検査） |
+| configuration descriptorは704 byte、複合HID reportは256 byteまで | 実際の長さで確保。上限はUSBの16 bit |
+| 複合HIDのreport IDは型ごとに固定（Keyboard=1など） | 構成ごとに一意に割り当てる。`compositeReportId()`で読む |
+| 文字列はASCIIを16 bitへ広げ、63文字で切り詰め | UTF-8をUTF-16へ変換。126 code unitまで。超過や不正はエラー |
+| WebUSB URLは、prefixなしをhttpsとみなし、切り詰める | prefixなしはscheme 255で全文を保存。長すぎるとエラー |
+| `writeDirect`はbuild flagで有効にし、65535 byteまで | 常に使える。投稿結果は`EspUsbTransferSubmission`。長さに16 bitの上限なし。`readDirect`と取消しを追加 |
+| `end()`は戻り値なし | `esp_err_t`。成功後は、DMAもcallbackもbufferに触れない。workerの停止待ちは`stopTimeoutMs`まで（`ESP_ERR_TIMEOUT`） |
+| `usbd_app_driver_get_cb`でclass driverを追加 | 内部API。公開していない（[12.2](#122-espusbdeviceclassの公開範囲)） |
+| remote wakeupなし | `remoteWakeupSupported`、`remoteWakeupEnabled()`、`remoteWakeup()` |
+| 休止の照会なし | `suspended()` |
+| 速度の照会なし | `speed()` |
+| VBUS検出は`CFG_TUD_VBUS_DETECT_HW` | `config.vbusSensing` |
+
+移行の手順は[v2からの移行](migrating-from-v2.ja.md)を参照してください。
+
+---
+
+## 15. 確認した範囲
+
+| 環境 | 状況 |
+| --- | --- |
+| ESP32-S3 二台のFS peer | 主な試験環境。全classと共通の仕組み |
+| ESP32-P4 一台のHS↔FS loopback | 両controllerで、各classの基本通信 |
+| 旧P4（v1.x）とP4X（v3.x）のHS直結 | 両方向 |
+| P4XとLinux PCのHS直結 | DFU/MSCのwire |
+| ESP32-S2 | compileのみ。実機は未確認 |
+| ESP32-S31 | 未対応 |
+| Windows / macOS | v3では未確認 |
+
+標準の試験は、`validation/`の`pytest --combo all`です（6組、200件超）。基準はArduino-ESP32 3.3.12です。
+
+この文書の内容のうち、次は確かめていません。
+
+- remote wakeupの、S2/P4実機とPCのOSでの動作（S3–S3だけで確認）。
+- `vbusSensing = true`で、実際にcableを抜いたときのVBUS検出。
+- HSの電気的な適合性とcompliance test（`SET_FEATURE(TEST_MODE)`の各test信号を測定器で確かめていない）。
+- v3での帯域の基準値。
+
+---
+
+## 関連文書
+
+- [USB Device開発ガイド（入門編）](usb-device-guide.ja.md)
+- [example workflow](example-workflow.ja.md)
+- [troubleshooting](troubleshooting.ja.md)
+- [USB経由のfirmware更新](ota-over-usb.ja.md)
+- [v2からの移行](migrating-from-v2.ja.md)
+- [Arduino-ESP32のUSBからの移行](migrating-from-arduino-esp32-usb.ja.md)
+- class別：[HID](classes/hid.ja.md)、[CDC](classes/cdc.ja.md)、[Vendor](classes/vendor.ja.md)、[MIDI](classes/midi.ja.md)、[MSC](classes/msc.ja.md)、[Audio](classes/audio.ja.md)、[Video](classes/video.ja.md)、[NCM](classes/ncm.ja.md)、[CCID](classes/ccid.ja.md)、[DFU](classes/dfu.ja.md)
+- [USB backendの由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)
+- [内部設計](development/architecture.ja.md)、[試験](development/testing.ja.md)
+- 規格：[USB 2.0 specification](https://www.usb.org/document-library/usb-20-specification)、[WebUSB](https://wicg.github.io/webusb/)、[Microsoft OS 2.0 descriptors](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-os-2-0-descriptors-specification)
+- Host側：[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost)

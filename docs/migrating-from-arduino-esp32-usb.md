@@ -2,40 +2,87 @@
 
 > 日本語版: [migrating-from-arduino-esp32-usb.ja.md](migrating-from-arduino-esp32-usb.ja.md)
 
-This guide is for sketches built on the Arduino-ESP32 core's USB device API -
-`USB.begin()`, `USBHIDKeyboard`, `USBHIDMouse`, `USBCDC`, `USBMSC`, `USBMIDI`,
-`USBVendor`, and friends. EspUsbDevice is **deliberately not API-compatible**
-with that stack: here the sketch controls the port, speed, descriptors,
-endpoint packet sizes, and raw class reports explicitly. This page maps each
-core API to its equivalent, shows the payoff, and lists what has no
-counterpart on either side.
+This guide is for sketches written against the USB device API that ships with
+the Arduino-ESP32 core: `USB.begin()`, `USBHIDKeyboard`, `USBHIDMouse`,
+`USBCDC`, `USBMSC`, `USBMIDI`, `USBVendor` and the rest. EspUsbDevice v3 is
+**deliberately not API-compatible** with that stack. Here the sketch states the
+controller, the descriptors, each Function's buffers and the raw reports
+explicitly, and every step reports why it failed. This page maps each core API
+to its v3 counterpart and lists what has no counterpart on either side.
+
+Coming from EspUsbDevice 2.x instead? See [Migrating from v2](migrating-from-v2.md).
 
 ## The model change (read this first)
 
-| | Arduino-ESP32 core | EspUsbDevice |
-|---|---|---|
-| Entry point | per-class `begin()`, then a global `USB.begin()` | one `EspUsbDevice` object; classes register themselves in their constructors; one `device.begin(config)` |
-| VID / PID / strings | `USB.VID()` / `USB.PID()` / `USB.productName()` … setters (or build flags) | fields of `EspUsbDeviceConfig`, passed to `begin()` |
-| Descriptors | owned by the core | owned by the library and inspectable byte for byte ([DescriptorDump](../examples/Info/EspUsbDeviceDescriptorDump/)) |
-| Events | `USB.onEvent()` global event hub | per-class callbacks (`onOutputReport`, `onLineState`, …) plus `device.ready()` |
-| Errors | mostly silent | `begin()` returns `false`; `device.lastErrorName()` names the reason |
-| Composite | classes stack implicitly | up to 4 classes register explicitly; endpoint budget checked before the PHY starts |
+| | Arduino-ESP32 core | EspUsbDevice v3 |
+| --- | --- | --- |
+| Objects | one global `USB` plus per-class objects | one `EspUsbDevice` (the **Device**) and one object per **Function**; each Function registers with the Device in its constructor |
+| Start | each class's `begin()`, then `USB.begin()` | `configure()` each Function if needed, then one `device.begin(config)`. A Function has no public `begin()`; calling one is a compile error |
+| Stop | - | `device.end()` releases everything; `end()` → `configure()` → `begin()` changes settings without rebuilding |
+| VID / PID / strings | `USB.VID()`, `USB.productName()`, ... | fields of `EspUsbDeviceConfig`, passed to `device.begin()` |
+| Buffer sizes | fixed in the core, or build flags | per Function, with `configure()` at run time. Old `CFG_TUD_*` flags are a compile error |
+| Callbacks | `onEvent()` at any time | typed callbacks (`onLineCoding`, `onOutputReport`, ...), registered **before** `device.begin()` |
+| Device state | `USB.onEvent(ARDUINO_USB_*_EVENT)` | poll `device.started()`, `device.ready()`, `device.suspended()` |
+| Errors | mostly silent | `configure()` returns `esp_err_t`; `begin()` returns `bool` and `device.lastError()` holds the reason |
+| Composite | classes stack implicitly | any number of Functions; the endpoint budget is checked in `begin()` before the PHY starts |
+| Controller | fixed per chip | `config.controller` selects FS or HS on ESP32-P4 |
 
-The two stacks are **mutually exclusive**: never call `USB.begin()` in an
-EspUsbDevice sketch, build with `USB Mode` = "USB-OTG (TinyUSB)", and leave
-`USB CDC On Boot` disabled. `Serial` therefore comes out on the UART - see
-[the guide, section 3.5](usb-device-guide.md#35-mutually-exclusive-with-the-stock-arduino-esp32-usb-stack).
+### The two stacks are exclusive
 
-### Migration checklist
+EspUsbDevice drives the USB OTG controller with its own driver. The core's USB
+device stack drives the same controller. In an EspUsbDevice sketch:
 
-1. Remove `#include "USB.h"` and every `USB.*` call.
-2. Create one `EspUsbDevice device;` and pass it to each class constructor.
-3. Move VID/PID/manufacturer/product/serial into an `EspUsbDeviceConfig`.
-4. Replace the per-class `begin()` + `USB.begin()` pair with a single
-   `device.begin(config)` after all classes are constructed.
-5. Gate sending on `device.ready()` - reports sent while unmounted are
-   dropped, not queued.
-6. Check `begin()`'s return value and print `device.lastErrorName()`.
+- Do not call `USB.begin()` or create any `USBHID*`, `USBCDC`, `USBMSC`,
+  `USBMIDI`, `USBVendor` or `FirmwareMSC` object.
+- On ESP32-S2/S3, build with *USB Mode: USB-OTG (TinyUSB)* (`USBMode=default`).
+- Leave *USB CDC On Boot*, *USB MSC On Boot* and *USB DFU On Boot* disabled for
+  the OTG controller.
+- `Serial` is therefore not on the OTG port. It comes out on the UART (or, on
+  ESP32-P4, on USB Serial/JTAG if you build with `USBMode=hwcdc`). See
+  [Troubleshooting, 4](troubleshooting.md#4-build-and-upload).
+
+### Checklist
+
+1. Remove `#include "USB.h"` and the class headers; `#include <EspUsbDevice.h>`.
+2. Create one `EspUsbDevice device;` and pass it to each Function constructor.
+   Declare Functions before `device.begin()`.
+3. Move VID, PID and strings into an `EspUsbDeviceConfig`.
+4. Replace every class `begin()` and `USB.begin()` with one
+   `device.begin(config)`. Keep `msc.begin(blockCount, blockSize)`; it only sets
+   the geometry.
+5. Register every callback before `device.begin()`, and check the returned
+   `esp_err_t`.
+6. Send only while `device.ready()` is `true`.
+7. Check `begin()`'s result and print `esp_err_to_name(device.lastError())`.
+8. Change the PID (or serial number) while testing, so Windows does not reuse
+   what it remembered about the core stack's device.
+
+## USB object → EspUsbDeviceConfig
+
+| Core | v3 | Note |
+| --- | --- | --- |
+| `USB.VID(v)` / `USB.PID(p)` | `config.vid` / `config.pid` | default `0x303a` / `0x4000`; fine on a bench, not for a product |
+| `USB.manufacturerName()` / `productName()` / `serialNumber()` | `config.manufacturer` / `product` / `serialNumber` | UTF-8, up to 126 UTF-16 units each |
+| `USB.firmwareVersion(v)` | `config.deviceVersion` | `bcdDevice`, default `0x0100` |
+| `USB.usbPower(mA)` | `config.maxPowerMilliamps` | default 100 |
+| `USB.usbAttributes(...)` | `config.selfPowered`, `config.remoteWakeupSupported` | |
+| `USB.usbVersion()` | - | `bcdUSB` is 0x0200, or 0x0201 when a BOS descriptor exists |
+| `USB.usbClass()` / `usbSubClass()` / `usbProtocol()` | - | set automatically; `0xEF/0x02/0x01` whenever an IAD is present |
+| `USB.webUSB(true)` / `USB.webUSBURL(url)` | `config.webusbEnabled` / `config.webusbUrl` | |
+| `USB.onEvent(...)` | `device.ready()`, `device.suspended()`, `device.started()` | no device-level event callback |
+| `USB.begin()` | `device.begin(config)` | returns `bool`; reason in `device.lastError()` |
+
+```cpp
+EspUsbDeviceConfig config;
+config.vid = 0x303a;
+config.pid = 0x4001;
+config.manufacturer = "Example";
+config.product = "My Keyboard";
+config.serialNumber = "0001";
+if (!device.begin(config)) {
+  Serial.println(esp_err_to_name(device.lastError()));
+}
+```
 
 ## Keyboard: `USBHIDKeyboard` → `EspUsbDeviceHidKeyboard`
 
@@ -58,17 +105,16 @@ void loop() {
 }
 ```
 
-Is now:
+With v3:
 
 ```cpp
-#include "EspUsbDevice.h"
+#include <EspUsbDevice.h>
 EspUsbDevice device;
 EspUsbDeviceHidKeyboard keyboard(device);
 
 void setup() {
-  keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);
+  keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US);  // the host's layout
   EspUsbDeviceConfig config;
-  config.vid = 0x303a;
   config.pid = 0x4001;
   config.product = "My Keyboard";
   device.begin(config);
@@ -77,49 +123,49 @@ void loop() {
   if (!device.ready()) { delay(10); return; }
   keyboard.write("Hello\n");
   keyboard.tapUsage(ESP_USB_HID_KEY_R, ESP_USB_DEVICE_MOD_LEFT_GUI);
+  delay(1000);
 }
 ```
 
-| Core | EspUsbDevice | Note |
-|---|---|---|
-| `Keyboard.print()` / `println()` | `keyboard.write("text")` | layout-aware; set the **host's** layout with `setLayout()` |
-| `Keyboard.press('a')` / `release()` | `keyboard.pressKey('a')` / `releaseAll()` | ASCII path |
-| `Keyboard.press(KEY_LEFT_GUI)` + key | `keyboard.pressUsage(usage, modifiers)` / `tapUsage()` | HID usage IDs and modifier bits are the primary API, not translated key codes |
-| `Keyboard.releaseAll()` | `keyboard.releaseAll()` | same idea |
-| (no equivalent) | `keyboard.sendReport(...)` | raw boot or NKRO report, byte-exact |
-| (no equivalent) | `keyboard.enableNkro()` + `EspUsbDeviceNkroKeyboardReport` | true N-key rollover with a 224-bit bitmap |
-| (no equivalent) | `keyboard.ledState()` / `onOutputReport()` | NumLock/CapsLock/ScrollLock from the host |
-| (no equivalent) | `keyboard.onProtocol()` | detect the BIOS/UEFI boot-protocol switch |
+| Core | v3 | Note |
+| --- | --- | --- |
+| `Keyboard.print()` / `println()` / `write(c)` | `keyboard.write("text")`, `keyboard.tapKey(c)` | layout-aware. `write()` returns `false` at the first character the layout cannot type |
+| `Keyboard.begin(layout)` | `keyboard.setLayout(ESP_USB_DEVICE_KEYBOARD_LAYOUT_*)` | match the layout the **host** uses |
+| `Keyboard.press(KEY_LEFT_GUI)` then `press('r')` | `keyboard.pressUsage(ESP_USB_HID_KEY_R, ESP_USB_DEVICE_MOD_LEFT_GUI)` or `tapUsage(...)` | HID usage IDs and modifier bits are the primary API |
+| `Keyboard.press(c)` / `release(c)` | `keyboard.pressKey(c)` / `releaseKey(c)` | `releaseKey(c)` also releases the modifiers the layout uses for that character; `releaseUsage(usage)` for usage IDs |
+| several `press()` calls held together | `pressUsage()` / `pressKey()` | each press adds to the held keys and modifiers, as in the core. Without NKRO six non-modifier keys can be held; a seventh fails with `ESP_ERR_INVALID_SIZE` and changes nothing. `enableNkro()` for more |
+| `Keyboard.releaseAll()` | `keyboard.releaseAll()` | also releases modifiers |
+| `Keyboard.pressRaw()` / `sendReport(KeyReport*)` | `keyboard.sendReport(EspUsbDeviceBootKeyboardReport)` | byte-exact boot report |
+| `onEvent(ARDUINO_USB_HID_KEYBOARD_LED_EVENT)` | `keyboard.onOutputReport(...)` (before `begin()`) or poll `keyboard.ledState()` | |
+| - | `keyboard.enableNkro()` + `EspUsbDeviceNkroKeyboardReport` | N-key rollover (usages 0x00-0xDF) |
+| - | `keyboard.onProtocol()` / `protocol()` | detect the BIOS/UEFI boot-protocol switch |
 
 ## Mouse: `USBHIDMouse` → `EspUsbDeviceHidMouse`
 
-| Core | EspUsbDevice | Note |
-|---|---|---|
-| `Mouse.move(x, y, wheel)` | `mouse.move(x, y, wheel)` | same shape |
-| `Mouse.click(MOUSE_LEFT)` | `mouse.click(ESP_USB_DEVICE_MOUSE_LEFT)` | constants: `LEFT` / `RIGHT` / `MIDDLE` / `BACK` / `FORWARD` |
-| `Mouse.press()` / `release()` | `mouse.press(buttons)` / `release(buttons)` / `releaseAll()` | button masks |
-| (no equivalent) | `mouse.sendReport(...)` | raw boot mouse report |
+| Core | v3 | Note |
+| --- | --- | --- |
+| `Mouse.move(x, y, wheel, pan)` | `mouse.move(x, y, wheel, buttons)` | **the 4th argument is the button state, not pan.** Its default `EspUsbDeviceHidMouse::KeepButtons` keeps the buttons held by `press()`, so `press()` then `move()` drags as in the core; 0-255 replaces them |
+| `Mouse.click(MOUSE_LEFT)` | `mouse.click(ESP_USB_DEVICE_MOUSE_LEFT)` | `LEFT` / `RIGHT` / `MIDDLE` / `BACK` / `FORWARD` |
+| `Mouse.press(b)` / `release(b)` | `mouse.press(b)` / `release(b)` / `releaseAll()` | button masks |
+| `Mouse.isPressed(b)` | `(mouse.buttons() & b) != 0` | |
+| - | `mouse.wheel(w)`, `mouse.sendReport(EspUsbDeviceBootMouseReport)` | raw boot mouse report |
 
-`USBHIDAbsoluteMouse` has **no counterpart** - this library implements the
-relative boot mouse only.
+There is no horizontal pan and no absolute mouse (`USBHIDAbsoluteMouse`). Both
+can be built with `EspUsbDeviceHidCustom` and your own report descriptor.
 
-## Media keys and more HID: consumer / system control / gamepad / vendor HID
+## Other HID classes
 
-- `USBHIDConsumerControl` → [`EspUsbDeviceHidConsumerControl`](../examples/MediaKeys/):
-  `media.click(ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_UP)` etc., or any raw
-  16-bit consumer usage via `press()` / `sendUsage()`.
-- `USBHIDSystemControl` → `EspUsbDeviceHidSystemControl` (power / sleep / wake).
-- `USBHIDGamepad` → [`EspUsbDeviceHidGamepad`](../examples/Gamepad/):
-  one `gamepad.send(x, y, z, rz, rx, ry, hat, buttons)` call.
-- `USBHIDVendor` → [`EspUsbDeviceHidVendor`](../examples/VendorHID/):
-  vendor-defined HID with interrupt IN/OUT and feature reports.
-- `USBHID` + a custom `USBHIDDevice` subclass →
-  [`EspUsbDeviceHidCustom`](../examples/CustomHID/): pass your own report
-  descriptor bytes; no subclassing required.
+| Core | v3 | Note |
+| --- | --- | --- |
+| `USBHIDConsumerControl` | `EspUsbDeviceHidConsumerControl` | `press(usage)`, `release()`, `click(usage)`, `sendUsage(usage)`. Usage values are the same Consumer page IDs (for example `ESP_USB_DEVICE_CONSUMER_CONTROL_VOLUME_UP` = 0x00E9). Values above 0x3FF fail with `ESP_ERR_INVALID_ARG` |
+| `USBHIDSystemControl` | `EspUsbDeviceHidSystemControl` | `press(usage)` takes the Generic Desktop usage IDs 0x81/0x82/0x83 (`ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF`, `STANDBY`, `WAKE_HOST`). **The core's values 1/2/3 are refused**; use the names |
+| `USBHIDGamepad` | `EspUsbDeviceHidGamepad` | `send(x, y, z, rz, rx, ry, hat, buttons)` in the same order, `sendReport()`, `releaseAll()`. Hat values `ESP_USB_DEVICE_GAMEPAD_HAT_*` (0 = center, 1-8). No `leftStick()`/`pressButton()` helpers |
+| `USBHIDVendor` | `EspUsbDeviceHidVendor(device, reportSize)` | `sendInput(data, length)`; incoming reports through `onOutputReport()` / `onFeatureReport()` (no `read()`/`available()`); `setFeatureReport()` sets what the host reads |
+| `USBHID` + a `USBHIDDevice` subclass | `EspUsbDeviceHidCustom(device, descriptor, length, inputReportSize)` | pass your report descriptor bytes; `sendReport(data, length, reportId)`. No subclassing |
 
-All HID classes above merge into **one HID interface** with report IDs when
-combined, so a keyboard + mouse + media-keys device costs a single IN
-endpoint ([guide 3.3](usb-device-guide.md#33-the-endpoint-budget)).
+All HID Functions on one Device merge into **one HID interface** with report
+IDs, so keyboard + mouse + media keys cost a single IN endpoint. In a composite,
+report IDs are assigned for you and `sendReport()` adds them.
 
 ## Serial: `USBCDC` → `EspUsbDeviceCdcSerial`
 
@@ -133,105 +179,173 @@ void setup() {
   USBSerial.begin();
   USB.begin();
 }
-void loop() { USBSerial.println("tick"); }
+void loop() { USBSerial.println("tick"); delay(1000); }
 ```
 
-Is now:
+With v3:
 
 ```cpp
-#include "EspUsbDevice.h"
+#include <EspUsbDevice.h>
 EspUsbDevice device;
-EspUsbDeviceCdcSerial UsbSerial(device);
+EspUsbDeviceCdcSerial usbSerial(device, "Console");
 
 void setup() {
-  UsbSerial.onLineState([](const EspUsbDeviceCdcLineState &s) {
-    // s.dtr / s.rts
-  });
-  EspUsbDeviceConfig config;
-  device.begin(config);
+  EspUsbBulkStreamConfig buffers;      // optional; defaults are 512/512/512
+  buffers.rxCapacity = 1024;
+  usbSerial.configure(buffers);
+  usbSerial.onLineState([](const EspUsbDeviceCdcLineState &s) { /* s.dtr, s.rts */ });
+  device.begin();
 }
 void loop() {
-  if (UsbSerial.connected()) UsbSerial.write((const uint8_t *)"tick\n", 5);
+  if (usbSerial.connected()) usbSerial.println("tick");
+  delay(1000);
 }
 ```
 
-`read()` / `available()` / `write()` / `flush()` carry over as expected. The
-core's `onEvent(ARDUINO_USB_CDC_*)` events become the typed callbacks
-`onLineCoding()`, `onLineState()`, and `onRx()`. Note that this CDC is a data
-port for your sketch - it is not the Arduino console (`Serial` stays on the
-UART, [guide 2.3](usb-device-guide.md#23-connector-layout-while-developing)).
+| Core | v3 | Note |
+| --- | --- | --- |
+| `USBSerial.begin(baud)` | (remove) | `device.begin()` starts it. The baud rate is whatever the host sets; read it with `lineCoding()` |
+| `print` / `println` / `write` / `read` / `available` / `peek` / `readBytes` / `setTimeout` | same | `EspUsbDeviceCdcSerial` is an Arduino `Stream`; pass it as `Stream&` |
+| `setRxBufferSize(n)` / TX buffer | `EspUsbBulkStreamConfig::rxCapacity` / `txCapacity` via `configure()` | set while stopped |
+| `setTxTimeoutMs(ms)` | `setTxTimeoutMs(ms)` | default 1000 ms. `write()` and `flush()` wait up to this for room or completion; `0` returns a partial count at once |
+| `if (USBSerial)` | `usbSerial.connected()` | `true` while the host has the port open with DTR set |
+| `onEvent(ARDUINO_USB_CDC_LINE_CODING_EVENT)` | `onLineCoding(callback)` | before `device.begin()` |
+| `onEvent(ARDUINO_USB_CDC_LINE_STATE_EVENT)` | `onLineState(callback)` | |
+| `onEvent(ARDUINO_USB_CDC_RX_EVENT)` | `onRx(callback)` | |
+| `enableReboot()` (restart into the bootloader on the host's request) | `onLineCoding()` + `device.rebootToBootloader()` from `loop()` | v3 never restarts by itself; see [Firmware Update over USB](ota-over-usb.md#24-entering-boot-mode-from-the-sketch) |
+| `USB CDC On Boot` (`Serial` on USB) | - | `Serial` stays separate; the CDC Function is a data port of your sketch |
+
+Several CDC ports are several `EspUsbDeviceCdcSerial` objects. Give each a name
+so Windows can tell them apart. Each uses two IN endpoints.
 
 ## Mass storage: `USBMSC` → `EspUsbDeviceMsc`
 
-The callback trio survives almost unchanged; capacity moves out of `begin()`:
+The callback shapes stay the same; the calls move before `device.begin()`.
 
-| Core | EspUsbDevice |
-|---|---|
-| `msc.vendorID("ESP32")` / `productID()` / `productRevision()` | same names |
-| `msc.onRead()` / `onWrite()` / `onStartStop()` | same names |
-| `msc.mediaPresent(true)` | same name; plus `isWritable(bool)` |
-| `msc.begin(blockCount, blockSize)` | capacity comes from the attached backend; registration happens in the constructor |
+```cpp
+EspUsbDevice device;
+EspUsbDeviceMsc msc(device);
 
-What is new: ready-made backends so most sketches never write block callbacks
-at all - [`EspUsbDeviceMscRamDisk`](../examples/MSC/) (raw blocks),
-[`EspUsbDeviceMscFatRamDisk`](../examples/MSCFatRamDisk/) (a real FAT12 image
-with file helpers), and [`EspUsbDeviceMscSdCard`](../examples/MSCSdCard/)
-(SD card passthrough). Each attaches with `disk.attach(msc)`.
+void setup() {
+  msc.vendorID("ESP32");
+  msc.productID("Disk");
+  msc.productRevision("1.0");
+  msc.onRead([](uint32_t lba, uint32_t offset, void *buffer, uint32_t size) -> int32_t { /* ... */ return size; });
+  msc.onWrite([](uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size) -> int32_t { /* ... */ return size; });
+  msc.begin(blockCount, 512);   // geometry only; needs onRead() first
+  msc.mediaPresent(true);
+  device.begin();               // starts USB, including MSC
+}
+```
+
+| Core | v3 | Note |
+| --- | --- | --- |
+| `vendorID()` / `productID()` / `productRevision()` | same names | return `esp_err_t`; only while stopped |
+| `onRead()` / `onWrite()` / `onStartStop()` | same names, same parameters | before `device.begin()`. Callbacks return the whole requested size synchronously |
+| `mediaPresent(bool)` | same | media starts absent. Re-inserting while the host is configured reports UNIT ATTENTION once |
+| `begin(blockCount, blockSize)` | same name | sets the geometry only; `device.begin()` starts USB |
+| `isWritable(bool)` | same | writable by default |
+| `end()` | `device.end()` | |
+| - | `EspUsbMscConfig::transferBytes` via `configure()` | staging size, default 512. Must be a multiple of the bulk MPS (512 at HS) |
+
+Ready-made backends spare most sketches the callbacks:
+[`EspUsbDeviceMscRamDisk`](../examples/MSC/) (raw blocks),
+[`EspUsbDeviceMscFatRamDisk`](../examples/MSCFatRamDisk/) (a FAT12 image with
+file helpers) and [`EspUsbDeviceMscSdCard`](../examples/MSCSdCard/) (an SD card).
+Each attaches with `disk.attach(msc)` before `device.begin()`. RAM disks start
+with the medium absent; call `msc.mediaPresent(true)`.
+
+### `FirmwareMSC` / *USB MSC On Boot* → `EspUsbDeviceMscFirmwareDisk`
+
+The core's firmware drive becomes `EspUsbDeviceMscFirmwareDisk`: a FAT volume
+whose data region is the spare OTA partition. It accepts a raw `.bin` or a
+`.uf2`. See [Firmware Update over USB, 3.6](ota-over-usb.md#36-the-firmware-drive)
+and [`FirmwareMSC`](../examples/FirmwareMSC/).
 
 ## MIDI: `USBMIDI` → `EspUsbDeviceMidi`
 
 ```cpp
-EspUsbDeviceMidi MIDI(device);          // or (device, inCables, outCables)
+EspUsbDeviceMidi midi(device);            // or (device, inCables, outCables)
 
-MIDI.noteOn(0, 60, 96);                 // channel, note, velocity[, cable]
-MIDI.noteOff(0, 60, 0);
-MIDI.controlChange(0, 74, 32);
+midi.noteOn(0, 60, 96);                   // channel, note, velocity[, cable]
+midi.noteOff(0, 60, 0);
+midi.controlChange(0, 74, 32);
 
 EspUsbDeviceMidiPacket packet;
-while (MIDI.readPacket(packet)) { /* 4-byte USB-MIDI event */ }
+while (midi.readPacket(packet)) { /* 4-byte USB-MIDI event */ }
 ```
 
-Watch the argument order: **the channel comes first here** (0-based), and the
-optional USB-MIDI **cable** number comes last. The core's helper methods take
-the channel as a trailing argument, so a mechanical port will send wrong
-notes rather than fail to compile. Multi-cable interfaces (up to
-asymmetric in/out counts) and raw 4-byte packet I/O have no core equivalent -
-see [`MIDIInterface`](../examples/MIDIInterface/).
+| Core | v3 |
+| --- | --- |
+| `MIDI.noteOn(note, velocity, channel)` with channel 1-16 | `midi.noteOn(channel, note, velocity, cable)` with **channel 0-15 first** |
+| `noteOff`, `controlChange`, `programChange`, `polyPressure`, `channelPressure` | same names, channel first, 0-based |
+| `pitchBend(value, channel)` | `pitchBend(channel, value)`, value 0..16383 (8192 = center) |
+| `readPacket(midiEventPacket_t*)` / `writePacket()` | `readPacket(EspUsbDeviceMidiPacket&)` / `writePacket()` |
+
+**Watch the argument order.** A mechanical port compiles and then misbehaves:
+the core's `noteOn(60, 96, 1)` is read as channel 60, which is out of range, so
+the call returns `false` with `ESP_ERR_INVALID_ARG` and sends nothing. Values
+are never clamped; arguments that happen to be in range send a wrong note. Also
+subtract 1 from the core's 1-based channel. Multi-cable interfaces (up to 16 in
+each direction), callback receive (`onPacket()`), and buffer sizes in packets
+(`EspUsbMidiConfig`) have no core equivalent; see
+[`MIDIInterface`](../examples/MIDIInterface/).
 
 ## Vendor: `USBVendor` → `EspUsbDeviceVendor`
 
-| Core | EspUsbDevice |
-|---|---|
-| `Vendor.write()` / `read()` / `available()` | same names (bulk IN/OUT) |
-| `Vendor.onEvent()` request handling | `onControlRequest()` + `sendControlResponse()` |
-| `USB.webUSB(true)` / `USB.webUSBURL(url)` | `config.webusbEnabled = true` / `config.webusbUrl = "..."` |
+| Core | v3 | Note |
+| --- | --- | --- |
+| `Vendor.write()` / `read()` / `available()` | same names (bulk IN/OUT) | `EspUsbDeviceVendor` is an Arduino `Print`. Buffers via `configure(EspUsbVendorConfig)` |
+| `Vendor.onRequest(handler)` | `vendor.onControlRequest(callback)` | before `device.begin()`; the callback returns `bool` |
+| `Vendor.sendResponse(rhport, request, data, len)` | `vendor.sendControlResponse(request, data, len)` | |
+| `Vendor.onEvent(ARDUINO_USB_VENDOR_DATA_EVENT)` | `onRx(callback)` | |
+| `USB.webUSB(true)` / `webUSBURL(url)` | `config.webusbEnabled` / `config.webusbUrl` | |
 
-With `webusbEnabled` the device serves the BOS and MS OS 2.0 descriptors, so
-Windows binds WinUSB automatically - no Zadig, no INF. See
-[`USBVendor`](../examples/USBVendor/) for the browser-side pairing.
+The library emits a Microsoft OS 2.0 descriptor set for every Vendor interface
+automatically, so Windows can bind WinUSB without an INF or Zadig (not checked
+with v3 on Windows). `config.webusbEnabled` only adds the WebUSB capability.
+A stream write does not end with a short packet by default; read fixed lengths
+on the host, or set `streamTermination`. Zero-copy transfers are available with
+`writeDirect()` / `readDirect()`. See [`USBVendor`](../examples/USBVendor/).
+
+## DFU: *USB DFU On Boot* → `EspUsbDeviceDfu`
+
+`EspUsbDeviceDfu(device, EspUsbDeviceDfuMode::Runtime)` answers `dfu-util -e`
+(`DFU_DETACH`) and restarts into the ROM loader by default.
+`EspUsbDeviceDfuMode::Download` (the default) accepts `dfu-util -D firmware.bin`
+and writes the spare OTA partition. Both use EP0 only. See
+[Firmware Update over USB](ota-over-usb.md).
 
 ## What only EspUsbDevice has
 
-- **USB Audio** (UAC1 default, UAC2 selectable): speaker, microphone, and
-  duplex headset streams - the core has no audio class at all.
-- **CDC-NCM network device** (`EspUsbDeviceNet`): the board becomes a USB
-  network interface with lwIP/esp_netif behind it.
+- **USB Audio** (UAC1 by default, UAC2 selectable): playback, capture and
+  duplex streams.
+- **USB Video** (UVC camera, MJPEG or YUY2).
+- **CDC-NCM network device** (`EspUsbDeviceNet`) with optional esp_netif/lwIP
+  and DHCP.
 - **CCID smart card reader** (`EspUsbDeviceCcid`).
-- **NKRO keyboard**, raw report APIs, boot-protocol observation.
-- **ESP32-P4 controller selection** (FS or HS) via `config.controller`.
-- Byte-level descriptor inspection and an endpoint-budget readout before any
-  host is attached.
+- **DFU in the application** and a firmware drive that accepts UF2.
+- NKRO keyboard, raw report APIs and boot-protocol observation.
+- **ESP32-P4 High Speed** (480 Mbps) with `config.controller`.
+- Run-time buffer sizes, `end()` and restart without rebuilding, and
+  zero-copy bulk transfers.
+- Descriptor inspection without a host (`EspUsbDeviceStartMode::DescriptorsOnly`,
+  [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/)).
 
 ## What is not here
 
-- `USBHIDAbsoluteMouse` - relative boot mouse only.
-- `FirmwareMSC` (flash-update-over-MSC) - planned; tracked in
-  [TODO.ja.md](../TODO.ja.md).
-- The USB console (`USB CDC On Boot` / `HWCDC`) - by design; logs stay on the
-  UART.
+- `USBHIDAbsoluteMouse` and mouse pan: write them with `EspUsbDeviceHidCustom`.
+- Gamepad helper methods (`leftStick()`, `pressButton()`, ...): use `send()` or
+  `sendReport()`.
+- A USB console (`USB CDC On Boot`, `HWCDC` on the OTG port): logs stay on the
+  UART or on USB Serial/JTAG.
+- Automatic restart into the bootloader from the CDC port: implement it with
+  `onLineCoding()` and `rebootToBootloader()`.
+- A device-level event callback (`USB.onEvent`): poll `ready()` and
+  `suspended()`.
 
-If something misbehaves after porting, work through
-[troubleshooting.md](troubleshooting.md) - the
-[descriptor-cache entry](troubleshooting.md#the-host-still-shows-the-old-device-after-a-change)
-in particular, because a re-flashed board keeping the core stack's old VID/PID
-will confuse Windows within minutes of a migration.
+If something misbehaves after porting, see [Troubleshooting](troubleshooting.md),
+particularly the
+[descriptor cache entry](troubleshooting.md#the-host-still-shows-the-old-device-after-a-change):
+a board that keeps the core stack's VID/PID confuses Windows right after a
+migration.

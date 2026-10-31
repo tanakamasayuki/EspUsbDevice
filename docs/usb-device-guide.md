@@ -1,710 +1,696 @@
 # USB Device Development Guide
 
-> 日本語版: [usb-device-guide.ja.md](usb-device-guide.ja.md)
+> 日本語: [usb-device-guide.ja.md](usb-device-guide.ja.md)
 
-How to turn an ESP32 into a USB peripheral that a PC - or any other host -
-recognises. The first half covers USB device fundamentals, the second half the
-ESP32-specific constraints and a hands-on bring-up procedure.
+A guide to turning an ESP32 into a USB device and getting a PC or another host to recognize it. It covers EspUsbDevice v3.
 
-It is written to be readable without prior USB experience, but the goal is that
-you can diagnose "why won't the host recognise this?" yourself, so the
-explanations are not skipped. If you are in a hurry, start at
-[Bring-up procedure](#4-bring-up-procedure) and come back to the first half when
-a term is unfamiliar.
+- The first half covers USB device basics and the shape of the v3 API.
+- The second half covers ESP32-specific constraints and a step-by-step bring-up procedure.
 
-Once it works and you want to know why it behaves that way and where the limits
-are, continue to the [USB Device Development Guide (Advanced)](usb-device-advanced.md).
-It covers the relationship with TinyUSB, descriptors byte by byte, callback
-context, and implementing your own class.
+The goal is to be able to work out for yourself *why the host does not recognize the device*. If you are in a hurry, start at [Bring-up procedure](#5-bring-up-procedure) and come back to the first half when you meet an unfamiliar term.
 
-If instead you want to **plug USB devices into** an ESP32 (the ESP32 being the
-host), the counterpart is [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost)
-and its [USB Host development guide](https://github.com/tanakamasayuki/EspUsbHost/blob/main/docs/usb-host-guide.md).
+- Detailed per-class usage lives in the guides under `docs/classes/` (linked from [the table in 1.7](#17-choosing-what-to-look-like)).
+- For internals and limits, continue to the [USB Device Development Guide (Advanced)](usb-device-advanced.md).
+- Coming from v2? Read [Migrating from v2](migrating-from-v2.md) first.
+- If you want the ESP32 to be the host instead, see [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) and its [USB Host Development Guide](https://github.com/tanakamasayuki/EspUsbHost/blob/main/docs/usb-host-guide.md).
 
 ## Contents
 
-1. [USB device fundamentals](#1-usb-device-fundamentals)
-2. [Power and connectors](#2-power-and-connectors)
-3. [ESP32-specific notes](#3-esp32-specific-notes)
-4. [Bring-up procedure](#4-bring-up-procedure)
-5. [Observing yourself from the host OS](#5-observing-yourself-from-the-host-os)
-6. [Troubleshooting](#6-troubleshooting)
-7. [Tool list](#7-tool-list)
-8. [References](#8-references)
+1. [USB device basics](#1-usb-device-basics)
+2. [The basic EspUsbDevice flow](#2-the-basic-espusbdevice-flow)
+3. [Power and connectors](#3-power-and-connectors)
+4. [ESP32-specific notes](#4-esp32-specific-notes)
+5. [Bring-up procedure](#5-bring-up-procedure)
+6. [Observing yourself from the host OS](#6-observing-yourself-from-the-host-os)
+7. [Troubleshooting](#7-troubleshooting)
+8. [Tools](#8-tools)
+9. [What has been verified](#9-what-has-been-verified)
+10. [References](#10-references)
 
 ---
 
-## 1. USB device fundamentals
+## 1. USB device basics
 
 ### 1.1 Host and device
 
-USB is not a peer-to-peer bus. **One host, with devices hanging off it**, and
-every transfer starts at the host. A device cannot push data on its own; it
-answers when the host comes asking.
+USB is not a peer-to-peer link. **One host sits at the top, and devices hang off it.** The host always starts communication. A device cannot push data on its own; it can only answer when the host comes to ask whether there is any.
 
 With this library the ESP32 is the **device**. That means:
 
-- **You cannot start a conversation.** `keyboard.write()` reaches the bus at the
-  moment the host polls that endpoint. If the host never looks, the send waits
-  or is dropped.
-- **Everything you are is self-declared.** Whether you look like a keyboard or a
-  serial port is decided entirely by the descriptors you return.
-- **The host decides when you stop.** Suspend, bus reset, and deconfiguration
-  can happen at any time, and each resets your state.
+- **You cannot start a transfer.** `keyboard.tapKey('a')` reaches the bus only when the host polls that endpoint. If the host never comes, the send waits or is refused.
+- **What you are is self-declared.** Whether you look like a keyboard or a serial port is decided by the descriptors you return.
+- **The host changes your state when it likes.** Suspend, bus reset and deconfiguration can happen at any time. Each time, transfers stop and your state is reset.
 
-This is the big difference from the host-side library. If the host's job is to
-*read and understand* someone else's descriptors, the device's job is to
-**write descriptors the host will understand**.
+If the host's job is "read and understand the other side's descriptors", the device's job is "**return descriptors the host understands**".
 
 ### 1.2 Which connector is the device side
 
-The USB Type-C connectors on an ESP32 board look alike but do different jobs.
+USB connectors on an ESP32 board look the same but do different jobs.
 
-- **The USB-UART bridge connector** (wired to a CP2102, CH340, …; used for
-  flashing and the serial monitor)
-- **The ESP32 USB OTG connector** (wired straight to the SoC's D+/D-; **this is
-  the one this library uses**)
-- **The USB Serial/JTAG connector** (an on-SoC peripheral on S3/P4; also usable
-  for flashing and logs)
+| Connector | Connects to | Used for |
+| --- | --- | --- |
+| USB-UART bridge | A chip such as CP2102 or CH340 | Flashing and serial logs |
+| USB Serial/JTAG | The SoC's built-in peripheral (S3, P4) | Flashing and logs |
+| **USB OTG** | The SoC's OTG controller | **The port this library uses** |
 
-Silkscreen labels reading `USB` / `OTG` / `UART` are not reliable. **Check the
-schematic.**
+On the ESP32-P4 the OTG side is further split into a high-speed and a full-speed controller ([4.2](#42-choosing-hs-or-fs-on-esp32-p4)).
 
-During development, strongly prefer a **board with two USB connectors**, so the
-log port and the port under test are separate. On a single-connector board the
-serial monitor disappears the moment you enumerate as a USB device, which makes
-diagnosis extremely hard.
+Silkscreen labels such as `USB`, `OTG` and `UART` are not reliable. **Check the schematic.**
+
+During development, **a board with two USB connectors** is strongly recommended. It keeps the port you read logs from separate from the port you connect to the host. On a one-connector board, the log port disappears the moment the device starts, and isolating problems becomes very hard.
 
 ### 1.3 Speed
 
-| Speed | Short | Rate | Notes |
-|-------|-------|------|-------|
-| Low Speed | LS | 1.5 Mbps | Not used by this library |
-| Full Speed | FS | 12 Mbps | ESP32-S2/S3, and the ESP32-P4 FS controller |
+| Speed | Short | Rate | This library |
+| --- | --- | --- | --- |
+| Low Speed | LS | 1.5 Mbps | Not handled |
+| Full Speed | FS | 12 Mbps | ESP32-S2/S3, ESP32-P4 FS controller |
 | High Speed | HS | 480 Mbps | ESP32-P4 HS controller only |
-| SuperSpeed | SS | 5 Gbps+ | Not available on ESP32 |
+| SuperSpeed | SS | 5 Gbps and up | Not available on ESP32 |
 
-**The device decides the speed**, by how it pulls up D+/D- and chirps. But you
-can only pick from what the board's controller has; it is not a free software
-choice ([3.2](#32-choosing-fs-or-hs-on-esp32-p4)).
+**The device declares its speed.** It does so with the D+ pull-up and, for HS, the chirp handshake (USB 2.0 §7.1.7.5). You can only pick a speed the SoC's controller has. An HS controller attached to an FS host still links at FS.
 
-When running at high speed the host also asks what you would do at full speed.
-The **Device Qualifier** and **Other Speed Configuration** descriptors answer
-that, and this library generates both. They are needed because a bulk endpoint's
-max packet size is 512 at HS and 64 at FS, so one class set needs two
-descriptors.
+A device running at HS is also asked "what would you look like at FS?". The answers are the **Device Qualifier** (USB 2.0 §9.6.2) and the **Other Speed Configuration** (§9.6.4). The bulk max packet size (MPS) is 64 bytes at FS and 512 at HS (§5.8.3), so one configuration needs a descriptor per speed. On a P4 using the HS controller, the library builds both.
 
 ### 1.4 Enumeration, from the answering side
 
-The steps between plugging in and being usable. **Where it stops** is the
-starting point for every diagnosis.
+The steps before the host can use the device (USB 2.0 §9.1.2). **Where it stops** is where isolation starts.
 
-1. **Attach detection** - you pull up D+ to announce "an FS/HS device is here"
-2. **Bus reset** - the host resets the bus
-3. **Address assignment** - you answer `SET_ADDRESS`
-4. **Device descriptor request** - you return 18 bytes for `GET_DESCRIPTOR(DEVICE)`
-5. **Configuration descriptor request** - you return the whole tree; this fails
-   most often
-6. **String descriptor requests** - manufacturer, product, serial number
-7. **`SET_CONFIGURATION`** - only now do the class endpoints open
-8. **Host driver binding** - the OS reads the class codes and loads a driver
+1. **Attach detection**: you pull D+ up, signalling an FS/HS device
+2. **Bus reset**: the host resets the bus; HS chirp happens here
+3. **Address**: you answer `SET_ADDRESS`
+4. **Device descriptor**: you return 18 bytes for `GET_DESCRIPTOR(DEVICE)`
+5. **Configuration descriptor**: you return the whole configuration; this is where most failures happen
+6. **String descriptors**: manufacturer, product, serial number
+7. **`SET_CONFIGURATION`**: only now do the Functions' endpoints open
+8. **Host driver binding**: the OS looks at the class codes and loads a driver
 
-`device.ready()` becomes true after step 7 (`tud_mounted()` internally).
+`device.ready()` becomes `true` after step 7.
 
-Reading the failure:
+Isolation:
 
-- **Stops at 1-3** (nothing at all on the host) → electrical: cable, connector,
-  build settings.
-- **Stops at 4-6** (host reports a failed device descriptor request) → the
-  descriptors.
-- **Reaches 7 but no driver** (shows up as an unknown device) → class codes, or
-  the host-side driver.
-- **Reaches 8 but does not work** → the class-specific protocol.
+- **Stops at 1–3** (nothing shows on the host) → electrical. Cable, connector, board settings, controller selection.
+- **Stops at 4–6** (the host reports something like "device descriptor request failed") → descriptors.
+- **Reaches 7 but no driver loads** (shows as an unknown device) → class codes or the OS driver.
+- **Reaches 8 but does not work** → the class protocol.
 
-### 1.5 You are the one writing the descriptors
+### 1.5 Descriptors are your declaration
 
-A device declares its structure as a sequence of **descriptors**:
+A device declares its configuration as a sequence of structures called **descriptors**.
 
 ```
 Device (VID/PID, USB version, EP0 size)
-└── Configuration (current draw, bus- or self-powered)
+└── Configuration (current draw, bus/self powered)
     ├── (IAD: groups several interfaces into one function)
-    ├── Interface 0 (class / subclass / protocol <- "what this is" lives here)
-    │   ├── class-specific descriptors (HID descriptor, CDC functional, …)
-    │   ├── Endpoint 0x81 (IN, interrupt, max packet 8, interval 10)
+    ├── Interface 0 (class / subclass / protocol ← "what it is" lives here)
+    │   ├── Class-specific descriptors (HID descriptor, CDC functional descriptors, ...)
+    │   ├── Endpoint 0x81 (IN, interrupt, MPS 8, interval 10)
     │   └── Endpoint 0x01 (OUT, ...)
     └── Interface 1
         └── ...
 ```
 
-With `EspUsbDevice` you never write these by hand - they are assembled inside
-`begin()` from the classes you registered. But **always check what was
-assembled**. [`examples/Info/EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/)
-prints all of it.
+With EspUsbDevice you do not write these by hand. `begin()` assembles them from the registered Functions. But **always check what was assembled**. [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/README.md) prints all of it.
 
-Points worth internalising:
+Points to keep in mind:
 
-- **The class belongs to the interface, not the device.** This library always
-  sets the device descriptor's class to `0x00` (decided per interface), so
-  **"what this is" is only visible on the interfaces**. The IAD
-  (`bDescriptorType=0x0b`), which groups several interfaces into one function,
-  appears inside the configuration descriptor on configurations that include
-  CDC.
-- **Interface and endpoint numbers are assigned by the library**, in one pass.
-  They are not yours to pick; read the actual numbers from DescriptorDump.
-- **The HID report descriptor is a separate thing.** The configuration
-  descriptor only says how many bytes it is; the host fetches the contents with
-  a separate request. That descriptor is what gives your HID data its meaning.
-- **Composite HID collapses into one interface.** Keyboard + mouse + gamepad do
-  not add interfaces; they share one HID interface and are told apart by report
-  ID (keyboard=1, mouse=2, gamepad=3, consumer=4, system=5, vendor=6).
+- **Classes belong to interfaces, not to the device.** The device descriptor's class is `0xEF/0x02/0x01` (composite device using IADs) when the configuration contains an IAD, and `0x00` (defined by the interfaces) otherwise. Either way, you have to look at the interfaces to know what the device is. IADs appear for Functions with several interfaces, such as CDC, MIDI, Audio and Video.
+- **The library numbers interfaces and endpoints.** You do not choose them. Numbers follow registration order. Check the actual values with DescriptorDump or on the host.
+- **The HID report descriptor is separate.** The configuration descriptor only says how many bytes it is; the host fetches the contents with another request. It is the report descriptor that gives HID input its meaning.
+- **Several HID Functions share one interface.** Keyboard + mouse + gamepad do not add interfaces; they are told apart by report ID on one HID interface. Default IDs are keyboard 1, mouse 2, gamepad 3, consumer 4, system 5, vendor 6. Repeated types are given free IDs automatically.
 
 ### 1.6 Endpoints and transfer types
 
-An endpoint is a communication slot: an address (`0x81` - bit 7 is direction,
-low 4 bits the number), a direction, a transfer type, a max packet size, and a
-polling interval.
+An endpoint is a channel. It has an address (as in `0x81`: bit 7 is the direction, the low 4 bits the number), a direction, a transfer type, an MPS and a polling interval.
 
-| Transfer type | Character | Used here for |
-|---------------|-----------|---------------|
-| **Control** | On EP0, request/response. Every device has one | Enumeration, class requests, HID SET_REPORT, vendor control |
-| **Interrupt** | Host polls at a fixed interval; small and low-latency | HID, CDC notifications, CCID status |
-| **Bulk** | Bulk data, no bandwidth guarantee, retried on error | CDC data, MSC, NCM, USBVendor |
-| **Isochronous** | Reserved bandwidth, no retries | USB Audio |
+| Transfer type | Characteristics | Used here for |
+| --- | --- | --- |
+| **Control** | Setup transfers on EP0. Every device has it | Enumeration, class requests, HID SET_REPORT, vendor control, DFU |
+| **Interrupt** | The host polls at a fixed interval. Small, low latency | HID, CDC and NCM notifications, CCID slot notifications |
+| **Bulk** | Large data. No bandwidth guarantee, errors are retried | CDC data, MSC, NCM, Vendor, MIDI, CCID, Video (bulk mode) |
+| **Isochronous** | Reserved bandwidth. Errors are not retried | Audio, Video (default) |
 
-Direction is **from the host's point of view**: "IN" means data goes from you to
-the host.
+Directions are **named from the host's side**. "IN" flows from the device (you) to the host; "OUT" from the host to the device.
 
-On the host side, endpoints consumed host channels. On the device side,
-**endpoints consume the slots this SoC's USB controller physically has**. That
-is the first wall you hit as a device ([3.3](#33-the-endpoint-budget)).
+On the device side, **endpoints use up the number the SoC's USB controller has, and the FIFO inside it**. This is the first wall in device development ([4.4](#44-endpoint-budget), [4.5](#45-fifo-budget)).
 
 ### 1.7 Choosing what to look like
 
-On the host side, "how does this device appear" was someone else's decision.
-On the device side **you choose**, and it is the most consequential design
-decision in the project.
+In host development, the other side decided what it looked like. On the device side **you choose**. This is the biggest design decision in device work.
 
-| Appearance | Class | Good for | Host driver |
-|------------|-------|----------|-------------|
-| HID keyboard / mouse / gamepad | `0x03` | Input devices, macro pads, automation | Built into every OS. **No driver** |
-| HID with vendor-defined reports | `0x03` | Bidirectional custom data, still driverless on Windows | Built in (reachable via HIDAPI etc.) |
-| CDC ACM | `0x02` | Look like a serial port; existing serial apps work | Built in (inbox on Windows 10+) |
-| USB MIDI | `0x01`/MIDI | DAWs, synths, controllers | Built in. **No driver** |
-| Mass Storage | `0x08` | Look like a drive; file handoff, config files | Built in |
-| USB Audio | `0x01` | Speaker, microphone | Built in |
-| USB Video | `0x0e` | Camera. Bandwidth-bound: see below | Built in. **No driver** |
-| CDC-NCM | `0x02`/NCM | Look like a network adapter; a web UI over USB | Recent OSes support it |
-| CCID | `0x0b` | Smart card reader | Built in (PC/SC) |
-| Vendor Specific | `0xff` | Custom protocols, fastest bulk transfer | **Windows needs a driver binding** (WinUSB / WebUSB) |
+| Appearance | Class | Good for | Host driver | Guide |
+| --- | --- | --- | --- | --- |
+| HID keyboard / mouse / gamepad | `0x03` | Input devices, macro pads, automation | OS built-in. **No driver** | [HID](classes/hid.md) |
+| HID (vendor / custom reports) | `0x03` | Two-way custom data, driverless even on Windows | OS built-in (open with HIDAPI etc.) | [HID](classes/hid.md) |
+| CDC ACM | `0x02` | Appear as a serial port; existing terminal software works | OS built-in | [CDC](classes/cdc.md) |
+| USB MIDI 1.0 | `0x01`/MIDI Streaming | DAWs, synths, controllers | OS built-in. **No driver** | [MIDI](classes/midi.md) |
+| Mass Storage (BOT) | `0x08` | Appear as a drive; file exchange | OS built-in | [MSC](classes/msc.md) |
+| USB Audio (UAC1 / UAC2) | `0x01` | Speakers, microphones | OS built-in | [Audio](classes/audio.md) |
+| USB Video (UVC) | `0x0E` | Cameras | OS built-in. **No driver** | [Video](classes/video.md) |
+| CDC-NCM | `0x02`/NCM | Appear as a network adapter; a web UI over USB | Built into the major OSes | [NCM](classes/ncm.md) |
+| CCID | `0x0B` | Smart card readers | OS built-in (PC/SC) | [CCID](classes/ccid.md) |
+| DFU | `0xFE`/DFU | Firmware update from `dfu-util` | On Windows, needs WinUSB as below | [DFU](classes/dfu.md) |
+| Vendor Specific (bulk) | `0xFF` | Your own protocol, large bulk transfers | **Windows needs WinUSB bound** | [Vendor](classes/vendor.md) |
 
-The decision rules are simple:
+How to decide:
 
-1. **If the host must not install a driver, use a standard class.** HID, CDC,
-   MIDI and MSC work everywhere as-is.
-2. **If you need custom data but still no driver, use HID with vendor-defined
-   reports.** This is a common commercial pattern. It is not fast, but it is
-   bidirectional with no driver and no privileges.
-3. **If you need bandwidth, use Vendor Specific bulk.** On Windows that needs a
-   Microsoft OS 2.0 descriptor to bind WinUSB; this library emits one for every
-   vendor interface, whether or not WebUSB is enabled.
-4. **If an existing application must consume it, use the class that application
-   expects.** MIDI for a DAW, CDC for a terminal program.
+1. **If the host must not install a driver, use a standard class.** HID, CDC, MIDI and MSC work as-is on the major OSes.
+2. **If you want custom data without a driver, use HID vendor reports.** Many commercial devices do this. It is not fast, but it is two-way with no driver and no permissions.
+3. **If you need bandwidth, use Vendor (bulk).** On Windows a Microsoft OS 2.0 descriptor is needed to bind WinUSB. This library returns one automatically whenever a Vendor or DFU Function is present, with or without WebUSB.
+4. **If you want an existing application to use it, pick the class that application expects.** MIDI for a DAW, CDC for a terminal program.
 
-You can combine several into a composite device, but endpoint budget and host-OS
-behaviour both come into play, so get one function working first
-([Step 7](#step-7-grow-into-a-composite-device)).
+Composite devices with several Functions are possible, but endpoint and FIFO budgets and host OS behavior come into play. Get one Function working first ([Step 7](#step-7-grow-into-a-composite-device)).
 
-### 1.8 VID, PID and the other identity fields
+### 1.8 VID, PID and the identity around them
 
-Two 16-bit numbers in the device descriptor tell the host what it is talking
-to: the **vendor ID** (who made it) and the **product ID** (which of their
-products). Together with the **serial number string** they are how a host tells
-*this* device from every other one it has seen. Everything in this section is
-about those three values and their neighbours in `EspUsbDeviceConfig`, because
-they behave differently from every other descriptor field: the host remembers
-them.
+The device descriptor carries two 16-bit numbers: the **vendor ID** (who made it) and the **product ID** (which of their products it is). Together with the **serial number string**, these three are how a host tells "that device I have seen before" from "a different device". Unlike the other descriptor fields, **the host remembers them**.
 
-**What you get without setting anything.** The library's defaults are
-`vid = 0x303A`, `pid = 0x4000`. `0x303A` is Espressif's vendor ID; `0x4000` is
-the first of the PIDs (`0x4000`-`0x4007`) that ESP-IDF's TinyUSB component hands
-out by default, and Espressif's own configuration help describes using its VID
-as "helpful at product develop stage". That is exactly what the default is for:
-the bench, the examples, the tests in this repository. It is also **not
-yours**. A device you hand to anyone else must not carry it - two different
-products with the same VID:PID are the same device to Windows, which will
-happily bind one's driver and cached settings to the other.
+**What you get if you set nothing.** The defaults are `vid = 0x303A` and `pid = 0x4000`. `0x303A` is Espressif's vendor ID; `0x4000` is the first of the PIDs ESP-IDF's TinyUSB component uses by default (`0x4000`–`0x4007`). Espressif itself describes using its VID as "useful in the development stage of a product". The defaults are for the bench and for this repository's examples. **They are not your product's numbers.** Do not ship them in a device you give to others. A different product with the same VID:PID is the same device to Windows, and one product's driver and remembered settings land on the other.
 
-**Where real numbers come from.** Vendor IDs are assigned by the USB
-Implementers Forum: US$6,000 for a VID on its own, or included in the US$5,000
-per year membership, with the USB logo licence a separate fee on top. Under
-today's terms a VID may not be transferred or shared, and its owner assigns
-the PIDs beneath it. For most small projects that price is out of reach, and
-there are three kinds of place that will let you use a number instead:
+**Where real numbers come from.** Vendor IDs are assigned by the USB Implementers Forum (USB-IF). A VID alone is US$6,000; it is included in the US$5,000 annual membership; the USB logo license is separate. Under the current terms a VID cannot be transferred or shared, and the VID owner assigns the PIDs under it. That is not a realistic amount for a small project, so there are three kinds of places that will let you use a number.
 
-- **The chip vendor's registry.** Espressif runs
-  [espressif/usb-pids](https://github.com/espressif/usb-pids) for devices that
-  contain one of its USB-capable chips: you open a pull request against
-  `allocated-pids.txt` describing the device, and get a PID under `0x303A`.
-  Free, but Espressif "reserves the right to deny a pull request ... for any
-  reason", says approval "should not be used ... in marketing material", and
-  describes the whole thing as "a cooperative way for people not to choose the
-  same number for different products". Other silicon vendors run similar
-  schemes for their own parts.
-- **Open-source registries.** [pid.codes](https://pid.codes/howto/) assigns
-  PIDs under VID `0x1209` to projects whose hardware or firmware is published
-  under a recognised open-source licence; the
-  [Openmoko registry](https://github.com/openmoko/openmoko-usb-oui) does the
-  same under `0x1D50`. pid.codes is open about where its VID came from: it was
-  "gifted ... by a company that ... has since ceased trading", obtained
-  "before the USB-IF changed their licensing terms to prohibit transfers or
-  subassignments". Both are run by volunteers through pull requests; a
-  neighbouring project measured about three months from request to merge.
-- **Test numbers.** pid.codes sets aside `0x1209:0x0001`-`0x0010` for
-  development. Anyone may use them on a bench; nothing may ship with them.
+- **Chip vendor registries.** Espressif runs [espressif/usb-pids](https://github.com/espressif/usb-pids) for devices built on its USB-capable chips. A pull request describing the device in `allocated-pids.txt` gets a PID under `0x303A`. It is free, but Espressif "reserves the right to reject a pull request for any reason", says approval "should not be used in marketing materials", and describes the whole scheme as "a cooperative way for separate products not to pick the same number".
+- **Open-source registries.** [pid.codes](https://pid.codes/howto/) assigns PIDs under VID `0x1209` to projects that publish their hardware or firmware under a recognized open-source license. The [Openmoko registry](https://github.com/openmoko/openmoko-usb-oui) does the same under `0x1D50`. pid.codes is open about its VID: it was "issued by the USB-IF to a company that has since gone out of business, who donated it", obtained "before the USB-IF changed its terms to forbid transfers". Both are run by volunteers handling pull requests by hand, and some requests have taken months to merge.
+- **Test numbers.** pid.codes reserves `0x1209:0x0001`–`0x0010` for testing. Anyone may use them on the bench; none may ship in a product.
 
-None of these is a USB-IF assignment. Each is someone with a VID letting you
-use one number under it so that you do not collide with the people who came
-before. That is worth knowing for what it is, and it is also entirely
-sufficient for a product that will never seek USB-IF certification.
+None of these is a USB-IF assignment. Someone who owns a VID is letting you use one number under it, so that you do not collide with whoever came first. Understood as such, it is enough for a product that does not seek USB-IF certification.
 
-**How many PIDs a product needs: one.** A PID identifies a product as the host
-should see it, not a firmware configuration. On Windows the device instance is
-keyed on VID, PID and serial, and driver binding follows the descriptors on
-every enumeration - so the same PID can carry a vendor interface today, add a
-serial port in the next firmware, move a function to another interface number
-after that, and go back, and Windows follows every step. That was measured,
-one change at a time, and the results are in
-[5.2](#52-windows). Only two things justify spending another number, and PIDs
-are a scarce thing to spend when each registry grants one per project after a
-review:
+**A product needs one PID.** A PID identifies "the product as you want the host to see it", not a firmware configuration. Windows keys device instances on VID, PID and serial, and driver binding follows the descriptors on every enumeration ([6.2](#62-windows)). Under one PID you can add, move and remove Functions. There are only two reasons to use another number:
 
-- The device should look like a *different product* to a person or to a host
-  application's device list - a second model, a bootloader mode that must never
-  be confused with the application (the ESP32's own ROM bootloader has its
-  own PID for that reason).
-- You want the host to treat it as a device it has never met, so that every
-  cached setting starts over. Changing the serial does the same, per unit.
+- It should look like **a different product** to people or to host applications: a different model, or a bootloader that must never be confused with the application (which is why the ESP32's own ROM bootloader has its own PID).
+- You want the host to treat it as a device it has never met, discarding everything it remembered. Per unit, changing the serial does the same.
 
-**The serial number is the third key.** With `serialNumber` set, one physical
-device is one instance whichever port it is plugged into; the string should be
-unique per unit and stable across firmware updates. Without it Windows keys the
-instance on the port path, so the same board in another socket is a new
-device with its own settings (measured; see 5.2). If several of your devices
-may be attached at once, a serial is also how the host tells them apart.
+**The serial number is the third key.** With a `serialNumber`, one physical device is one instance whichever port it is plugged into. Make the string unique per unit, and keep it across firmware updates. Without one, Windows keys the instance on the port path, so the same board in a different socket is a different device with different settings. If several units may be plugged in at once, the serial is also how the host tells them apart.
 
-Everything else in `EspUsbDeviceConfig` that the host can see -
-`deviceVersion`, the `product` and `manufacturer` strings, the device
-interface GUID and its revision, the power attributes - is covered field by
-field in [5.2](#52-windows), with what Windows does when each one changes and
-how to measure it yourself.
+How Windows treats the rest of what `EspUsbDeviceConfig` exposes to the host (`deviceVersion`, `product`, `manufacturer`, the device interface GUID, power attributes) is covered in [6.2](#62-windows).
 
 ---
 
-## 2. Power and connectors
+## 2. The basic EspUsbDevice flow
 
-### 2.1 The device receives power
+### 2.1 Device and Functions
 
-On the host side the first hurdle was whether the board can *supply* VBUS. As a
-device it is the opposite - you are **fed** by the host. That removes most power
-problems, but not these:
+The v3 API is built from two kinds of object.
 
-- **Boards that are not powered from the OTG connector's VBUS.** If that VBUS is
-  not wired to the SoC's supply, plugging in only that connector will not even
-  boot the board. Power it from the log connector as well.
-- **Declaring self-powered operation.** If an external supply runs the board, set
-  `config.selfPowered = true`. It is only a declaration in the descriptor, but
-  the host's power management reads it, so keep it consistent with the wiring.
-- **Without VBUS sensing you cannot notice unplugging.** Most ESP32 boards do
-  not wire VBUS sensing, so an unplug never reaches `onBusDetached()` and the
-  state is only refreshed by the bus reset on the next plug-in. That is why the
-  library also clears state in `onBusAttached()` (`SET_CONFIGURATION`).
+| Object | Role | Example |
+| --- | --- | --- |
+| **Device** (`EspUsbDevice`) | Owns USB as a whole: the controller, EP0, descriptors, the USB worker | One per sketch |
+| **Function** | One capability shown to the host. Registers with the Device in its constructor | `EspUsbDeviceHidKeyboard`, `EspUsbDeviceCdcSerial`, `EspUsbDeviceMsc`, ... |
 
-### 2.2 bMaxPower
+The main Functions:
 
-`config.maxPowerMilliamps` (100 mA by default) is the current you declare you
-will draw. It does not have to match reality, but raising it to 500 mA is the
-honest choice for a power-hungry configuration such as one using Wi-Fi. Some
-hosts cut the port when consumption exceeds the declaration.
+| Area | Classes |
+| --- | --- |
+| HID | `EspUsbDeviceHidKeyboard`, `EspUsbDeviceHidMouse`, `EspUsbDeviceHidGamepad`, `EspUsbDeviceHidConsumerControl`, `EspUsbDeviceHidSystemControl`, `EspUsbDeviceHidCustom`, `EspUsbDeviceHidVendor` |
+| CDC | `EspUsbDeviceCdcSerial` |
+| Vendor | `EspUsbDeviceVendor` |
+| MIDI | `EspUsbDeviceMidi` |
+| MSC | `EspUsbDeviceMsc`; helpers `EspUsbDeviceMscRamDisk`, `EspUsbDeviceMscFatRamDisk`, `EspUsbDeviceMscSdCard`, `EspUsbDeviceMscFirmwareDisk` |
+| Audio | `EspUsbAudioFunction` (UAC1 / UAC2) |
+| Video | `EspUsbDeviceVideo` |
+| NCM | `EspUsbDeviceNet` |
+| CCID | `EspUsbDeviceCcid` |
+| DFU | `EspUsbDeviceDfu`; helper `EspUsbDeviceFirmwareUpdate` |
 
-### 2.3 Connector layout while developing
+- The Device does not own the Functions. Keep the Device alive longer than its Functions; normally both are globals.
+- You can have several Functions of the same kind (two CDC ports, for instance).
+- There is no fixed limit on the number of Functions. The limit is the endpoint and FIFO budget ([4.4](#44-endpoint-budget)). Because of string index allocation, more than 251 makes `begin()` fail.
 
-The recommended arrangement:
+### 2.2 configure, begin, end
 
-| Purpose | Where it goes |
-|---------|---------------|
-| Flashing and the serial log | The USB-UART bridge connector, or USB Serial/JTAG |
-| The host under test | The ESP32 USB OTG connector |
+The flow is: create the Functions → `configure()` them if needed → `device.begin()`.
 
-Shipping a single-connector board (an AtomS3, say) is fine, but **develop on a
-two-connector board**. If the log dies the instant you enumerate, you cannot
-even read `MOUNTED`.
+```cpp
+#include <EspUsbDevice.h>
 
-The other option is to use a second ESP32 running
-[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) as the host. That is
-what [`tests/peer`](../tests/peer/) in this repository does, and it lets you read
-both sides' logs from the PC at once.
+EspUsbDevice device;                                // owns USB as a whole
+EspUsbDeviceHidKeyboard keyboard(device);           // registers with device in its constructor
+EspUsbDeviceCdcSerial console(device, "Console");   // the name is visible to the host
 
-On a one-connector ESP32-S3 the same cable can still flash the board: a reset
-hands the shared PHY back to USB Serial/JTAG, so the ROM loader appears where
-your device was. Which connector answers after a reset, and how a running sketch
-gets the chip there without the BOOT button, are in
-[Firmware update over USB](ota-over-usb.md).
+void setup() {
+  Serial.begin(115200);  // Logs. Goes to the USB-UART or USB Serial/JTAG port
 
----
+  EspUsbBulkStreamConfig buffers;  // capacities are chosen per Function at run time
+  buffers.rxCapacity = 1024;
+  buffers.txCapacity = 1024;
+  if (console.configure(buffers) != ESP_OK) {
+    Serial.println("configure failed");
+  }
 
-## 3. ESP32-specific notes
+  EspUsbDeviceConfig config;
+  config.product = "My Device";
+  if (!device.begin(config)) {
+    Serial.printf("begin failed: %s\n", device.lastErrorName());
+  }
+}
 
-### 3.1 Supported chips and controllers
-
-| Chip | USB device capability | What `EspUsbController::Auto` resolves to |
-|------|----------------------|------------------------------------------|
-| ESP32-S2 | One FS device controller | FullSpeed |
-| ESP32-S3 | One FS device controller; the main target | FullSpeed |
-| ESP32-P4 | Two: FS (rhport 0) and HS (rhport 1) | **HighSpeed** |
-| ESP32 (original), C3, C6, … | No USB OTG. **This library does not run** | — |
-
-The required Arduino-ESP32 core is **3.3.9 or newer**. Per-version build results
-are published in [`docs/`](.) as `COMPATIBILITY.<version>.md`.
-
-### 3.2 Choosing FS or HS on ESP32-P4
-
-Select with `config.controller`. The default `Auto` resolves to **HighSpeed** on
-P4.
-
-| | FullSpeed (rhport 0) | HighSpeed (rhport 1) |
-|---|---|---|
-| PHY | On-SoC | External UTMI PHY |
-| Default pins | GPIO26=D-, GPIO27=D+ | Board's UTMI wiring |
-| Speed | 12 Mbps | 480 Mbps |
-| Endpoint budget | Tight ([3.3](#33-the-endpoint-budget)) | Roomy |
-
-Which connector is wired to which PHY **differs per board**; check the
-schematic. Typically the HS connector is a third one - neither the USB
-Serial/JTAG connector nor the GPIO26/27 FS pair.
-
-The P4 FS PHY shares pins with USB Serial/JTAG, and
-`usb_wrap_ll_phy_select(&USB_WRAP, 0)` routes it to GPIO24/25 instead (shown
-commented out in [`examples/P4FullSpeedDevice`](../examples/P4FullSpeedDevice/)).
-After the swap USB Serial/JTAG moves to GPIO26/27, so a serial monitor on the
-old pins disconnects.
-
-### 3.3 The endpoint budget
-
-**This is the first hard limit you hit as a device.** A USB controller has a
-bounded number of endpoints and endpoint numbers, and a configuration that
-exceeds them is rejected by `begin()` with `ESP_ERR_INVALID_SIZE`, before the
-PHY is started.
-
-| Controller | Max endpoint number | Non-control IN | Non-control OUT |
-|---|---|---|---|
-| ESP32-S2 / S3 | 5 | 4 | 5 |
-| ESP32-P4 rhport 0 (FS) | 6 | 4 | 6 |
-| ESP32-P4 rhport 1 (HS) | 15 | 7 | 15 |
-
-Roughly what each class costs:
-
-| Class | Endpoints used |
-|-------|----------------|
-| HID (one interface for the whole composite HID) | 1 IN |
-| CDC ACM | 1 notification IN + 1 data IN + 1 data OUT |
-| USB MIDI | 1 IN + 1 OUT |
-| MSC | 1 IN + 1 OUT |
-| USBVendor | 1 IN + 1 OUT |
-| USB Audio | 1 isochronous endpoint per direction |
-| USB Video | 1 isochronous IN |
-| CDC-NCM | 1 notification IN + 1 data IN + 1 data OUT |
-| CCID | 1 IN + 1 OUT + 1 notification IN |
-
-In practice, the binding limit on ESP32-S3 is **four IN endpoints**. HID + CDC +
-MSC already uses 1+2+1 = 4. One more class does not fit.
-
-**Isochronous functions hit a second limit: the transmit FIFO.** The S2 and S3
-share one 1 KB FIFO between the receive FIFO, every IN endpoint's transmit FIFO
-and the DMA bookkeeping, which leaves about 650 bytes for one isochronous IN
-endpoint - so a camera gets 512-byte payloads by default, and a camera plus an
-audio capture stream does not fit at all. `begin()` returns `ESP_ERR_NO_MEM`
-rather than enumerate a function that cannot transmit; see
-[advanced 5.2](usb-device-advanced.md#52-the-controller-limits-in-practice).
-A high-speed P4 has four times the FIFO and does not run into this.
-
-Checking is easy: set the `DUMP_ENABLE_*` defines in
-[`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/) to
-the combination you want, build, and read the endpoint budget at the end. You do
-not even need to attach a host.
-
-### 3.4 Other library-side limits
-
-| Item | Limit | What happens past it |
-|------|-------|----------------------|
-| Registered classes | 4 | The fifth object's constructor calls `addClass()`, which fails and **registers nothing, silently** |
-| Configuration descriptor | 704 bytes | `begin()` fails |
-| HID report descriptor | 256 bytes | Same |
-| String descriptors | 63 characters | Truncated |
-
-The class limit fails quietly, so when building a composite always confirm the
-interface list in DescriptorDump.
-
-#### RAM: every class costs whether you use it or not
-
-TinyUSB gives each class its buffers as file-scope statics, so a class that is
-compiled in costs RAM even if no sketch ever instantiates it. Measured on an
-ESP32-S3 with [`Keyboard`](../examples/Keyboard/), which uses HID alone:
-
-| Class | RAM | Used by this sketch |
-|---|---:|---|
-| CDC-NCM | 16,016 | no |
-| USB Audio | 7,760 | no |
-| MSC | 4,096 | no |
-| CDC ACM | 2,824 | no |
-| USB MIDI | 1,288 | no |
-| Vendor | 1,276 | no |
-| DFU | 1,024 | no |
-| USB Video | 512 | no |
-| **HID** | **12** | **yes** |
-
-That is about 34 KB, against 12 bytes for the one class in use, out of 55 KB of
-RAM-resident static data in the whole image.
-
-**Any class can be dropped from `build_opt.h`.** For a keyboard that will never
-be anything else:
-
-```
--DCFG_TUD_NCM=0
--DCFG_TUD_AUDIO=0
--DCFG_TUD_MSC=0
--DCFG_TUD_MIDI=0
--DCFG_TUD_VENDOR=0
--DCFG_TUD_VIDEO=0
--DCFG_TUD_DFU=0
--DCFG_TUD_DFU_RUNTIME=0
--DCFG_TUD_CDC=0
+void loop() {
+  if (device.ready() && console.available()) {
+    console.write(console.read());
+  }
+  delay(1);
+}
 ```
 
-Measured on the same sketch: **59,568 -> 24,016 bytes of RAM** and 349,989 ->
-319,061 of flash. These are library-wide switches, so **`arduino-cli --clean`**
-is required - without it the sketch is rebuilt and the library is not, and
-nothing changes.
+| Stage | What happens | How failure is reported |
+| --- | --- | --- |
+| Function constructor | Registers with the Device. Allocates no heap | None |
+| `configure()` | Sets capacities and modes. Checks only the shape of the values | Returns `esp_err_t` |
+| `device.begin(config)` | Builds descriptors, checks the controller budget, allocates each Function's resources, starts USB | Returns `false`; the reason is in `lastError()` |
+| Running | The USB worker (a FreeRTOS task) handles transfers. No `task()` or polling call is needed | Each Function's return values |
+| `device.end()` | Stops the USB worker and DMA, returns borrowed buffers, frees everything | Returns `esp_err_t`. `ESP_ERR_TIMEOUT` if the worker does not stop in time |
 
-**Disabling a class the sketch does use will not fail the build.** That is the
-one thing to be careful of. The Arduino core ships its own TinyUSB and its
-archive is on the link line, so when this library's copy of a driver is
-compiled out, the missing symbols resolve against the core's copy instead.
-Measured with [`UsbNetwork`](../examples/UsbNetwork/) and `-DCFG_TUD_NCM=0`: it
-linked, and the network buffer came from `libarduino_tinyusb.a` rather than
-from this library - a device built from two differently configured stacks.
-Disable only what the sketch is certain never to instantiate, and confirm it
-still enumerates the way it should.
+- **USB does not start by itself.** Until `begin()`, the host sees nothing.
+- **Stop before changing settings.** The order is `end()` → `configure()` → `begin()`. The host sees an unplug and a replug.
+- **Adding a Function while running is refused.** While a refused Function remains, the next `begin()` also fails with `ESP_ERR_INVALID_STATE`. Recreate it after stopping, or re-register it with `device.addClass(&function)`.
+- **A failed `begin()` returns everything it took before returning.** Fix the settings and call `begin()` again.
+- **`end()` waits up to `config.stopTimeoutMs` (default 5000 ms) for the worker to stop.** If a callback does not return in time, it returns `ESP_ERR_TIMEOUT`. The stop request stays in place, so calling `end()` again after the callback returns completes the stop. `0` waits without a limit. The Device and Function destructors wait until the stop completes.
+- **A Function's `begin()` cannot be called.** Only `device.begin()` / `device.end()` start and stop Functions. Writing `console.begin()` is a compile error.
 
-### 3.5 Mutually exclusive with the stock Arduino-ESP32 USB stack
+### 2.3 State: started, ready, suspended
 
-This library builds its own TinyUSB and initialises the ESP-IDF PHY/controller
-directly. Therefore:
+| Function | True when |
+| --- | --- |
+| `started()` | From a successful `begin()` until `end()`. Means resources are held. Also true while waiting for the host or during a reset |
+| `ready()` | The host has completed SET_CONFIGURATION (enumeration step 7) |
+| `suspended()` | The bus is suspended (no traffic for 3 ms or more; USB 2.0 §7.1.7.6). The configuration survives suspend, so `ready()` stays true |
 
-- **Do not call `USB.begin()`.** `USBHIDKeyboard`, `USBHIDMouse` and `USBCDC`
-  cannot be used alongside it either.
-- **Build with USB Mode set to "USB-OTG (TinyUSB)".** Setting the ESP32-S3/P4
-  board menu's `USB Mode` to `Hardware CDC and JTAG` routes D+/D- to the USB
-  Serial/JTAG peripheral, and the OTG controller becomes unusable. With
-  `arduino-cli`, `esp32:esp32:esp32s3:USBMode=default` *is* "USB-OTG (TinyUSB)"
-  (every `sketch.yaml` in this repository specifies it).
-- **Leave `USB CDC On Boot` disabled**, or Arduino tries to bring up a second
-  USB CDC of its own.
-- **`usb_persist_restart()` does not link either.** The core's
-  reboot-into-the-bootloader helper drags `esp32-hal-tinyusb.c` into the link,
-  which defines two of the same TinyUSB callbacks this library defines. The
-  replacement, and the per-chip register it writes, are in
-  [Firmware update over USB, 2.5](ota-over-usb.md#25-usb_persist_restart-does-not-link-in-this-library).
+`device.speed()` returns the speed the host chose at its last bus reset (USB 2.0 §7.1.7.5).
 
-In this configuration `Serial` comes out on the UART, which is why you need a
-separate port for logs ([2.3](#23-connector-layout-while-developing)).
+| Value | Meaning |
+| --- | --- |
+| `EspUsbBusSpeed::None` | Before USB starts, in descriptors-only mode, after `end()`, or no bus reset yet |
+| `EspUsbBusSpeed::Full` | 12 Mbps. An HS controller also runs at this speed behind an FS hub or host |
+| `EspUsbBusSpeed::High` | 480 Mbps |
 
-### 3.6 Logs
+- `suspended()` is false before USB starts, in descriptors-only mode ([2.6](#26-checking-descriptors-without-starting-usb)), and after `end()`.
+- Suspend is neither a reset nor a stop. Borrowed buffers stay borrowed until they come back through completion, cancellation, reset or `end()`.
+- `ready() && !suspended()` does not promise that the next transfer will succeed. Use each Function's return values and completion notifications to know what was sent and what arrived.
+- To wake a suspended host, advertise the capability with `config.remoteWakeupSupported = true`, then call `remoteWakeup()` once the host has enabled it (`remoteWakeupEnabled()`). Whether it may be used is the host's decision (USB 2.0 §9.4.1, §9.4.9).
 
-The reason enumeration failed is often only visible in the ESP-IDF log. Set Core
-Debug Level to `Verbose` in the Arduino IDE while investigating.
+### 2.4 Capacities are decided at run time
 
-And always read the **host OS log too**
-([section 5](#5-observing-yourself-from-the-host-os)). When developing a device,
-what the host received and what it objected to is your best source of
-information.
+In v3, buffer capacities are chosen **per Function, at run time**. There are no build flags.
+
+| Function | Config type | Main fields and defaults |
+| --- | --- | --- |
+| CDC, Vendor | `EspUsbBulkStreamConfig` | `rxCapacity` 512, `txCapacity` 512, `transferBytes` 512 |
+| MIDI | `EspUsbMidiConfig` | `rxPackets` 128, `txPackets` 128 |
+| MSC | `EspUsbMscConfig` | `transferBytes` 512 (must be a multiple of the bulk MPS) |
+| Audio | `EspUsbAudioConfig` | `playbackBufferFrames` 256, `captureBufferFrames` 256, `eventCapacity` 8 |
+| Video | `EspUsbVideoConfig` | `transport` Isochronous, `payloadBytes` 512 |
+| NCM | `EspUsbNetConfig` | `ntbInBytes` / `ntbOutBytes` 3200 |
+| CCID | `EspUsbCcidConfig` | `messageBytes` 0 (automatic: `max(271, Bulk-OUT MPS)`) |
+| DFU | `EspUsbDfuConfig` | `transferBytes` 1024 |
+
+How memory is used:
+
+- **Allocation happens in `begin()`, release in `end()`.** Only the Functions in use, at the capacities chosen. No heap is allocated in the middle of a transfer.
+- **Functions you do not use are not linked.** Code and buffers for Functions you never construct do not end up in the firmware.
+- **Regions the USB DMA touches are in DMA-capable internal RAM.** Regions only the CPU reads and writes, such as rings and MSC backing storage, may be in PSRAM (`rxBuffer`, `txBuffer` and the like).
+- **Buffers for borrowed transfers (`writeDirect` / `readDirect` and similar) must be in DMA-capable internal RAM, on a 64-byte boundary.** PSRAM is refused with `NotDmaCapable`, a misaligned address with `NotAligned`. A refused buffer is not borrowed.
+
+For each Function's capacities and the difference between copy and borrowed modes, see the guides under `docs/classes/`.
+
+### 2.5 Callbacks and the USB worker
+
+USB processing runs in a USB worker (a FreeRTOS task) separate from `loop()`. Callbacks you register with Functions are called on this worker.
+
+- **Keep callbacks short.** Long logging, waiting or file I/O delays the next USB event. Hand heavy work to `loop()` through a queue or similar.
+- **Do not wait inside a callback.** Send HID reports with `timeoutMs = 0`; a waiting send from the worker is refused.
+- **Do not call `begin()` / `end()` or reconfigure inside a callback.** `end()` from a callback returns `ESP_ERR_INVALID_STATE`.
+- Data handed to a callback may be reused once it returns. Copy what you need later into your own buffer.
+
+The worker can be tuned through `EspUsbDeviceConfig`. If the defaults suit you, write nothing.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `taskStackBytes` | 4096 | Worker stack in bytes. Callbacks use this stack too |
+| `taskPriority` | -1 | -1 means `configMAX_PRIORITIES - 1` (highest) |
+| `taskCoreId` | -1 | -1 leaves the worker unpinned |
+| `eventQueueDepth` | 16 | How many interrupt events can be held at once. 0 is not allowed |
+| `stopTimeoutMs` | 5000 | How long `end()` waits for the worker to stop (ms). 0 waits without a limit |
+
+### 2.6 Checking descriptors without starting USB
+
+With `startMode = DescriptorsOnly`, `begin()` builds the descriptors and allocates the Functions' resources but does not start the controller, interrupts or worker. You can check a configuration with no host.
+
+```cpp
+EspUsbDeviceConfig config;
+config.startMode = EspUsbDeviceStartMode::DescriptorsOnly;
+if (device.begin(config)) {
+  const uint8_t *descriptor = device.configurationDescriptor(0);
+  // started() == true, ready() == false
+  device.end();
+}
+```
+
+The endpoint and FIFO budget checks also run in this mode. A configuration over budget fails here with `ESP_ERR_INVALID_SIZE`.
+
+### 2.7 Reading errors
+
+`begin()` returns a `bool`; the reason for a failure stays in `device.lastError()` (`esp_err_t`). `device.lastErrorName()` gives its name as a string.
+
+```cpp
+if (!device.begin(config)) {
+  Serial.printf("begin failed: %s (0x%x)\n",
+                device.lastErrorName(), unsigned(device.lastError()));
+}
+```
+
+| Error | Typical causes |
+| --- | --- |
+| `ESP_ERR_INVALID_SIZE` | Endpoint budget exceeded. The IN endpoints do not fit the transmit FIFO ([4.5](#45-fifo-budget)). A HID packet over 64 bytes at FS or 1024 at HS. A string over 126 UTF-16 code units. MSC `transferBytes` not a multiple of the bulk MPS. An explicit CCID `messageBytes` below the Bulk-OUT MPS. A Vendor FS bulk size other than 8/16/32/64. `bulkInBuffering = Double` does not fit the FIFO. `taskStackBytes` too small |
+| `ESP_ERR_NO_MEM` | Out of heap |
+| `ESP_ERR_INVALID_ARG` | An invalid setting (`startMode`, `taskPriority`, `taskCoreId`, GUID format, ...). An inconsistent Audio configuration |
+| `ESP_ERR_INVALID_STATE` | Already started. Another `EspUsbDevice` is running. A Function whose registration was refused remains. `end()` was called from a USB worker callback |
+| `ESP_ERR_NOT_SUPPORTED` | The SoC has no USB OTG. No controller of the requested speed (for example `HighSpeed` on an S3) |
+| `ESP_FAIL` | Hardware preparation failed: interrupt allocation, cache synchronization and the like |
+
+- **Read `lastError()` right after `begin()`.** Other calls, such as `addClass()` and HID sends, overwrite it.
+- **`lastErrorName()` returns the same name as `esp_err_to_name()`.** Values not in the table above (such as the `ESP_ERR_TIMEOUT` left by a HID send that timed out) are named too.
+- `configure()` returns its own `esp_err_t`. When a Function fails inside `begin()`, that Function's reason goes into `lastError()`.
+- Failures are detected before the PHY or the host is touched, so while `begin()` is failing nothing has happened on the host side. Suspect the local settings first.
 
 ---
 
-## 4. Bring-up procedure
+## 3. Power and connectors
 
-The path to a working USB device. **Go top to bottom without skipping.** Most
-dead ends come from debugging a later step while an earlier problem (connector,
-build setting, endpoint budget) is still there.
+### 3.1 A device receives VBUS
 
-### Step 0. Bench checks, before writing code
+In host development, "can you supply VBUS" was the first hurdle. On the device side it is the reverse: **the host supplies VBUS**. Power itself rarely trips you up, but these things do happen:
 
-- From the schematic, confirm **which connector goes straight to the ESP32 USB
-  OTG pins**
-- Confirm you can keep the log port and the host port separate
-- Confirm the cable carries data (not a charge-only cable)
-- Confirm the board menu's `USB Mode` is "USB-OTG (TinyUSB)"
+- **Some boards do not feed the OTG connector's VBUS to the SoC supply.** Plugging in only that connector will not boot the board. Power it from the log connector as well.
+- **Declare self power.** If the board runs from its own supply, set `config.selfPowered = true`. It is a declaration in the descriptor; make it match the real wiring. The host's power management reads it.
+- **VBUS sensing is not used by default.**
 
-### Step 1. Confirm it starts and enumerates
+#### vbusSensing
 
-Flash [`examples/Info/EspUsbDeviceBringUpCheck`](../examples/Info/EspUsbDeviceBringUpCheck/).
-It enumerates as a HID keyboard but never sends a key, so it is safe to leave
-plugged into a PC.
+| Value | Behavior |
+| --- | --- |
+| `false` (default) | Behaves as if VBUS were always present. For boards without a sensing circuit |
+| `true` | Uses the board's VBUS-valid signal |
 
-- Does `BEGIN ok` appear? If not, the problem is on the board (target, core
-  version, endpoint budget)
-- Connect to the host - does `MOUNTED` appear? If not, it is electrical or the
-  descriptors
-- Note the speed (Full / High)
-- Press CapsLock on the host - does `HOST_OUTPUT_REPORT` appear? That confirms
-  both directions
+- Choose `true` only if the board has a sensing circuit and its signal is wired to the controller. The option does not provide a GPIO or a circuit.
+- Most ESP32 boards do not wire VBUS sensing. With `false`, there may be no way to learn that the cable was pulled until the host next resets the bus.
+- On the HS port of an older P4 (chip revision v1.x), the session-valid (BSesVld) bit did not reflect VBUS. VBUS detection with a real cable pull has not been tested yet.
 
-Once this passes, the board and the build settings are known good, and every
-later problem is specific to your own configuration.
+### 3.2 bMaxPower
+
+`config.maxPowerMilliamps` (default 100 mA) is the current you declare you will draw from the bus. The descriptor stores it in 2 mA units, up to 500 mA (USB 2.0 §9.6.3). For configurations that draw a lot, such as ones using Wi-Fi, raising it to 500 mA is the straightforward choice. Some hosts drop the port when a device draws more than it declared.
+
+### 3.3 Connector setup during development
+
+| Purpose | Connect to |
+| --- | --- |
+| Flashing and logs | USB-UART bridge, or USB Serial/JTAG |
+| Host under test | The ESP32's USB OTG connector |
+
+A one-connector board (an AtomS3, for instance) is fine as a final product. **During development, use a two-connector board.** If the log drops the moment enumeration starts, you cannot even see `ready()` change.
+
+Another option is to use a second ESP32 running [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) as the host. You can read both sides' logs from the PC at once. This repository's tests ([validation](../validation/README.ja.md)) use that arrangement.
+
+A one-connector ESP32-S3 can still be flashed over the same cable: after a reset the shared PHY returns to USB Serial/JTAG and the ROM loader appears. How a running sketch can get there without the BOOT button (`device.rebootToBootloader()`) is described in [Firmware update over USB](ota-over-usb.md).
+
+---
+
+## 4. ESP32-specific notes
+
+### 4.1 Supported chips and controllers
+
+| Chip | USB device capability | `EspUsbController::Auto` selects | Status |
+| --- | --- | --- | --- |
+| ESP32-S3 | One FS controller | FullSpeed | Main target. Verified on hardware |
+| ESP32-S2 | One FS controller | FullSpeed | Compile-checked only. Not verified on hardware |
+| ESP32-P4 (older revision v1.x) | One HS and one FS controller | **HighSpeed** | Verified on hardware |
+| ESP32-P4X (revision v3.x) | Same | **HighSpeed** | Verified on hardware |
+| ESP32-S31 | — | — | Not supported |
+| ESP32 (original), C3, C6, ... | No USB OTG | — | Does not work |
+
+The reference Arduino-ESP32 version is **3.3.12**.
+
+### 4.2 Choosing HS or FS on ESP32-P4
+
+Choose with `config.controller`.
+
+| Value | Controller |
+| --- | --- |
+| `Auto` (default) | HS if the SoC has one (P4), otherwise FS (S2/S3) |
+| `HighSpeed` | The HS controller. If there is none, `begin()` fails with `ESP_ERR_NOT_SUPPORTED` |
+| `FullSpeed` | The FS controller |
+
+| | FS controller | HS controller |
+| --- | --- | --- |
+| PHY | SoC's built-in FS PHY | UTMI HS PHY |
+| Default pins | GPIO26 = D−, GPIO27 = D+ | The board's UTMI wiring |
+| Speed | 12 Mbps | 480 Mbps (FS when attached to an FS host) |
+| Endpoint numbers | 1–6 | 1–15 |
+| Non-control IN endpoints | 4 | 7 |
+| FIFO | 256 words (1 KB) | 1024 words (4 KB) |
+
+How to choose:
+
+- **Need bandwidth, many Functions, or large packets** → HS.
+- **Connecting to the board's FS connector, or carrying over an FS configuration unchanged** → FS.
+- Which connector is wired to which controller **varies by board**. Check the schematic. A common layout is a third connector, neither USB Serial/JTAG nor the GPIO26/27 FS pair, for HS.
+- If `config.controller` does not match the connector the cable is in, `begin()` succeeds but the host sees nothing.
+
+The FS PHY shares pins with USB Serial/JTAG. `usb_wrap_ll_phy_select(&USB_WRAP, 0)` moves the FS controller to GPIO24/25 (shown as a comment in [`P4FullSpeedDevice`](../examples/P4FullSpeedDevice/README.md)). USB Serial/JTAG then moves to GPIO26/27, so a Serial/JTAG connection on GPIO24/25 is lost.
+
+#### Older P4 and P4X
+
+The library source has no code that distinguishes the older P4 from the P4X. The difference is in the build settings.
+
+| | Older P4 (v1.x) | P4X (v3.x) |
+| --- | --- | --- |
+| Arduino `ChipVariant` | `prev3` | `postv3` |
+| Example profile | `esp32p4` | `esp32p4x` |
+| Revisions the SDK supports | v1.x | **v3.1 and later** |
+
+- The board menu says "v3.00 or newer", but the shipped SDK's minimum revision is 3.1. v3.0 silicon is not treated as supported.
+- Endpoint counts and FIFO size are the same on both.
+
+### 4.3 What changes at HS
+
+At HS the bulk MPS goes from 64 to 512 bytes, and the interrupt limit from 64 to 1024 bytes (USB 2.0 §5.7.3, §5.8.3). So **a configuration that works at FS can fail in `begin()` at HS.**
+
+| Item | Requirement at HS |
+| --- | --- |
+| MSC `transferBytes` (default 512) | Must be a multiple of 512. 64 or 256 gives `ESP_ERR_INVALID_SIZE` |
+| CCID `messageBytes` | The default 0 (automatic) becomes 512. An explicit value below 512 gives `ESP_ERR_INVALID_SIZE` |
+| Borrowed receive (`readDirect`) capacity | Must be a multiple of 512 (a multiple of 64 at FS) |
+| CDC, Vendor, MIDI `transferBytes` | Values below 512 are accepted |
+| Vendor bulk packet size | Always 512 (the constructor's FS value is not used) |
+| HID interrupt endpoints | Up to 1024 bytes (`EspUsbDeviceHidCustom`, `EspUsbDeviceHidVendor`). Read the actual value with `inputPacketSize()` |
+| UAC2 feedback | 16.16 in 4 bytes (FS: 10.14 in 3 bytes, USB 2.0 §5.12.4.2) |
+
+When the HS controller is selected, these checks apply even if the link ends up at FS, so that the HS MPS can be handled.
+
+### 4.4 Endpoint budget
+
+**This is the first limit you hit on the device side.** The controller has a maximum endpoint number and a maximum count. `begin()` refuses a configuration that exceeds them with `ESP_ERR_INVALID_SIZE`, before the PHY starts.
+
+| Controller | Highest endpoint number | Non-control IN | Non-control OUT |
+| --- | --- | --- | --- |
+| ESP32-S2/S3 | 6 | 4 | 6 |
+| ESP32-P4 FS | 6 | 4 | 6 |
+| ESP32-P4 HS | 15 | 7 | 15 |
+
+One number can be shared by an IN and an OUT endpoint. Per-Function use:
+
+| Function | IN | OUT |
+| --- | --- | --- |
+| HID (all HID Functions share one interface) | 1 | 1 if there is an output report |
+| CDC ACM | 2 (notification, data) | 1 |
+| CDC-NCM | 2 (notification, data) | 1 |
+| Vendor | 1 | 1 |
+| MIDI | 1 | 1 |
+| MSC | 1 | 1 |
+| CCID | 1 (plus 1 for notifications if the slot is removable) | 1 |
+| Audio | 1 for capture, plus 1 for feedback with UAC2 playback | 1 for playback |
+| Video | 1 | 0 |
+| DFU | 0 (uses EP0 only) | 0 |
+
+What bites is the **4 IN endpoints** of S2/S3 and P4 FS.
+
+- HID + CDC + MSC uses 1 + 2 + 1 = 4 IN, exactly the limit. Adding Vendor does not fit.
+- Two CDC ports use 4 and fit. Three use 6 and do not.
+- DFU uses no endpoints, so it can be added even when the budget is spent.
+
+To find out whether a configuration fits, set the `DUMP_ENABLE_*` switches of [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/README.md) to it, build, and read the `endpoint budget` lines at the end. No host is needed.
+
+### 4.5 FIFO budget
+
+Separately from the endpoint count, the **FIFO** inside the controller is shared. It is a fixed region used by the receive FIFO and by the transmit FIFO of every IN endpoint. Adding RAM does not make it larger.
+
+| Controller | FIFO | Roughly left for IN endpoints |
+| --- | --- | --- |
+| S2/S3, P4 FS | 256 words (1 KB) | About 650 bytes (with a 64-byte largest OUT packet) |
+| P4 HS | 1024 words (4 KB) | About 2.6 KB (with a 512-byte largest OUT packet) |
+
+The estimate is what remains after the receive FIFO (a fixed part, the largest OUT packet, and a share per endpoint) and EP0. A large OUT packet (Audio playback, for example) enlarges the receive FIFO and leaves less.
+
+- **`begin()` does the transmit FIFO arithmetic for every IN endpoint in the configuration** and fails with `ESP_ERR_INVALID_SIZE` if they do not fit. Starting anyway would give a device whose endpoints fail to open at SET_CONFIGURATION, or, with isochronous IN, one that enumerates and binds a driver but delivers nothing. The check runs before the PHY is touched.
+- Example: at P4 HS, up to five Vendors (512-byte bulk IN) fit. Six fit the endpoint count but not the FIFO, and fail with `ESP_ERR_INVALID_SIZE`. At FS, a camera (default 512-byte payload) together with Audio capture tends to hit this limit.
+- **Bulk IN double buffering** (`config.bulkInBuffering`) gives bulk IN endpoints two packets of FIFO when there is room, which speeds up sustained sending.
+
+| Value | Behavior |
+| --- | --- |
+| `Auto` (default) | Doubles every bulk IN endpoint if they all fit; otherwise changes nothing |
+| `Single` | One packet each |
+| `Double` | Doubles every bulk IN endpoint; if that does not fit, `begin()` fails with `ESP_ERR_INVALID_SIZE` |
+
+`device.bulkInDoubleBuffered()` returns which endpoints actually got two packets (a bitmap by endpoint number). If a stream is slower than expected, check whether it is 0.
+
+### 4.6 Other limits
+
+| Item | Limit | When exceeded |
+| --- | --- | --- |
+| Number of Functions | 251 | `begin()` fails with `ESP_ERR_INVALID_SIZE` |
+| Strings (manufacturer, product, serial, Function names) | 126 UTF-16 code units each | `begin()` fails with `ESP_ERR_INVALID_SIZE`; nothing is truncated |
+| Configuration descriptor | 65535 bytes (`wTotalLength` is 16 bits) | `begin()` fails with `ESP_ERR_INVALID_SIZE` |
+| WebUSB URL | 252 bytes after removing `http(s)://` | `begin()` fails with `ESP_ERR_INVALID_SIZE` |
+
+Strings are given as UTF-8. `begin()` converts and copies them to UTF-16, so non-ASCII text works. Invalid UTF-8 is refused.
+
+### 4.7 Not usable together with Arduino-ESP32's own USB
+
+This library initializes and drives the OTG controller itself. Arduino-ESP32's standard USB stack uses the same controller, so the two cannot be used together.
+
+- **Do not call `USB.begin()`.** `USBHIDKeyboard`, `USBHIDMouse`, `USBCDC` and the like cannot be mixed in either.
+- **On ESP32-S3, set the board menu's `USB Mode` to "USB-OTG (TinyUSB)".** The S3 default is "Hardware CDC and JTAG", which routes D+/D− to USB Serial/JTAG. In `arduino-cli`, `esp32:esp32:esp32s3:USBMode=default` is "USB-OTG (TinyUSB)".
+- **Leave `USB CDC On Boot`, `USB MSC On Boot` and `USB DFU On Boot` disabled.**
+- **On ESP32-P4, the HS controller is separate from USB Serial/JTAG.** The examples build with `USBMode=default`. The tests also verified building the P4X with `USBMode=hwcdc,CDCOnBoot=cdc`, sending logs to USB Serial/JTAG while EspUsbDevice uses the HS controller.
+- **TinyUSB build flags (`CFG_TUD_*` and so on) are not used.** v3 does not use TinyUSB's device stack; it runs on its own core. An old flag left in `build_opt.h` or elsewhere causes a compile error that points to the migration (even if set to 0).
+
+With USB OTG in use on an S3, `Serial` goes to the UART. That is why a separate log port is needed ([3.3](#33-connector-setup-during-development)).
+
+### 4.8 Logs
+
+When `begin()` fails, print `lastErrorName()` first ([2.7](#27-reading-errors)). Enumeration failures are often invisible from the device side, so **always look at the host OS logs too** ([chapter 6](#6-observing-yourself-from-the-host-os)). In device work, what the host received and what it disliked is the best information you have.
+
+---
+
+## 5. Bring-up procedure
+
+The steps to build a new USB device. **Go in order and skip nothing.** Most failures come from puzzling at a later stage over an earlier-stage problem (connector, build settings, budget).
+
+### Step 0. Desk check (before writing code)
+
+- In the schematic, find **which connector goes to the ESP32's USB OTG**. On P4, also which of HS and FS
+- Make sure the log connector and the host connector can be kept separate
+- Make sure the cable carries data (is not charge-only)
+- Check the board settings (S3: `USB Mode` is "USB-OTG (TinyUSB)"; P4: `ChipVariant` matches the chip revision)
+
+### Step 1. Check startup and enumeration
+
+Flash [`EspUsbDeviceBringUpCheck`](../examples/Info/EspUsbDeviceBringUpCheck/README.md). It enumerates as a HID keyboard but never sends a key, so it is safe to leave plugged into a PC.
+
+- Does `BEGIN ok` appear? → If not, look up the printed error name in [2.7](#27-reading-errors). The host is not involved yet
+- Connected to a host, does `MOUNTED` appear? → If not, it is electrical or descriptors. A checklist prints after 10 seconds
+- Press CapsLock on the host. Does `HOST_OUTPUT_REPORT` appear? → The host-to-device direction works too
+- Suspend the host. Does `SUSPENDED` appear?
+
+If all of this passes, the board and build settings are fine. Later problems can be attributed to your own configuration.
 
 ### Step 2. Decide what to look like
 
-Pick a class from [the table in 1.7](#17-choosing-what-to-look-like). This
-decision shapes the whole project, so make it first. When in doubt:
+Pick the class that fits from [the table in 1.7](#17-choosing-what-to-look-like). This choice shapes the whole project, so decide it first.
 
-- Host must not install a driver → a standard class
-- Custom data with no driver → HID with vendor-defined reports
-- Bandwidth matters → Vendor Specific bulk
-- An existing application must consume it → that application's class
+### Step 3. Run the minimal configuration from an example
 
-### Step 3. Get the minimum working with the class API
+Flash the example for the class you chose, unchanged.
 
-Flash the matching example as-is.
+| Class | Examples |
+| --- | --- |
+| HID keyboard / mouse | [`Keyboard`](../examples/Keyboard/README.md), [`Mouse`](../examples/Mouse/README.md) |
+| HID gamepad / media keys | [`Gamepad`](../examples/Gamepad/README.md), [`MediaKeys`](../examples/MediaKeys/README.md) |
+| HID custom reports | [`CustomHID`](../examples/CustomHID/README.md), [`VendorHID`](../examples/VendorHID/README.md) |
+| CDC ACM | [`Serial`](../examples/Serial/README.md), [`SerialMulti`](../examples/SerialMulti/README.md) |
+| USB MIDI | [`MIDI`](../examples/MIDI/README.md), [`MIDIController`](../examples/MIDIController/README.md) |
+| MSC | [`MSC`](../examples/MSC/README.md), [`MSCFatRamDisk`](../examples/MSCFatRamDisk/README.md), [`MSCSdCard`](../examples/MSCSdCard/README.md) |
+| USB Audio | [`AudioSpeaker`](../examples/AudioSpeaker/README.md), [`AudioMicrophone`](../examples/AudioMicrophone/README.md), [`AudioHeadset`](../examples/AudioHeadset/README.md) |
+| USB Video | [`VideoCamera`](../examples/VideoCamera/README.md) |
+| CDC-NCM | [`UsbNetwork`](../examples/UsbNetwork/README.md) |
+| CCID | [`SmartCardReader`](../examples/SmartCardReader/README.md) |
+| Vendor bulk | [`USBVendor`](../examples/USBVendor/README.md) |
+| DFU, firmware update | [`FirmwareDFU`](../examples/FirmwareDFU/README.md), [`FirmwareMSC`](../examples/FirmwareMSC/README.md) |
+| P4 HS / FS | [`P4HighSpeedDevice`](../examples/P4HighSpeedDevice/README.md), [`P4FullSpeedDevice`](../examples/P4FullSpeedDevice/README.md) |
 
-| Class | Example |
-|-------|---------|
-| HID keyboard / mouse | [`Keyboard`](../examples/Keyboard/) / [`Mouse`](../examples/Mouse/) |
-| HID gamepad / media keys | [`Gamepad`](../examples/Gamepad/) / [`MediaKeys`](../examples/MediaKeys/) |
-| HID custom reports | [`CustomHID`](../examples/CustomHID/) / [`VendorHID`](../examples/VendorHID/) |
-| CDC ACM | [`Serial`](../examples/Serial/) |
-| USB MIDI | [`MIDI`](../examples/MIDI/) |
-| MSC | [`MSC`](../examples/MSC/) / [`MSCFatRamDisk`](../examples/MSCFatRamDisk/) / [`MSCSdCard`](../examples/MSCSdCard/) |
-| USB Audio | [`AudioSpeaker`](../examples/AudioSpeaker/) / [`AudioMicrophone`](../examples/AudioMicrophone/) / [`AudioHeadset`](../examples/AudioHeadset/) |
-| USB Video | [`VideoCamera`](../examples/VideoCamera/) |
-| CDC-NCM | [`UsbNetwork`](../examples/UsbNetwork/) |
-| CCID | [`SmartCardReader`](../examples/SmartCardReader/) |
-| Vendor bulk | [`USBVendor`](../examples/USBVendor/) |
-
-**Get the example working before writing your own code.** When something breaks
-later, you can tell a library problem from a configuration problem.
+**Write your own code only after the example works.** When something fails, you can then tell a library problem from a configuration problem. How to read the examples is covered in [Working through the examples](example-workflow.md).
 
 ### Step 4. Check what you are declaring
 
-Set the `DUMP_ENABLE_*` defines in
-[`examples/Info/EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/)
-to match your configuration, build, and read the serial output. No host needed.
+Set the `DUMP_ENABLE_*` switches of [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/README.md) to your configuration, build, and read the output. No host is needed.
 
-What to check:
+Check:
 
-- How many interfaces there are, and each one's class / subclass / protocol
-- Endpoint types, directions, MPS, interval
-- How large the HID report descriptor is
-- **Whether it fits the endpoint budget**
+- How many interfaces, and each one's class / subclass / protocol
+- Each endpoint's type, direction, MPS and interval
+- How many bytes the HID report descriptor is
+- **Whether it fits the endpoint budget**, and what happened to bulk IN double buffering
 
-### Step 5. Compare against what the host received
+To check inside your own sketch, use `DescriptorsOnly` from [2.6](#26-checking-descriptors-without-starting-usb).
 
-Step 4 is what you *meant* to send. Now confirm the host got the same bytes.
+### Step 5. Compare with what the host received
+
+Step 4 is "what you meant to send". Now check that it matches what the host actually received.
 
 ```sh
 # Linux
 lsusb -v -d 303a:4051
-
-# Any OS, via PyUSB
-cd tests
-uv run --with pyusb python manual/device_inspect/device_inspect.py --pid 0x4051
 ```
 
-If they match, the descriptor layer is fine. If they differ - or if the host
-shows nothing at all - the problem is further down (enumeration, electrical,
-controller selection). Section 5 covers how to look.
+If they match, the descriptor layer is fine. If they do not, or nothing shows on the host, the problem is lower down (enumeration, electrical, controller selection). Chapter [6](#6-observing-yourself-from-the-host-os) covers observation in detail.
 
-### Step 6. Nail it down by hand
+### Step 6. Narrow it down by hand
 
-When the class works but "the host's software does not react the way I expect",
-[`examples/Info/EspUsbDeviceConsole`](../examples/Info/EspUsbDeviceConsole/) is
-the tool. One transfer at a time, no rebuild, so the experiment loop is fast.
+When the class works but "the host software does not react as expected", [`EspUsbDeviceConsole`](../examples/Info/EspUsbDeviceConsole/README.md) helps. You can try one transfer at a time without rebuilding.
 
 ```
 > state
-STATE mounted=1 speed=full leds=0x00 hid_protocol=report vendor_mounted=0
 > key 0x04                            # does the host react to this usage?
-> report 1 00 00 05 00 00 00 00 00    # put a raw report on the wire
-> vendor 01 02 03 04                  # raw bytes on the vendor bulk IN endpoint
+> report 1 00 00 05 00 00 00 00 00    # send a raw report
+> vendor 01 02 03 04                  # raw bytes on the vendor bulk IN
 ```
 
-At the same time everything coming *down* from the host - HID output reports,
-protocol switches, vendor control requests, bulk OUT - is printed with a `HOST_`
-prefix. **Watching that while the host's own software runs is how you learn the
-initialization sequence it expects.**
+Everything coming from the host (HID output reports, protocol switches, vendor control requests, bulk OUT) is printed with a `HOST_` prefix. **Watching this while the host's own software runs shows the initialization sequence the host expects.**
 
 ### Step 7. Grow into a composite device
 
-Once a single function works, combine them. Only two constraints matter here:
+Once single Functions work, combine them. There are two constraints:
 
-- **The endpoint budget** ([3.3](#33-the-endpoint-budget)) - check it in
-  DescriptorDump first
-- **At most four classes** ([3.4](#34-other-library-side-limits))
+- **Endpoint and FIFO budgets** ([4.4](#44-endpoint-budget), [4.5](#45-fifo-budget)). Check with DescriptorDump first
+- **The host OS.** Some OSes behave differently depending on interface order and the presence of IADs
 
-Composite HID does not add interfaces; it adds report IDs on one HID interface.
-[`CompositeHidCdcMsc`](../examples/CompositeHidCdcMsc/) and
-[`KeyboardMouse`](../examples/KeyboardMouse/) are the references.
+Several HID Functions add report IDs, not interfaces. [`CompositeHidCdcMsc`](../examples/CompositeHidCdcMsc/README.md) and [`KeyboardMouse`](../examples/KeyboardMouse/README.md) are good references.
 
-Some host OSes behave differently depending on interface order and whether an
-IAD is present. After rearranging, re-verify on the OSes you actually target.
+Registration order decides only interface and endpoint numbers. HID works the same whether registered first or last. But things such as Windows COM port numbers attach to interface numbers, so reordering changes what the host sees ([6.2](#62-windows)). After rearranging, recheck on the target OS.
 
-Registration order decides interface and endpoint numbers
-([advanced 5.1](usb-device-advanced.md#51-numbering-rules)) and nothing else:
-a HID class works the same whether it is registered first or after a vendor,
-CDC or MSC class. That was not always so - in 2.4.0 and earlier a single HID class
-registered after a non-HID one never answered the host's report descriptor
-request, which on Windows 11 read as the keyboard failing with Code 10 about
-6 seconds after plugging in and, in a composite, the function next to it
-never becoming usable either. If a HID function is dead on an older build
-while the same classes work in another order, that is what you are seeing.
+### Step 8. Check robustness
 
-### Step 8. Check that it holds up
+Enumerating once and staying usable are different things.
 
-Enumerating once is not the same as staying usable.
+- Suspend and resume the host (the change in `suspended()`, and transfers after resume)
+- Unplug and replug the cable many times
+- Repeat `end()` → `begin()` (the host sees an unplug and replug)
+- Reboot the host and see whether it is recognized during boot (BIOS / UEFI). HID switches to boot protocol there
 
-```sh
-cd tests
-uv run --with pyusb python manual/enumeration_soak/enumeration_soak.py --cycles 50
-```
+### Step 9. Record the result
 
-That repeats re-enumeration and configuration changes, checking that the
-descriptors never drift and that the device keeps answering. On top of that:
-
-- Suspend and resume the host
-- Unplug and replug many times
-- Reboot the host and check it is recognised at boot (BIOS/UEFI switches HID
-  devices to boot protocol)
-
-### Step 9. Write down the result
-
-- Put the smallest working sketch under `examples/` (with README.md,
-  README.ja.md and sketch.yaml if contributing here)
-- Add anything that needs a human to `tests/manual/`
-- Add anything automatable on two boards to `tests/peer/`
-- **State the host OS and version you verified on.** On the device side this is
-  the equivalent of the host side's VID:PID - the single most important fact.
+- Keep the smallest sketch that works
+- **Write down the host OS and its version, the chip and its revision, and the controller (HS / FS) you used.** In device work, this is the most important record
 
 ---
 
-## 5. Observing yourself from the host OS
+## 6. Observing yourself from the host OS
 
-Host-side development meant capturing and analysing someone else's device. On
-the device side you observe **how you look to the host**. The tools differ per
-OS.
+In host development you observed the other device. On the device side you observe **how the host sees you**. The tools differ by OS.
 
-### 5.1 Linux
+### 6.1 Linux
 
 ```sh
-# What happened (start this before plugging in)
+# What happened (start before plugging in)
 sudo dmesg -w
 udevadm monitor --udev
 
@@ -717,305 +703,196 @@ lsusb -t
 # HID report descriptor
 sudo usbhid-dump -d 303a:4050
 
-# What is actually arriving as keyboard/mouse input
+# What arrives as HID keyboard / mouse input
 sudo evtest
 
-# Capture your own transfers
+# Capture traffic to and from you
 sudo modprobe usbmon
 sudo wireshark   # pick usbmonX
 ```
 
-`dmesg` matters most: it states the reason when a descriptor is invalid, and
-shows which driver bound.
+`dmesg` matters most. An invalid descriptor gets a reason, and you see which driver bound. Whether the P4 HS controller enumerated at HS is shown by `480M` in `lsusb -t`. On the device side, read it with `device.speed()` ([2.3](#23-state-started-ready-suspended)).
 
-### 5.2 Windows
+### 6.2 Windows
 
-- **Device Manager** - "Unknown USB Device (Device Descriptor Request Failed)"
-  means it failed at the descriptor stage; a Code 10 / Code 43 warning (the
-  "!" badge on the device) means driver binding failed.
-- **[USB Device Tree Viewer](https://www.uwe-sieber.de/usbtreeview_e.html)** -
-  the most useful tool on Windows. It shows both the raw descriptor bytes and
-  the error Windows produced.
-- **Event Viewer** - details of a failed driver bind.
-- **`pnputil /enum-devices /connected`** - which driver bound.
+- **Device Manager**: "Unknown USB Device (Device Descriptor Request Failed)" is a failure at the descriptor stage; a "!" with Code 10 / Code 43 is a driver binding failure.
+- **[USB Device Tree Viewer](https://www.uwe-sieber.de/usbtreeview_e.html)**: the most useful tool on Windows. Shows both the raw descriptor bytes and the errors Windows reported.
+- **Event Viewer**: details of binding failures.
+- **`pnputil /enum-devices /connected`**: which driver is bound.
 
-#### What Windows re-reads, and what it keeps
+> The observations in this section were made on Windows 11 25H2 (build 26200.9457) with **EspUsbDevice v2** firmware. Windows decides from descriptors and identity alone, so the same rules are expected to hold for v3, but **they have not been re-measured with v3**. Windows driver binding and class behavior are also unverified with v3.
 
-"Windows caches descriptors" is the usual shorthand and it is too broad to act
-on. Everything below was measured on one PC - Windows 11 25H2, build
-26200.9457, on 2026-09-16 - against one device instance, changing one thing at
-a time, with [`tests/manual/windows_device_guid`](../tests/manual/windows_device_guid/)
-and [`tests/manual/windows_identity`](../tests/manual/windows_identity/). Windows
-changes between builds; the last part of this section is how to repeat the
-measurements on the build you actually target.
+#### What Windows re-reads and what it keeps
 
-| You change | Windows picks it up? |
-|---|---|
-| Interfaces, endpoints, packet sizes, which functions exist and in what order | **Yes, every time** |
+"Windows caches descriptors" is too coarse to act on. Changing one thing at a time gave this:
+
+| What changed | Does Windows follow? |
+| --- | --- |
+| Interfaces, endpoints, packet sizes, which Functions exist and their order | **Yes, every time** |
 | Which driver should bind | **Yes, every time** |
-| `deviceInterfaceGuid`, with the vendor revision moving (the default) | **Yes** |
-| `deviceInterfaceGuid`, with the vendor revision pinned | **No** - it keeps the old GUID |
-| `deviceVersion`, `product` | **Yes** - the hardware ID and the bus-reported description update; the Device Manager name does not |
-| `vid`, `pid` or `serialNumber` | **Yes** - it is a different device to Windows, everything starts fresh |
+| `deviceInterfaceGuid` (vendor revision allowed to move = default) | **Yes** |
+| `deviceInterfaceGuid` (vendor revision pinned) | **No**. The old GUID stays |
+| `deviceVersion`, `product` | **Yes**. Hardware ID and bus-reported description update; the Device Manager display name does not |
+| `vid`, `pid`, `serialNumber` | **Yes**. To Windows it is a different device, so everything starts fresh |
 
-**The standard descriptors are read on every enumeration.** A device that was a
-single vendor interface and becomes a composite gets split into children; one
-that goes back becomes a single node again. Measured on one PID and serial with
-the vendor class registered first throughout, each step following the last:
+- **Standard descriptors are read on every enumeration.** A single vendor interface that becomes composite is split into child devices, and becomes one node again when you go back. Driver selection follows the descriptors, so there is nothing for you to do.
+- **The exception is Microsoft OS 2.0 registry properties.** Windows reads `DeviceInterfaceGUIDs` once per instance and keeps it, re-reading only when the descriptor set's `wVendorRevision` changes. By default this library derives the revision from the set's contents, so a changed set is re-read automatically. Only pinning `msOs20VendorRevision` by hand leaves the old GUID in place.
+- **Changing identity starts fresh.** Windows identifies the instance by VID, PID and serial (`USB\VID_303A&PID_4080\GUID-TEST-1`). Change any of them and it is a new instance. The old one stays in the registry, unused.
+- **Without a `serialNumber`, the instance is keyed by port path** (`USB\VID_303A&PID_4080\8&2EBC545B&0&4`). The same board in a different socket is a different device to Windows.
+- **Child instances of a composite device hang off interface numbers** (`USB\VID_303A&PID_4090&MI_01\...`), and it is the child that holds settings. The path an application gets from GUID enumeration moves with the Function. Enumerate by GUID every time; do not store the path.
 
-| Step, same PID and serial | Parent | `MI_00` | `MI_01` | GUID enumerates |
-|---|---|---|---|---|
-| vendor only | `WINUSB` | - | - | device node |
-| + HID | `usbccgp` | `HidUsb` started 38 ms after arrival, `kbdhid` child | `WINUSB` 50 ms, interface enabled | `&mi_01` |
-| swap to vendor + MSC | `usbccgp` | `WINUSB` 34 ms | `USBSTOR` 32 ms | `&mi_00` |
-| back to vendor only | `WINUSB` | - | - | device node |
+**COM ports attach to interface numbers.** One CDC Function, one PID and serial:
 
-Adding, moving and removing functions all took effect on the next plug-in, with
-the vendor revision left to derive itself and nothing else changed. **Driver
-binding follows your descriptors and needs no help.**
+| Configuration | CDC child | COM |
+| --- | --- | --- |
+| CDC alone | `MI_00` | COM16 |
+| CDC + vendor (CDC registered first) | `MI_00`, same instance | **Still COM16** |
+| vendor + CDC (vendor registered first) | `MI_01`, **new instance** | **COM34** |
+| Back to CDC alone | `MI_00` | Back to COM16 |
 
-**The Microsoft OS 2.0 registry properties are the exception.** Windows reads
-`DeviceInterfaceGUIDs` once per device instance and keeps it, re-reading only
-when `wVendorRevision` in the descriptor set changes. Measured: sending a
-different GUID under a pinned revision left the old one in the registry, on a
-parent instance and on an `&MI_01` child alike. This library derives the
-revision from the descriptor set by default, so it moves whenever the set moves
-and you get the re-read for free; see
-[advanced guide 3.7](usb-device-advanced.md#37-bos-and-microsoft-os-20). Pinning
-`msOs20VendorRevision` by hand is the only way to hit this.
+Adding a Function *after* the serial port does not move its COM number. Moving the serial port to another interface number gives it a new one. If users have COM16 saved in their terminal software, whether it still works after an update is decided by your Function registration order.
 
-**A new identity is a clean slate.** Windows keys an instance on VID, PID and
-serial - `USB\VID_303A&PID_4080\GUID-TEST-1`. Change any of the three and you
-get a new instance that reads everything fresh; measured for the PID, the VID
-and the serial, and it holds even with the vendor revision pinned to a value
-the old instance never saw. The old instance stays in the registry, unused.
+**A value left in the registry is not a device left behind.** Windows writes `DeviceInterfaceGUIDs` (and the COM `PortName`) and never deletes them. After rearranging, old values remain, but enumerating the way an application does (`SetupDiGetClassDevs` with `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE`) returned only the live interfaces.
 
-**With no `serialNumber`, the instance is keyed on the port.** Measured, the
-instance ID became `USB\VID_303A&PID_4080\8&2EBC545B&0&4` - a path, not a
-serial. The same board in another port is then a different device to Windows,
-with its own cached properties. Ship a serial unless you want that.
-
-**Interface numbers are what child instances hang off.** In a composite, each
-function becomes a child named by its interface number
-(`USB\VID_303A&PID_4090&MI_01\...`), and that child is what keeps settings.
-Swapping which function sits at which number keeps both children and changes
-only what is inside them; Windows re-binds each one (`HidUsb` -> `WINUSB`,
-`WINUSB` -> `USBSTOR`, measured). Two consequences follow:
-
-- The device interface path an application gets back from a GUID enumeration
-  moves with the function (`...#guid-test-1#`, `...&mi_01#...`, `...&mi_00#...`).
-  Enumerate by GUID every time; do not save the path.
-- **COM ports follow the interface number.** Measured with one CDC function on
-  one PID and serial:
-
-  | Step | CDC child | COM port |
-  |---|---|---|
-  | CDC only | `MI_00` | COM16 |
-  | CDC + vendor, CDC registered first | `MI_00`, same instance | **COM16 kept** |
-  | vendor + CDC, vendor registered first | `MI_01`, **new instance** | **COM34** |
-  | HID + CDC | `MI_01`, same instance as the row above | COM34 kept |
-  | CDC only again | `MI_00` | COM16 again |
-
-  Adding functions *after* a serial port leaves its COM number alone; moving
-  the serial port to another interface number gives it a new one, and moving
-  it back brings the old number back. If a user's terminal program has COM16
-  saved, the registration order of your classes decides whether it still works
-  after the update.
-
-**Leftover registry values are not leftover devices.** Windows writes
-`DeviceInterfaceGUIDs` (and a COM port's `PortName`) when an instance has none,
-updates it when the revision moves, and never removes it. So after the swaps
-above the parent still carried a GUID from its single-interface days and the
-mass-storage child still carried one from when it was the vendor interface, and
-the old `MI_00` kept `PortName COM16` while it was a WinUSB interface. None of
-that is reachable: enumerating the interface class the way an application does
-(`SetupDiGetClassDevs` with `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE`) returned
-exactly one interface, the live one, in every configuration measured. A
-registry value does not create a device interface; the driver bound to that
-node does.
-
-**`msOs20CcgpDevice`** asks Windows to treat a single-interface device as a
-composite. Measured: the parent binds `usbccgp`, the child `&MI_00` binds
-`WINUSB`, and the GUID is registered on the child with nothing on the parent.
-Its original justification - keeping a later-added function from leaving a
-GUID behind on the parent - is answered above: the leftover is inert. No case
-was found where it changes what a host application sees, which is why it
-defaults to off.
-
-#### Every identity field, measured
-
-The same PC, the same VID, PID and serial throughout; one field changed per
-flash, then read back with `windows_identity.py`.
+#### Identity fields
 
 | Field | Default | What changing it did |
-|---|---|---|
-| `vid`, `pid` | `0x303A`, `0x4000` | New instance, driver installed fresh, GUID recorded fresh |
-| `serialNumber` | none | New instance likewise; with none at all, the instance is the port path |
-| `deviceVersion` (bcdDevice) | `0x0100` | Hardware ID `USB\VID_303A&PID_4090&REV_0200` on the next plug-in; same instance, same driver, no reconfiguration event |
-| `product` | `"EspUsbDevice"` | Bus-reported description (`DEVPKEY_Device_BusReportedDeviceDesc`) shows the new string on the next plug-in. The Device Manager name kept the old one: names are set when Windows installs the driver and refreshed only when it reconfigures the device (a driver change did rename it) |
-| `manufacturer` | `"EspUsbDevice"` | Nothing visible. Windows' Manufacturer column comes from the driver's INF (`WinUsb Device`, `Microsoft`, ...); the string appears in no PnP property and is only visible in the raw descriptors |
-| `deviceInterfaceGuid` | library default | Taken on the next plug-in with the derived revision; kept with a pinned one |
-| `msOs20VendorRevision` | 0 = derived | The one knob that can make a GUID change not take |
-| `msOs20Layout` | Auto | **Forcing `Subsets` on a single interface: no `MS_COMP_WINUSB` compatible ID, no driver, `CM_PROB_FAILED_INSTALL` (Code 28).** Windows applies function subsets only to composite devices; Auto picks the right one. The instance recovered on the next plug-in with a valid set |
-| `msOs20CcgpDevice` | off | Parent `usbccgp`, child `MI_00` `WINUSB`, GUID on the child only |
-| `webusbEnabled`, `webusbUrl` | off | Nothing on the Windows side; browsers read it, PnP does not |
-| `maxPowerMilliamps`, `selfPowered` | 100, false | Nothing in any PnP property; visible only in the configuration descriptor |
-| Function name (CDC constructor's `name`) | none | The composite child's bus-reported description is the name (`Console`); without one it falls back to `product`. A COM port's Device Manager name is `USB Serial Device (COMn)` from usbser.inf either way |
+| --- | --- | --- |
+| `vid`, `pid` | `0x303A`, `0x4000` | New instance. Driver and GUID recorded afresh |
+| `serialNumber` | none | Likewise a new instance. Without one, the instance is the port path |
+| `deviceVersion` (bcdDevice) | `0x0100` | On the next connection the hardware ID becomes `...&REV_0200` and so on. Same instance and driver |
+| `product` | `"EspUsbDevice"` | The bus-reported description shows the new string. The Device Manager name is set when the driver is installed and changes only when Windows reconfigures the device |
+| `manufacturer` | `"EspUsbDevice"` | No visible change. Windows' manufacturer column comes from the driver INF |
+| `deviceInterfaceGuid` | Library default | Applied on the next connection with an automatic revision; kept with a pinned one. Give your product its own GUID |
+| `msOs20VendorRevision` | 0 (automatic) | The only field that can make a GUID change not take effect |
+| `msOs20Layout` | Auto | **Forcing `Subsets` on a single-interface device leaves it with no driver (Code 28).** Auto picks the right shape |
+| `msOs20CcgpDevice` | off | Parent is `usbccgp`, child `MI_00` is `WINUSB`; the GUID goes only on the child |
+| `webusbEnabled`, `webusbUrl` | off | Nothing happens on the Windows side. Browsers read these |
+| `maxPowerMilliamps`, `selfPowered` | 100, false | Visible only in the configuration descriptor |
+| Function name (CDC constructor `name` and the like) | none | A composite child's description becomes that name; otherwise `product` |
 
-#### How to measure this yourself
+#### Measuring it yourself
 
-Windows behaviour differs between builds, and the table above is one build on
-one day. Before relying on any row for a product, repeat it on the Windows you
-target, and write the build down (`winver`, or `DisplayVersion` +
-`CurrentBuild`.`UBR` under `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`).
-The procedure that produced these tables:
+Windows behavior changes between builds. Before a product depends on any row above, measure again on the target Windows and record the build (`winver`, or `DisplayVersion` and `CurrentBuild`.`UBR` in the registry).
 
-1. **Change one thing per flash** and note the time of the flash. Use a PID the
-   PC has never seen when you want a clean log, and the *same* PID when the
-   question is what happens to a PC that has already met the device - that is
-   the question that matters for a shipped product.
-2. **Keep the device off WSL.** A device attached through usbipd is a USBIP
-   device to Windows and nothing binds. Detach it first.
-3. **Read Windows first, the board second.** Some UART adapters reset the board
-   when the port is opened, and a reset is a re-plug: it starts a new
-   enumeration and erases the state you were about to read.
-4. **Do not trust `STATUS OK`.** `Get-PnpDevice` reported OK for a child whose
-   start was still pending, and for one whose start had already failed. Read
-   `Microsoft-Windows-Kernel-PnP/Configuration` in Event Viewer instead: 400
-   configured, 410 started, 411 start failed, 430 requires further
-   installation. It also tells you whether a driver was re-selected
-   (`Device Updated`). Do not expect `setupapi.dev.log` to help with a WinUSB
-   device: on the build measured here it recorded a section only when a
-   class driver such as `usbser` was installed, and none for any of the
-   dozens of WinUSB binds through the Microsoft OS 2.0 compatible ID -
-   neither the successes nor the deliberate failure. Its silence means
-   nothing either way.
-5. **Check the device interface, not just the driver.** `pnputil
-   /enum-interfaces /class {GUID}` lists every registration with its state,
-   and the only test that matters is enumerating as an application does
-   (`SetupDiGetClassDevs` with `DIGCF_PRESENT | DIGCF_DEVICEINTERFACE`).
-6. **Read what Windows kept** under the instance's `Device Parameters`
-   (`DeviceInterfaceGUIDs`, `PortName`) and compare with what the device sent
-   (`DEVPKEY_Device_BusReportedDeviceDesc`, hardware IDs, USB Device Tree
-   Viewer for the raw bytes).
+1. **Change one thing per flash.** To see "what happens on a PC that has met this device before", keep the same PID. That is what matters for a shipped product.
+2. **Do not attach the device to WSL.** A device attached through usbipd is a USBIP device to Windows and nothing binds to it.
+3. **Read Windows first, the board second.** Some UART adapters reset the board when the port opens, which is a reconnect.
+4. **Do not trust `OK` from `Get-PnpDevice`.** It returned OK for children whose start was pending or had failed. Read `Microsoft-Windows-Kernel-PnP/Configuration` in Event Viewer (400 = configured, 410 = started, 411 = start failed, 430 = further installation required). WinUSB binding may not be recorded in `setupapi.dev.log`.
+5. **Check the device interface, not just the driver.** Use `pnputil /enum-interfaces /class {GUID}` and the same enumeration an application uses.
+6. **Read what Windows kept.** Compare the instance's `Device Parameters` (`DeviceInterfaceGUIDs`, `PortName`) with what the device sent.
 
-[`tests/manual/windows_identity/windows_identity.py`](../tests/manual/windows_identity/)
-does steps 4 to 6 in one command from a WSL shell, for every node matching a
-VID/PID, and its sketch puts every field above on a `build_opt.h` switch so one
-can be changed at a time. Its README holds the raw readings behind this section.
+The PC-side script of the v2 test tool [`windows_identity`](https://github.com/tanakamasayuki/EspUsbDevice/tree/3fed50d0d777f600432b71381faccd93adb9a202/tests/manual/windows_identity/) does steps 4–6 for every node matching a VID/PID in one command from a WSL shell. The sketch in the same directory is written against the v2 API and does not build with v3.
 
-Two notes on things this section used to hedge about. Device Manager's friendly
-name does have its own life, as measured above: it is set at driver install
-and survives descriptor changes until Windows reconfigures the device. And a
-`CM_PROB_FAILED_INSTALL` instance recovered here on the next plug-in once the
-descriptors were valid again - but the
-[wch-protocols](https://github.com/ch32-riscv-ug/wch-protocols) project reports
-one that did not, after a hardware ID change, and that case was not reproduced
-here. If you meet it, the event log is where to look first.
+### 6.3 macOS
 
-### 5.3 macOS
+- **System Information → USB**: tree and descriptor summary
+- `ioreg -p IOUSB -l -w 0`: more detail
+- Capture with Wireshark on the `XHC20` interface
 
-- **System Information → USB** - the tree and a descriptor summary
-- `ioreg -p IOUSB -l -w 0` - more detail
-- Wireshark on the `XHC20` interface for captures
+v3 has not been checked on macOS.
 
-### 5.4 Using another ESP32 as the host
+### 6.4 Using another ESP32 as the host
 
-If the real host is an embedded system rather than a PC, an ESP32 running
-[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) can play host. Both
-sides' logs are then readable from the PC at once, which speeds up diagnosis.
-[`tests/peer`](../tests/peer/) in this repository is exactly that setup.
+If the target is an embedded device rather than a PC, an ESP32 running [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) can act as the host. You read both sides' logs from the PC at once, which speeds up isolation. This repository's tests ([validation](../validation/README.ja.md)) use this arrangement.
 
-### 5.5 Compare against something that works
+### 6.5 Comparing with a device that works
 
-When a host dislikes your device, the fastest route is to **put a commercial
-device of the same class side by side**.
+When the host dislikes your device, the shortest path is to **put a commercial device of the same class side by side**.
 
 ```sh
-lsusb -v -d <the commercial device's vid:pid> > known-good.txt
-lsusb -v -d 303a:4051                         > mine.txt
+lsusb -v -d <vid:pid of the commercial device> > known-good.txt
+lsusb -v -d 303a:4051                          > mine.txt
 diff -u known-good.txt mine.txt
 ```
 
-Interface ordering, presence of an IAD, `bInterfaceProtocol`, endpoint
-intervals - the fields that are technically optional but that real host
-drivers assume - are what show up in the diff.
+Interface order, IAD presence, `bInterfaceProtocol`, endpoint intervals: items that are optional in the specification but that real host drivers assume show up in the diff.
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
-The expanded, symptom-first version of this table - including build, host-OS,
-and per-class issues - lives in [troubleshooting.md](troubleshooting.md).
+A symptom-indexed list lives in [troubleshooting.md](troubleshooting.md). Only the main items are here.
 
 | Symptom | Likely cause | Check / fix |
-|---------|--------------|-------------|
-| `begin()` fails with `ESP_ERR_INVALID_SIZE` | Endpoint budget exceeded, or descriptor too large | Read the budget in DescriptorDump. Drop a class. On P4, use HS ([3.3](#33-the-endpoint-budget)) |
-| `begin()` fails with `ESP_ERR_NOT_SUPPORTED` | Target has no USB device controller | Confirm it is an S2 / S3 / P4 |
-| `begin()` succeeds but the host shows nothing | Wrong connector (plugged into the UART / Serial-JTAG side) | Check the schematic ([1.2](#12-which-connector-is-the-device-side)) |
-| Same | `USB Mode` built as Hardware CDC and JTAG | Set it to "USB-OTG (TinyUSB)" ([3.5](#35-mutually-exclusive-with-the-stock-arduino-esp32-usb-stack)) |
+| --- | --- | --- |
+| `begin()` fails with `ESP_ERR_INVALID_SIZE` | Endpoint or FIFO budget exceeded; at HS, MSC `transferBytes` not a multiple of the MPS; etc. | Read the budget in DescriptorDump. Remove a Function. On P4, use HS ([4.3](#43-what-changes-at-hs), [4.4](#44-endpoint-budget), [4.5](#45-fifo-budget)) |
+| `begin()` fails with `ESP_ERR_NO_MEM` | Out of heap | Reduce capacities. Put rings and similar storage in PSRAM ([2.4](#24-capacities-are-decided-at-run-time)) |
+| `begin()` fails with `ESP_ERR_NOT_SUPPORTED` | A chip without USB OTG, or a controller it does not have | Check it is S2 / S3 / P4, and check `config.controller` |
+| `begin()` fails with `ESP_ERR_INVALID_STATE` | Double `begin()`; a Function added while running remains | `end()` and reconfigure ([2.2](#22-configure-begin-end)) |
+| `end()` returns `ESP_ERR_TIMEOUT` | A callback did not return, so the worker did not stop within `stopTimeoutMs` | Keep callbacks short. Call `end()` again after it returns ([2.2](#22-configure-begin-end)) |
+| `begin()` succeeds but nothing shows on the host | Wrong connector (UART side, Serial/JTAG side) | Check the schematic ([1.2](#12-which-connector-is-the-device-side)) |
+| Same | S3 `USB Mode` is Hardware CDC and JTAG | Set "USB-OTG (TinyUSB)" ([4.7](#47-not-usable-together-with-arduino-esp32s-own-usb)) |
 | Same | Charge-only cable | Use a data cable |
-| Same, on P4 | Controller does not match the connector | Set `config.controller` to match the connector (FS/HS) you used ([3.2](#32-choosing-fs-or-hs-on-esp32-p4)) |
-| Windows: "Device Descriptor Request Failed" | Invalid descriptor, or none returned | Read the raw bytes in USB Device Tree Viewer and compare with DescriptorDump |
-| Host still shows the old device after a change | **Windows descriptor cache** | Change the PID or serial number; or delete the device in Device Manager and replug ([5.2](#52-windows)) |
-| A fifth class never appears in the descriptor | Only four classes fit; the fifth is dropped silently | Check the interface list in DescriptorDump ([3.4](#34-other-library-side-limits)) |
-| Reaches `SET_CONFIGURATION` but no driver binds | The class / subclass / protocol combination | Diff against a commercial device of the same class ([5.5](#55-compare-against-something-that-works)) |
-| Cannot open the vendor interface on Windows | Not bound to WinUSB | Set `config.webusbEnabled = true` so the MS OS 2.0 descriptor is returned; failing that, bind with Zadig |
-| HID keystrokes produce the wrong characters | Host keyboard layout mismatch | Set `keyboard.setLayout()` to the host's layout |
-| Keyboard does not work in BIOS / UEFI | The host switched to boot protocol | Watch `HOST_HID_PROTOCOL` in Console. NKRO folds to 6 keys under boot protocol |
-| Sends never arrive at the host | Sending before mount | Check `device.ready()` first; sends while unmounted are dropped |
-| No log, or the log dies right after `begin()` | Single-connector board sharing the log and device port | Use a two-connector board, or a peer-board setup ([2.3](#23-connector-layout-while-developing)) |
-| Stops working after repeated replugging | State surviving re-enumeration | Reproduce with `enumeration_soak`, and drop state in `onBusDetached()` / `onBusAttached()` |
-| MSC will not mount | FAT image or block size | Compare against `MSCFatRamDisk` |
-| Audio drops out | FIFO read/write cadence | Poll the API at a steady interval; watch the stream stats |
-| No idea at all | You have not read the host's log | Start with `dmesg -w` (Linux) or USB Device Tree Viewer (Windows) ([section 5](#5-observing-yourself-from-the-host-os)) |
+| Same (P4) | Controller and connector do not match | Set `config.controller` to the connector you used (HS / FS) ([4.2](#42-choosing-hs-or-fs-on-esp32-p4)) |
+| P4 HS controller enumerates at 12 Mbps | The host or hub is FS | Check whether `device.speed()` is `Full`. Fine if intended. For HS, use an HS port |
+| Windows: "Device Descriptor Request Failed" | Invalid descriptor, or it could not be returned | Look at raw bytes in USB Device Tree Viewer and compare with DescriptorDump |
+| Changed something but the host still shows the old value | A value Windows keeps | See what is kept in [6.2](#62-windows). Change PID or serial to start fresh |
+| Reaches SET_CONFIGURATION but no driver loads | Class / subclass / protocol combination | Diff against a commercial device of the same kind ([6.5](#65-comparing-with-a-device-that-works)) |
+| Cannot open the vendor interface on Windows | WinUSB not bound | Check the Microsoft OS 2.0 descriptor. Set `msOs20Layout` back to Auto |
+| HID key input comes out garbled | Host keyboard layout mismatch | Match `keyboard.setLayout()` to the host layout |
+| Keyboard does not work in BIOS / UEFI | Switched to boot protocol | Check `HOST_HID_PROTOCOL` in Console. NKRO folds to 6 keys in boot protocol |
+| Sent but nothing reaches the host | Sending before `ready()` | Check `device.ready()` before sending, and check the return value |
+| No log, or it stops right after `begin()` | One-connector board; log and device share the port | Use a two-connector board, or an ESP32 as host ([3.3](#33-connector-setup-during-development)) |
+| Stops working after repeated replugging | State from the previous connection remains | Reproduce with repeated `end()` / `begin()`. Without VBUS sensing, an unplug is not visible until the next bus reset |
+| MSC fails in `begin()` at HS | `transferBytes` not a multiple of 512 | Make it a multiple of 512 ([4.3](#43-what-changes-at-hs)) |
+| No idea at all | Not looking at host logs | Look at `dmesg -w` (Linux) or USB Device Tree Viewer (Windows) first ([chapter 6](#6-observing-yourself-from-the-host-os)) |
 
 ---
 
-## 7. Tool list
+## 8. Tools
 
 ### For users (examples/Info/)
 
 | Tool | Purpose |
-|------|---------|
-| [`EspUsbDeviceBringUpCheck`](../examples/Info/EspUsbDeviceBringUpCheck/) | **Run this first.** Whether begin() succeeded, whether the host enumerates, the speed, and host->device traffic. Includes a checklist for when nothing enumerates |
-| [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/) | **Run this next.** Every descriptor the library built, plus the endpoint budget. No host needed |
-| [`EspUsbDeviceConsole`](../examples/Info/EspUsbDeviceConsole/) | **For nailing things down.** Type HID reports and vendor transfers into a serial terminal, and see every request the host makes |
+| --- | --- |
+| [`EspUsbDeviceBringUpCheck`](../examples/Info/EspUsbDeviceBringUpCheck/README.md) | **Run first.** `begin()` result, enumeration, suspend, host-to-device path. Prints a checklist when enumeration does not happen |
+| [`EspUsbDeviceDescriptorDump`](../examples/Info/EspUsbDeviceDescriptorDump/README.md) | **Run next.** Every descriptor the library built, and the endpoint budget. No host needed |
+| [`EspUsbDeviceConsole`](../examples/Info/EspUsbDeviceConsole/README.md) | **For narrowing down.** Send HID reports and vendor transfers by hand from serial, and print every request from the host |
 
-The per-feature examples are listed in [`examples/README.md`](../examples/README.md).
-How the library works internally is covered in the
-[USB Device Development Guide (Advanced)](usb-device-advanced.md).
+For per-feature examples see [examples](../examples/README.md).
 
-### For developers (tests/manual/)
+### Host-side tools
 
-PyUSB scripts you run on the PC. See [tests/manual/README.md](../tests/manual/README.md)
-for how to run them.
-
-| Tool | Purpose |
-|------|---------|
-| [`device_inspect`](../tests/manual/device_inspect/) | Every descriptor as the host received it - the cross-check for DescriptorDump. `--json` for diffing |
-| [`enumeration_soak`](../tests/manual/enumeration_soak/) | Repeated re-enumeration and configuration changes, checking the descriptors never drift |
-| [`p4_hs_bulk`](../tests/manual/p4_hs_bulk/) | ESP32-P4 High-Speed operation and effective bulk throughput |
-| [`usb_ncm`](../tests/manual/usb_ncm/) | Whether the host OS binds its NCM driver to the network device |
-| [`windows_device_guid`](../tests/manual/windows_device_guid/) | What Windows recorded for the device interface GUID, and whether a change took effect on a PC that had seen the device |
-| [`windows_identity`](../tests/manual/windows_identity/) | Every identity field on a switch, and one command that reads back the driver, names, hardware IDs, COM port, GUID, interface state and the PnP event log |
-
-The automated tests live in [`tests/peer`](../tests/peer/) (two boards) and
-[`tests/unit`](../tests/unit/) (host-side descriptor checks). See
-[tests/TEST_PLAN.md](../tests/TEST_PLAN.md) for the structure.
+- Linux: `lsusb`, `dmesg`, `usbhid-dump`, `evtest`, Wireshark (usbmon)
+- Windows: USB Device Tree Viewer, Device Manager, Event Viewer, `pnputil`
+- v2 test tools ([v2 `tests/manual/`](https://github.com/tanakamasayuki/EspUsbDevice/tree/3fed50d0d777f600432b71381faccd93adb9a202/tests/manual/)): the PC-side PyUSB scripts can read standard descriptors. The sketches bundled with them use the v2 API and do not build with v3.
 
 ---
 
-## 8. References
+## 9. What has been verified
 
-- [USB 2.0 Specification](https://www.usb.org/document-library/usb-20-specification) - the standard itself
-- [USB Class Codes](https://www.usb.org/defined-class-codes) - the class code list
-- [USB Device Class Documents](https://www.usb.org/documents) - HID, CDC, MSC, CCID, UAC and the rest
-- [HID Usage Tables](https://usb.org/document-library/hid-usage-tables-16) - required reading when writing a report descriptor
-- [USB Made Simple](https://www.usbmadesimple.co.uk/) - a beginner-friendly explanation
-- [USB Device Tree Viewer](https://www.uwe-sieber.de/usbtreeview_e.html) - observation on Windows
-- [TinyUSB](https://docs.tinyusb.org/) - the device stack this library vendors
-- [pid.codes](https://pid.codes/) - VID/PID for open source projects
-- This repository's [README.md](../README.md) - API reference and per-class status
-- [Firmware update over USB](ota-over-usb.md) - boot mode per chip, entering it from a sketch, and the OTA routes
-- [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) - the library for making an ESP32 the host, with its [USB Host development guide](https://github.com/tanakamasayuki/EspUsbHost/blob/main/docs/usb-host-guide.md)
+v3's tests live in [validation](../validation/README.ja.md). They are test sketches separate from the examples; `--combo all` runs six wiring combinations and more than 200 tests.
+
+| Setup | What was checked |
+| --- | --- |
+| Two ESP32-S3 boards (FS) | Main test environment. All classes and the common core |
+| One ESP32-P4, HS controller ↔ FS controller (FS link) | Basic traffic for all 10 classes, both controllers, restart, storage in PSRAM |
+| Older P4 and P4X connected at HS (480 Mbps, both directions) | The S3 tests extended to HS, plus HS-specific tests |
+| P4X and a Linux PC (HS) | MSC, DFU and other traffic, checked with pyusb |
+
+Not verified:
+
+- ESP32-S2 hardware (compile only)
+- ESP32-S31 (not supported)
+- v3 class behavior and driver binding on Windows and macOS
+- VBUS detection with a real cable pull (`vbusSensing = true`)
+
+---
+
+## 10. References
+
+- [USB 2.0 Specification](https://www.usb.org/document-library/usb-20-specification): the specification itself
+- [USB Class Codes](https://www.usb.org/defined-class-codes): list of class codes
+- [USB Device Class Documents](https://www.usb.org/documents): HID, CDC, MSC, CCID, UAC and other class specifications
+- [HID Usage Tables](https://usb.org/document-library/hid-usage-tables-16): HID usages; needed when writing report descriptors
+- [USB Made Simple](https://www.usbmadesimple.co.uk/): an introduction for beginners
+- [USB Device Tree Viewer](https://www.uwe-sieber.de/usbtreeview_e.html): observation on Windows
+- [pid.codes](https://pid.codes/): VID/PIDs for open-source projects
+- [ESP32-P4 chip revision v3.x User Guide](https://documentation.espressif.com/esp32-p4-chip-revision-v3.x_user_guide_en.html): differences between the older P4 and the P4X
+- This repository's [README](../README.md): installation and support status
+- [USB Device Development Guide (Advanced)](usb-device-advanced.md): internals, descriptor layout, callback context
+- [Working through the examples](example-workflow.md): how to try and read the examples
+- [Migrating from v2](migrating-from-v2.md), [Migrating from Arduino-ESP32 USB](migrating-from-arduino-esp32-usb.md)
+- [Firmware update over USB](ota-over-usb.md): per-chip boot modes, entering them from a sketch, OTA paths
+- [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost): the library that makes an ESP32 the host. [USB Host Development Guide](https://github.com/tanakamasayuki/EspUsbHost/blob/main/docs/usb-host-guide.md)
