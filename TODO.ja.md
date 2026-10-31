@@ -76,6 +76,18 @@
   - legacyの古いリンク切れをまとめて直す作業とは分ける。
   - 公開release/tag/pushは未実施。
 
+## 文書の見直しで見つかった実装の確認事項（2026-10-31）
+
+文書を実装と照合したときに見つかった点。文書は実装どおりに書いてあり、製品はまだ変えていない。
+
+- [ ] **Vendorのコンストラクタの`endpointSize`を検査していない**：FSのbulk MPSは8/16/32/64だけだが、10などを渡してもそのままdescriptorに載る。開始時に拒否するよう直す。
+- [ ] **UAC2のFS feedbackが4 byte（16.16）**：USB 2.0規格のFS形式は3 byte（10.14）。Linuxは両方を受けるが、Windows/macOSのUAC2 driverで確かめ、必要なら規格どおりにする。
+- [ ] **Audioのbegin失敗時のエラー値**：実装はESP_ERR_INVALID_ARGを設定するが、過去の実測記録ではdevice.begin()がESP_ERR_INVALID_SIZEだった。どちらが正しい経路か確かめてそろえる。
+- [ ] **AudioのformatをHSでもFSの上限（1023 byte/packet）で検査している**：HSでしか表せない大きなformatは使えない。制限として残すか決める。
+- [ ] **MSCのstagingの条件がほかと違う**：MSCは「HS対応controllerなら512の倍数」（576も拒否）、CCIDは「MPS以上」。判定もMSCだけcontroller設定を直接見ている。そろえるか決める。
+- [ ] **`msOs20CcgpDevice`のheaderコメント**：「subset layoutを強制」とあるが、実装では`msOs20Layout`にFLATを明示するとFLATが優先され、CCGPが効くのはAutoのときだけ。実装が妥当なので、コメントを直す。
+- 設計どおりで変えないもの：HS対応controllerでは、FSで接続してもbulkの容量を512基準で検査・予約する（接続速度は開始後にしか分からず、HSのdescriptorにも同じ資源を使うため）。そのためCCIDの明示messageBytes 64〜511は、FS接続でも拒否される。
+
 ## 完了した作業（2026-10-31）
 
 - [x] 旧P4（2-3）とP4X（2-4）のHS直結（480 Mbps）を両方向で検証した。
