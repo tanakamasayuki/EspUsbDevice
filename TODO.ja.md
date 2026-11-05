@@ -10,7 +10,7 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
 
 - [ ] **ESP32-S2 の実機検証（新しい組 S2–S3）**
   - いまは compile だけを確かめています。
-  - 結線：S2 のネイティブ USB と、専用の S3 のネイティブ USB（GPIO19/20）を、D+・D−・GND だけで直結する。制御は S2 が CH340、S3 が USB-UART の口。
+  - 結線：S2 のネイティブ USB と、専用の S3 のネイティブ USB（GPIO19/20）を、普通のケーブルで直結する。どちらの口も VBUS を出さない前提で、Device 側は `vbusSensing = false` のまま列挙する。制御と給電は S2 が CH340、S3 が USB-UART の口。到着時に、どちらの口も VBUS を出さないことを回路図か実測で確かめる。
   - 完了の条件：
     - combo `s3_s2`（S3 Host → S2 Device）と `s2_s3`（S2 Host → S3 Device）を `validation/pyproject.toml` に登録する。
     - `s3/` の probe に S2 と新しい S3 の profile を足し、両方の combo で全件が通る（列挙、各 class、reset / end、借用 buffer の返却を含む）。
@@ -19,7 +19,7 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
 - [ ] **ESP32-S31 への対応（新しい組 P4X–S31）**
   - いまは未対応です。build には Arduino-ESP32 4.0.0-RC1 以降が要ります。
   - S31 の USB（データシート v0.5 §4.2.2.6）：OTG は HS の 1 本だけ（HS／FS で Host と Device。endpoint 1〜15、IN は EP0 を含め 8 本、FIFO 4 KB）。FS の OTG はなく、USB-Serial/JTAG（FS、GPIO33/34）が別にある。
-  - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と、新しい P4X の HS の口を、D+・D−・GND だけで直結する（Type-A の VBUS は TPS2051C の EN が 5 V 固定で常時出るため）。制御は両方とも USB-Serial/JTAG。
+  - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と、新しい P4X の HS の口を、普通の A–C ケーブルで直結する。Type-A の VBUS は TPS2051C の EN が 5 V 固定で常時出るので、P4X の HS の口が VBUS を出さないこと（2-4 と同じ WT9932P4X-TINY なら出さない見込み）を到着時に確かめる。S31 の VBUS が P4X へ回り込むので、電源は両方の port をまとめて切る。制御は両方とも USB-Serial/JTAG。
   - 完了の条件：
     - 使う Core の版を固定し、S31 の target / FQBN / SDK / toolchain で library が compile できる。
     - S31 の HS port の能力を `src/internal/EspUsbDwc2Platform.cpp` の port 表に、資料と register の値で確かめて登録する。PHY と cache の処理も確かめる。`validation/s3/common/probe_link.h` の HS の判定に S31 を加える。
