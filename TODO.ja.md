@@ -8,14 +8,9 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
 
 ## 機種と Core
 
-- [ ] **ESP32-S2 の実機検証（新しい組 S2–S3）**
-  - いまは compile だけを確かめています。
-  - 結線：S2 のネイティブ USB と、専用の S3 のネイティブ USB（GPIO19/20）を、普通のケーブルで直結する。どちらの口も VBUS を出さない前提で、Device 側は `vbusSensing = false` のまま列挙する。制御と給電は S2 が CH340、S3 が USB-UART の口。到着時に、どちらの口も VBUS を出さないことを回路図か実測で確かめる。
-  - 完了の条件：
-    - combo `s3_s2`（S3 Host → S2 Device）と `s2_s3`（S2 Host → S3 Device）を `validation/pyproject.toml` に登録する。
-    - `s3/` の probe に S2 と新しい S3 の profile を足し、両方の combo で全件が通る（列挙、各 class、reset / end、借用 buffer の返却を含む）。
-    - S2 の ROM DFU への移行（`rebootToRomDfu()`）を実機で確かめる。
-    - README の対応表を「S2 実機確認済み」に直す。
+- [ ] **ESP32-S2 の ROM DFU への移行**
+  - S2 の USB の動作は、S3 との FS 直結の両方向（`s3_s2`、`s2_s3`）と Linux PC（`s2_pc`）で確かめています。
+  - 完了の条件：S2 の native USB を PC につないだ状態で `rebootToRomDfu()` を呼び、ROM の DFU（303a:0002）として列挙し、`dfu-util` で書き込める。
 - [ ] **ESP32-S31 への対応（新しい組 P4X–S31）**
   - いまは未対応です。build には Arduino-ESP32 4.0.0-RC1 以降が要ります。
   - S31 の USB（データシート v0.5 §4.2.2.6）：OTG は HS の 1 本だけ（HS／FS で Host と Device。endpoint 1〜15、IN は EP0 を含め 8 本、FIFO 4 KB）。FS の OTG はなく、USB-Serial/JTAG（FS、GPIO33/34）が別にある。

@@ -104,7 +104,8 @@ cp .env.example .env   # 各 key に実際の port を書く
 - 同じ board を使う組（`p4` と `p4_psram`、HS 直結の二方向）は同時に動かしません。実機の pytest は一つずつ実行します。
 - 2-3 の HS 口から 2-4 へ電源が回り込みます。片方の電源を切るときは、両方の port をまとめて切ります。
 - 機器の lock は plugin が取ります。
-- S2 と S31 の組はありません。
+- S31 の組はまだありません。
+- 新しい組を足すときは、全 probe を build する前に `s3/pad_link` で二台の native 口の導通を確かめます。書込み口が見えていても、試験用の USB 結線がつながっているとは限りません。
 
 ### P4 loopback の注意
 
@@ -257,6 +258,8 @@ CI（`.github/workflows/v3-checks.yml`）は、これと `pytest --combo all --c
 | S3 ↔ S3（FS） | `s3/` の全 probe。10 class、lifecycle、確保失敗からの回復、取消し・reset・end の競合、標準要求、suspend / resume、remote wakeup |
 | 旧 P4 loopback（FS、両 controller） | 10 class の基本通信、65537 byte までの借用 DMA、再開始。PSRAM 上の MSC 保存先と Vendor ring |
 | 旧 P4 ↔ P4X の HS 直結（両方向） | `s3/` の全 probe と `peer/` の HS 専用 probe。HS の列挙、MPS 512、借用転送、Audio / Video の ISO、PSRAM 上の保存先 |
+| S2 ↔ S3（FS、両方向） | `s3/` の全 probe（各 55 件）。S2 が Device のときと Host のときの両方 |
+| Linux PC → S2（FS） | MSC の媒体交換、DFU DETACH |
 | P4X → Linux PC（HS） | MSC の媒体交換（06/28/00、02/3A/00、residue）、DFU DETACH |
 | build | S2 / S3 / P4 / P4X の compile。未使用 class がリンクされないこと |
 
@@ -264,7 +267,7 @@ CI（`.github/workflows/v3-checks.yml`）は、これと `pytest --combo all --c
 
 | 範囲 | 状態 |
 | --- | --- |
-| ESP32-S2 の実機 | compile のみ。実機の組がない |
+| ESP32-S2 の ROM DFU への移行 | `rebootToRomDfu()` は未確認 |
 | ESP32-S31 | 未対応 |
 | Windows / macOS | class の bind、各 class の動作とも未確認 |
 | Linux PC の class driver | 上記の MSC / DFU の wire 検査だけ。CDC / HID / Audio / Video / NCM の OS driver との組合せは未確認 |

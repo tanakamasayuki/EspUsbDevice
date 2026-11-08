@@ -22,7 +22,8 @@ bool parallelQueue() {
   if (!queue.configure(257)) return false;
   finished.store(0);
   bool ok = xTaskCreatePinnedToCore(producer, "event-a", 2048, nullptr, 3, nullptr, 0) == pdPASS;
-  ok &= xTaskCreatePinnedToCore(producer, "event-b", 2048, reinterpret_cast<void *>(1), 3, nullptr, 1) == pdPASS;
+  // The second core where there is one; the single-core S2 runs both on core 0.
+  ok &= xTaskCreatePinnedToCore(producer, "event-b", 2048, reinterpret_cast<void *>(1), 3, nullptr, configNUMBER_OF_CORES - 1) == pdPASS;
   const uint32_t until = millis() + 3000;
   while (finished.load() < 2 && int32_t(until - millis()) > 0) delay(1);
   unsigned counts[2] = {};
