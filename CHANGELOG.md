@@ -73,6 +73,15 @@ Major version. Existing sketches need changes; see `docs/migrating-from-v2.md`.
   範囲外の MIDI や Consumer の値は丸めずに拒否します。`lastErrorName()` は全ての
   `esp_err_t` の名前を返します。新しく作った MIDI の config は、コンストラクタで
   指定した cable 数を保ちます。
+- (EN) Verified on hardware by the `validation/` probes: ESP32-S3 and ESP32-S2
+  at full speed (S3 to S3, and S2 to S3 in both directions), ESP32-P4 v1.x and
+  P4X at high speed in both directions and on one P4's own HS and FS
+  controllers, and a P4X and an S2 against a Linux PC. Windows and macOS hosts
+  are not yet verified.
+- (JA) `validation/` の試験で実機確認しています：ESP32-S3 と ESP32-S2 の FS（S3 同士、
+  S2 と S3 の両方向）、ESP32-P4 v1.x と P4X の HS 直結の両方向、P4 一台の HS と FS
+  controller の結線、P4X と S2 のそれぞれと Linux PC。Windows と macOS の Host は
+  未確認です。
 
 ## 2.6.1
 - (EN) Honor HID `timeoutMs`: wait for a busy IN endpoint, with zero retaining
