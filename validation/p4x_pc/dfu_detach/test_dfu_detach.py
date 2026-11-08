@@ -90,6 +90,7 @@ def boot(dut, timeout=10):
 
 
 last_count = None
+expected_speed = usb.util.SPEED_HIGH  # FS for the S2, set per test
 
 
 def start(dut, mode, delay, timeout=1000, end_after=-1, refuse=0):
@@ -97,7 +98,7 @@ def start(dut, mode, delay, timeout=1000, end_after=-1, refuse=0):
     dut.expect_exact("STARTED 1\r\n", timeout=10)
     dev = find()
     assert dev is not None, "DFU runtime device did not enumerate on the PC"
-    assert dev.speed == usb.util.SPEED_HIGH
+    assert dev.speed == expected_speed
     # The serial string is readable before Linux sends SET_CONFIGURATION.
     end = time.monotonic() + 3
     while time.monotonic() < end:
@@ -110,7 +111,9 @@ def start(dut, mode, delay, timeout=1000, end_after=-1, refuse=0):
     raise AssertionError("DFU runtime device was not configured")
 
 
-def test_dfu_detach(dut):
+def test_dfu_detach(dut, request):
+    global expected_speed
+    expected_speed = usb.util.SPEED_FULL if "s2_pc" in request.node.name else usb.util.SPEED_HIGH
     results = {"restart_delay": [], "timer": [], "end_race": [], "reset_race": []}
     reasons = []
     try:

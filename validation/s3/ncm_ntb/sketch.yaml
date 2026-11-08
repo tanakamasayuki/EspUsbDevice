@@ -14,4 +14,14 @@ profiles:
     platforms:
       - platform: esp32:esp32 (3.3.12)
         platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  s3b_host:
+    fqbn: esp32:esp32:esp32s3:USBMode=default
+    platforms:
+      - platform: esp32:esp32 (3.3.12)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  s2_host:
+    fqbn: esp32:esp32:esp32s2
+    platforms:
+      - platform: esp32:esp32 (3.3.12)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
 default_profile: s3_host

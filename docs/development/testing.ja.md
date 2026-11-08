@@ -75,6 +75,9 @@ cp .env.example .env   # 各 key に実際の port を書く
 | `TEST_SERIAL_PORT_P4_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_P4_HS_DEVICE` | HS 直結の旧 P4 |
 | `TEST_SERIAL_PORT_P4X_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_P4X_HS_DEVICE` | HS 直結の P4X |
 | `TEST_SERIAL_PORT_P4X_HS_PC` | Linux PC につないだ P4X |
+| `TEST_SERIAL_PORT_S2_PC` | Linux PC につないだ S2 |
+| `TEST_SERIAL_PORT_S3B_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_S3B_DEVICE` | S2 と組む S3 |
+| `TEST_SERIAL_PORT_S2_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_S2_DEVICE` | S3 と組む S2 |
 
 - primary は `TEST_SERIAL_PORT_<PROFILE>`、peer device は `TEST_SERIAL_PORT_PEER_DEVICE_<PROFILE>` です。
 - port は `/run/board-identify/by-id/...` のような安定した path を使います。
@@ -92,6 +95,8 @@ cp .env.example .env   # 各 key に実際の port を書く
 | 2-3 | ESP32-P4 v1.3（旧 P4） | 32 MiB | CH340 UART | 2-4 と HS 口どうしを直結 | `p4_p4x_hs`、`p4x_p4_hs` |
 | 2-4 | ESP32-P4 v3.2（P4X） | 32 MiB | USB Serial/JTAG | 2-3 と HS 直結 | `p4_p4x_hs`、`p4x_p4_hs` |
 | 3-3 / 3-4 | ESP32-P4 v3.2（P4X） | 32 MiB | 3-3 の USB Serial/JTAG | 3-4 の HS 口を Linux PC へ直結 | `p4x_pc` |
+| S2（PC） | ESP32-S2 | — | CH340 UART | native USB を Linux PC へ直結 | `s2_pc` |
+| S2–S3 | ESP32-S2 と ESP32-S3 | — | 各 board の CH340 UART | native USB どうしを FS で直結 | `s3_s2`、`s2_s3` |
 
 位置 `N-M` はハブ N の port M です。設備の正本は bench の台帳（`oep-bench/hosts/native-linux/` の README と `inventory.json`）です。
 

@@ -44,7 +44,8 @@ def find(timeout=10.0):
     raise AssertionError("MSC device did not enumerate on the PC")
 
 
-def test_msc_media(dut):
+def test_msc_media(dut, request):
+    full_speed = "s2_pc" in request.node.name  # the S2 has only the FS controller
     results = {}
 
     def device(text, reply):
@@ -70,7 +71,7 @@ def test_msc_media(dut):
         dut.expect_exact("STOPPED\r\n", timeout=30)
         device("start", "STARTED 1")
         dev = find()
-        assert dev.speed == usb.util.SPEED_HIGH
+        assert dev.speed == (usb.util.SPEED_FULL if full_speed else usb.util.SPEED_HIGH)
         time.sleep(1)  # let usb-storage finish its probe before taking the interface over
         bot = Bot(dev)
         # The initial present=true and whatever the kernel sent leave no notification.

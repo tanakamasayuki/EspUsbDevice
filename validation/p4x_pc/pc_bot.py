@@ -22,7 +22,9 @@ class Bot:
         intf = dev.get_active_configuration()[(0, 0)]
         self.ep_in = usb.util.find_descriptor(intf, custom_match=lambda e: e.bEndpointAddress & 0x80)
         self.ep_out = usb.util.find_descriptor(intf, custom_match=lambda e: not e.bEndpointAddress & 0x80)
-        assert self.ep_in.wMaxPacketSize == 512 and self.ep_out.wMaxPacketSize == 512
+        # USB 2.0 5.8.3: a high-speed bulk endpoint is 512 bytes; this device uses 64 at full speed.
+        mps = 512 if dev.speed == usb.util.SPEED_HIGH else 64
+        assert self.ep_in.wMaxPacketSize == mps and self.ep_out.wMaxPacketSize == mps
 
     def command(self, cdb, length=0, data_in=True, payload=b""):
         self.tag += 1

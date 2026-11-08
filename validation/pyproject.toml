@@ -19,4 +19,7 @@ arduino_combos = [
     "p4_p4x_hs: primary=p4_hs_host,device=p4x_hs_device",
     "p4x_p4_hs: primary=p4x_hs_host,device=p4_hs_device",
     "p4x_pc: primary=p4x_hs_pc",
+    "s2_pc: primary=s2_pc",
+    "s3_s2: primary=s3b_host,device=s2_device",
+    "s2_s3: primary=s2_host,device=s3b_device",
 ]

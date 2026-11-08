@@ -40,6 +40,9 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 | `p4_p4x_hs` | 旧 P4 → P4X | HS |
 | `p4x_p4_hs` | P4X → 旧 P4 | HS |
 | `p4x_pc` | Linux PC → P4X | HS |
+| `s2_pc` | Linux PC → S2 | FS |
+| `s3_s2` | S3 → S2 | FS |
+| `s2_s3` | S2 → S3 | FS |
 
 `.env` の key は `.env.example` にあります。bench の結線は [testing.ja.md の bench](../docs/development/testing.ja.md#bench) を見てください。
 
@@ -47,20 +50,21 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 | 場所 | 内容 | combo |
 | --- | --- | --- |
-| `s3/` | 二台 peer の probe。S3 の FS と、P4 / P4X の HS 直結の両方で動く | `s3`、`p4_p4x_hs`、`p4x_p4_hs` |
+| `s3/` | 二台 peer の probe。S3 / S2 の FS と、P4 / P4X の HS 直結の両方で動く | `s3`、`s3_s2`、`s2_s3`、`p4_p4x_hs`、`p4x_p4_hs` |
 | `s3/common/` | probe が共有する header（link の bulk MPS） | — |
 | `p4/` | 一台の P4 の loopback（FS、両 controller）。[p4/README.ja.md](p4/README.ja.md) | `p4`、`p4_psram` |
 | `p4_hs/` | HS 直結の列挙と VBUS、P4 系 board の PSRAM 容量 | HS 直結と P4 系の各 combo |
 | `peer/` | HS 直結のための peer probe | `p4_p4x_hs`、`p4x_p4_hs` |
-| `p4x_pc/` | P4X と Linux PC（pyusb） | `p4x_pc` |
+| `p4x_pc/` | P4X / S2 と Linux PC（pyusb） | `p4x_pc`、`s2_pc` |
 | `build_probes/` | build 専用。未使用の機能がリンクされないことを確かめる | pytest の対象外 |
 
 ## 各 probe の目的
 
-### `s3/`（S3 ↔ S3、HS 直結）
+### `s3/`（S3 ↔ S3、S2 ↔ S3、HS 直結）
 
 | probe | 目的 |
 | --- | --- |
+| `pad_link` | USB stack を使わず、USB_WRAP の test register で片側が D+/D− を駆動・pull し、反対側が読む。二台の native 口が電気的につながっているかを確かめる（FS の組だけ） |
 | `vendor_roundtrip` | Vendor の往復。同じ binary で容量と送出の方式を変えて再開始できる |
 | `vendor_packet_size` | Vendor の FS bulk packet 長。USB 2.0 が許す 8 / 16 / 32 / 64 は動き、それ以外は `begin()` が失敗する |
 | `vendor_soak` | 連番付きの frame を流しながら、Host を何度も再列挙させても欠落・重複・破損がない |
@@ -133,7 +137,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 | `dfu` | RAM backend の download、manifest、abort、runtime detach |
 | `psram_link` | Device の PSRAM に置いた MSC 保存先と Vendor ring を HS で往復する |
 
-### `p4x_pc/`（Linux PC が Host）
+### `p4x_pc/`（Linux PC が Host。`msc_media` と `dfu_detach` は S2 の FS でも動く）
 
 | probe | 目的 |
 | --- | --- |
