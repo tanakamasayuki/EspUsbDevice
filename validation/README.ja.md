@@ -40,7 +40,6 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 | `p4_p4x_hs` | 旧 P4 → P4X | HS |
 | `p4x_p4_hs` | P4X → 旧 P4 | HS |
 | `p4x_pc` | Linux PC → P4X | HS |
-| `s2_pc` | Linux PC → S2 | FS |
 | `s3_s2` | S3 → S2 | FS |
 | `s2_s3` | S2 → S3 | FS |
 
@@ -55,7 +54,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 | `p4/` | 一台の P4 の loopback（FS、両 controller）。[p4/README.ja.md](p4/README.ja.md) | `p4`、`p4_psram` |
 | `p4_hs/` | HS 直結の列挙と VBUS、P4 系 board の PSRAM 容量 | HS 直結と P4 系の各 combo |
 | `peer/` | HS 直結のための peer probe | `p4_p4x_hs`、`p4x_p4_hs` |
-| `p4x_pc/` | P4X / S2 と Linux PC（pyusb） | `p4x_pc`、`s2_pc` |
+| `p4x_pc/` | P4X / S2 と Linux PC（pyusb） | `p4x_pc`（S2 は常設の combo なし。下記） |
 | `build_probes/` | build 専用。未使用の機能がリンクされないことを確かめる | pytest の対象外 |
 
 ## 各 probe の目的
@@ -137,7 +136,9 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 | `dfu` | RAM backend の download、manifest、abort、runtime detach |
 | `psram_link` | Device の PSRAM に置いた MSC 保存先と Vendor ring を HS で往復する |
 
-### `p4x_pc/`（Linux PC が Host。`msc_media` と `dfu_detach` は S2 の FS でも動く）
+### `p4x_pc/`（Linux PC が Host）
+
+`msc_media` と `dfu_detach` は S2 の FS でも動きます。S2 を PC につなぐ組は常設していないので、S2 の native USB を PC へつないだときに、名前のない combo で流します：`pytest p4x_pc/msc_media p4x_pc/dfu_detach --combo primary=s2_pc`（port は `TEST_SERIAL_PORT_S2_PC`）。
 
 | probe | 目的 |
 | --- | --- |

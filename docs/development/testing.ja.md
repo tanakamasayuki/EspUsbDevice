@@ -75,7 +75,7 @@ cp .env.example .env   # 各 key に実際の port を書く
 | `TEST_SERIAL_PORT_P4_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_P4_HS_DEVICE` | HS 直結の旧 P4 |
 | `TEST_SERIAL_PORT_P4X_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_P4X_HS_DEVICE` | HS 直結の P4X |
 | `TEST_SERIAL_PORT_P4X_HS_PC` | Linux PC につないだ P4X |
-| `TEST_SERIAL_PORT_S2_PC` | Linux PC につないだ S2 |
+| `TEST_SERIAL_PORT_S2_PC` | Linux PC につないだ S2（常設しない。必要なときだけ） |
 | `TEST_SERIAL_PORT_S3B_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_S3B_DEVICE` | S2 と組む S3 |
 | `TEST_SERIAL_PORT_S2_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_S2_DEVICE` | S3 と組む S2 |
 
@@ -95,7 +95,6 @@ cp .env.example .env   # 各 key に実際の port を書く
 | 2-3 | ESP32-P4 v1.3（旧 P4） | 32 MiB | CH340 UART | 2-4 と HS 口どうしを直結 | `p4_p4x_hs`、`p4x_p4_hs` |
 | 2-4 | ESP32-P4 v3.2（P4X） | 32 MiB | USB Serial/JTAG | 2-3 と HS 直結 | `p4_p4x_hs`、`p4x_p4_hs` |
 | 3-3 / 3-4 | ESP32-P4 v3.2（P4X） | 32 MiB | 3-3 の USB Serial/JTAG | 3-4 の HS 口を Linux PC へ直結 | `p4x_pc` |
-| S2（PC） | ESP32-S2 | — | CH340 UART | native USB を Linux PC へ直結 | `s2_pc` |
 | S2–S3 | ESP32-S2 と ESP32-S3 | — | 各 board の CH340 UART | native USB どうしを FS で直結 | `s3_s2`、`s2_s3` |
 
 位置 `N-M` はハブ N の port M です。設備の正本は bench の台帳（`oep-bench/hosts/native-linux/` の README と `inventory.json`）です。
@@ -259,7 +258,7 @@ CI（`.github/workflows/v3-checks.yml`）は、これと `pytest --combo all --c
 | 旧 P4 loopback（FS、両 controller） | 10 class の基本通信、65537 byte までの借用 DMA、再開始。PSRAM 上の MSC 保存先と Vendor ring |
 | 旧 P4 ↔ P4X の HS 直結（両方向） | `s3/` の全 probe と `peer/` の HS 専用 probe。HS の列挙、MPS 512、借用転送、Audio / Video の ISO、PSRAM 上の保存先 |
 | S2 ↔ S3（FS、両方向） | `s3/` の全 probe（各 55 件）。S2 が Device のときと Host のときの両方 |
-| Linux PC → S2（FS） | MSC の媒体交換、DFU DETACH |
+| Linux PC → S2（FS） | MSC の媒体交換、DFU DETACH。常設の組ではなく、S2 の native USB を PC へつないで `--combo primary=s2_pc` で流す |
 | P4X → Linux PC（HS） | MSC の媒体交換（06/28/00、02/3A/00、residue）、DFU DETACH |
 | build | S2 / S3 / P4 / P4X の compile。未使用 class がリンクされないこと |
 
