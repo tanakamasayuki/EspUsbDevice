@@ -42,7 +42,7 @@ void loop() {
 | ESP32-P4 v1.x と P4X（v3.1 以降） | HS（480 Mbps）と FS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | ESP32-S2 | FS（12 Mbps） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-✅ = `validation/` の試験で、実機の転送を確かめています。ESP32-S3 二台の FS、ESP32-S2 と S3 を FS で
+✅ = `tests/` の試験で、実機の転送を確かめています。ESP32-S3 二台の FS、ESP32-S2 と S3 を FS で
 直結した両方向、P4 と P4X を HS で直結した両方向、P4 一台の HS と FS controller の結線、P4X と S2 の
 それぞれと Linux PC です。ESP32-S31 にはまだ対応していません。
 
@@ -91,7 +91,7 @@ firmware の disk）、UAC1/UAC2 audio、UVC video、CDC-NCM の network、CCID 
 ## まだ確かめていないこと
 
 Windows と macOS の Host、実際の SD card と OTA の書込み、Arduino-ESP32 4.x。
-試験の Host は ESP32 と Linux PC です。[試験](docs/development/testing.ja.md)を参照してください。
+試験の Host は ESP32 と Linux PC です。[テスト](tests/README.ja.md)を参照してください。
 
 ## ライセンス
 

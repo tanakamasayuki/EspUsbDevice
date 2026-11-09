@@ -1136,7 +1136,7 @@ When adding a class to the library itself, this order makes failures easier to i
 2. Enumerate on hardware and compare with `lsusb -v` and similar on the host.
 3. Check the data path one direction at a time.
 4. Check that buffers come back exactly once on reset, configuration re-select, HALT, cancellation and `end()`.
-5. Pass the standard tests in `validation/` (`--combo all`).
+5. Pass the standard tests in `tests/` (`--combo all`).
 
 See [docs/development/architecture.ja.md](development/architecture.ja.md) (Japanese) for the internal design.
 
@@ -1155,7 +1155,7 @@ See [docs/development/architecture.ja.md](development/architecture.ja.md) (Japan
 | Which control requests the host sent | `device.onAnyControlRequest()` |
 | Bulk IN double buffering | `device.bulkInDoubleBuffered()` |
 | The speed the host chose (FS / HS) | `device.speed()` |
-| Automated two-board tests | `validation/` (`pytest --combo all`) |
+| Automated two-board tests | `tests/` (`pytest --combo all`) |
 
 ### 13.2 Principles for isolating a problem
 
@@ -1209,14 +1209,14 @@ Migration steps are in [Migrating from v2](migrating-from-v2.md).
 | Environment | Status |
 | --- | --- |
 | Two ESP32-S3 boards as FS peers | Main test environment; every class and the shared mechanisms |
+| An ESP32-S2 and an ESP32-S3 linked at FS | Both directions; the same tests as the two S3 boards |
 | One ESP32-P4 as an HS↔FS loopback | Basic transfers of each class on both controllers |
 | Old P4 (v1.x) and P4X (v3.x) connected directly at HS | Both directions |
 | P4X connected directly to a Linux PC at HS | DFU/MSC on the wire |
-| ESP32-S2 | Compile only; not tested on hardware |
 | ESP32-S31 | Not supported |
 | Windows / macOS | Not checked with v3 |
 
-The standard tests are `pytest --combo all` in `validation/` (6 combinations, more than 200 cases), against Arduino-ESP32 3.3.12.
+The standard tests are `pytest --combo all` in `tests/` (every registered wiring combination), against Arduino-ESP32 3.3.12.
 
 Not verified for this document:
 
@@ -1237,6 +1237,6 @@ Not verified for this document:
 - [Migrating from the Arduino-ESP32 USB stack](migrating-from-arduino-esp32-usb.md)
 - Per class: [HID](classes/hid.md), [CDC](classes/cdc.md), [Vendor](classes/vendor.md), [MIDI](classes/midi.md), [MSC](classes/msc.md), [Audio](classes/audio.md), [Video](classes/video.md), [NCM](classes/ncm.md), [CCID](classes/ccid.md), [DFU](classes/dfu.md)
 - [Origin and maintenance of the USB backend](../third_party/tinyusb/PROVENANCE.md)
-- [Internal design](development/architecture.ja.md), [testing](development/testing.ja.md) (Japanese)
+- [Internal design](development/architecture.ja.md), [tests](../tests/README.md)
 - Specifications: [USB 2.0 specification](https://www.usb.org/document-library/usb-20-specification), [WebUSB](https://wicg.github.io/webusb/), [Microsoft OS 2.0 descriptors](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-os-2-0-descriptors-specification)
 - Host side: [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost)

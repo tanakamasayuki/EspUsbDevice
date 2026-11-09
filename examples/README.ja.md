@@ -97,8 +97,8 @@ board の USB OTG の connector を Host につなぎます。log を出す例�
 ## 確認していること
 
 どの例も、`sketch.yaml` にある全 profile で compile できます。例が使っているライブラリの動作は、
-別の `validation/` の試験で実機確認しています（ESP32-S3 と ESP32-S2 の FS、ESP32-P4 と P4X の FS と HS、
-P4X と S2 のそれぞれと Linux PC）。詳しくは[試験](../docs/development/testing.ja.md)を参照してください。
+別の `tests/` の試験で実機確認しています（ESP32-S3 と ESP32-S2 の FS、ESP32-P4 と P4X の FS と HS、
+P4X と S2 のそれぞれと Linux PC）。詳しくは[テスト](../tests/README.ja.md)を参照してください。
 例そのものを Windows や macOS の Host で 1 本ずつ動かした確認はまだありません。
 
 EspUsbDevice 2.x から移る場合：2.x の例はすべて同じ名前でここにあります。

@@ -408,7 +408,7 @@ Host側の開発では「VBUSを出せるか」が最初の関門でした。Dev
 
 コネクタが1つしかないボード（AtomS3など）を最終製品にするのはかまいません。ただし**開発中は2口のボードを使ってください**。列挙した瞬間にログが切れると、`ready()` の変化すら読めません。
 
-もう一つの方法は、Host役に別のESP32（[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost)）を使うことです。両側のログをPCから同時に読めます。このリポジトリの試験（[validation](../validation/README.ja.md)）はこの構成です。
+もう一つの方法は、Host役に別のESP32（[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost)）を使うことです。両側のログをPCから同時に読めます。このリポジトリの試験（[tests](../tests/README.ja.md)）はこの構成です。
 
 コネクタが1つのESP32-S3でも、同じケーブルのまま書き込めます。resetすると共有PHYがUSB Serial/JTAGへ戻り、ROMのloaderが出てくるからです。動作中のスケッチからBOOTボタンなしでそこへ入る方法（`device.rebootToBootloader()`）は[USB経由のfirmware更新](ota-over-usb.ja.md)にあります。
 
@@ -421,7 +421,7 @@ Host側の開発では「VBUSを出せるか」が最初の関門でした。Dev
 | chip | USB Deviceの能力 | `EspUsbController::Auto` の選択 | 状態 |
 | --- | --- | --- | --- |
 | ESP32-S3 | FSのcontroller 1つ | FullSpeed | 主な対象。実機で確認 |
-| ESP32-S2 | FSのcontroller 1つ | FullSpeed | compileのみ確認。実機は未確認 |
+| ESP32-S2 | FSのcontroller 1つ | FullSpeed | S3とのFS直結（両方向）とLinux PCで実機確認 |
 | ESP32-P4（旧revision v1.x） | HSとFSのcontroller 1つずつ | **HighSpeed** | 実機で確認 |
 | ESP32-P4X（revision v3.x） | 同上 | **HighSpeed** | 実機で確認 |
 | ESP32-S31 | — | — | 未対応 |
@@ -794,7 +794,7 @@ v3はmacOSでは未確認です。
 
 ### 6.4 別のESP32をHostにする
 
-対象がPCではなく組込み機器なら、[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) を載せたESP32をHost役にできます。両側のログをPCから同時に読めるので、切り分けが速くなります。このリポジトリの試験（[validation](../validation/README.ja.md)）もこの構成です。
+対象がPCではなく組込み機器なら、[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) を載せたESP32をHost役にできます。両側のログをPCから同時に読めるので、切り分けが速くなります。このリポジトリの試験（[tests](../tests/README.ja.md)）もこの構成です。
 
 ### 6.5 動いている機器と比べる
 
@@ -862,18 +862,19 @@ interfaceの並び、IADの有無、`bInterfaceProtocol`、endpointのinterval�
 
 ## 9. 確認済みの範囲
 
-v3の試験は[validation](../validation/README.ja.md)にあります。examplesとは別の試験用スケッチで、`--combo all` で6組の結線、200件を超える試験を実行します。
+試験は[tests](../tests/README.ja.md)にあります。examplesとは別の試験用スケッチで、`--combo all` で登録した全ての結線の組を実行します。
 
 | 環境 | 確認したこと |
 | --- | --- |
 | ESP32-S3 2台（FS） | 主な検証環境。全classと共通coreの試験 |
+| ESP32-S2とESP32-S3（FS、両方向） | S3 2台と同じ試験。S2がDeviceのときとHostのとき |
 | ESP32-P4 1台のHS controller↔FS controller（linkはFS） | 10 classの基本通信、両controller、再開始、PSRAM上の保存先 |
 | 旧P4とP4XのHS直結（480 Mbps、両方向） | S3の試験をHSへ広げたものと、HS用の試験 |
 | P4XとLinux PC（HS） | MSC、DFUなどの通信をpyusbで確認 |
+| S2とLinux PC（FS） | MSCの媒体交換、DFU DETACH |
 
 未確認のもの：
 
-- ESP32-S2の実機（compileのみ）
 - ESP32-S31（未対応）
 - Windows、macOSでのv3のclass動作とdriverの割当て
 - 実際にケーブルを抜いたときのVBUS検出（`vbusSensing = true`）

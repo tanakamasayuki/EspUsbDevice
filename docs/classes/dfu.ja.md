@@ -237,7 +237,7 @@ Host が DFU_DETACH を送ったときに、受け付けるかどうかと、受
 
 - UPLOAD、複数の alternate setting による保存先の選択、非同期の保存 callback は実装していません。
 - Runtime だけを使う場合も、Download と内蔵 OTA の処理がリンクされることがあります。
-- ESP32-S2 の実機、各 OS の `dfu-util`、v3 での実際の OTA 反映と再起動、block 番号の一周、EP0 の途中切断は未確認です。
+- 各 OS の `dfu-util`、v3 での実際の OTA 反映と再起動、block 番号の一周、EP0 の途中切断は未確認です。
 
 ## 関連する examples
 

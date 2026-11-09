@@ -408,7 +408,7 @@ In host development, "can you supply VBUS" was the first hurdle. On the device s
 
 A one-connector board (an AtomS3, for instance) is fine as a final product. **During development, use a two-connector board.** If the log drops the moment enumeration starts, you cannot even see `ready()` change.
 
-Another option is to use a second ESP32 running [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) as the host. You can read both sides' logs from the PC at once. This repository's tests ([validation](../validation/README.ja.md)) use that arrangement.
+Another option is to use a second ESP32 running [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) as the host. You can read both sides' logs from the PC at once. This repository's tests ([tests](../tests/README.md)) use that arrangement.
 
 A one-connector ESP32-S3 can still be flashed over the same cable: after a reset the shared PHY returns to USB Serial/JTAG and the ROM loader appears. How a running sketch can get there without the BOOT button (`device.rebootToBootloader()`) is described in [Firmware update over USB](ota-over-usb.md).
 
@@ -421,7 +421,7 @@ A one-connector ESP32-S3 can still be flashed over the same cable: after a reset
 | Chip | USB device capability | `EspUsbController::Auto` selects | Status |
 | --- | --- | --- | --- |
 | ESP32-S3 | One FS controller | FullSpeed | Main target. Verified on hardware |
-| ESP32-S2 | One FS controller | FullSpeed | Compile-checked only. Not verified on hardware |
+| ESP32-S2 | One FS controller | FullSpeed | Checked on hardware linked to an S3 at FS (both directions) and against a Linux PC |
 | ESP32-P4 (older revision v1.x) | One HS and one FS controller | **HighSpeed** | Verified on hardware |
 | ESP32-P4X (revision v3.x) | Same | **HighSpeed** | Verified on hardware |
 | ESP32-S31 | — | — | Not supported |
@@ -794,7 +794,7 @@ v3 has not been checked on macOS.
 
 ### 6.4 Using another ESP32 as the host
 
-If the target is an embedded device rather than a PC, an ESP32 running [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) can act as the host. You read both sides' logs from the PC at once, which speeds up isolation. This repository's tests ([validation](../validation/README.ja.md)) use this arrangement.
+If the target is an embedded device rather than a PC, an ESP32 running [EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost) can act as the host. You read both sides' logs from the PC at once, which speeds up isolation. This repository's tests ([tests](../tests/README.md)) use this arrangement.
 
 ### 6.5 Comparing with a device that works
 
@@ -862,18 +862,19 @@ For per-feature examples see [examples](../examples/README.md).
 
 ## 9. What has been verified
 
-v3's tests live in [validation](../validation/README.ja.md). They are test sketches separate from the examples; `--combo all` runs six wiring combinations and more than 200 tests.
+The tests live in [tests](../tests/README.md). They are test sketches separate from the examples; `--combo all` runs every registered wiring combination.
 
 | Setup | What was checked |
 | --- | --- |
 | Two ESP32-S3 boards (FS) | Main test environment. All classes and the common core |
+| An ESP32-S2 and an ESP32-S3 (FS, both directions) | The same tests as the two S3 boards, with the S2 as Device and as Host |
 | One ESP32-P4, HS controller ↔ FS controller (FS link) | Basic traffic for all 10 classes, both controllers, restart, storage in PSRAM |
 | Older P4 and P4X connected at HS (480 Mbps, both directions) | The S3 tests extended to HS, plus HS-specific tests |
 | P4X and a Linux PC (HS) | MSC, DFU and other traffic, checked with pyusb |
+| An S2 and a Linux PC (FS) | MSC media change, DFU DETACH |
 
 Not verified:
 
-- ESP32-S2 hardware (compile only)
 - ESP32-S31 (not supported)
 - v3 class behavior and driver binding on Windows and macOS
 - VBUS detection with a real cable pull (`vbusSensing = true`)

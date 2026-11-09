@@ -183,8 +183,8 @@ built by `idf.py dfu`, not a plain `.bin`.
   burned, returns `false` with `ESP_ERR_NOT_SUPPORTED` **without restarting**.
   Restarting anyway would leave the ROM DFU stack on a controller with no pads
   and the connector dark. The library never burns the eFuse.
-- **ESP32-S2:** the ROM's only USB is USB OTG, so the call proceeds. Not checked
-  on hardware.
+- **ESP32-S2:** the ROM's only USB is USB OTG, so the call proceeds. Entering
+  the ROM DFU is not checked on hardware.
 - **ESP32-P4:** returns `false` with `ESP_ERR_NOT_SUPPORTED` and restarts
   nothing.
 
@@ -551,7 +551,8 @@ protocol state or chip registers; the sketch owns policy.**
 | `rebootToBootloader()`, `rebootToRomDfu()` | Not checked with v3 |
 | `FirmwareCDC`, `FirmwareVendor`, `FirmwareHTTP` end to end | Not checked with v3 |
 | `dfu-util`, Windows, macOS | Not checked with v3 |
-| ESP32-S2 | Compile only |
+| DFU DETACH on ESP32-S2 | Checked, Linux PC (FS) with pyusb |
+| `rebootToRomDfu()` on ESP32-S2 | Not checked |
 
 `EspUsbDeviceFirmwareUpdate`, the firmware drive's FAT and UF2 logic and
 `rebootToBootloader()` are the same code as in v2, where they were checked on

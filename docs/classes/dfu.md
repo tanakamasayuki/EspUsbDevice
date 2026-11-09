@@ -237,7 +237,7 @@ The reference is [USB-IF DFU 1.1](https://www.usb.org/sites/default/files/DFU_1.
 
 - UPLOAD, choosing storage through several alternate settings, and asynchronous storage callbacks are not implemented.
 - Even with Runtime only, the Download and built-in OTA code may be linked.
-- Not verified: ESP32-S2 hardware, `dfu-util` on each OS, an actual OTA activation and restart with v3, block-number wrap-around, and an EP0 transfer cut off midway.
+- Not verified: `dfu-util` on each OS, an actual OTA activation and restart with v3, block-number wrap-around, and an EP0 transfer cut off midway.
 
 ## Related examples
 

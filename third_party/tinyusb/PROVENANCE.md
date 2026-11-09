@@ -27,7 +27,7 @@ patch manifests and the former updater remain available in Git history.
 Run `python3 tools/verify_usb_backend.py` offline to check maintained paths and
 absence of vendor build/configuration paths. This check does not establish USB
 correctness or detect every possible indirect dependency. Review compiler
-headers, link maps/symbol locations, and run `validation/` with the standard
+headers, link maps/symbol locations, and run `tests/` with the standard
 plugin `--combo all`. Upstream fixes require review and an explicit change to
 the maintained implementation; there is no automatic snapshot replacement.
 

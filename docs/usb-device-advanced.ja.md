@@ -1136,7 +1136,7 @@ coreはSET_CONFIGURATIONのとき、すべてのinterfaceをどれかのclass dr
 2. 実機で列挙させ、Host側の`lsusb -v`などと照らし合わせる。
 3. data経路を1方向ずつ確かめる。
 4. reset、構成の再選択、HALT、取消し、`end()`の各経路で、bufferが1回だけ返ることを確かめる。
-5. `validation/`の標準試験（`--combo all`）を通す。
+5. `tests/`の標準試験（`--combo all`）を通す。
 
 内部の設計は[docs/development/architecture.ja.md](development/architecture.ja.md)を参照してください。
 
@@ -1155,7 +1155,7 @@ coreはSET_CONFIGURATIONのとき、すべてのinterfaceをどれかのclass dr
 | Hostが送ったcontrol要求 | `device.onAnyControlRequest()` |
 | bulk INの二重buffer | `device.bulkInDoubleBuffered()` |
 | Hostが決めた速度（FS／HS） | `device.speed()` |
-| 2台構成の自動試験 | `validation/`（`pytest --combo all`） |
+| 2台構成の自動試験 | `tests/`（`pytest --combo all`） |
 
 ### 13.2 切り分けの原則
 
@@ -1209,14 +1209,14 @@ v3での帯域の基準値は、まだ測っていません。
 | 環境 | 状況 |
 | --- | --- |
 | ESP32-S3 二台のFS peer | 主な試験環境。全classと共通の仕組み |
+| ESP32-S2とESP32-S3のFS直結 | 両方向。S3二台と同じ試験 |
 | ESP32-P4 一台のHS↔FS loopback | 両controllerで、各classの基本通信 |
 | 旧P4（v1.x）とP4X（v3.x）のHS直結 | 両方向 |
 | P4XとLinux PCのHS直結 | DFU/MSCのwire |
-| ESP32-S2 | compileのみ。実機は未確認 |
 | ESP32-S31 | 未対応 |
 | Windows / macOS | v3では未確認 |
 
-標準の試験は、`validation/`の`pytest --combo all`です（6組、200件超）。基準はArduino-ESP32 3.3.12です。
+標準の試験は、`tests/`の`pytest --combo all`です（登録した全ての結線の組）。基準はArduino-ESP32 3.3.12です。
 
 この文書の内容のうち、次は確かめていません。
 
@@ -1237,6 +1237,6 @@ v3での帯域の基準値は、まだ測っていません。
 - [Arduino-ESP32のUSBからの移行](migrating-from-arduino-esp32-usb.ja.md)
 - class別：[HID](classes/hid.ja.md)、[CDC](classes/cdc.ja.md)、[Vendor](classes/vendor.ja.md)、[MIDI](classes/midi.ja.md)、[MSC](classes/msc.ja.md)、[Audio](classes/audio.ja.md)、[Video](classes/video.ja.md)、[NCM](classes/ncm.ja.md)、[CCID](classes/ccid.ja.md)、[DFU](classes/dfu.ja.md)
 - [USB backendの由来と保守](../third_party/tinyusb/PROVENANCE.ja.md)
-- [内部設計](development/architecture.ja.md)、[試験](development/testing.ja.md)
+- [内部設計](development/architecture.ja.md)、[テスト](../tests/README.ja.md)
 - 規格：[USB 2.0 specification](https://www.usb.org/document-library/usb-20-specification)、[WebUSB](https://wicg.github.io/webusb/)、[Microsoft OS 2.0 descriptors](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-os-2-0-descriptors-specification)
 - Host側：[EspUsbHost](https://github.com/tanakamasayuki/EspUsbHost)

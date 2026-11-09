@@ -157,7 +157,7 @@ ROMをUSB OTG上のDFU deviceとして起動させます。Host側は`dfu-util`�
 
 - **ESP32-S3：** `USB_PHY_SEL` eFuseを読み、焼いていなければ`false`と`ESP_ERR_NOT_SUPPORTED`を返し、**再起動しません**。
   再起動するとROMのDFUがpadのないcontrollerで動き、connectorに何も出なくなるからです。ライブラリがeFuseを焼くことはありません。
-- **ESP32-S2：** ROMのUSBはUSB OTGだけなので、そのまま進みます。実機では未確認です。
+- **ESP32-S2：** ROMのUSBはUSB OTGだけなので、そのまま進みます。ROMのDFUへの移行は実機では未確認です。
 - **ESP32-P4：** `false`と`ESP_ERR_NOT_SUPPORTED`を返し、何も再起動しません。
 
 `dfu-util`を使いたいだけなら、どのchipでも同じに動く`EspUsbDeviceDfu`（[3.5](#35-dfu-function)）を使います。
@@ -454,7 +454,8 @@ applicationの経路では、動かないimageを入れてしまうことがあ�
 | `rebootToBootloader()`、`rebootToRomDfu()` | v3では未確認 |
 | `FirmwareCDC`、`FirmwareVendor`、`FirmwareHTTP`の通し | v3では未確認 |
 | `dfu-util`、Windows、macOS | v3では未確認 |
-| ESP32-S2 | compileのみ |
+| ESP32-S2のDFU DETACH | Linux PC（FS）でpyusbを使って確認 |
+| ESP32-S2の`rebootToRomDfu()` | 未確認 |
 
 `EspUsbDeviceFirmwareUpdate`、firmware driveのFATとUF2の処理、`rebootToBootloader()`はv2と同じコードで、v2では実機で確認しています。
 ESP32-P4のHSでのDFU download（385 KBを2.7秒、その後新しいimageで再起動）、逆順に書いたUF2 block、

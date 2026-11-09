@@ -140,6 +140,6 @@ Try one stage at a time: no partner → connected → normal operation → disco
 
 ## About what has been verified
 
-The examples use only the v3 public API. Pass/fail testing on hardware is done separately in [validation](../validation/README.ja.md). Verified setups: two S3 boards (FS), an S2 and an S3 at FS in both directions, one P4 with HS ↔ FS, older P4 and P4X connected at HS, a P4X with a Linux PC (HS) and an S2 with a Linux PC (FS). v3 behavior on Windows and macOS has not been verified.
+The examples use only the v3 public API. Pass/fail testing on hardware is done separately in [tests](../tests/README.md). Verified setups: two S3 boards (FS), an S2 and an S3 at FS in both directions, one P4 with HS ↔ FS, older P4 and P4X connected at HS, a P4X with a Linux PC (HS) and an S2 with a Linux PC (FS). v3 behavior on Windows and macOS has not been verified.
 
 For principles see the [USB Device Development Guide](usb-device-guide.md); for internals and callback context, the [Advanced guide](usb-device-advanced.md); for each class's API, the guides under `docs/classes/`.

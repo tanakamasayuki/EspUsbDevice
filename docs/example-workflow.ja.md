@@ -140,6 +140,6 @@ USBのcallbackは、`loop()` とは別のUSB workerで動きます。`loop()` �
 
 ## 確認の範囲について
 
-examplesは、v3の公開APIだけを使う利用例です。実機での合否の試験は、別の[validation](../validation/README.ja.md)で行っています。確かめた環境は、S3 2台（FS）、S2とS3のFS直結（両方向）、P4 1台のHS↔FS、旧P4とP4XのHS直結、P4XとLinux PC（HS）、S2とLinux PC（FS）です。Windows、macOSでのv3の動作は未確認です。
+examplesは、v3の公開APIだけを使う利用例です。実機での合否の試験は、別の[tests](../tests/README.ja.md)で行っています。確かめた環境は、S3 2台（FS）、S2とS3のFS直結（両方向）、P4 1台のHS↔FS、旧P4とP4XのHS直結、P4XとLinux PC（HS）、S2とLinux PC（FS）です。Windows、macOSでのv3の動作は未確認です。
 
 詳しい原理は[USB Device開発ガイド](usb-device-guide.ja.md)、内部の仕組みとcallbackの文脈は[上級編](usb-device-advanced.ja.md)、classごとのAPIは `docs/classes/` の各ガイドを見てください。

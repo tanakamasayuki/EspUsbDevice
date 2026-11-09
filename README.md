@@ -42,7 +42,7 @@ void loop() {
 | ESP32-P4 v1.x and P4X (v3.1+) | HS (480 Mbps) and FS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | ESP32-S2 | FS (12 Mbps) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-✅ = transfers checked on hardware by the `validation/` probes: two ESP32-S3
+✅ = transfers checked on hardware by the `tests/` probes: two ESP32-S3
 boards at full speed; an ESP32-S2 and an S3 linked at full speed in both
 directions; a P4 and a P4X linked at high speed in both directions and one P4
 linking its own HS and FS controllers; a P4X and an S2 each against a Linux PC.
@@ -99,7 +99,7 @@ endpoints and FIFO, and a configuration that does not fit fails `begin()`.
 ## Not yet verified
 
 Windows and macOS hosts, real SD cards and OTA writes on hardware, and
-Arduino-ESP32 4.x. The library is tested against ESP32 hosts and a Linux PC; see [testing](docs/development/testing.ja.md).
+Arduino-ESP32 4.x. The library is tested against ESP32 hosts and a Linux PC; see [tests](tests/README.md).
 
 ## License
 

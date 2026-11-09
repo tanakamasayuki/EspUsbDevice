@@ -487,7 +487,7 @@ lsusb -v -d 303a:      # descriptors as the host parsed them (use your VID)
 
 | Chip | USB controllers | Notes |
 | --- | --- | --- |
-| ESP32-S2 | FS | Same endpoint budget as the S3. **Compile-only so far**; not run on hardware with v3 |
+| ESP32-S2 | FS | Same endpoint budget as the S3. Checked linked to an S3 at FS with the same tests as two S3 boards, in both directions |
 | ESP32-S3 | FS | Main hardware-tested target. One PHY on GPIO19/20, shared with USB Serial/JTAG |
 | ESP32-P4 (v1.x) | HS (480 Mbps, own UTMI PHY) and FS | `Auto` picks HS. Build with `ChipVariant=prev3` |
 | ESP32-P4X (v3.x) | HS and FS | Same USB budget as v1.x. Build with `ChipVariant=postv3`; the SDK supports v3.1 and later |
@@ -540,7 +540,7 @@ before the first bus reset).
 | P4 HS ↔ P4 FS loopback on one board | All 10 classes, both controllers |
 | P4 ↔ P4X HS (both directions) | Checked |
 | P4X → Linux PC (HS) | MSC and DFU checked at the wire level with pyusb |
-| ESP32-S2 | Compile only |
+| S2 ↔ S3 (FS, both directions) | The same tests as two S3 boards |
 | Windows, macOS | Not checked |
 
 ## 9. Still stuck

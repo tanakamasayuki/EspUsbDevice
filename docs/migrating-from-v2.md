@@ -849,12 +849,12 @@ Examples that exist only in v3:
 ## 7. Not yet verified
 
 The library is tested on hardware with: two ESP32-S3 boards as an FS
-host/device pair, one ESP32-P4 as an HS↔FS loopback, an older P4 and a P4X
-connected at HS in both directions, and a P4X with a Linux PC at HS.
+host/device pair, an ESP32-S2 and an S3 at FS in both directions, one ESP32-P4
+as an HS↔FS loopback, an older P4 and a P4X connected at HS in both
+directions, a P4X with a Linux PC at HS, and an S2 with a Linux PC at FS.
 
 Not verified:
 
-- ESP32-S2 on hardware (compile only).
 - Windows and macOS hosts.
 - MSC on a real SD card, and OTA activation and restart on hardware.
 - Most examples on hardware. Each example README states what was checked.

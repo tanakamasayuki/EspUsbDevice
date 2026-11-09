@@ -1,0 +1,40 @@
+name: Tests (offline)
+
+# These checks require no boards. Physical USB transfers run separately from
+# tests/ with configured ports and the bench's registered combos.
+on:
+  push:
+    branches: [main, master, v3]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "third_party/tinyusb/**"
+      - "tools/verify_usb_backend.py"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "third_party/tinyusb/**"
+      - "tools/verify_usb_backend.py"
+      - ".github/workflows/tests.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-and-collection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: tests/uv.lock
+      - name: Verify native backend structure
+        run: python3 tools/verify_usb_backend.py
+      - name: Collect the hardware tests
+        working-directory: tests
+        run: uv run --locked pytest --combo all --collect-only -q

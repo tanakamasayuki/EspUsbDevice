@@ -2,7 +2,7 @@
 
 保守者向けの文書です。EspUsbDevice v3 をリリースするときの確認項目と手順を書きます。
 
-- 試験の仕組みは [試験](testing.ja.md)、設計は [設計と理由](architecture.ja.md) を見てください。
+- 試験の仕組みは [テスト](../../tests/README.ja.md)、設計は [設計と理由](architecture.ja.md) を見てください。
 - `.github/workflows/release.yml` と `tools/bump_version.py` は共通の release toolkit（[arduino-library-release-toolkit](https://github.com/tanakamasayuki/arduino-library-release-toolkit)）で保守します。このリポジトリでは編集しません。
 
 ## 全体の流れ
@@ -21,7 +21,7 @@
 
 | 対象 | 確かめること |
 | --- | --- |
-| `README.md` / `README.ja.md` | 対応 SoC、確認済みの範囲、未確認の範囲（S2 実機、S31、Windows / macOS など）が [試験](testing.ja.md#確認済みの範囲) と一致する |
+| `README.md` / `README.ja.md` | 対応 SoC、確認済みの範囲、未確認の範囲（S2 の ROM DFU、S31、Windows / macOS など）が [テスト計画](../../tests/TEST_PLAN.ja.md#確認済みの範囲) と一致する |
 | `docs/` の利用者向け文書 | API 名、既定値、戻り値が `src/EspUsbDevice.h` と一致する。英語版（`.md`）と日本語版（`.ja.md`）が同じ内容 |
 | `examples/README.md` と各 example の README | 実装済みの API で書かれている。必要な board と結線が書いてある |
 | `docs/migrating-from-v2.ja.md` / `.md` | v2 からの変更点が漏れていない |
@@ -46,7 +46,7 @@ git diff --check
 | `tools/check_doc_links.py` | Markdown の相対リンクと `#anchor` がすべて解決する。見出しを変えるとリンクは黙って壊れるので、文書を直したら必ず実行する |
 | `git diff --check` | 空白の誤り |
 
-CI の `v3-checks.yml` も `verify_usb_backend.py` と `pytest --combo all --collect-only` を実行します。対象 commit で緑であることを確かめます。
+CI の `tests.yml` も `verify_usb_backend.py` と `pytest --combo all --collect-only` を実行します。対象 commit で緑であることを確かめます。
 
 ## examples の build
 
@@ -66,14 +66,14 @@ python3 tools/build_check.py --list   # どの example がどの profile を持�
 - CI の Build Check（`.github/workflows/build-check.yml`）は `esp32s3`、`esp32p4`、`esp32s2` だけを build します。`esp32p4x` は手元で実行します。
 - 出力は `build/examples/<profile>/` に置かれます（git 対象外）。
 
-build probe で、未使用の機能がリンクされないことも確かめます（[試験の build probe](testing.ja.md#build-probe)）。
+build probe で、未使用の機能がリンクされないことも確かめます（[build probe](../../tests/build_probes/README.ja.md)）。
 
 ## 実機試験
 
-`validation/` で、登録した全 combo を対象の commit で実行します。
+`tests/` で、登録した全 combo を対象の commit で実行します。
 
 ```sh
-cd validation
+cd tests
 uv sync --locked
 uv run --locked --env-file .env pytest --combo all --collect-only -q
 uv run --locked --env-file .env pytest --combo all --maxfail=1000 -q -rs \
@@ -98,7 +98,7 @@ uv run --locked --env-file .env pytest --combo s3 --maxfail=1000 -q -rs
 
 次の範囲は bench にないので、リリースの時点の状態を README に書きます。
 
-- ESP32-S2 の実機（compile だけの場合はそう書く）
+- ESP32-S2 の ROM DFU への移行
 - ESP32-S31（未対応）
 - Windows / macOS
 - SD card と OTA の実媒体
@@ -123,9 +123,9 @@ Release workflow（`workflow_dispatch`）は次のことをします。
 - **版番号**：workflow は `library.properties` の現在の値を基準に上げます。v3 の branch は v2 の最終版 `2.6.1` のままにしてあり、
   v3 の最初のリリースは `version_level=major` で実行して 3.0.0 にします。版番号を手で 3.x に変えないでください（4.0.0 になってしまいます）。
 - **default branch**：workflow は default branch へ push します。v3 を `main` へ取り込んでから実行します。
-- **release に含める file**：共通の workflow が `tests/` を除き、`tools/release_hooks/pre_release_commit.py` が `validation/` を除きます。
+- **release に含める file**：共通の workflow が `tests/` を除きます。
 - **examples の library 参照**：`release` branch では examples の `dir:` 参照が版指定に変わります。default branch では `dir:` のままです。
-- **EspUsbHost の版**：examples と validation が指定する EspUsbHost の版（例：2.10.1）が公開済みであること。
+- **EspUsbHost の版**：examples と tests が指定する EspUsbHost の版（例：2.10.1）が公開済みであること。
 
 ### 実行
 

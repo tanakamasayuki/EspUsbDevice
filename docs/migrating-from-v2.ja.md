@@ -771,12 +771,11 @@ v3 だけにある例：
 
 ## 7. まだ確認していないこと
 
-実機の試験は次の組合せで行っています。ESP32-S3 二台の FS の Host/device、ESP32-P4 一台の HS↔FS の loopback、
-旧 P4 と P4X の HS 直結（両方向）、P4X と Linux PC の HS 接続です。
+実機の試験は次の組合せで行っています。ESP32-S3 二台の FS の Host/device、ESP32-S2 と S3 の FS の両方向、ESP32-P4 一台の HS↔FS の loopback、
+旧 P4 と P4X の HS 直結（両方向）、P4X と Linux PC の HS 接続、S2 と Linux PC の FS 接続です。
 
 まだ確認していないもの：
 
-- ESP32-S2 の実機（compile だけ）。
 - Windows と macOS の Host。
 - 実物の SD card での MSC、実機での OTA の切替えと再起動。
 - 多くの例の実機での動作。各例の README に、確かめた範囲を書いています。

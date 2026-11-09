@@ -1,7 +1,7 @@
 # TODO
 
 v3 の残作業の一覧です。各項目に「何をすれば完了か」を書きます。
-試験の仕組みは [docs/development/testing.ja.md](docs/development/testing.ja.md)、リリース手順は [docs/development/release.ja.md](docs/development/release.ja.md) にあります。
+試験の仕組みは [tests/README.ja.md](tests/README.ja.md)、リリース手順は [docs/development/release.ja.md](docs/development/release.ja.md) にあります。
 
 - ここに書いたことを、実装や検証が済んだ扱いにしません。
 - 別の機種や別の Host での成功を、その項目の代わりにしません。
@@ -17,12 +17,12 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
   - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と、新しい P4X の HS の口を、普通の A–C ケーブルで直結する。Type-A の VBUS は TPS2051C の EN が 5 V 固定で常時出るので、P4X の HS の口が VBUS を出さないこと（2-4 と同じ WT9932P4X-TINY なら出さない見込み）を到着時に確かめる。S31 の VBUS が P4X へ回り込むので、電源は両方の port をまとめて切る。制御は両方とも USB-Serial/JTAG。
   - 完了の条件：
     - 使う Core の版を固定し、S31 の target / FQBN / SDK / toolchain で library が compile できる。
-    - S31 の HS port の能力を `src/internal/EspUsbDwc2Platform.cpp` の port 表に、資料と register の値で確かめて登録する。PHY と cache の処理も確かめる。`validation/s3/common/probe_link.h` の HS の判定に S31 を加える。
-    - combo `p4x_s31_hs`（P4X Host → S31 Device）で、`s3/` の probe と `peer/` の HS probe が通る。
+    - S31 の HS port の能力を `src/internal/EspUsbDwc2Platform.cpp` の port 表に、資料と register の値で確かめて登録する。PHY と cache の処理も確かめる。`tests/sketch_support/probe_link.h` の HS の判定に S31 を加える。
+    - combo `p4x_s31_hs`（P4X Host → S31 Device）で、`tests/peer/` の共通の probe と HS 専用の probe が通る。
     - EspUsbHost を S31 で Host として動かし、combo `s31_p4x_hs`（S31 Host → P4X Device）でも全件が通る。Device の成功だけで逆向きも対応済みにしない。
 - [ ] **HS 直結の組の整理**
   - 2-3（P4 v1.3）⇄ 2-4（P4X）の HS 直結は、当面残す。
-  - 完了の条件：`s31_p4x_hs` で P4X の HS の Device 試験が全件、安定して通るようになったら、2-3 ⇄ 2-4 を撤去するか決める。撤去したら、P4 v1.3 の Device 試験は 2-1 の FS loopback だけになることを testing.ja.md に書く。
+  - 完了の条件：`s31_p4x_hs` で P4X の HS の Device 試験が全件、安定して通るようになったら、2-3 ⇄ 2-4 を撤去するか決める。撤去したら、P4 v1.3 の Device 試験は 2-1 の FS loopback だけになることを tests/TEST_PLAN に書く。
 - [ ] **Arduino-ESP32 4 系の互換性**
   - 基準は 3.3.12 のままにします。4 系は別の profile と combo にします。
   - 完了の条件：
@@ -61,7 +61,7 @@ Device 側に回避の動作は加えません。Host 側で直し、Device の�
   - 完了の条件：EspUsbHost で修正が公開され、P4 の loopback で同期経路の往復が通る。
 - [ ] **NCM の `networkClose()` の後の Host 再開始**
   - `networkClose()` → Device の終了 → Host の終了の順にすると、次の Host の開始が失敗する。
-  - 完了の条件：Host 側で原因を切り分けて直し、その順序を含む回帰試験を `validation/` に足して通す。
+  - 完了の条件：Host 側で原因を切り分けて直し、その順序を含む回帰試験を `tests/` に足して通す。
 
 - [ ] **SET_CONFIGURATION で endpoint を開けない Device を列挙すると Host が panic する**
   - P4X の EspUsbHost 2.10.1 で、送信 FIFO に収まらない構成の Device（P4 HS で Vendor 6 個）を列挙すると、ROM 内で Load access fault になった。Device 側はこの構成を `begin()` で拒否するようにしたので、この Device からは再現しない。
@@ -80,7 +80,7 @@ Device 側に回避の動作は加えません。Host 側で直し、Device の�
 ## リリース
 
 - [ ] **全体の回帰試験と全 example の compile**
-  - 完了の条件：リリースする commit で、`validation/` の `--combo all` が全件通り、`tools/build_check.py` が全 profile で通る。
+  - 完了の条件：リリースする commit で、`tests/` の `--combo all` が全件通り、`tools/build_check.py` が全 profile で通る。
 
 ## examples
 

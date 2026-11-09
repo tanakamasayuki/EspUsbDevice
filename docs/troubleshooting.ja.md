@@ -382,7 +382,7 @@ lsusb -v -d 303a:      # Hostが解釈したdescriptor（自分のVIDを指定�
 
 | chip | USB controller | 注意 |
 | --- | --- | --- |
-| ESP32-S2 | FS | endpointの予算はS3と同じ。**現時点ではcompileのみ**で、v3の実機確認はしていない |
+| ESP32-S2 | FS | endpointの予算はS3と同じ。S3とのFS直結で、S3二台と同じ試験を両方向に確認している |
 | ESP32-S3 | FS | 実機確認の中心。PHYは1つでGPIO19/20、USB Serial/JTAGと共有 |
 | ESP32-P4（v1.x） | HS（480 Mbps、専用のUTMI PHY）とFS | `Auto`はHS。`ChipVariant=prev3`でbuild |
 | ESP32-P4X（v3.x） | HSとFS | USBの予算はv1.xと同じ。`ChipVariant=postv3`でbuild。SDKの対応はv3.1以上 |
@@ -431,7 +431,7 @@ Hostと決まった速度は`device.speed()`で分かります（`EspUsbBusSpeed
 | 1枚のP4でHS ↔ FSのloopback | 全10 class、両controller |
 | P4 ↔ P4XのHS直結（両方向） | 確認済み |
 | P4X → Linux PC（HS） | MSCとDFUをpyusbでwireの段階まで確認 |
-| ESP32-S2 | compileのみ |
+| S2 ↔ S3（FS、両方向） | S3二台と同じ試験 |
 | Windows、macOS | 未確認 |
 
 ## 9. それでも解決しないとき

@@ -1,7 +1,7 @@
 name: Build Check
 
 # Compile current examples for their declared profiles, without boards.
-# This checks API/build compatibility; physical USB coverage lives in validation/.
+# This checks API/build compatibility; physical USB coverage lives in tests/.
 
 on:
   push:

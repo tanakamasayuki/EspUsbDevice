@@ -220,7 +220,7 @@ USB では、reset や再構成の後も、前の転送の完了 event が queue
 - bulk IN の二重 buffer（`bulkInBuffering`）は、`Auto` なら全 bulk IN を 2 packet にできるときだけ行います。一部だけにすると、Function の登録順で速度が変わるためです。
 - `begin()` は、構成全体の IN endpoint が FIFO に入るかを、driver の割当てと同じ計算で検査します。数えるのは EP0 IN、各 IN endpoint 番号の最大 packet（alternate setting の間では最大の一つ）、二重 buffer の分、RX FIFO（最大の OUT packet から決まる）です。入らなければ `ESP_ERR_INVALID_SIZE` です。
   理由：入らない endpoint は SET_CONFIGURATION で開けず、列挙した後に動かない device になります。isochronous IN は FIFO を置けなくても完了を報告し、Host には何も届きません。
-  例：P4 の HS port では、既定の Vendor（bulk IN 512 byte）は 5 個まで入り、6 個目で `begin()` が失敗します（`validation/peer/fifo_budget`）。
+  例：P4 の HS port では、既定の Vendor（bulk IN 512 byte）は 5 個まで入り、6 個目で `begin()` が失敗します（`tests/peer/fifo_budget`）。
 
 ### IRQ と cache
 
@@ -487,7 +487,7 @@ ESP 固有の worker / core / cache の設定と、CH32RV 固有の clock や co
 
 ## 関連文書
 
-- [試験](testing.ja.md)、[リリース手順](release.ja.md)
+- [テスト](../../tests/README.ja.md)、[リリース手順](release.ja.md)
 - [DWC2 の由来と license](../../third_party/tinyusb/PROVENANCE.ja.md)
 - [v2 からの移行](../migrating-from-v2.ja.md)
 - [USB 2.0 specification](https://www.usb.org/document-library/usb-20-specification)

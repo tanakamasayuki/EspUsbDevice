@@ -100,8 +100,8 @@ examples use the high-speed controller unless they say otherwise; see
 
 Every example compiles for each profile its `sketch.yaml` declares. The library
 behaviour the examples rely on is tested on hardware by the separate
-`validation/` probes (ESP32-S3 and ESP32-S2 at full speed, ESP32-P4 and P4X at
-full and high speed, a P4X and an S2 against a Linux PC); see [testing](../docs/development/testing.ja.md).
+`tests/` probes (ESP32-S3 and ESP32-S2 at full speed, ESP32-P4 and P4X at
+full and high speed, a P4X and an S2 against a Linux PC); see [tests](../tests/README.md).
 The examples themselves have not each been run against Windows or macOS hosts.
 
 Coming from EspUsbDevice 2.x? Every 2.x example exists here under the same name;

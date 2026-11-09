@@ -24,7 +24,7 @@ controller event、CDC/MIDI descriptor layout、US keyboard lookup行の由来�
 
 `python3 tools/verify_usb_backend.py`で保守対象fileと旧vendor build/configuration経路の
 不在をoffline確認する。この検査だけでUSBの正しさや全間接依存の不在は証明できない。
-compiler依存、link symbolの実装位置、`validation/`の標準`--combo all`も確認する。
+compiler依存、link symbolの実装位置、`tests/`の標準`--combo all`も確認する。
 upstream修正は内容をreviewして保守実装へ反映し、snapshotの自動置換は行わない。
 
 転送recordは引き続きdescriptorで選択した方向だけ確保する。専用mapはoffset/strideを
