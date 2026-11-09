@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+## 3.0.0
 Major version. Existing sketches need changes; see `docs/migrating-from-v2.md`.
 メジャー版です。既存のスケッチには変更が必要です。`docs/migrating-from-v2.ja.md` を参照してください。
 
