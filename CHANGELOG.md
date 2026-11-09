@@ -31,12 +31,14 @@ Major version. Existing sketches need changes; see `docs/migrating-from-v2.md`.
   (`DescriptorsOnly` checks a configuration without USB), worker task stack,
   priority, core and queue depth, and a bounded `end()` (`stopTimeoutMs`). The
   USB worker runs callbacks; `device.task()` is gone. Function `begin()` is no
-  longer public: start and stop the device.
+  longer public: start and stop the device. Each Function's `startError()`
+  names why it refused to start.
 - (JA) 状態は `started()` / `ready()` / `suspended()`。`startMode`
   （`DescriptorsOnly` で USB を使わずに構成を検査）、worker task の stack・優先度・
   core・queue、期限付きの `end()`（`stopTimeoutMs`）を追加しました。callback は
   USB worker が呼び、`device.task()` は無くなりました。Function の `begin()` は
-  非公開になり、Device を開始・停止します。
+  非公開になり、Device を開始・停止します。各 Function の `startError()` が、
+  開始を断った理由を返します。
 - (EN) Bulk transfers (CDC, Vendor, MIDI): copy, callback and borrowed DMA
   receive modes, `writeDirect` / `readDirect` with one typed completion, cancel
   and return on reset or `end()`, external or PSRAM rings. CDC is an Arduino

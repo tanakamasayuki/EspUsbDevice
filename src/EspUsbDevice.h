@@ -1087,6 +1087,8 @@ public:
   const EspUsbBulkStreamConfig &configuration() const { return config_; }
   void end() override;
   bool isHid() const override { return false; }
+  // Why this Function refused to start in the last begin(); ESP_OK otherwise.
+  esp_err_t startError() const override { return startError_; }
 
   bool mounted() const;
   int available();
@@ -1154,7 +1156,6 @@ protected:
   virtual void onBulkReset() {}
   virtual bool onBulkExtraCompletion(uint8_t, uint8_t, uint32_t) { return false; }
   friend struct EspUsbBulkState;
-  esp_err_t startError() const override { return startError_; }
   esp_err_t startError_ = ESP_OK;
   EspUsbBulkStreamConfig config_;
   EspUsbBulkState *state_ = nullptr;
@@ -1544,7 +1545,6 @@ public:
   EspUsbDeviceMidi(EspUsbDevice &device, uint8_t inCableCount, uint8_t outCableCount);
   ~EspUsbDeviceMidi() override;
 
-  using EspUsbDeviceBulkStream::startError;
   esp_err_t configure(const EspUsbMidiConfig &config);
   const EspUsbMidiConfig &configuration() const { return midiConfig_; }
   using PacketCallback = std::function<void(const EspUsbDeviceMidiPacket &)>;
