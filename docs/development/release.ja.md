@@ -76,7 +76,7 @@ build probe で、未使用の機能がリンクされないことも確かめ�
 cd tests
 uv sync --locked
 uv run --locked --env-file .env pytest --combo all --collect-only -q
-uv run --locked --env-file .env pytest --combo all --maxfail=1000 -q -rs \
+uv run --locked --env-file .env pytest --combo all -q -rs \
   --junitxml=.pytest-results/release.xml
 ```
 
@@ -91,7 +91,7 @@ uv run --locked --env-file .env pytest --combo all --maxfail=1000 -q -rs \
 一度に流せない場合は combo ごとに実行してよいですが、すべて同じ commit で行います。
 
 ```sh
-uv run --locked --env-file .env pytest --combo s3 --maxfail=1000 -q -rs
+uv run --locked --env-file .env pytest --combo s3 -q -rs
 ```
 
 ### 実機で確かめられない範囲

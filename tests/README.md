@@ -41,14 +41,15 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 | --- | --- |
 | Run one combo | `pytest --combo s3 -q -rs` |
 | Run one probe | `pytest peer/vendor_link --combo p4_p4x_hs -q -rs` |
-| Keep going after a failure | `pytest --combo all --maxfail=1000 -q -rs` |
+| Stop at the first failure | `pytest --combo all --maxfail=1 -q -rs` |
 | Build only | `pytest --combo all --run-mode=build -q` |
 
 (Prefix each with `uv run --locked --env-file .env`.)
 
 - Run one hardware pytest at a time; several combos share boards.
 - The count changes as tests are added. Check the collected count and zero errors with `--collect-only` every time.
-- `--maxfail=1` is the default: after the first failure (including a failed USB stop) no further hardware case runs, so a board left in a bad state does not pile up failures with other causes.
+- By default the run continues after a failure. Each probe is flashed again at the start of its module, so a failure's state is not carried over.
+- When investigating one failure, add `--maxfail=1`, so a board left in a bad state does not pile up failures with other causes.
 
 ### Offline checks
 

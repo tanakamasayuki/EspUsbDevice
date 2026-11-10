@@ -41,14 +41,15 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 | --- | --- |
 | 一つの combo だけ | `pytest --combo s3 -q -rs` |
 | 一つの probe だけ | `pytest peer/vendor_link --combo p4_p4x_hs -q -rs` |
-| 失敗しても最後まで流す | `pytest --combo all --maxfail=1000 -q -rs` |
+| 最初の失敗で止める | `pytest --combo all --maxfail=1 -q -rs` |
 | build だけ | `pytest --combo all --run-mode=build -q` |
 
 （どれも `uv run --locked --env-file .env` を前に付けます。）
 
 - 実機の pytest は一つずつ実行します。同じ board を複数の combo が使います。
 - 件数は試験の追加で変わります。毎回 `--collect-only` で収集数とエラー 0 を確かめます。
-- `--maxfail=1` が既定です。最初の失敗（USB の停止失敗を含む）の後は、次の実機 case を実行しません。壊れた状態の board で後続を走らせて、原因の違う失敗を重ねないためです。
+- 既定では、失敗しても最後まで流します。各 probe は module の始めに書き込み直すので、前の失敗の状態を持ち越しません。
+- 一つの失敗を調べるときは `--maxfail=1` を付けます。最初の失敗の後に、壊れた状態の board で後続を走らせて、原因の違う失敗を重ねないためです。
 
 ### offline の確認
 
