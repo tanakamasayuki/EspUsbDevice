@@ -81,7 +81,10 @@ struct EspUsbDfuState {
       return true;
     }
     if (r->bmRequestType != 0x21 && r->bmRequestType != 0xa1) return false;
-    if (s->state == WaitReset) return false;
+    // dfuMANIFEST-WAIT-RESET waits for a USB reset (DFU 1.1). GETSTATUS and
+    // GETSTATE still report state 8, as dfu-util polls after the final block;
+    // every other request stalls.
+    if (s->state == WaitReset && r->bRequest != 3 && r->bRequest != 5) return false;
     if (r->bRequest == 3 && r->bmRequestType == 0xa1 && !r->wValue && r->wLength == 6) {
       if (s->state == DownloadBusy || s->state == Manifest) return s->reject();
       if (stage == ESPUSB_CONTROL_STAGE_SETUP) {

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- (EN) DFU: in dfuMANIFEST-WAIT-RESET (`manifestationTolerant = false`, the
+  default) GETSTATUS and GETSTATE are answered with state 8 instead of
+  stalling, so dfu-util and other hosts that poll after the final block see the
+  download finish; other DFU requests still stall until the USB reset.
+- (JA) DFU：dfuMANIFEST-WAIT-RESET（既定の `manifestationTolerant = false`）で、
+  GETSTATUS と GETSTATE に STALL せず state 8 で答えるようにしました。最後の block の
+  後も状態を確かめる dfu-util などの Host が、書込みの完了を正しく受け取れます。
+  ほかの DFU 要求は USB reset まで STALL のままです。
+
 ## 3.0.0
 Major version. Existing sketches need changes; see `docs/migrating-from-v2.md`.
 メジャー版です。既存のスケッチには変更が必要です。`docs/migrating-from-v2.ja.md` を参照してください。

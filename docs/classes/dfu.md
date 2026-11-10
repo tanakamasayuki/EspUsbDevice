@@ -108,7 +108,7 @@ The `transferBytes` range, poll times and DETACH handling do not depend on speed
 | `firmware()` | The `EspUsbDeviceFirmwareUpdate` the built-in OTA uses |
 
 - These setters return `esp_err_t` and `ESP_ERR_INVALID_STATE` while running.
-- `manifestationTolerant = false` (default): after a successful manifestation the device waits in dfuMANIFEST-WAIT-RESET for a USB reset.
+- `manifestationTolerant = false` (default): after a successful manifestation the device waits in dfuMANIFEST-WAIT-RESET for a USB reset. GETSTATUS and GETSTATE are still answered with state 8 (dfuMANIFEST-WAIT-RESET) and any other DFU request stalls, because dfu-util keeps polling GETSTATUS after the final block.
 - `manifestationTolerant = true`: the GETSTATUS after manifestation returns to dfuIDLE and another transfer can start.
 - A file that is not an ESP application fails on its first block with `Write`. A malformed image fails the final verification with `Verify`. Neither changes the boot partition.
 

@@ -129,7 +129,7 @@ void loop() {
     Serial.printf("MULTI %u\r\n",unsigned(ok));
   } else if (command == "manifest_wait") {
     bool ok = download(0,64) && request(0x21,1,1,0) && status(7,0,11);
-    ok &= stall(0xa1,5,0,1) && stall(0x21,6,0,0) && stall(0x21,1,0,64);
+    ok &= status(8,0,0) && state(8) && stall(0x21,6,0,0) && stall(0x21,1,0,64) && stall(0x21,4,0,0);
     ok &= request(0x81,10,0,1) && control->data_buffer[8] == 0;
     Serial.printf("MANIFEST_WAIT %u\r\n",unsigned(ok));
   } else if (command == "write_error") {

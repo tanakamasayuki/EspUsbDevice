@@ -108,7 +108,7 @@ DFU は EP0 だけを使います。EP0 の MPS は FS でも HS でも 64 byte 
 | `firmware()` | 内蔵 OTA が使う `EspUsbDeviceFirmwareUpdate` |
 
 - これらの setter は `esp_err_t` を返し、稼働中は `ESP_ERR_INVALID_STATE` です。
-- `manifestationTolerant = false`（既定）：manifest 成功の後は dfuMANIFEST-WAIT-RESET で USB reset を待ちます。
+- `manifestationTolerant = false`（既定）：manifest 成功の後は dfuMANIFEST-WAIT-RESET で USB reset を待ちます。この間も GETSTATUS と GETSTATE には state 8（dfuMANIFEST-WAIT-RESET）で答え、ほかの DFU 要求は STALL します。dfu-util は最後の block の後も GETSTATUS で状態を確かめるためです。
 - `manifestationTolerant = true`：manifest 後の GETSTATUS で dfuIDLE に戻り、別の転送を始められます。
 - ESP の application でないファイルは、最初の block で `Write` として失敗します。壊れた image は最後の検証で `Verify` として失敗します。どちらも起動先を変えません。
 
