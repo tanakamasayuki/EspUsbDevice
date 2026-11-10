@@ -780,6 +780,16 @@ Choose with `config.bulkInBuffering`:
 
 It is all or nothing because a rule that doubles only some endpoints would make throughput depend on the Function registration order.
 
+To double only the endpoint that needs the speed, set `EspUsbBulkStreamConfig::bulkInBuffering` on that CDC or Vendor Function. The choice is made by this setting, not by registration order.
+
+| Function value | Behaviour |
+| --- | --- |
+| `Auto` (default) | Follow the device's `config.bulkInBuffering` |
+| `Double` | Double it whatever the device says; if it does not fit, `begin()` fails with `ESP_ERR_INVALID_SIZE` |
+| `Single` | Keep one packet whatever the device says |
+
+Example: on the P4 HS controller, one Vendor and three CDC console ports. With four bulk IN endpoints the device's `Auto` doubles none, so the Vendor slows down too. Setting the Vendor to `Double` doubles its bulk IN alone.
+
 | Controller | Rule of thumb |
 | --- | --- |
 | S2 / S3 / P4 FS | Four 64-byte bulk IN endpoints can all be doubled |

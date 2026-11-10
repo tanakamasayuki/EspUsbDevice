@@ -77,6 +77,31 @@ struct EspUsbBulkState {
     directBuffer = nullptr; directLength = 0; needZlp = sendingZlp = false;
     return result;
   }
+  // A second borrowed send waits here while the first is on the wire, so the
+  // completion can arm it before any callback runs. It has not touched the bus.
+  const void *queuedBuffer = nullptr;
+  size_t queuedLength = 0;
+  uint64_t queuedId = 0;
+  bool queuedZlp = false;
+  EspUsbTransferResult takeQueued(EspUsbTransferStatus status) {
+    EspUsbTransferResult result{queuedBuffer, queuedLength, 0, status, true};
+    result.id = queuedId;
+    queuedBuffer = nullptr; queuedLength = 0; queuedId = 0; queuedZlp = false;
+    return result;
+  }
+  // Lock held, endpoint idle. Moves the queued loan onto the wire; if it cannot
+  // be armed, returns it as a TransferError completion instead.
+  EspUsbTransferResult armQueued() {
+    if (!queuedBuffer) return {};
+    directBuffer = queuedBuffer; directLength = queuedLength; txId = queuedId; needZlp = queuedZlp; sendingZlp = false;
+    queuedBuffer = nullptr; queuedLength = 0; queuedId = 0; queuedZlp = false;
+    if (espusb_device_edpt_claim(rhport, epIn)) {
+      txBusy = espusb_device_edpt_xfer(rhport, epIn, static_cast<uint8_t *>(const_cast<void *>(directBuffer)), uint32_t(directLength), false);
+      if (txBusy) return {};
+      espusb_device_edpt_release(rhport, epIn);
+    }
+    return takeDirect(EspUsbTransferStatus::TransferError, 0, true);
+  }
 
   EspUsbTransferResult takeReceive(EspUsbTransferStatus status, size_t actual, bool known) {
     EspUsbTransferResult result{directRxBuffer, directRxCapacity, actual, status, known};
@@ -136,9 +161,9 @@ struct EspUsbBulkState {
   void reset() {
     portENTER_CRITICAL(&bulkLock);
     const auto status = stopping ? EspUsbTransferStatus::Stopped : EspUsbTransferStatus::BusReset;
-    EspUsbTransferResult result, received;
+    EspUsbTransferResult result, queued, received;
     if (cancelTx && !stopping) { abortedTx = true; cancelTxStatus = status; }
-    else { result = takeDirect(status, 0, false); cancelTx = abortedTx = fenceTx = false; }
+    else { result = takeDirect(status, 0, false); queued = takeQueued(status); cancelTx = abortedTx = fenceTx = false; }
     if (cancelRx && !stopping) { abortedRx = true; cancelRxStatus = status; }
     else { received = takeReceive(status, 0, false); cancelRx = abortedRx = fenceRx = false; }
     epIn = epOut = 0; txBusy = rxBusy = flushing = false;
@@ -148,13 +173,16 @@ struct EspUsbBulkState {
     portEXIT_CRITICAL(&bulkLock);
     owner.onBulkReset();
     if (result.buffer && owner.directTxCompleteCallback_) owner.directTxCompleteCallback_(result);
+    if (queued.buffer && owner.directTxCompleteCallback_) owner.directTxCompleteCallback_(queued);
     if (received.buffer && owner.directRxCompleteCallback_) owner.directRxCompleteCallback_(received);
   }
   esp_err_t requestCancel(bool input, uint64_t id) {
     // Caller holds bulkLock: end cannot discard the runtime/state between
     // checking the loan and posting its allocation-free worker job.
     if (stopping || (input ? !directBuffer : !directRxBuffer)) return ESP_ERR_INVALID_STATE;
-    if (id && id != (input ? txId : rxId)) return ESP_ERR_INVALID_STATE;
+    // Cancelling a send cancels every outstanding borrowed send: the queued one
+    // must not go out after the one ahead of it was withdrawn.
+    if (id && id != (input ? txId : rxId) && !(input && id == queuedId)) return ESP_ERR_INVALID_STATE;
     if (!espusb_device_edpt_abort_supported()) return ESP_ERR_NOT_SUPPORTED;
     bool &pending = input ? cancelTx : cancelRx;
     if (pending) return ESP_OK;
@@ -203,13 +231,14 @@ struct EspUsbBulkState {
   static void finishCancelTx(void *context) { finishCancel(static_cast<EspUsbBulkState *>(context), true); }
   static void finishCancelRx(void *context) { finishCancel(static_cast<EspUsbBulkState *>(context), false); }
   static void finishCancel(EspUsbBulkState *s, bool input) {
-    EspUsbTransferResult result;
+    EspUsbTransferResult result, queued;
     portENTER_CRITICAL(&bulkLock);
     if (s->stopping) { portEXIT_CRITICAL(&bulkLock); return; }
     if (input && s->cancelTx) {
       if (s->resetTxPid && s->epIn) espusb_device_edpt_clear_stall(s->rhport, s->epIn);
       s->resetTxPid = false;
       result = s->takeDirect(s->cancelTxStatus, 0, false);
+      queued = s->takeQueued(s->cancelTxStatus);
       s->cancelTx = s->abortedTx = s->fenceTx = s->txBusy = false;
       s->transmit();
     } else if (!input && s->cancelRx) {
@@ -224,6 +253,7 @@ struct EspUsbBulkState {
       if (input && s->owner.directTxCompleteCallback_) s->owner.directTxCompleteCallback_(result);
       else if (!input && s->owner.directRxCompleteCallback_) s->owner.directRxCompleteCallback_(result);
     }
+    if (queued.buffer && s->owner.directTxCompleteCallback_) s->owner.directTxCompleteCallback_(queued);
   }
   static void init() {}
   static void resetAll(uint8_t) { for (auto *s = first; s; s = s->next) s->reset(); }
@@ -280,7 +310,7 @@ struct EspUsbBulkState {
       return false;
     }
     const bool input = ep == s->epIn;
-    EspUsbTransferResult completion, received;
+    EspUsbTransferResult completion, next, received;
     bool copied = false;
     portENTER_CRITICAL(&bulkLock);
     if ((input && s->cancelTx) || (!input && s->cancelRx)) {
@@ -292,16 +322,21 @@ struct EspUsbBulkState {
       if (s->directBuffer) {
         if (result != ESPUSB_TRANSFER_SUCCESS) {
           completion = s->takeDirect(EspUsbTransferStatus::TransferError, 0, false);
+          next = s->takeQueued(EspUsbTransferStatus::TransferError);
         } else if (s->needZlp && !s->sendingZlp) {
           s->sendingZlp = true;
           if (espusb_device_edpt_claim(s->rhport, s->epIn)) {
             s->txBusy = espusb_device_edpt_xfer(s->rhport, s->epIn, nullptr, 0, false);
             if (!s->txBusy) espusb_device_edpt_release(s->rhport, s->epIn);
           }
-          if (!s->txBusy) completion = s->takeDirect(EspUsbTransferStatus::TransferError, n, true);
+          if (!s->txBusy) {
+            completion = s->takeDirect(EspUsbTransferStatus::TransferError, n, true);
+            next = s->takeQueued(EspUsbTransferStatus::TransferError);
+          }
         } else {
           completion = s->takeDirect(EspUsbTransferStatus::Success,
                                      s->sendingZlp ? s->directLength : n, true);
+          next = s->armQueued();   // on the wire before the callback runs
         }
       } else if (s->copyZlp) {
         s->copyZlp = false;
@@ -337,6 +372,7 @@ struct EspUsbBulkState {
     portEXIT_CRITICAL(&bulkLock);
     // No internal lock is held when ownership is returned to the application.
     if (completion.buffer && s->owner.directTxCompleteCallback_) s->owner.directTxCompleteCallback_(completion);
+    if (next.buffer && s->owner.directTxCompleteCallback_) s->owner.directTxCompleteCallback_(next);
     if (received.buffer && s->owner.directRxCompleteCallback_) s->owner.directRxCompleteCallback_(received);
     if (result == ESPUSB_TRANSFER_SUCCESS) {
       if (input && copied) s->owner.handleTxComplete(n);
@@ -555,7 +591,14 @@ EspUsbTransferSubmission EspUsbDeviceBulkStream::writeDirect(const void *buffer,
   portENTER_CRITICAL(&bulkLock);
   if (error == EspUsbTransferError::None) {
     if (!state_ || state_->stopping || !state_->epIn) error = EspUsbTransferError::NotMounted;
-    else if (state_->cancelTx || state_->directBuffer || state_->txBusy || state_->tx.used || !espusb_device_edpt_claim(state_->rhport, state_->epIn))
+    else if (state_->cancelTx || state_->tx.used || state_->queuedBuffer) error = EspUsbTransferError::Busy;
+    else if (state_->directBuffer) {
+      // One on the wire, one queued: armed by the completion, not by a task.
+      if (++nextTransferId_ == 0) ++nextTransferId_;
+      state_->queuedBuffer = buffer; state_->queuedLength = n;
+      state_->queuedId = id = nextTransferId_;
+      state_->queuedZlp = termination == EspUsbTransferTermination::EndWithShortPacket && n % state_->packetSize == 0;
+    } else if (state_->txBusy || !espusb_device_edpt_claim(state_->rhport, state_->epIn))
       error = EspUsbTransferError::Busy;
     else {
       state_->directBuffer = buffer; state_->directLength = n;

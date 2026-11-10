@@ -217,7 +217,7 @@ USB では、reset や再構成の後も、前の転送の完了 event が queue
 - 未知の SoC を既存の port へ割り当てません。S31 は未対応です。
 - IN endpoint 番号と TX FIFO 番号は別です。TX FIFO は、使う IN endpoint の番号順に 1 から詰めます（EP0 は FIFO 0）。
   理由：DWC2 の FIFO の数は endpoint 番号の範囲より少ないことがあり、番号に空きがある構成（Audio と CDC で IN 1/2/4/5 など）では、番号 = FIFO 番号の対応が成り立たないためです。
-- bulk IN の二重 buffer（`bulkInBuffering`）は、`Auto` なら全 bulk IN を 2 packet にできるときだけ行います。一部だけにすると、Function の登録順で速度が変わるためです。
+- bulk IN の二重 buffer（`bulkInBuffering`）は、Device の `Auto` なら全 bulk IN を 2 packet にできるときだけ行います。一部だけにすると、Function の登録順で速度が変わるためです。一部だけを 2 倍にしたいときは、CDC・Vendor の Function ごとの `bulkInBuffering` で明示します。登録順ではなく指定で決まり、`Double` を指定したものが入らなければ `begin()` が断ります。
 - `begin()` は、構成全体の IN endpoint が FIFO に入るかを、driver の割当てと同じ計算で検査します。数えるのは EP0 IN、各 IN endpoint 番号の最大 packet（alternate setting の間では最大の一つ）、二重 buffer の分、RX FIFO（最大の OUT packet から決まる）です。入らなければ `ESP_ERR_INVALID_SIZE` です。
   理由：入らない endpoint は SET_CONFIGURATION で開けず、列挙した後に動かない device になります。isochronous IN は FIFO を置けなくても完了を報告し、Host には何も届きません。
   例：P4 の HS port では、既定の Vendor（bulk IN 512 byte）は 5 個まで入り、6 個目で `begin()` が失敗します（`tests/peer/fifo_budget`）。

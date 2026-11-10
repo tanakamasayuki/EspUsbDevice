@@ -73,6 +73,7 @@ Every field of `EspUsbVendorConfig` (the same type as `EspUsbBulkStreamConfig`):
 | `autoFlush` | `true` | `true` starts sending on every `write()`. `false` holds data until `flush()` | none |
 | `streamTermination` | `FunctionDefault` | Whether a copied send ends with a ZLP. For Vendor, `FunctionDefault` is `Continue` (no ZLP) | The length that gets a ZLP depends on the MPS |
 | `rxMode` | `Stream` | Receive mode: `Stream` / `Callback` / `Borrowed` / `Disabled` ([Receive modes](#receive-modes)) | none |
+| `bulkInBuffering` | `Auto` | Two packets of transmit FIFO for this Function's bulk IN. `Auto` follows the device's `bulkInBuffering`; `Double` always (if it does not fit, begin fails with `ESP_ERR_INVALID_SIZE`); `Single` never | At HS it takes another 512 bytes of FIFO |
 
 The constructor's second argument `endpointSize` (default 64) is the bulk MPS
 on a full-speed link.
@@ -202,7 +203,8 @@ if (!submission) {
 
 **Borrowed send (`writeDirect`)**
 
-- One instance runs one borrowed send at a time. It is also `Busy` while copied data is still pending.
+- One instance can have two borrowed sends outstanding. While the first is on the wire, the second waits in a queue and is handed to DMA while the first completion is processed, before its callback runs. No gap opens between a completion and the next send, so keep two outstanding when streaming. A third, or any while copied data is still pending, is `Busy`.
+- When the first ends in error, cancel, bus reset or `end()`, the second is returned with the same status without being sent, after the first. `cancelDirectTx()` with either id cancels both.
 - `Continue` adds no ZLP. `EndWithShortPacket` sends a ZLP before completing when the length is a multiple of the MPS.
 - No short packet or ZLP is inserted in the middle. There is one completion for the whole transfer.
 - `maxDirectTransfer()` gives the length limit (2147483647 on 32-bit ESP32, 0 while stopped). Lengths that do not fit one DMA programming of the controller are split by the library.
@@ -328,7 +330,7 @@ exactly once, after DMA has stopped and older completions have been processed.
 
 - Non-control IN endpoints are limited to 4 on ESP32-S3 and 7 on the P4 high-speed controller. Vendor uses one IN endpoint.
 - Every IN endpoint also needs at least one packet in the controller's transmit FIFO, which is shared by all endpoints (256 words on ESP32-S2/S3 and the P4 FS controller, 1024 words = 4 KiB on the P4 HS controller, including the receive FIFO). `device.begin()` checks the whole configuration and fails with `ESP_ERR_INVALID_SIZE` if it does not fit, instead of a device that enumerates and then cannot open its endpoints. On the P4 HS controller, five Vendor Functions with default settings fit; a sixth (six 512-byte bulk IN packets) does not.
-- For a sustained stream to the Host, giving each bulk IN endpoint two packets of transmit FIFO can help. `EspUsbDeviceConfig::bulkInBuffering` selects this (default `Auto`: double only if all of them fit); `device.bulkInDoubleBuffered()` shows the result.
+- For a sustained stream to the Host, giving each bulk IN endpoint two packets of transmit FIFO can help. `EspUsbDeviceConfig::bulkInBuffering` selects this (default `Auto`: double only if all of them fit); `device.bulkInDoubleBuffered()` shows the result. To double this Vendor alone, set `EspUsbVendorConfig::bulkInBuffering = Double`.
 
 ## Buffers and memory
 

@@ -42,6 +42,8 @@
 | `peer/vendor_packet_size` | Vendor の FS bulk 長 8 / 16 / 32 / 64 が動き、それ以外を `begin()` が拒否すること。HS は常に 512 |
 | `peer/fifo_budget` | HS で既定の Vendor 5 個は列挙でき、6 個目は `begin()` が `ESP_ERR_INVALID_SIZE` |
 | `pc/msc_fat` | `EspUsbDeviceMscFatRamDisk` の 1 / 4 / 24 MiB の volume を PC が読み、`fsck.fat` で検査する |
+| `peer/direct_queue` | 借用送信を2つまで出しておけること。3つ目の `Busy`、送信・取消し・`end()` で2つとも一度だけ順に返ること |
+| `peer/fifo_budget` | Function ごとの `bulkInBuffering`：`Double` を指定した Function だけが2倍になること、入らない `Double` を `begin()` が断ること |
 
 ## HS で変わる値
 

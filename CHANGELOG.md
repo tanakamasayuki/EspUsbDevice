@@ -10,6 +10,27 @@
   GETSTATUS と GETSTATE に STALL せず state 8 で答えるようにしました。最後の block の
   後も状態を確かめる dfu-util などの Host が、書込みの完了を正しく受け取れます。
   ほかの DFU 要求は USB reset まで STALL のままです。
+- (EN) Vendor and CDC borrowed sends: two `writeDirect()` loans may be
+  outstanding. The second waits behind the first and is armed while the first
+  completion is processed, before its callback runs, so a stream that keeps two
+  submitted leaves no gap between transfers. A third is still `Busy`. When the
+  first ends in error, cancel, bus reset or `end()`, the second is returned
+  with the same status without being sent, after the first.
+- (JA) Vendor と CDC の借用送信：`writeDirect()` を2つまで出しておけます。2つ目は
+  1つ目の後ろで待ち、1つ目の完了の処理の中で（callback より先に）DMA へ渡されるので、
+  2つ出しておけば転送の間に隙間が空きません。3つ目は従来どおり `Busy` です。
+  1つ目が失敗・取消し・bus reset・`end()` で終わったときは、2つ目は送らずに同じ
+  status で、1つ目の後に返します。
+- (EN) `EspUsbBulkStreamConfig::bulkInBuffering`: a CDC or Vendor Function can
+  ask for a two-packet transmit FIFO for its own bulk IN (`Double`, refused by
+  `begin()` if it does not fit) or keep one (`Single`); `Auto` follows the
+  device setting as before. A fast Vendor beside several CDC console ports can
+  now be doubled alone, where the device-wide all-or-nothing `Auto` doubled none.
+- (JA) `EspUsbBulkStreamConfig::bulkInBuffering`：CDC と Vendor の Function ごとに、
+  bulk IN の送信 FIFO を 2 packet 分にするか（`Double`。入らなければ `begin()` が断る）、
+  1 packet のままにするか（`Single`）を指定できます。`Auto` は従来どおり Device の設定に
+  従います。コンソール用の CDC を複数並べても、速さの要る Vendor だけを 2 倍にできます。
+  Device 全体の `Auto`（全部か無しか）では、どれも 2 倍になりませんでした。
 
 ## 3.0.0
 Major version. Existing sketches need changes; see `docs/migrating-from-v2.md`.

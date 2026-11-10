@@ -64,7 +64,7 @@ PHYより前の段階ではbusに触れないので、Hostには何も見えま�
 | 原因 | 対処 |
 | --- | --- |
 | 非controlのIN endpointがcontrollerの数を超えた。ESP32-S2/S3とESP32-P4のFS controllerは4本、P4のHS controllerは7本。endpoint番号にも上限がある（S2/S3は1〜6） | DescriptorDumpで数える（Host不要）。下の[予算の表](#endpointの予算)を参照。Functionを減らすか、P4のHS controllerを使う |
-| `bulkInBuffering = EspUsbBulkInBuffering::Double`で、すべてのbulk INに2 packet分のTX FIFOを取れない | `Auto`（全部入るときだけ倍にする）か`Single`にする |
+| `bulkInBuffering = EspUsbBulkInBuffering::Double`（DeviceかCDC・VendorのFunction）で、指定したbulk INに2 packet分のTX FIFOを取れない | 2倍にするFunctionを減らす。Deviceは`Auto`（全部入るときだけ倍にする）か`Single`にする |
 | 構成全体のIN endpointが、controllerのTX FIFOに入らない（S2/S3/P4 FSは256 word、P4 HSは1024 word。EP0とRX FIFOと共有）。P4のHS controllerでは、既定のVendor（bulk IN 512 byte）は5個まで入り、6個目は入らない | IN endpointを減らすか、packetを小さくする（Audio/Videoのisochronous packet、`EspUsbDeviceHidCustom`の`inputReportSize`） |
 | MSCの`transferBytes`がbulkのMPS（FSは64、HSは512）の倍数でない | 512の倍数にする。FSでもHSでも使える |
 | CCIDの`messageBytes`を、Bulk-OUTのMPS（HSでは512）未満の値で明示した | 0（自動：`max(271, MPS)`）のままにするか、512以上にする |

@@ -68,11 +68,17 @@ enum class EspUsbBusSpeed : uint8_t
 // on the P4 high-speed controller - shared by the receive FIFO and every IN
 // endpoint. Ask for more than there is and the endpoint simply does not open,
 // which is a device that fails to enumerate rather than one that runs slowly.
+//
+// EspUsbDeviceConfig::bulkInBuffering applies to every bulk IN endpoint. A
+// CDC or Vendor Function can override it for its own endpoint with
+// EspUsbBulkStreamConfig::bulkInBuffering: Double always doubles it (begin()
+// fails if it does not fit), Single never does, Auto follows the device.
 enum class EspUsbBulkInBuffering : uint8_t
 {
-  // Double every bulk IN endpoint if they all fit, and change nothing if they
-  // do not. All or nothing on purpose: a rule that doubles some endpoints and
-  // not others makes throughput depend on the order functions were registered.
+  // Double every bulk IN endpoint left to the device setting if they all fit,
+  // and change nothing if they do not. All or nothing on purpose: a rule that
+  // doubles some endpoints and not others makes throughput depend on the order
+  // functions were registered. Name the endpoint that needs it instead.
   Auto,
   // One packet per bulk IN endpoint, which is what the controller does without
   // being asked.
@@ -956,6 +962,8 @@ public:
 
 protected:
   friend class EspUsbDevice;
+  // This Function's own choice for its bulk IN endpoints; Auto defers to the device.
+  virtual EspUsbBulkInBuffering bulkInBufferingPreference() const { return EspUsbBulkInBuffering::Auto; }
   // Lifecycle hooks run by EspUsbDevice::begin()/end() only.
   virtual bool begin() { return true; }
   virtual bool afterDeviceStarted() { return true; }
@@ -1057,6 +1065,10 @@ struct EspUsbBulkStreamConfig
   bool autoFlush = true;
   EspUsbStreamTermination streamTermination = EspUsbStreamTermination::FunctionDefault;
   EspUsbBulkRxMode rxMode = EspUsbBulkRxMode::Stream;
+  // Two-packet transmit FIFO for this Function's bulk IN endpoint. Auto follows
+  // EspUsbDeviceConfig::bulkInBuffering; Double requires it (begin() fails with
+  // ESP_ERR_INVALID_SIZE if the controller FIFO cannot hold it); Single never.
+  EspUsbBulkInBuffering bulkInBuffering = EspUsbBulkInBuffering::Auto;
 };
 
 using EspUsbVendorConfig = EspUsbBulkStreamConfig;
@@ -1113,6 +1125,10 @@ public:
   // typed completion, including BusReset/Stopped. Rejection borrows nothing.
   // Register the completion callback while stopped. Runs on the USB worker;
   // it may submit another prepared buffer but must not block or call end().
+  // Two loans may be outstanding: one on the wire and one queued behind it,
+  // which the completion arms before the callback runs. A third is Busy. When
+  // the first ends in error, reset, stop or cancel, the queued one is returned
+  // with the same status without being sent, after the first.
   static bool directWriteSupported();
   size_t maxDirectTransfer() const;
   EspUsbTransferSubmission writeDirect(const void *buffer, size_t length,
@@ -1126,6 +1142,7 @@ public:
   // Request cancellation; the typed completion returns ownership later.
   // A timeout or successful request alone never permits freeing the buffer.
   // id=0 selects the current loan. A nonzero id cannot cancel a newer loan.
+  // Cancelling a send returns the queued send behind it as Cancelled too.
   esp_err_t cancelDirectTx(uint64_t id = 0);
   esp_err_t cancelDirectRx(uint64_t id = 0);
   esp_err_t onTxComplete(TxCompleteCallback callback);
@@ -1156,6 +1173,7 @@ protected:
   virtual void onBulkReset() {}
   virtual bool onBulkExtraCompletion(uint8_t, uint8_t, uint32_t) { return false; }
   friend struct EspUsbBulkState;
+  EspUsbBulkInBuffering bulkInBufferingPreference() const override { return config_.bulkInBuffering; }
   esp_err_t startError_ = ESP_OK;
   EspUsbBulkStreamConfig config_;
   EspUsbBulkState *state_ = nullptr;

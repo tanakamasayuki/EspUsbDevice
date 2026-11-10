@@ -42,6 +42,8 @@ The API promises written in the documentation are checked on the wire by these p
 | `peer/vendor_packet_size` | Vendor FS bulk sizes 8 / 16 / 32 / 64 work and `begin()` refuses any other; HS is always 512 |
 | `peer/fifo_budget` | At HS five default Vendors enumerate and a sixth makes `begin()` return `ESP_ERR_INVALID_SIZE` |
 | `pc/msc_fat` | The PC reads `EspUsbDeviceMscFatRamDisk` volumes of 1 / 4 / 24 MiB and checks them with `fsck.fat` |
+| `peer/direct_queue` | Two borrowed sends may be outstanding: a third is `Busy`, and sending, cancel and `end()` return both once, in order |
+| `peer/fifo_budget` | Per-Function `bulkInBuffering`: only the Function set to `Double` is doubled, and `begin()` refuses a `Double` that cannot fit |
 
 ## Values that change at high speed
 

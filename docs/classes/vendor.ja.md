@@ -65,6 +65,7 @@ void loop() {
 | `autoFlush` | `true` | `true` なら `write()` のたびに送信を始める。`false` なら `flush()` まで溜める | なし |
 | `streamTermination` | `FunctionDefault` | コピー送信の終わりに ZLP を付けるか。Vendor の `FunctionDefault` は `Continue`（付けない） | ZLP が付く長さが MPS で変わる |
 | `rxMode` | `Stream` | 受信の方式。`Stream` / `Callback` / `Borrowed` / `Disabled`（[受信の方式](#受信の方式)） | なし |
+| `bulkInBuffering` | `Auto` | この Function の bulk IN の送信 FIFO を2 packet 分にするか。`Auto` は Device の `bulkInBuffering` に従う。`Double` は必ず2倍（入らなければ begin が `ESP_ERR_INVALID_SIZE`）、`Single` は1 packet | HS では 512 byte 分の FIFO を余分に使う |
 
 constructor の第2引数 `endpointSize`（既定 64）は、FS 接続のときの bulk MPS です。
 
@@ -186,7 +187,8 @@ if (!submission) {
 
 **借用送信（`writeDirect`）**
 
-- 1つの instance で同時に進められる借用送信は1つです。コピー送信のデータが残っている間も `Busy` です。
+- 1つの instance で同時に出しておける借用送信は2つです。1つ目が送信中なら、2つ目は待ち行列に入り、1つ目の完了の処理の中で（callback より先に）DMA へ渡されます。完了から次の送信までの隙間が空かないので、流し続けるときは2つ出しておきます。3つ目と、コピー送信のデータが残っている間は `Busy` です。
+- 1つ目が失敗・取消し・bus reset・`end()` で終わったときは、2つ目は送らずに同じ status で返します。順番は1つ目が先です。`cancelDirectTx()` は、どちらの id を指定しても両方を取り消します。
 - `Continue` は ZLP を付けません。`EndWithShortPacket` は長さが MPS の倍数なら ZLP まで送ってから完了します。
 - 途中に短い packet や ZLP は入りません。転送全体に対して完了は1回です。
 - 長さの上限は `maxDirectTransfer()` で分かります（32 bit の ESP32 では 2147483647、停止中は 0）。controller の1回の DMA 設定に収まらない長さは、ライブラリが内部で分けます。
@@ -306,7 +308,7 @@ Host から次の標準要求が来ると、Vendor と CDC の bulk 転送は対
 
 - 非 control の IN endpoint は、ESP32-S3 で 4本、P4 の HS controller で 7本までです。Vendor は IN を1本使います。
 - IN endpoint はそれぞれ、controller の送信 FIFO に少なくとも 1 packet 分が要ります。FIFO は全 endpoint で共有します（ESP32-S2/S3 と P4 の FS controller は 256 word、P4 の HS controller は 1024 word＝4 KiB。受信 FIFO を含む）。`device.begin()` は構成全体を検査し、収まらなければ `ESP_ERR_INVALID_SIZE` で失敗します。列挙の後で endpoint を開けない Device にしないためです。P4 の HS controller では、既定設定の Vendor は 5 個まで収まり、6 個（512 byte の bulk IN が 6 本）は収まりません。
-- 連続して Host へ送る場合、各 bulk IN endpoint の送信 FIFO を2 packet 分にすると速くなることがあります。`EspUsbDeviceConfig::bulkInBuffering`（既定 `Auto`：全部入るときだけ2倍にする）で選べます。`device.bulkInDoubleBuffered()` で結果を確認できます。
+- 連続して Host へ送る場合、各 bulk IN endpoint の送信 FIFO を2 packet 分にすると速くなることがあります。`EspUsbDeviceConfig::bulkInBuffering`（既定 `Auto`：全部入るときだけ2倍にする）で選べます。この Vendor だけを2倍にするなら、`EspUsbVendorConfig::bulkInBuffering = Double` にします。`device.bulkInDoubleBuffered()` で結果を確認できます。
 
 ## バッファとメモリ
 

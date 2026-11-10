@@ -30,6 +30,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `vendor_soak` | Numbered frames survive repeated Host re-enumeration with no loss, duplication or corruption |
 | `transfer_limits` | A borrowed transfer longer than 16 bits passes with DMA splitting and a single completion |
 | `cancel_lifecycle` | Cancelling a borrowed transfer, and racing it with reset / `end()`, returns the buffer exactly once |
+| `direct_queue` | Two borrowed sends can be outstanding and a third is `Busy`; both go out in order, and cancel (by either id) or `end()` returns both once, in order |
 | `cancel_fence` | Old completions left beyond the event queue's capacity never return a newer loan |
 | `configuration_epoch` | After the configuration is selected again, stale queued completions never return a newer loan |
 | `bulk_standard` | SET_INTERFACE and ENDPOINT_HALT return only that stream's loans and keep the others running |
@@ -78,7 +79,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `ccid` | A simulated card: ATR, APDU and Escape across packet boundaries; slot state |
 | `dfu` | RAM backend download, manifest, abort, runtime detach |
 | `psram_link` | MSC storage and Vendor rings in the Device's PSRAM, round trips at HS |
-| `fifo_budget` | Five default Vendors enumerate; a sixth makes `begin()` return `ESP_ERR_INVALID_SIZE` |
+| `fifo_budget` | Five default Vendors enumerate; a sixth makes `begin()` return `ESP_ERR_INVALID_SIZE`. Per-Function `bulkInBuffering`: a Vendor beside three CDC ports is doubled alone with `Double`, and a `Double` that cannot fit is refused |
 
 ## Link check
 

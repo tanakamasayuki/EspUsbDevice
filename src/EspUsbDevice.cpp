@@ -751,7 +751,7 @@ bool EspUsbDevice::begin(const EspUsbDeviceConfig &config)
       (config_.controller == EspUsbController::Auto && ESP_USB_DEVICE_HIGH_SPEED_DEFAULT);
   bool doubleBufferFits = true;
   bulkInDoubleBuffered_ = bulkInDoubleBufferMask(highSpeedBudget, &doubleBufferFits);
-  if (config_.bulkInBuffering == EspUsbBulkInBuffering::Double && !doubleBufferFits)
+  if (!doubleBufferFits)
   {
     // Asked for two packets per bulk IN endpoint and the controller's FIFO
     // cannot hold that. Saying so here is the whole point: the alternative is
@@ -2052,22 +2052,24 @@ bool EspUsbDevice::buildWebUsbDescriptors()
 
 uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
 {
+  // *fits reports whether every endpoint that *must* be doubled - Double on the
+  // device, or Double on a Function - fits. Auto that does not fit is not an
+  // error; it leaves those endpoints single.
   if (fits)
   {
     *fits = true;
   }
-  if (config_.bulkInBuffering == EspUsbBulkInBuffering::Single)
-  {
-    return 0;
-  }
 
+  // Without a controller or descriptors to measure, only an explicit device
+  // Double is an error, as before Functions could ask for it.
+  const bool deviceDouble = config_.bulkInBuffering == EspUsbBulkInBuffering::Double;
 #if !ESP_USB_DEVICE_HAS_OTG
   (void)highSpeed;
-  if (fits) *fits = false;
+  if (fits) *fits = !deviceDouble;
   return 0;
 #else
   const auto *port = descriptorController(highSpeed);
-  if (!port) { if (fits) *fits = false; return 0; }
+  if (!port) { if (fits) *fits = !deviceDouble; return 0; }
   const uint16_t fifoDepthWords = port->otg_dfifo_depth;
   const uint8_t endpointCount = port->ep_count;
 
@@ -2085,10 +2087,7 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
   const uint8_t *descriptor = highSpeed ? configDescriptorHighSpeed_ : configDescriptor_;
   if (!descriptor)
   {
-    if (fits)
-    {
-      *fits = false;
-    }
+    if (fits) *fits = !deviceDouble;
     return 0;
   }
   const uint16_t total = static_cast<uint16_t>(descriptor[2] | (descriptor[3] << 8));
@@ -2099,13 +2098,28 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
   uint16_t inPacketWords[16] = {};
   inPacketWords[0] = packetWords(ESPUSB_CONTROL_PACKET_BYTES);
   uint16_t largestOutPacket = ESPUSB_CONTROL_PACKET_BYTES;
-  uint16_t candidateMask = 0;
-  uint32_t candidateWords = 0;
+  uint16_t forcedMask = 0, autoMask = 0;
+  EspUsbBulkInBuffering current = EspUsbBulkInBuffering::Auto;
+  // The Function that owns an interface number; descriptors list a Function's
+  // interfaces together, so its endpoints follow its interface descriptors.
+  const auto preferenceFor = [this](uint8_t interfaceNumber) {
+    for (size_t i = 0; i < classCount_; ++i) {
+      const auto *function = classAt(i);
+      const uint8_t first = function->descriptorInterfaceNumber_;
+      if (first != 0xff && interfaceNumber >= first && interfaceNumber - first < function->interfaceCount())
+        return function->bulkInBufferingPreference();
+    }
+    return EspUsbBulkInBuffering::Auto;
+  };
 
   uint16_t offset = 0;
   while (offset + 2 <= total && descriptor[offset] > 0)
   {
     const uint8_t length = descriptor[offset];
+    if (descriptor[offset + 1] == USB_DESC_INTERFACE && length >= 9)
+    {
+      current = preferenceFor(descriptor[offset + 2]);
+    }
     if (descriptor[offset + 1] == USB_DESC_ENDPOINT && length >= 7)
     {
       const uint8_t address = descriptor[offset + 2];
@@ -2121,7 +2135,9 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
         {
           // Only bulk IN endpoints are double buffered; the port ignores the
           // bit for anything else.
-          candidateMask = static_cast<uint16_t>(candidateMask | (1u << (address & 0x0f)));
+          const uint16_t bit = static_cast<uint16_t>(1u << (address & 0x0f));
+          if (current == EspUsbBulkInBuffering::Double) forcedMask = static_cast<uint16_t>(forcedMask | bit);
+          else if (current == EspUsbBulkInBuffering::Auto) autoMask = static_cast<uint16_t>(autoMask | bit);
         }
       }
       else if (packet > largestOutPacket)
@@ -2132,29 +2148,33 @@ uint16_t EspUsbDevice::bulkInDoubleBufferMask(bool highSpeed, bool *fits) const
     offset = static_cast<uint16_t>(offset + length);
   }
 
+  // A device-wide Single leaves the Functions that did not choose single too.
+  if (config_.bulkInBuffering == EspUsbBulkInBuffering::Single) autoMask = 0;
+  autoMask = static_cast<uint16_t>(autoMask & ~forcedMask);
   // Alternate descriptors reuse physical FIFOs. Budget each endpoint once.
+  uint32_t forcedWords = 0, autoWords = 0;
   for (unsigned number = 0; number < 16; ++number) {
     inWords += inPacketWords[number];
-    if (candidateMask & (1u << number)) candidateWords += inPacketWords[number];
-  }
-  if (candidateMask == 0)
-  {
-    return 0;
+    if (forcedMask & (1u << number)) forcedWords += inPacketWords[number];
+    if (autoMask & (1u << number)) autoWords += inPacketWords[number];
   }
 
   // Buffer DMA reserves two words per endpoint for its endpoint-info area
   // before anything else is allocated.
   const uint32_t available = fifoDepthWords - (2u * endpointCount);
-  const uint32_t needed = inWords + candidateWords + receiveWords(largestOutPacket);
-  if (needed > available)
+  const uint32_t base = inWords + receiveWords(largestOutPacket);
+  if (base + forcedWords > available)
   {
-    if (fits)
-    {
-      *fits = false;
-    }
+    if (fits) *fits = false;
     return 0;
   }
-  return candidateMask;
+  if (autoMask && base + forcedWords + autoWords > available)
+  {
+    // The device asked for Double: every remaining bulk IN endpoint is required.
+    if (config_.bulkInBuffering == EspUsbBulkInBuffering::Double && fits) *fits = false;
+    return forcedMask;
+  }
+  return static_cast<uint16_t>(forcedMask | autoMask);
 #endif
 }
 

@@ -65,6 +65,7 @@ whose default differs for CDC are marked.
 | `autoFlush` | `true` | Whether every `write()` starts sending | none |
 | `streamTermination` | `FunctionDefault` | **For CDC this is `EndWithShortPacket`** (a ZLP when a send ends on a multiple of the MPS and the ring is empty) | ZLP on multiples of 64 at FS, 512 at HS |
 | `rxMode` | `Stream` | `Stream` / `Callback` / `Borrowed` / `Disabled` | none |
+| `bulkInBuffering` | `Auto` | Two packets of transmit FIFO for this port's bulk IN. `Auto` follows the device setting; `Double` always (begin fails if it does not fit); `Single` never. Leave console ports at `Auto` or `Single` so the FIFO goes to the Function that needs the speed | At HS it takes another 512 bytes of FIFO |
 
 CDC-specific settings:
 

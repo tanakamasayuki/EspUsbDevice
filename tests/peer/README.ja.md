@@ -30,6 +30,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `vendor_soak` | 連番付きの frame を流しながら、Host を何度も再列挙させても欠落・重複・破損がない |
 | `transfer_limits` | 借用転送が 16 bit を超える長さでも、DMA の分割と一度の完了で通る |
 | `cancel_lifecycle` | 借用転送の取消しと、reset / `end()` との競合で、buffer が一度だけ返る |
+| `direct_queue` | 借用送信を2つ出しておける。3つ目は `Busy`。2つとも順番どおりに送られ、取消し（どちらの id でも）と `end()` では2つとも一度だけ順に返る |
 | `cancel_fence` | event queue の容量を超えて古い完了が残っても、新しい借用を返さない |
 | `configuration_epoch` | 構成を選び直した後、queue に残った古い完了が新しい借用を返さない |
 | `bulk_standard` | SET_INTERFACE と ENDPOINT_HALT が、対象の stream の借用だけを返し、他を続ける |
@@ -78,7 +79,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `ccid` | 模擬カード。packet 境界をまたぐ ATR、APDU、Escape、slot の状態 |
 | `dfu` | RAM backend の download、manifest、abort、runtime detach |
 | `psram_link` | Device の PSRAM に置いた MSC 保存先と Vendor ring を HS で往復する |
-| `fifo_budget` | 既定の Vendor 5 個は列挙でき、6 個目は `begin()` が `ESP_ERR_INVALID_SIZE` |
+| `fifo_budget` | 既定の Vendor 5 個は列挙でき、6 個目は `begin()` が `ESP_ERR_INVALID_SIZE`。Function ごとの `bulkInBuffering`：CDC 3 つと並べた Vendor だけを `Double` で 2 倍にでき、入らない `Double` は断る |
 
 ## 結線の確認
 

@@ -780,6 +780,16 @@ P4 HSの例：Vendor（bulk IN 512 byte＝128 word）は5個まで入ります�
 
 「全部か無しか」にしているのは、一部だけ2倍にする規則だと、速度がFunctionの登録順で変わってしまうからです。
 
+速度の要るendpointだけを2倍にしたいときは、CDCとVendorの`EspUsbBulkStreamConfig::bulkInBuffering`で、そのFunctionのbulk INを指定します。登録順ではなく、この指定で決まります。
+
+| Functionの値 | 動作 |
+| --- | --- |
+| `Auto`（既定） | Deviceの`config.bulkInBuffering`に従う |
+| `Double` | Deviceの設定によらず2倍にする。収まらなければ`begin()`が`ESP_ERR_INVALID_SIZE` |
+| `Single` | Deviceの設定によらず1 packet分のまま |
+
+例：P4 HSで、Vendor 1つとコンソール用のCDC 3つ。bulk INが4本あるのでDeviceの`Auto`では1本も2倍にならず、Vendorも遅くなります。Vendorだけ`Double`にすると、Vendorのbulk INだけが2倍になります。
+
 | controller | 目安 |
 | --- | --- |
 | S2 / S3 / P4 FS | 64 byteのbulk INなら、4本とも2倍にできる |

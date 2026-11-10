@@ -9,6 +9,7 @@ Linux PC を Host にして、Device の動作を wire の上で確かめます�
 | `msc_media` | MSC の媒体交換と抜去を、PC の BOT client で確かめる（06/28/00、02/3A/00、residue） |
 | `msc_fat` | `EspUsbDeviceMscFatRamDisk` の 1 / 4 / 24 MiB の volume を PC が読み、`fsck.fat` で検査する。PSRAM が要る |
 | `dfu_detach` | DFU DETACH の受付と、再起動までの時間を測る |
+| `bulk_stream` | 借用送信で区画（27,136 byte と 4,096 byte）を流し続け、PC が全区画を順番どおり受け取ることを確かめる。同時に出す数 1 と 2 の帯域を `.pytest-results/bulk-stream.json` に記録する（合否はつけない）。P4X のみ |
 
 `pc_bot.py` は、MSC の試験が共有する BOT client です。bulk の MPS は、HS なら 512、FS なら 64 を期待します。
 

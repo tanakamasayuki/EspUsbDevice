@@ -70,7 +70,7 @@ sees nothing.
 | Cause | Fix |
 | --- | --- |
 | More non-control IN endpoints than the controller has: 4 on ESP32-S2/S3 and on the ESP32-P4 FS controller, 7 on the P4 HS controller. Endpoint numbers are limited too (1-6 on S2/S3) | Count with DescriptorDump (no host needed). See the [budget table](#endpoint-budget) below. Drop a Function, or use the P4 HS controller |
-| `bulkInBuffering = EspUsbBulkInBuffering::Double`, and the TX FIFO cannot hold two packets for every bulk IN endpoint | Use `Auto` (doubles only when all fit) or `Single` |
+| `bulkInBuffering = EspUsbBulkInBuffering::Double` (on the device or on a CDC or Vendor Function), and the TX FIFO cannot hold two packets for the bulk IN endpoints it names | Double fewer Functions; on the device use `Auto` (doubles only when all fit) or `Single` |
 | The IN endpoints of the whole configuration do not fit the controller's TX FIFO (256 words on S2/S3/P4 FS, 1024 words on P4 HS, shared with EP0 and the RX FIFO). On the P4 HS controller five default Vendor Functions (512-byte bulk IN each) fit and a sixth does not | Remove an IN endpoint or lower packet sizes (Audio/Video isochronous packets, `EspUsbDeviceHidCustom` `inputReportSize`) |
 | MSC `transferBytes` is not a multiple of the bulk MPS (64 at FS, 512 at HS) | Use a multiple of 512, which is valid at both speeds |
 | CCID `messageBytes` set explicitly below the Bulk-OUT MPS (512 at HS) | Leave it at 0 (automatic: `max(271, MPS)`) or use 512 or more |

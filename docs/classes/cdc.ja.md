@@ -56,6 +56,7 @@ void loop() {
 | `autoFlush` | `true` | `write()` のたびに送信を始めるか | なし |
 | `streamTermination` | `FunctionDefault` | **CDC では `EndWithShortPacket`**（MPS の倍数で終わり、ring が空なら ZLP を送る） | ZLP が付く長さは FS 64、HS 512 の倍数 |
 | `rxMode` | `Stream` | `Stream` / `Callback` / `Borrowed` / `Disabled` | なし |
+| `bulkInBuffering` | `Auto` | この port の bulk IN の送信 FIFO を2 packet 分にするか。`Auto` は Device の設定に従う。`Double` は必ず（入らなければ begin が失敗）、`Single` はしない。コンソール用の port は `Auto` か `Single` にして、速さの要る Function に FIFO を回せる | HS では 512 byte 分の FIFO を余分に使う |
 
 CDC 固有の設定：
 
