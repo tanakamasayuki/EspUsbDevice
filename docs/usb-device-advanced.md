@@ -797,6 +797,8 @@ Example: on the P4 HS controller, one Vendor and three CDC console ports. With f
 
 `device.bulkInDoubleBuffered()` returns the bitmap of endpoints that were doubled. It is the first thing to check when a stream is slower than expected.
 
+The next is the other IN endpoints the Host keeps polling. An idle bulk IN with a read waiting on the Host (an open CDC port, for example) is answered with NAK again and again, and that bus time is taken from the stream. See [CDC: FS and HS differences](classes/cdc.md#fs-and-hs-differences).
+
 ### 6.5 Transmit FIFO budget
 
 `begin()` computes the FIFO budget for every IN endpoint in the configuration: receive FIFO, EP0, each IN endpoint and double buffering (the formulas in [6.3](#63-how-the-fifo-is-divided)).

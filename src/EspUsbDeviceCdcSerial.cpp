@@ -77,6 +77,9 @@ uint16_t EspUsbDeviceCdcSerial::configurationDescriptor(uint8_t *dst, uint8_t it
   if (!ep || ep > 14) return 0;
   interfaceNumber_ = itf;
   const uint16_t packet = ceiling < endpointSize_ ? ceiling : endpointSize_;
+  // The notification IN is polled every 16 ms (HS bInterval 8, FS 16), as
+  // NCM's is: serial-state notices are rare, and polling it every microframe
+  // takes HS bus time from the other endpoints.
   // IAD, ACM control interface and functional descriptors, notification IN,
   // then the data interface and bulk pair. Lengths/IDs come from this Function.
   const uint8_t dataInterface = uint8_t(itf + 1), dataEndpoint = uint8_t(ep + 1);
@@ -87,7 +90,7 @@ uint16_t EspUsbDeviceCdcSerial::configurationDescriptor(uint8_t *dst, uint8_t it
     5, 0x24, 1, 0, dataInterface,
     4, 0x24, 2, 6,
     5, 0x24, 6, itf, dataInterface,
-    7, 5, uint8_t(0x80 | ep), 3, 8, 0, 1,
+    7, 5, uint8_t(0x80 | ep), 3, 8, 0, uint8_t(ceiling > 64 ? 8 : 16),
     9, 4, dataInterface, 0, 2, 10, 0, 0, 0,
     7, 5, dataEndpoint, 2, uint8_t(packet), uint8_t(packet >> 8), 0,
     7, 5, uint8_t(0x80 | dataEndpoint), 2, uint8_t(packet), uint8_t(packet >> 8), 0,

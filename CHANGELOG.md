@@ -31,6 +31,17 @@
   1 packet のままにするか（`Single`）を指定できます。`Auto` は従来どおり Device の設定に
   従います。コンソール用の CDC を複数並べても、速さの要る Vendor だけを 2 倍にできます。
   Device 全体の `Auto`（全部か無しか）では、どれも 2 倍になりませんでした。
+- (EN) CDC: the notification interrupt IN is polled every 16 ms (bInterval 16
+  at FS, 8 at HS, as NCM's) instead of every frame / microframe. At HS each CDC
+  Function was polled 8000 times a second, taking bus time from other
+  endpoints: with three CDC ports open on a P4X, a Vendor stream beside them
+  went from 32.2 to 35.1 MB/s. CDC sends no notifications, so nothing else
+  changes.
+- (JA) CDC：通知用 interrupt IN の polling 間隔を、毎 frame / microframe から 16 ms
+  （FS は bInterval 16、HS は 8。NCM と同じ）にしました。HS では CDC 1 つにつき毎秒
+  8000 回 polling され、ほかの endpoint の bus の時間を使っていました。P4X で CDC の
+  port を 3 つ開いた状態で、隣の Vendor の stream が 32.2 から 35.1 MB/s になりました。
+  CDC は通知を送らないので、ほかに変わることはありません。
 
 ## 3.0.0
 Major version. Existing sketches need changes; see `docs/migrating-from-v2.md`.

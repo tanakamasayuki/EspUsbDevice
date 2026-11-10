@@ -182,10 +182,11 @@ SET_LINE_CODING を受け付ける条件：要求長（wLength）が 7 で、DAT
 | `transferBytes` | 1〜65535。MPS 未満でもよい | 同左 |
 | `readDirect()` の容量 | 64 の倍数 | 512 の倍数 |
 | ZLP が付く長さ | 64 の倍数 | 512 の倍数 |
-| 通知 endpoint（interrupt IN） | 8 byte、bInterval 1（1 ms） | 8 byte、bInterval 1（125 µs） |
+| 通知 endpoint（interrupt IN） | 8 byte、bInterval 16（16 ms） | 8 byte、bInterval 8（2^(8−1) × 125 µs = 16 ms） |
 
 - CDC 1つで非 control の IN endpoint を2本（通知と data）使います。上限は ESP32-S3 で 4本、P4 の HS controller で 7本です。S3 で CDC を2つ使うと、IN endpoint を使う他の Function は置けません。
-- CDC は serial-state の通知を送りません。通知 endpoint は、ACM の descriptor に必要なので置いています。
+- CDC は serial-state の通知を送りません。通知 endpoint は、ACM の descriptor に必要なので置いています。NCM と同じく 16 ms ごとの polling なので、bus の時間はほとんど使いません。
+- 開いている port は、何も流していなくても bus の時間を使います。プログラムが port を開いている間（Linux では `cdc_acm` が読み待ちを出し続けます）、Host は空の bulk IN に IN token を送り続け、Device は NAK で答えます。P4X の HS で、隣の Vendor の stream は開いた port 1 つにつき約 2 MB/s 落ちました（開いていなければ 41.9 MB/s、1 つで 39.1、3 つで 35.1）。stream 中は、使わないコンソールの port を閉じてください。
 
 ## バッファとメモリ
 
@@ -209,7 +210,7 @@ CDC ACM は各 OS の標準ドライバで動きます。下の内容は各 OS �
 - 装置の descriptor は、IAD があるとき class 0xEF / 0x02 / 0x01（複合装置）を宣言します。CDC は必ず IAD を出すので、Windows は usbccgp を親として読み込み、CDC ごとに COM ポートを作ります。
 - 複数の CDC を見分けるには、それぞれに名前を付けます（`EspUsbDeviceCdcSerial(device, "Console")`）。Windows は IAD の iFunction の文字列を子装置の名前に使います。
 - Windows は COM ポートの番号を VID/PID/serial と interface 番号ごとに覚えます。基板ごとに異なる `EspUsbDeviceConfig::serialNumber` を設定すると、USB ポートを替えても番号が変わりません。
-- Linux で一般ユーザーが開くには、`dialout` グループなどの権限が要ります。ModemManager が新しい ACM 装置に接続を試みることがあります。
+- Linux で一般ユーザーが開くには、`dialout` グループなどの権限が要ります。ModemManager が新しい ACM 装置に接続を試みることがあります。列挙の後の数秒は port を開いたままになり、上の bus の時間を使います。
 - 上の Windows の振る舞いは v2 で同じ形式の descriptor を使って確認したものです。v3 では Windows 実機で未確認です。macOS も未確認です。
 
 ## 規格との対応と設計の理由

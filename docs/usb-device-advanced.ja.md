@@ -797,6 +797,8 @@ P4 HSの例：Vendor（bulk IN 512 byte＝128 word）は5個まで入ります�
 
 実際に2倍にしたendpointのbitmapは、`device.bulkInDoubleBuffered()`で読めます。streamが思ったより遅いときに、最初に見る値です。
 
+次に見るのは、Hostがpollingし続けているほかのIN endpointです。Hostが読み待ちを出している空のbulk IN（開いたCDCのportなど）にはNAKを返し続けることになり、その分のbusの時間がstreamから減ります。[CDC：FSとHSの違い](classes/cdc.ja.md#fs-と-hs-の違い)を参照してください。
+
 ### 6.5 送信FIFOの予算
 
 `begin()`は、構成にある全IN endpointについて、受信FIFO、EP0、各IN endpoint、二重bufferを合わせたFIFOの予算を計算します（[6.3](#63-fifoの配分)の式）。

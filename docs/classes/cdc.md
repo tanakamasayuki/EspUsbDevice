@@ -199,10 +199,11 @@ bytes arrive in the DATA stage, and the values are in these ranges:
 | `transferBytes` | 1-65535. Below the MPS is fine | same |
 | `readDirect()` capacity | multiple of 64 | multiple of 512 |
 | Length that gets a ZLP | multiple of 64 | multiple of 512 |
-| Notification endpoint (interrupt IN) | 8 bytes, bInterval 1 (1 ms) | 8 bytes, bInterval 1 (125 µs) |
+| Notification endpoint (interrupt IN) | 8 bytes, bInterval 16 (16 ms) | 8 bytes, bInterval 8 (2^(8−1) × 125 µs = 16 ms) |
 
 - One CDC Function uses two non-control IN endpoints (notification and data). The limit is 4 on ESP32-S3 and 7 on the P4 high-speed controller. With two CDC Functions on S3, no other Function that uses an IN endpoint fits.
-- CDC does not send serial-state notifications. The notification endpoint is there because the ACM descriptor requires it.
+- CDC does not send serial-state notifications. The notification endpoint is there because the ACM descriptor requires it. It is polled every 16 ms, as NCM's is, so it takes almost no bus time.
+- An open port costs bus time even when it carries nothing. While a program holds the port open (on Linux `cdc_acm` keeps a read waiting), the Host keeps sending IN tokens to the idle bulk IN and the device answers NAK. On a P4X at HS each open port measured about 2 MB/s less for a Vendor stream beside it (41.9 MB/s with none open, 39.1 with one, 35.1 with three). Close console ports that are not in use while streaming.
 
 ## Buffers and memory
 
@@ -228,7 +229,7 @@ not been checked.
 - When an IAD is present, the device descriptor declares class 0xEF / 0x02 / 0x01 (composite device). CDC always emits an IAD, so Windows loads usbccgp as the parent and creates one COM port per CDC Function.
 - Give each CDC Function a name to tell them apart (`EspUsbDeviceCdcSerial(device, "Console")`). Windows uses the IAD's iFunction string as the child device name.
 - Windows remembers COM port numbers per VID/PID/serial and interface number. Setting a per-board `EspUsbDeviceConfig::serialNumber` keeps the number when the board moves to another USB port.
-- On Linux, a normal user needs permission such as the `dialout` group. ModemManager may probe a new ACM device.
+- On Linux, a normal user needs permission such as the `dialout` group. ModemManager may probe a new ACM device; for a few seconds after enumeration it holds the port open, with the bus cost above.
 - The Windows behaviour above was confirmed with v2, which emits descriptors of the same form. It has not been checked on Windows with v3. macOS has not been checked either.
 
 ## Standards and design rationale
