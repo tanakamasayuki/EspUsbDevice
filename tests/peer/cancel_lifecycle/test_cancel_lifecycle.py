@@ -20,7 +20,7 @@ def test_cancel_lifecycle(dut, peers, request):
                 dut.write(f"send {mps} 0")
                 dut.expect_exact(f"SENT {mps} zlp=0 ok=1\r\n", timeout=10)
                 device.write("hold")
-                device.expect_exact("HELD 1 busy=1\r\n", timeout=5)
+                device.expect_exact("HELD 1\r\n", timeout=5)
                 dut.write("prefix")
                 dut.expect_exact("PREFIX_OK 1\r\n", timeout=10)
                 command = "fault_park_cancelled" if scenario == "end_before_fence" else "fault_park"

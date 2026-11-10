@@ -81,7 +81,7 @@ def test_vendor_roundtrip(dut, peers, request):
                 device.expect_exact(f"ECHOED {length}\r\n", timeout=10)
 
         device.write("hold")
-        device.expect_exact("HELD 1 busy=1\r\n", timeout=5)
+        device.expect_exact("HELD 1\r\n", timeout=5)
         dut.write("stop")
         dut.expect_exact("STOPPED\r\n", timeout=30)
         dut.write("start")
@@ -89,7 +89,7 @@ def test_vendor_roundtrip(dut, peers, request):
         device.write("direct_status")
         device.expect_exact(f"DIRECT_STATUS 15 status=1 requested={hold} actual=0 known=0 pointer=1\r\n", timeout=5)
         device.write("hold")
-        device.expect_exact("HELD 1 busy=1\r\n", timeout=5)
+        device.expect_exact("HELD 1\r\n", timeout=5)
         device.write("stop")
         device.expect_exact("STOPPED\r\n", timeout=30)
         device.write("direct_status")
@@ -215,7 +215,7 @@ def test_vendor_roundtrip(dut, peers, request):
                 dut.write(f"send {mps} 0")
                 dut.expect_exact(f"SENT {mps} zlp=0 ok=1\r\n", timeout=10)
             device.write("hold")
-            device.expect_exact("HELD 1 busy=1\r\n", timeout=5)
+            device.expect_exact("HELD 1\r\n", timeout=5)
             if cycle % 2:
                 dut.write("prefix")
                 dut.expect_exact("PREFIX_OK 1\r\n", timeout=10)

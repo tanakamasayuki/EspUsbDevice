@@ -385,9 +385,9 @@ void loop() {
       memset(directBuffer, 0x5a, sizeof(directBuffer));
       const auto accepted = vendor.writeDirect(directBuffer, 2 * PROBE_BULK_MPS + 1);
       lastTxId = accepted.id;
-      const auto duplicate = vendor.writeDirect(directBuffer, 1);
-      const bool busy = !duplicate && duplicate.error == EspUsbTransferError::Busy && duplicate.id == 0;
-      Serial.printf("HELD %u busy=%u\r\n", unsigned(bool(accepted)), unsigned(busy));
+      // Only one send is held here; a second one would be queued, not refused
+      // (peer/direct_queue checks that two may be outstanding).
+      Serial.printf("HELD %u\r\n", unsigned(bool(accepted)));
     } else if (command == "end_status") {
       Serial.printf("END_STATUS %u error=%d\r\n", rejectedWorkerEnds.load(), int(device.lastError()));
     } else if (command == "direct_status") {
