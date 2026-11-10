@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+## 3.1.0
 - (EN) DFU: in dfuMANIFEST-WAIT-RESET (`manifestationTolerant = false`, the
   default) GETSTATUS and GETSTATE are answered with state 8 instead of
   stalling, so dfu-util and other hosts that poll after the final block see the
