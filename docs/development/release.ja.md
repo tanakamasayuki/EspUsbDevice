@@ -10,7 +10,7 @@
 1. 対象の commit を決め、source を固定する。
 2. [文書とメタデータ](#文書とメタデータ) を確かめる。
 3. [offline の確認](#offline-の確認) を通す。
-4. [examples の build](#examples-の-build) を全 profile で通す。
+4. [examples の build](#examples-の-build) が全 profile で通っていることを、CI で確かめる。
 5. [実機試験](#実機試験) を全 combo で通す。
 6. [版番号](#版番号) を確かめ、GitHub Actions の Release workflow を実行する。
 7. [リリース後の確認](#リリース後の確認) をする。
@@ -50,7 +50,7 @@ CI の `tests.yml` も `verify_usb_backend.py` と `pytest --combo all --collect
 
 ## examples の build
 
-全 example を、各 example が宣言した profile で build します。
+全 example を、各 example が宣言した profile で build します。CI の Build Check（`.github/workflows/build-check.yml`）が 4 つの profile（`esp32s3`、`esp32p4`、`esp32p4x`、`esp32s2`）をすべて build するので、対象 commit で緑であれば手元での build は要りません。CI が使えないときや、失敗を手元で調べるときは次のコマンドを使います。
 
 ```sh
 python3 tools/build_check.py esp32s3
@@ -63,7 +63,6 @@ python3 tools/build_check.py --list   # どの example がどの profile を持�
 - 4 つの profile すべてで `failed=0` を確かめます。
 - その profile を宣言していない example は skip され、失敗にはなりません。宣言の漏れがないかを `--list` で確かめます。
 - `KILLED by signal` は環境の問題です。build の失敗と区別し、やり直します。
-- CI の Build Check（`.github/workflows/build-check.yml`）は `esp32s3`、`esp32p4`、`esp32s2` だけを build します。`esp32p4x` は手元で実行します。
 - 出力は `build/examples/<profile>/` に置かれます（git 対象外）。
 
 build probe で、未使用の機能がリンクされないことも確かめます（[build probe](../../tests/build_probes/README.ja.md)）。
