@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 3.2.0
 - (EN) HID: `EspUsbHidFunction::enableOwnInterface()` gives a HID Function an
   interface of its own instead of the merged one. A Keyboard placed this way
   is a boot interface (subclass 1, no report ID), so a device can carry a
