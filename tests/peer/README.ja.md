@@ -50,6 +50,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `hid_transport` | report descriptor から決まる HID の容量、複数 packet の report、control、boot mode |
 | `hid_report_state` | report ID ごとの GET_REPORT の snapshot、Feature の並行更新、idle、reset |
 | `hid_standard` | 複数 packet の HID report を、反対側の endpoint の PID を変えずに回復する |
+| `hid_own_interface` | 専用の boot interface の Keyboard と、まとめた Mouse・Consumer Control：interface の並び、report ID、入力、LED、SET_PROTOCOL を interface ごとに確かめる |
 | `hid_protocol` | 旧形式の IN を DMA に残したまま protocol を切り替え、新しい report を読む（[README](hid_protocol/README.ja.md)） |
 | `hid_typed` | Gamepad、Consumer、System Control の送信と GET_REPORT（[README](hid_typed/README.ja.md)） |
 | `msc_bot` | BOT の 13 case、不正な CBW、reset の手順、SCSI sense |

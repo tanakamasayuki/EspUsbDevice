@@ -663,6 +663,8 @@ public:
   // once. A busy timeout sets ESP_ERR_TIMEOUT. Success queues a copied report,
   // rather than waiting for the host to receive it. Call from the sketch task;
   // USB callbacks must use timeoutMs = 0 so the USB task can keep progressing.
+  // instance is the HID interface number: 0 for the merged interface, or the
+  // number of a Function's own interface (EspUsbHidFunction::enableOwnInterface).
   bool sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs = 100);
 
   // Restart into the chip's ROM download loader - "boot mode", the state the
@@ -800,7 +802,10 @@ private:
   // endpoint whose FIFO cannot be placed still enumerates and still reports
   // completed transfers, and the host receives nothing.
   bool transmitFifoFits(bool highSpeed) const;
+  // More than one HID Function shares the merged interface.
   bool compositeHid() const;
+  // This HID Function is one of those sharing the merged interface.
+  bool hidMerged(uint8_t classInstance) const;
   bool hasHidClass() const;
   bool hasCdcClass() const;
   bool hasMidiClass() const;
@@ -813,7 +818,8 @@ private:
   // Two different numbers meet here. classReportId() and classRuntimeInstance()
   // take the class's slot in classes_ (EspUsbDeviceClass::hidInstance_), which
   // is registration order. hidClassForInstance() takes the HID driver instance
-  // number - always 0 in this build - and returns the class behind it. Treating
+  // number - the HID interface number, 0 for the merged interface - and returns
+  // the class behind it, or nullptr for the merged interface. Treating
   // one as the other is what once broke a HID class registered after a non-HID
   // one.
   uint8_t classRuntimeInstance(uint8_t classInstance) const;
@@ -876,6 +882,9 @@ public:
   virtual esp_err_t startError() const { return ESP_FAIL; }
   virtual void end() {}
   virtual bool isHid() const { return false; }
+  // A HID Function that asked for an interface of its own instead of joining
+  // the merged one. See EspUsbHidFunction::enableOwnInterface().
+  virtual bool hidOwnInterface() const { return false; }
   virtual bool isCdc() const { return false; }
   virtual bool isMidi() const { return false; }
   virtual bool isMsc() const { return false; }
@@ -992,6 +1001,16 @@ public:
   void end() override;
   bool isHid() const override { return true; }
   esp_err_t startError() const override { return hidStartError_; }
+  // Give this Function an interface of its own. By default every HID Function
+  // of a Device shares one interface and is told apart by report ID; one that
+  // enables this keeps its own report descriptor, without a report ID, on a
+  // separate interface with its own endpoints. A Keyboard or Mouse placed
+  // this way is a boot device (subclass 1) that a BIOS or KVM switch can use
+  // while other HID Functions share the merged interface. Call before
+  // EspUsbDevice::begin(); ESP_ERR_INVALID_STATE while started.
+  esp_err_t enableOwnInterface(bool enable = true);
+  bool ownInterfaceEnabled() const { return ownInterface_; }
+  bool hidOwnInterface() const override { return ownInterface_; }
   bool sendHidInput(uint8_t reportId, const void *, size_t, uint32_t timeoutMs) override;
   // Set current Feature state without sending an interrupt report. Payload
   // excludes the report ID; 0 selects this Function's unambiguous default ID.
@@ -1011,6 +1030,7 @@ protected:
 private:
   EspUsbHidState *hidState_ = nullptr;
   esp_err_t hidStartError_ = ESP_OK;
+  bool ownInterface_ = false;
 
 protected:
   // Lifecycle hooks run by EspUsbDevice::begin()/end(). Start and stop the

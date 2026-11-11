@@ -28,7 +28,10 @@ Which one to use:
 
 When two or more HID Functions are registered, they are merged into one HID
 interface with one report descriptor and told apart by report ID
-([Composite HID](#composite-hid)).
+([Composite HID](#composite-hid)). A Function that calls
+`enableOwnInterface()` stays out of the merge and gets an interface of its own
+([A Function on its own interface](#a-function-on-its-own-interface)).
+
 
 Operation has been checked over a full-speed link between two ESP32-S3 boards
 and over a high-speed link between ESP32-P4/P4X boards (both with EspUsbHost as
@@ -86,11 +89,12 @@ from setters called while stopped.
 | Mouse, Gamepad, Consumer, System alone | yes | no | 8 | 8 | same |
 | Custom alone | yes | no | `inputReportSize` (8-64) | `inputReportSize` if over 64 (up to 1024); otherwise same as FS | same |
 | Vendor alone | yes | yes | `reportSize + 1` (8-64) | `reportSize + 1` (up to 1024) | same |
+| Function with `enableOwnInterface()` | as when alone | as when alone | as when alone | as when alone | same |
 | Composite HID (two or more HID Functions) | one, shared | one, shared | largest of 16, 32 (NKRO Keyboard), Vendor's `reportSize + 1` and Custom's `inputReportSize` (each capped at 64) | largest of the FS value and the HS value of each Vendor/Custom (up to 1024) | same |
 
 - A report longer than the packet size is sent as several packets in one transfer (USB 2.0 §5.7.3). For example, a Gamepad alone (12 bytes including the ID) goes out as an 8-byte and a 4-byte packet.
-- A Keyboard or Mouse registered alone is declared as a boot interface (subclass 1). A composite HID uses report IDs and is therefore not a boot interface ([Standards and design rationale](#standards-and-design-rationale)).
-- Non-control IN endpoints are limited, across all Functions, to 4 on ESP32-S3 and 7 on the P4 high-speed controller. HID uses one IN endpoint however many HID Functions you register.
+- A Keyboard or Mouse registered alone, or with `enableOwnInterface()`, is declared as a boot interface (subclass 1). A composite HID uses report IDs and is therefore not a boot interface ([Standards and design rationale](#standards-and-design-rationale)).
+- Non-control IN endpoints are limited, across all Functions, to 4 on ESP32-S3 and 7 on the P4 high-speed controller. The merged HID interface uses one IN endpoint however many Functions share it; each Function with its own interface uses one more.
 - `inputPacketSize()` on any HID Function returns the `wMaxPacketSize` of the interrupt IN endpoint at the speed the Host negotiated (0 before the bus reset and after end).
 - At HS, interrupt packets over 512 bytes may not fit the Host's periodic FIFO. With EspUsbHost on ESP32-P4 as the Host, set `ESP_USB_HOST_FIFO_LARGE_PERIODIC_OUT` on the Host side.
 
@@ -244,11 +248,11 @@ happens.
 ### Capacity queries
 
 `inputReportCapacity()` / `outputReportCapacity()` / `featureReportCapacity()`
-return the largest byte count the shared interface needs. Reports that declare a
+return the largest byte count the Function's interface needs (the merged one when it is shared). Reports that declare a
 report ID include its byte. They return 0 before start and after end.
 
 `inputPacketSize()` returns the interrupt IN `wMaxPacketSize` at the speed the
-Host negotiated. It is shared by every HID Function of a composite interface,
+Host negotiated. It is the same for every HID Function sharing the merged interface,
 and is 0 until the Host resets the bus, and after end.
 
 ### Writing your own HID class
@@ -313,12 +317,12 @@ How to check:
 - Linux: `lsusb -v -d <vid>:<pid>` for descriptors, `sudo usbhid-dump` for the report descriptor, `evtest` for input events.
 - Windows: USB Device Tree Viewer shows descriptors and status.
 - Wrong characters: the Host turns usages into characters with its own layout. Set `setLayout()` to the Host's layout.
-- Does not work in BIOS/UEFI: the Host uses boot protocol. Register the Keyboard and Mouse alone so that they are boot interfaces.
+- Does not work in BIOS/UEFI: the Host uses boot protocol. Register the Keyboard alone, or call `enableOwnInterface()` on it, so that it is a boot interface.
 
 ## Standards and design rationale
 
 - **HID 1.11**: bcdHID in the HID descriptor is 1.11. Boot interfaces follow §4.2 and Appendix B, idle follows §7.2.4, protocol follows §7.2.5-7.2.6.
-- **Why a composite HID is not a boot interface**: boot-format reports carry no report ID (HID 1.11 Appendix B). An interface that merges several Functions by report ID cannot coexist with the boot format, so its subclass/protocol are 0.
+- **Why a composite HID is not a boot interface**: boot-format reports carry no report ID (HID 1.11 Appendix B). An interface that merges several Functions by report ID cannot coexist with the boot format, so its subclass/protocol are 0. A Keyboard that must work in a BIOS beside other HID Functions takes an interface of its own instead.
 - **Gamepad hat**: the logical range is 1-8 and the Input has the Null state, so 0 means "not pressed" (HID 1.11 §6.2.2.5, Hat Switch in the HID Usage Tables).
 - **System Control**: the usage is an array with logical minimum 1 and 0 as "not pressed" (the recommendation in HID 1.11 §6.2.2.5). On the wire it sends selectors 1/2/3, which the descriptor maps to 0x81/0x82/0x83.
 - **Why allocation happens at run time**: large reports work without build settings, unused OUT/Feature resources are skipped, and the HID class is not linked at all when unused. The cost is parsing and allocation at begin, and explicit rejection of bad descriptors and over-long sends.
@@ -332,6 +336,31 @@ When two or more HID Functions are registered, they are merged into one interfac
 - The assigned Report ID is inserted right after the first Collection item of each Function's report descriptor (replacing a Report ID already at that position). A Custom HID that uses several Report IDs is safest registered alone.
 - Each Function's descriptor is wrapped in a global Push/Pop, so its units and ranges do not leak into the next Function. This adds 2 bytes per Function.
 - HID interfaces come before the interfaces of other classes.
+
+### A Function on its own interface
+
+`enableOwnInterface()` keeps a HID Function out of the merged interface. It is
+how a device carries a boot Keyboard that a BIOS/UEFI or a KVM switch can use
+next to a Mouse or a Vendor HID, as multi-function keyboards do with two or
+three HID interfaces.
+
+```cpp
+EspUsbDevice device;
+EspUsbDeviceHidKeyboard keyboard(device);
+EspUsbDeviceHidMouse mouse(device);
+EspUsbDeviceHidConsumerControl media(device);
+
+void setup() {
+  keyboard.enableOwnInterface();   // before device.begin()
+  device.begin();
+}
+```
+
+- The Function keeps its own report descriptor, without a report ID, and has its own interrupt endpoints. A Keyboard or Mouse there is a boot interface, and SET_PROTOCOL on it applies to that Function only.
+- The Functions without it are merged as before; one left alone is a standalone interface. In the example the Mouse and Consumer Control share interface 0 (report IDs 2 and 4) and the Keyboard is interface 1.
+- The merged interface, if any, is interface 0. The Functions with their own interfaces follow in registration order, and when nothing is merged every HID interface is in registration order.
+- Call it while the device is stopped. While started it returns `ESP_ERR_INVALID_STATE` and changes nothing. `ownInterfaceEnabled()` reads the setting.
+- Each such Function uses one more IN endpoint (and one OUT endpoint number), from the limits above.
 
 ## Changes from v2
 

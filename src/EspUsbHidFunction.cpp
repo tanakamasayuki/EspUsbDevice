@@ -72,12 +72,15 @@ struct EspUsbHidState {
   espusb::internal::UsbRuntimeJob idleJob{idlePump, this};
   size_t assembled = 0;
   const uint8_t *hidDescriptor = nullptr;
+  // The interface this state serves, by its number in the configuration: 0
+  // for the merged interface, or a Function's own. One state per interface.
+  uint8_t instance = 0;
   uint8_t rhport = 0, interface = 0xff, in = 0, out = 0, protocol = 1, response = 0, boot = 0;
   uint16_t packetCapacity = 0, packetSize = 0;
   bool stopping = false, busy = false;
   bool inputDraining = false, inputFenceQueued = false;
   bool outputDraining = false, outputFenceQueued = false, resetInputPid = false, resetOutputPid = false;
-  explicit EspUsbHidState(EspUsbDevice &owner) : device(owner) {}
+  EspUsbHidState(EspUsbDevice &owner, uint8_t number) : device(owner), instance(number) {}
   ~EspUsbHidState() {
     espusb::internal::removeUsbRuntimeJob(idleJob);
     espusb::internal::freeUsbMemory(reports);
@@ -174,8 +177,8 @@ struct EspUsbHidState {
     if (again) espusb::internal::postUsbRuntimeJob(s->idleJob);
   }
   esp_err_t allocate() {
-    const auto *descriptor = device.hidReportDescriptor(0);
-    const size_t bytes = device.hidReportDescriptorLength(0);
+    const auto *descriptor = device.hidReportDescriptor(instance);
+    const size_t bytes = device.hidReportDescriptorLength(instance);
     if (!descriptor || !bytes) return ESP_ERR_INVALID_ARG;
     size_t depth = 0, maximum = 0;
     for (size_t offset = 0; offset < bytes;) {
@@ -248,7 +251,7 @@ struct EspUsbHidState {
     for (size_t offset = 9; offset + 2 <= configBytes;) {
       const auto *d = config + offset;
       if (d[0] < 2 || d[0] > configBytes - offset) return ESP_ERR_INVALID_ARG;
-      if (d[1] == 4 && d[0] >= 9 && d[5] == 3) {
+      if (d[1] == 4 && d[0] >= 9 && d[2] == instance && d[5] == 3) {
         found = true;
         if (d[6] == 1) {
           if (d[7] != 1 && d[7] != 2) return ESP_ERR_INVALID_ARG;
@@ -270,7 +273,7 @@ struct EspUsbHidState {
       for (size_t offset = 9; offset + 2 <= total;) {
         const auto *d = config + offset;
         if (d[0] < 2 || d[0] > total - offset) return 0;
-        if (d[1] == 4) selected = d[0] >= 9 && d[5] == 3;
+        if (d[1] == 4) selected = d[0] >= 9 && d[2] == instance && d[5] == 3;
         if (selected && d[1] == 5 && d[0] >= 7 && !(d[2] & 0x80)) return uint16_t(d[4] | uint16_t(d[5]) << 8);
         offset += d[0];
       }
@@ -303,7 +306,7 @@ struct EspUsbHidState {
       neutral(r, 0); neutral(r, 1);
     }
     portEXIT_CRITICAL(&hidLock);
-    device.handleHidSetProtocol(0, 1);
+    device.handleHidSetProtocol(instance, 1);
   }
   static void init() {}
   static void resetAll(uint8_t) { for (auto *s = first; s; s = s->next) s->reset(); }
@@ -311,13 +314,13 @@ struct EspUsbHidState {
   static uint16_t open(uint8_t port, const EspUsbInterfaceDescriptor *itf, uint16_t available) {
     if (itf->bInterfaceClass != 3 || available < 18 || itf->bLength != 9) return 0;
     auto *s = first;
-    while (s && s->device.config().startMode != EspUsbDeviceStartMode::Usb) s = s->next;
+    while (s && (s->device.config().startMode != EspUsbDeviceStartMode::Usb || s->instance != itf->bInterfaceNumber)) s = s->next;
     if (!s) return 0;
     if ((itf->bInterfaceSubClass == 1 ? itf->bInterfaceProtocol : 0) != s->boot) return 0;
-    // One merged HID interface per currently active Device.
+    // One state per HID interface of the currently active Device.
     const auto *d = reinterpret_cast<const uint8_t *>(itf);
     if (d[9] != 9 || d[10] != 0x21 || d[15] != 0x22 ||
-        uint16_t(d[16] | uint16_t(d[17]) << 8) != s->device.hidReportDescriptorLength(0)) return 0;
+        uint16_t(d[16] | uint16_t(d[17]) << 8) != s->device.hidReportDescriptorLength(s->instance)) return 0;
     const size_t required = 18 + 7 * itf->bNumEndpoints;
     if (required > available || !itf->bNumEndpoints || itf->bNumEndpoints > 2) return 0;
     uint8_t in = 0, out = 0; uint16_t packetSize = 0;
@@ -361,7 +364,7 @@ struct EspUsbHidState {
     if (r->bmRequestType == 0x81 && r->bRequest == 6 && !(r->wValue & 0xff)) {
       if (stage != ESPUSB_CONTROL_STAGE_SETUP) return true;
       if (r->wValue == 0x2100) return s->hidDescriptor && espusb_device_control_transfer(port, r, const_cast<uint8_t *>(s->hidDescriptor), 9);
-      if (r->wValue == 0x2200) return espusb_device_control_transfer(port, r, const_cast<uint8_t *>(s->device.hidReportDescriptor(0)), s->device.hidReportDescriptorLength(0));
+      if (r->wValue == 0x2200) return espusb_device_control_transfer(port, r, const_cast<uint8_t *>(s->device.hidReportDescriptor(s->instance)), s->device.hidReportDescriptorLength(s->instance));
       return false;
     }
     const uint8_t id = uint8_t(r->wValue), type = uint8_t(r->wValue >> 8);
@@ -389,7 +392,7 @@ struct EspUsbHidState {
         portENTER_CRITICAL(&hidLock);
         s->save(*report, type - 1, s->control + (prefixed ? 1 : 0), r->wLength - (prefixed ? 1 : 0));
         portEXIT_CRITICAL(&hidLock);
-        s->device.handleHidSetReport(0, id, type, s->control + (prefixed ? 1 : 0), r->wLength - (prefixed ? 1 : 0));
+        s->device.handleHidSetReport(s->instance, id, type, s->control + (prefixed ? 1 : 0), r->wLength - (prefixed ? 1 : 0));
       }
       return true;
     }
@@ -437,7 +440,7 @@ struct EspUsbHidState {
         portEXIT_CRITICAL(&hidLock);
         return espusb_device_control_status(port, r);
       }
-      if (stage == ESPUSB_CONTROL_STAGE_ACK) s->device.handleHidSetProtocol(0, s->protocol);
+      if (stage == ESPUSB_CONTROL_STAGE_ACK) s->device.handleHidSetProtocol(s->instance, s->protocol);
       return true;
     }
     return false;
@@ -478,7 +481,7 @@ struct EspUsbHidState {
       portENTER_CRITICAL(&hidLock);
       s->save(*s->find(id), 1, s->output + (id ? 1 : 0), bytes - (id ? 1 : 0));
       portEXIT_CRITICAL(&hidLock);
-      s->device.handleHidSetReport(0, id, 2, s->output + (id ? 1 : 0), uint16_t(bytes - (id ? 1 : 0)));
+      s->device.handleHidSetReport(s->instance, id, 2, s->output + (id ? 1 : 0), uint16_t(bytes - (id ? 1 : 0)));
     }
     portENTER_CRITICAL(&hidLock); s->receive(); portEXIT_CRITICAL(&hidLock);
     return true;
@@ -497,10 +500,14 @@ EspUsbHidFunction::EspUsbHidFunction(EspUsbDevice &device) : EspUsbDeviceClass(d
 EspUsbHidFunction::~EspUsbHidFunction() { end(); }
 bool EspUsbHidFunction::begin() {
   if (!registered_ || hidState_ || espusb::internal::usbRuntimeStarted()) { hidStartError_ = ESP_ERR_INVALID_STATE; return false; }
+  // Functions on the merged interface share one state; one with its own
+  // interface has its own. The descriptor build has numbered them already.
+  const uint8_t instance = descriptorInterfaceNumber_;
+  if (instance == 0xff) { hidStartError_ = ESP_ERR_INVALID_STATE; return false; }
   auto *s = EspUsbHidState::first;
-  while (s && &s->device != &device_) s = s->next;
+  while (s && (&s->device != &device_ || s->instance != instance)) s = s->next;
   if (!s) {
-    s = espusb::internal::newUsbObject<EspUsbHidState>(device_);
+    s = espusb::internal::newUsbObject<EspUsbHidState>(device_, instance);
     hidStartError_ = s ? s->allocate() : ESP_ERR_NO_MEM;
     if (hidStartError_ != ESP_OK) { espusb::internal::deleteUsbObject(s); return false; }
     if (!EspUsbHidState::first && !espUsbDeviceRegisterAppDrivers(&hidDriver, 1)) {
@@ -563,6 +570,11 @@ bool EspUsbHidFunction::sendHidInput(uint8_t id, const void *data, size_t length
     if (millis() - start >= timeoutMs) { device_.setLastError(ESP_ERR_TIMEOUT); return false; }
     delay(1);
   } while (true);
+}
+esp_err_t EspUsbHidFunction::enableOwnInterface(bool enable) {
+  if (hidStarted()) return ESP_ERR_INVALID_STATE;
+  ownInterface_ = enable;
+  return ESP_OK;
 }
 size_t EspUsbHidFunction::inputReportCapacity() const {
   portENTER_CRITICAL(&hidLock); const size_t n = hidState_ ? hidState_->capacity[0] : 0; portEXIT_CRITICAL(&hidLock); return n;

@@ -50,6 +50,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `hid_transport` | HID capacity derived from the report descriptor, multi-packet reports, control, boot mode |
 | `hid_report_state` | Per-report-ID GET_REPORT snapshots, concurrent Feature updates, idle, reset |
 | `hid_standard` | A multi-packet HID report recovers without changing the PID of the opposite endpoint |
+| `hid_own_interface` | A Keyboard on its own boot interface beside a merged Mouse and Consumer Control: layout, report IDs, input, LEDs and SET_PROTOCOL per interface |
 | `hid_protocol` | Switching protocol while an old-format IN is still in DMA; the Host reads the new report ([README](hid_protocol/README.md)) |
 | `hid_typed` | Gamepad, Consumer and System Control sends and GET_REPORT ([README](hid_typed/README.md)) |
 | `msc_bot` | The 13 BOT cases, invalid CBWs, the reset sequence, SCSI sense |

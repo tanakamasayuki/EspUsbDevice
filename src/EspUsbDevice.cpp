@@ -1086,11 +1086,14 @@ void EspUsbDevice::removeClass(EspUsbDeviceClass *function)
 bool EspUsbDevice::sendHidReport(uint8_t instance, uint8_t reportId, const void *data, size_t length, uint32_t timeoutMs)
 {
   if (!usbStarted_) { setLastError(ESP_ERR_INVALID_STATE); return false; }
-  if (instance != 0 || !data || !length) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+  if (!data || !length) { setLastError(ESP_ERR_INVALID_ARG); return false; }
+  // The instance is the HID interface number; Functions sharing the merged
+  // interface share its transport, so any of them sends for all.
   for (size_t i = 0; i < classCount_; ++i) {
-    if (classAt(i)->isHid()) return classAt(i)->sendHidInput(reportId, data, length, timeoutMs);
+    if (classAt(i)->isHid() && classAt(i)->descriptorInterfaceNumber_ == instance)
+      return classAt(i)->sendHidInput(reportId, data, length, timeoutMs);
   }
-  setLastError(ESP_ERR_INVALID_STATE); return false;
+  setLastError(ESP_ERR_INVALID_ARG); return false;
 }
 
 const uint8_t *EspUsbDevice::deviceDescriptor()
@@ -1339,17 +1342,14 @@ const uint8_t *EspUsbDevice::webUsbUrlDescriptor() const
   return webUsbUrlDescriptor_;
 }
 
-// Physical HID interface 0 represents either one Function or their merged
-// report descriptor. Logical registration order is a separate identity.
+// A HID interface number represents either one Function or, for interface 0
+// of a composite, their merged report descriptor. Logical registration order
+// is a separate identity.
 EspUsbDeviceClass *EspUsbDevice::hidClassForInstance(uint8_t instance) const
 {
-  if (instance != 0 || compositeHid())
-  {
-    return nullptr;
-  }
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classAt(i) && classAt(i)->isHid())
+    if (classAt(i) && classAt(i)->isHid() && !hidMerged(uint8_t(i)) && classAt(i)->descriptorInterfaceNumber_ == instance)
     {
       return classAt(i);
     }
@@ -1359,9 +1359,9 @@ EspUsbDeviceClass *EspUsbDevice::hidClassForInstance(uint8_t instance) const
 
 const uint8_t *EspUsbDevice::hidReportDescriptor(uint8_t instance)
 {
-  if (compositeHid())
+  if (compositeHid() && instance == 0)
   {
-    return instance == 0 ? hidReportDescriptor_ : nullptr;
+    return hidReportDescriptor_;
   }
   EspUsbDeviceClass *hid = hidClassForInstance(instance);
   return hid ? hid->hidReportDescriptor() : nullptr;
@@ -1369,9 +1369,9 @@ const uint8_t *EspUsbDevice::hidReportDescriptor(uint8_t instance)
 
 uint16_t EspUsbDevice::hidReportDescriptorLength(uint8_t instance)
 {
-  if (compositeHid())
+  if (compositeHid() && instance == 0)
   {
-    return instance == 0 ? hidReportDescriptorLength_ : 0;
+    return hidReportDescriptorLength_;
   }
   EspUsbDeviceClass *hid = hidClassForInstance(instance);
   return hid ? hid->hidReportDescriptorLength() : 0;
@@ -1379,11 +1379,11 @@ uint16_t EspUsbDevice::hidReportDescriptorLength(uint8_t instance)
 
 void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length)
 {
-  if (compositeHid())
+  if (compositeHid() && instance == 0)
   {
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (!classAt(i) || !classAt(i)->isHid())
+      if (!classAt(i) || !hidMerged(uint8_t(i)))
       {
         continue;
       }
@@ -1404,15 +1404,11 @@ void EspUsbDevice::handleHidSetReport(uint8_t instance, uint8_t reportId, uint8_
 
 void EspUsbDevice::handleHidSetProtocol(uint8_t instance, uint8_t protocol)
 {
-  if (compositeHid())
+  if (compositeHid() && instance == 0)
   {
-    if (instance != 0)
-    {
-      return;
-    }
     for (size_t i = 0; i < classCount_; i++)
     {
-      if (classAt(i))
+      if (classAt(i) && hidMerged(uint8_t(i)))
       {
         classAt(i)->onHidSetProtocol(protocol);
       }
@@ -1532,7 +1528,7 @@ bool EspUsbDevice::buildMergedHidReport()
   size_t total = 0;
   for (size_t i = 0; i < classCount_; ++i) {
     auto *function = classAt(i);
-    if (!function->isHid()) continue;
+    if (!hidMerged(uint8_t(i))) continue;
     size_t bytes = 0;
     if (!mergeHidReport(nullptr, 0, function->hidReportDescriptor(), function->hidReportDescriptorLength(),
           function->assignedReportId_, bytes) || bytes > UINT16_MAX - total) {
@@ -1545,7 +1541,7 @@ bool EspUsbDevice::buildMergedHidReport()
   size_t offset = 0;
   for (size_t i = 0; i < classCount_; ++i) {
     auto *function = classAt(i);
-    if (!function->isHid()) continue;
+    if (!hidMerged(uint8_t(i))) continue;
     size_t bytes = 0;
     if (!mergeHidReport(hidReportDescriptor_ + offset, total - offset,
         function->hidReportDescriptor(), function->hidReportDescriptorLength(), function->assignedReportId_, bytes)) {
@@ -1563,7 +1559,7 @@ bool EspUsbDevice::buildConfigurationDescriptor(bool highSpeed)
   const bool composite = compositeHid();
   uint16_t compositePacket = 16;
   if (composite) {
-    for (size_t i = 0; i < classCount_; ++i) if (classAt(i)->isHid()) {
+    for (size_t i = 0; i < classCount_; ++i) if (hidMerged(uint8_t(i))) {
       const uint16_t hint = classAt(i)->hidInEndpointSize();
       if (hint > compositePacket) compositePacket = hint;
       const uint16_t hsHint = highSpeed ? classAt(i)->hidHighSpeedEndpointSize() : 0;
@@ -1579,12 +1575,12 @@ bool EspUsbDevice::buildConfigurationDescriptor(bool highSpeed)
       const uint16_t bytes = writeHidConfigurationDescriptor(nullptr, 0, 1, compositePacket, 0, 0, hidReportDescriptorLength_, true);
       if (!bytes || (dst && bytes > capacity - offset) || (dst && writeHidConfigurationDescriptor(dst + offset, 0, 1, compositePacket, 0, 0, hidReportDescriptorLength_, true) != bytes)) return false;
       offset += bytes; itf = 1; ep = 2;
-      for (size_t i = 0; i < classCount_; ++i) if (classAt(i)->isHid() && !highSpeed) classAt(i)->descriptorInterfaceNumber_ = 0;
+      for (size_t i = 0; i < classCount_; ++i) if (hidMerged(uint8_t(i)) && !highSpeed) classAt(i)->descriptorInterfaceNumber_ = 0;
     }
     for (unsigned group = 0; group < 2; ++group) {
       for (size_t i = 0; i < classCount_; ++i) {
         auto *function = classAt(i);
-        if (function->isHid() != (group == 0) || (composite && function->isHid())) continue;
+        if (function->isHid() != (group == 0) || hidMerged(uint8_t(i))) continue;
         const unsigned count = function->interfaceCount(), endpoints = function->endpointCount();
         if (count > UINT8_MAX - itf || (endpoints && (ep > 15 || endpoints - 1 > 15 - ep))) return false;
         const uint16_t bytes = function->configurationDescriptorForSpeed(nullptr, 0, uint8_t(itf), uint8_t(ep), highSpeed);
@@ -1663,7 +1659,7 @@ bool EspUsbDevice::buildDescriptors()
   if (composite) {
     for (size_t i = 0; i < classCount_; ++i) {
       auto *function = classAt(i);
-      if (!function->isHid()) continue;
+      if (!hidMerged(uint8_t(i))) continue;
       const uint8_t preferred = function->hidReportId();
       bool used = false;
       for (size_t j = 0; preferred && j < i; ++j) used |= classAt(j)->assignedReportId_ == preferred;
@@ -1671,7 +1667,7 @@ bool EspUsbDevice::buildDescriptors()
     }
     for (size_t i = 0; i < classCount_; ++i) {
       auto *function = classAt(i);
-      if (!function->isHid() || function->assignedReportId_) continue;
+      if (!hidMerged(uint8_t(i)) || function->assignedReportId_) continue;
       for (unsigned candidate = 1; candidate <= UINT8_MAX; ++candidate) {
         bool used = false;
         for (size_t j = 0; j < classCount_; ++j) used |= classAt(j)->assignedReportId_ == candidate;
@@ -2353,12 +2349,18 @@ bool EspUsbDevice::compositeHid() const
   size_t hidCount = 0;
   for (size_t i = 0; i < classCount_; i++)
   {
-    if (classAt(i) && classAt(i)->isHid())
+    if (classAt(i) && classAt(i)->isHid() && !classAt(i)->hidOwnInterface())
     {
       hidCount++;
     }
   }
   return hidCount > 1;
+}
+
+bool EspUsbDevice::hidMerged(uint8_t classInstance) const
+{
+  return classInstance < classCount_ && classAt(classInstance) && classAt(classInstance)->isHid() &&
+         !classAt(classInstance)->hidOwnInterface() && compositeHid();
 }
 
 bool EspUsbDevice::hasHidClass() const
@@ -2459,15 +2461,15 @@ bool EspUsbDevice::hasNetClass() const
 
 uint8_t EspUsbDevice::classReportId(uint8_t classInstance) const
 {
-  return compositeHid() && classInstance < classCount_ ? classAt(classInstance)->assignedReportId_ : 0;
+  return hidMerged(classInstance) ? classAt(classInstance)->assignedReportId_ : 0;
 }
 
-// Registered HID Functions share physical interface 0, independently of
-// their positions in the complete Function registry.
+// A HID Function sends on the interface it was given by the last descriptor
+// build: 0 for the merged interface, its own number otherwise.
 uint8_t EspUsbDevice::classRuntimeInstance(uint8_t classInstance) const
 {
-  // An unregistered HID must never send using another Function's slot 0.
-  return classInstance < classCount_ && classAt(classInstance)->isHid() ? 0 : UINT8_MAX;
+  // An unregistered HID must never send using another Function's interface.
+  return classInstance < classCount_ && classAt(classInstance)->isHid() ? classAt(classInstance)->descriptorInterfaceNumber_ : UINT8_MAX;
 }
 
 void EspUsbDevice::setLastError(esp_err_t error)
@@ -5200,7 +5202,7 @@ bool EspUsbDeviceHidCustom::begin()
 
 bool EspUsbDeviceHidCustom::sendReport(const void *data, size_t length, uint8_t reportId, uint32_t timeoutMs)
 {
-  if (device_.compositeHid()) {
+  if (device_.hidMerged(hidInstance_)) {
     const uint8_t assigned = device_.classReportId(hidInstance_);
     if (reportId && reportId != assigned) return false;
     reportId = assigned;
@@ -5310,7 +5312,7 @@ bool EspUsbDeviceHidVendor::sendInput(const void *data, size_t length, uint32_t 
     return false;
   }
   if (length > reportSize_) return false;
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), data, length, timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.hidMerged(hidInstance_) ? device_.classReportId(hidInstance_) : hidReportId(), data, length, timeoutMs);
 }
 
 esp_err_t EspUsbDeviceHidVendor::onOutputReport(ReportCallback callback)
@@ -5433,7 +5435,7 @@ bool EspUsbDeviceHidGamepad::sendReport(const EspUsbDeviceGamepadReport &report,
       static_cast<uint8_t>((report_.buttons >> 16) & 0xff),
       static_cast<uint8_t>((report_.buttons >> 24) & 0xff),
   };
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), data, sizeof(data), timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.hidMerged(hidInstance_) ? device_.classReportId(hidInstance_) : hidReportId(), data, sizeof(data), timeoutMs);
 }
 
 bool EspUsbDeviceHidGamepad::send(int8_t x,
@@ -5509,7 +5511,7 @@ bool EspUsbDeviceHidConsumerControl::sendUsage(uint16_t usage, uint32_t timeoutM
       static_cast<uint8_t>(usage & 0xff),
       static_cast<uint8_t>((usage >> 8) & 0xff),
   };
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), report, sizeof(report), timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.hidMerged(hidInstance_) ? device_.classReportId(hidInstance_) : hidReportId(), report, sizeof(report), timeoutMs);
 }
 
 bool EspUsbDeviceHidConsumerControl::press(uint16_t usage, uint32_t timeoutMs)
@@ -5575,7 +5577,7 @@ bool EspUsbDeviceHidSystemControl::sendUsage(uint8_t usage, uint32_t timeoutMs)
   // Public values are standard usages, while the descriptor's array selects
   // its three entries with 1..3. Zero is the out-of-range null/release value.
   const uint8_t selector = usage ? uint8_t(usage - ESP_USB_DEVICE_SYSTEM_CONTROL_POWER_OFF + 1) : 0;
-  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.compositeHid() ? device_.classReportId(hidInstance_) : hidReportId(), &selector, sizeof(selector), timeoutMs);
+  return device_.sendHidReport(device_.classRuntimeInstance(hidInstance_), device_.hidMerged(hidInstance_) ? device_.classReportId(hidInstance_) : hidReportId(), &selector, sizeof(selector), timeoutMs);
 }
 
 bool EspUsbDeviceHidSystemControl::press(uint8_t usage, uint32_t timeoutMs)

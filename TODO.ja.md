@@ -77,6 +77,17 @@ Device 側に回避の動作は加えません。Host 側で直し、Device の�
   - FS controller の pin（GPIO26/27 と 24/25）の入れ替えは、例（P4FullSpeedDevice）がスケッチから ESP-IDF の HAL（`usb_wrap_ll_phy_select`）を呼ぶ形のままで、ライブラリの API はない。
   - 完了の条件：`EspUsbDeviceConfig` で選べるようにするかを決める。する場合は、PHY の初期化の中で切り替え、P4 の FS で列挙を確かめる。
 
+## 機能の追加
+
+- [ ] **HID の interface を複数持つ（boot Keyboard を専用の interface に置く）**
+  - 用途：BIOS/UEFI や KVM 切替器で使う Keyboard には、report ID のない専用の boot interface（subclass 1 / protocol 1）が要る。いまは HID Function をすべて1つの interface にまとめるので、Keyboard と Mouse や Vendor HID を同じ Device に載せると BIOS で打てない。市販の多機能キーボードは HID interface を2〜3個持つ。USB Host の対向試験（HID interface 2つ、片方が boot Keyboard）の相手にも使う。
+  - `EspUsbHidFunction::enableOwnInterface()` を入れ、`tests/peer/hid_own_interface` を足した。
+  - 完了の条件：`hid_own_interface` が全 combo で通り、既存の HID と複合の試験が回帰しない。
+- [ ] **MSC の LUN を複数持つ**
+  - 用途：複数スロットのカードリーダー、CD-ROM（ドライバー入り）と書き込める領域の組み合わせなど。USB Host の対向試験（LUN 0/1 を切り替えて読み書きし、LUN ごとに媒体の有無を扱う）の相手にも使う。
+  - いまは `maxLun()` が 0 で、媒体の状態・容量・読み書きのコールバックが1組しかない。
+  - 完了の条件：入れるかを決める。入れる場合は、LUN ごとの媒体・容量・コールバックと、LUN ごとの抜去・挿入を、Host との往復と PC の mount で確かめる。
+
 ## リリース
 
 - [ ] **全体の回帰試験と全 example の compile**

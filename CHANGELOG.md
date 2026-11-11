@@ -1,6 +1,16 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) HID: `EspUsbHidFunction::enableOwnInterface()` gives a HID Function an
+  interface of its own instead of the merged one. A Keyboard placed this way
+  is a boot interface (subclass 1, no report ID), so a device can carry a
+  Keyboard that works in a BIOS/UEFI or KVM switch beside a Mouse or Vendor HID.
+  Functions that do not call it are merged as before.
+- (JA) HID：`EspUsbHidFunction::enableOwnInterface()` で、HID Function を
+  まとめた interface に入れず、専用の interface に置けるようにしました。こうした
+  Keyboard は boot interface（subclass 1、report ID なし）になるので、Mouse や
+  Vendor HID と同じ Device に、BIOS/UEFI や KVM 切替器でも使える Keyboard を
+  載せられます。呼ばない Function はこれまでどおりまとめます。
 
 ## 3.1.0
 - (EN) DFU: in dfuMANIFEST-WAIT-RESET (`manifestationTolerant = false`, the

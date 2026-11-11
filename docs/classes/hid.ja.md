@@ -25,7 +25,7 @@ Windows、Linux、macOS のどれにも標準のドライバがあるので、Ho
 - ドライバなしで独自データをやり取りしたい：`EspUsbDeviceHidVendor`。速度は bulk より低いですが、Windows でもドライバの導入が要りません。
 - 速度が必要：HID ではなく [Vendor bulk](vendor.ja.md) を使います。
 
-HID Function を2つ以上登録すると、1つの HID interface と1つの report descriptor にまとめられ、report ID で区別されます（[複合 HID](#複合-hid)）。
+HID Function を2つ以上登録すると、1つの HID interface と1つの report descriptor にまとめられ、report ID で区別されます（[複合 HID](#複合-hid)）。`enableOwnInterface()` を呼んだ Function はまとめに入らず、専用の interface を持ちます（[専用の interface を持つ Function](#専用の-interface-を持つ-function)）。
 
 動作は、ESP32-S3 同士の FS 接続と、ESP32-P4/P4X の HS 直結（どちらも EspUsbHost を Host にした試験）で確認しています。PC の OS との相互接続は未確認です。
 
@@ -80,11 +80,12 @@ HID には設定用の構造体はありません。constructor の引数と、�
 | Mouse、Gamepad、Consumer、System 単独 | あり | なし | 8 | 8 | 同上 |
 | Custom 単独 | あり | なし | `inputReportSize`（8〜64） | 64 を超えれば `inputReportSize`（最大 1024）。それ以外は FS と同じ | 同上 |
 | Vendor 単独 | あり | あり | `reportSize + 1`（8〜64） | `reportSize + 1`（最大 1024） | 同上 |
+| `enableOwnInterface()` を呼んだ Function | 単独と同じ | 単独と同じ | 単独と同じ | 単独と同じ | 同上 |
 | 複合 HID（HID Function が2つ以上） | 1本を共有 | 1本を共有 | 16、32（NKRO Keyboard）、Vendor の `reportSize + 1`、Custom の `inputReportSize` のうち最大（それぞれ 64 まで） | FS の値と、各 Vendor／Custom の HS の値のうち最大（最大 1024） | 同上 |
 
 - report が packet 長より長いときは、1回の転送で複数の packet に分けて送ります（USB 2.0 §5.7.3）。たとえば単独の Gamepad（ID 込み 12 byte）は 8 byte と 4 byte の packet になります。
-- 単独の Keyboard と Mouse は boot interface（subclass 1）として宣言します。複合 HID は report ID を使うので boot interface にはなりません（[規格との対応](#規格との対応と設計の理由)）。
-- 非 control の IN endpoint は、全 Function 合わせて ESP32-S3 で 4本、P4 の HS controller で 7本までです。HID は何個登録しても IN を1本しか使いません。
+- 単独の Keyboard と Mouse、および `enableOwnInterface()` を呼んだ Keyboard と Mouse は、boot interface（subclass 1）として宣言します。複合 HID は report ID を使うので boot interface にはなりません（[規格との対応](#規格との対応と設計の理由)）。
+- 非 control の IN endpoint は、全 Function 合わせて ESP32-S3 で 4本、P4 の HS controller で 7本までです。まとめた HID interface は、いくつの Function が共有しても IN を1本しか使いません。専用の interface を持つ Function は、1つにつき1本ずつ増えます。
 - どの HID Function でも、`inputPacketSize()` で、Host と決まった速度での interrupt IN の `wMaxPacketSize` を得られます（bus reset の前と end の後は 0）。
 - HS で 512 byte を超える interrupt packet を使うと、Host 側の周期転送用 FIFO が足りないことがあります。ESP32-P4 の EspUsbHost を Host にする場合は、Host 側で `ESP_USB_HOST_FIFO_LARGE_PERIODIC_OUT` を指定してください。
 
@@ -227,9 +228,9 @@ Feature report の現在値を設定します。Host が次に GET_REPORT した
 
 ### 容量の照会
 
-`inputReportCapacity()` / `outputReportCapacity()` / `featureReportCapacity()` は、共有 interface に必要な最大 byte 数を返します。report ID を宣言した report は ID の 1 byte を含みます。開始前と終了後は 0 です。
+`inputReportCapacity()` / `outputReportCapacity()` / `featureReportCapacity()` は、その Function の interface（共有しているときはまとめた interface）に必要な最大 byte 数を返します。report ID を宣言した report は ID の 1 byte を含みます。開始前と終了後は 0 です。
 
-`inputPacketSize()` は、Host と決まった速度での interrupt IN の `wMaxPacketSize` を返します。複合 interface ではすべての HID Function で同じ値です。Host が bus reset をするまでと、end の後は 0 です。
+`inputPacketSize()` は、Host と決まった速度での interrupt IN の `wMaxPacketSize` を返します。まとめた interface を共有する HID Function では、どれも同じ値です。Host が bus reset をするまでと、end の後は 0 です。
 
 ### 独自の HID クラスを作る
 
@@ -288,12 +289,12 @@ HID は各 OS の標準ドライバで動きます。下の内容は各 OS の�
 - Linux：`lsusb -v -d <vid>:<pid>` で descriptor、`sudo usbhid-dump` で report descriptor、`evtest` で入力イベントを確認できます。
 - Windows：USB Device Tree Viewer で descriptor と状態を確認できます。
 - 文字が違う：Host が自分の配列で usage を文字に変えています。`setLayout()` を Host の配列に合わせてください。
-- BIOS/UEFI で使えない：Host は boot protocol を使います。Keyboard と Mouse は単独で登録し、boot interface にしてください。
+- BIOS/UEFI で使えない：Host は boot protocol を使います。Keyboard を単独で登録するか、Keyboard で `enableOwnInterface()` を呼んで、boot interface にしてください。
 
 ## 規格との対応と設計の理由
 
 - **HID 1.11 準拠**：HID descriptor の bcdHID は 1.11 です。boot interface は §4.2 と付録 B、idle は §7.2.4、protocol は §7.2.5〜7.2.6 に従います。
-- **複合 HID を boot interface にしない理由**：boot 形式の report には report ID がありません（HID 1.11 付録 B）。report ID で複数の Function をまとめた interface は boot 形式と両立しないので、subclass/protocol を 0 にします。
+- **複合 HID を boot interface にしない理由**：boot 形式の report には report ID がありません（HID 1.11 付録 B）。report ID で複数の Function をまとめた interface は boot 形式と両立しないので、subclass/protocol を 0 にします。ほかの HID Function と一緒に載せて BIOS でも使う Keyboard は、専用の interface に置きます。
 - **Gamepad の hat**：logical range を 1〜8 にし、Input に Null 状態を付けて、0 を「押していない」にしています（HID 1.11 §6.2.2.5、HID Usage Tables の Hat Switch）。
 - **System Control**：usage は array で、logical minimum 1、0 を「押していない」にしています（HID 1.11 §6.2.2.5 の推奨）。wire 上は 1/2/3 の選択値を送り、descriptor でそれを 0x81/0x82/0x83 に対応させています。
 - **runtime 確保にした理由**：ビルド設定なしで大きな report を使えます。使わない OUT/Feature の資源を省けます。HID を使わないと HID class 全体がリンクされません。代わりに、begin での解析と確保、不正な descriptor や長すぎる送信の明示的な拒否が増えています。
@@ -307,6 +308,28 @@ HID Function を2つ以上登録すると、1つの interface にまとめます
 - 各 Function の report descriptor の最初の Collection の直後に、割り当てた Report ID を入れます（その位置にすでに Report ID があれば置き換えます）。Report ID を複数使う Custom HID は、単独で登録するのが確実です。
 - 各 Function の descriptor 全体を global の Push/Pop で囲み、単位や範囲が次の Function に引き継がれないようにしています。このため Function ごとに 2 byte 長くなります。
 - HID の interface は、他の class の interface より前に並びます。
+
+### 専用の interface を持つ Function
+
+`enableOwnInterface()` を呼んだ HID Function は、まとめた interface に入りません。BIOS/UEFI や KVM 切替器で使える boot Keyboard を、Mouse や Vendor HID と同じ Device に載せるときに使います。市販の多機能キーボードが HID interface を2〜3個持つのと同じ形です。
+
+```cpp
+EspUsbDevice device;
+EspUsbDeviceHidKeyboard keyboard(device);
+EspUsbDeviceHidMouse mouse(device);
+EspUsbDeviceHidConsumerControl media(device);
+
+void setup() {
+  keyboard.enableOwnInterface();   // device.begin() の前に呼ぶ
+  device.begin();
+}
+```
+
+- その Function は自分の report descriptor を report ID なしで使い、専用の interrupt endpoint を持ちます。Keyboard と Mouse は boot interface になり、SET_PROTOCOL はその Function だけに効きます。
+- 呼ばなかった Function は、これまでどおりまとめます。残りが1つだけなら単独の interface です。上の例では Mouse と Consumer Control が interface 0 を共有し（report ID 2 と 4）、Keyboard が interface 1 です。
+- まとめた interface があれば interface 0 です。専用の interface はその後に登録順で並びます。まとめるものがなければ、HID の interface はすべて登録順です。
+- Device を止めている間に呼びます。開始中は `ESP_ERR_INVALID_STATE` を返し、何も変えません。設定は `ownInterfaceEnabled()` で読めます。
+- 専用の interface を持つ Function は、1つにつき IN endpoint を1本（と OUT の endpoint 番号を1つ）使います。上の上限に数えます。
 
 ## v2 からの変更点
 
