@@ -30,7 +30,7 @@ void loop() {
     const bool own = layout != "shared";
     bool ok = keyboard->enableOwnInterface(own) == ESP_OK && keyboard->ownInterfaceEnabled() == own;
     // 16 is the largest HS bInterval; 17 is refused and keeps the last value.
-    ok &= keyboard->setHighSpeedInterval(17) == ESP_ERR_INVALID_ARG && keyboard->highSpeedInterval() == 1;
+    ok &= keyboard->setHighSpeedInterval(17) == ESP_ERR_INVALID_ARG && keyboard->highSpeedInterval() == 4;
     ok &= keyboard->setHighSpeedInterval(uint8_t(keyboardInterval)) == ESP_OK &&
           mouse->setHighSpeedInterval(uint8_t(mouseInterval)) == ESP_OK;
     EspUsbDeviceConfig config; config.product = "v3 HID own interface";
@@ -38,7 +38,7 @@ void loop() {
     // Changing the layout while started is refused and changes nothing.
     ok &= keyboard->enableOwnInterface(!own) == ESP_ERR_INVALID_STATE && keyboard->ownInterfaceEnabled() == own;
     ok &= keyboard->setHighSpeedInterval(2) == ESP_ERR_INVALID_STATE &&
-          keyboard->highSpeedInterval() == (keyboardInterval ? keyboardInterval : 1);
+          keyboard->highSpeedInterval() == (keyboardInterval ? keyboardInterval : 4);
     Serial.printf("STARTED %u keyboard_id=%u mouse_id=%u consumer_id=%u\r\n", unsigned(ok),
                   unsigned(keyboard->compositeReportId()), unsigned(mouse->compositeReportId()),
                   unsigned(consumer ? consumer->compositeReportId() : 0));

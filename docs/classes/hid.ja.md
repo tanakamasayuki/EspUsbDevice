@@ -71,24 +71,24 @@ HID には設定用の構造体はありません。constructor の引数と、�
 | `keyboard.enableNkro(true)` | 無効 | NKRO（usage 0x00〜0xDF の bitmap、29 byte）。停止中だけ | なし |
 | `keyboard.setLayout(layout)` | `ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US` | `write()`/`tapKey()` で使う文字→キーの変換表。動作中も変えられる | なし |
 | 送信関数の `timeoutMs` | 100 | IN endpoint が使用中のときに待つ時間（ms）。0 は待たない | なし |
-| `setHighSpeedInterval(bInterval)`（どの HID Function でも） | 1 | HS での interrupt endpoint の間隔。2^(bInterval-1) × 125 µs ごとで、1 は 125 µs、4 は 1 ms、16 は 4.096 s。0 で既定に戻す。16 を超えると `ESP_ERR_INVALID_ARG`。停止中だけ | HS だけ。FS は 1（1 ms）のまま |
+| `setHighSpeedInterval(bInterval)`（どの HID Function でも） | 4（1 ms） | HS での interrupt endpoint の間隔。2^(bInterval-1) × 125 µs ごとで、1 は 125 µs、4 は 1 ms、16 は 4.096 s。0 で既定に戻す。16 を超えると `ESP_ERR_INVALID_ARG`。停止中だけ | HS だけ。FS は 1（1 ms）のまま |
 
 ### endpoint と packet 長
 
 | 構成 | interrupt IN | interrupt OUT | packet 長（FS） | packet 長（HS） | bInterval |
 | --- | --- | --- | --- | --- | --- |
-| Keyboard 単独 | あり | あり（LED） | 8（NKRO は 32） | 同左 | FS は 1（1 ms）。HS は 1（125 µs）か `setHighSpeedInterval()` の値 |
+| Keyboard 単独 | あり | あり（LED） | 8（NKRO は 32） | 同左 | FS は 1（1 ms）。HS は 4（1 ms）か `setHighSpeedInterval()` の値 |
 | Mouse、Gamepad、Consumer、System 単独 | あり | なし | 8 | 8 | 同上 |
 | Custom 単独 | あり | なし | `inputReportSize`（8〜64） | 64 を超えれば `inputReportSize`（最大 1024）。それ以外は FS と同じ | 同上 |
 | Vendor 単独 | あり | あり | `reportSize + 1`（8〜64） | `reportSize + 1`（最大 1024） | 同上 |
 | `enableOwnInterface()` を呼んだ Function | 単独と同じ | 単独と同じ | 単独と同じ | 単独と同じ | 同上 |
-| 複合 HID（HID Function が2つ以上） | 1本を共有 | 1本を共有 | 16、32（NKRO Keyboard）、Vendor の `reportSize + 1`、Custom の `inputReportSize` のうち最大（それぞれ 64 まで） | FS の値と、各 Vendor／Custom の HS の値のうち最大（最大 1024） | 同上。HS では、まとめた Function が指定した `setHighSpeedInterval()` のうち最小の値（指定がなければ 1） |
+| 複合 HID（HID Function が2つ以上） | 1本を共有 | 1本を共有 | 16、32（NKRO Keyboard）、Vendor の `reportSize + 1`、Custom の `inputReportSize` のうち最大（それぞれ 64 まで） | FS の値と、各 Vendor／Custom の HS の値のうち最大（最大 1024） | 同上。HS では、まとめた Function の `highSpeedInterval()` のうち最小の値 |
 
 - report が packet 長より長いときは、1回の転送で複数の packet に分けて送ります（USB 2.0 §5.7.3）。たとえば単独の Gamepad（ID 込み 12 byte）は 8 byte と 4 byte の packet になります。
 - 単独の Keyboard と Mouse、および `enableOwnInterface()` を呼んだ Keyboard と Mouse は、boot interface（subclass 1）として宣言します。複合 HID は report ID を使うので boot interface にはなりません（[規格との対応](#規格との対応と設計の理由)）。
 - 非 control の IN endpoint は、全 Function 合わせて ESP32-S3 で 4本、P4 の HS controller で 7本までです。まとめた HID interface は、いくつの Function が共有しても IN を1本しか使いません。専用の interface を持つ Function は、1つにつき1本ずつ増えます。
 - どの HID Function でも、`inputPacketSize()` で、Host と決まった速度での interrupt IN の `wMaxPacketSize` を得られます（bus reset の前と end の後は 0）。
-- HS の既定の bInterval 1 では、125 µs の microframe ごとに packet 長の分を予約します。Host の root port が周期転送に回せるのは microframe の約 8 割なので、大きな HID packet の Device（たとえば 512 byte の Vendor HID、IN と OUT）を数台つなぐと足りなくなり、Host が構成を断ります（Linux では `Not enough bandwidth`、error -28）。1 ms ごとで足りるなら、`setHighSpeedInterval(4)` で予約は 1/8 になります。
+- HS の既定の bInterval は 4（1 ms）で、FS と同じ間隔です。`setHighSpeedInterval(1)` にすると 125 µs の microframe ごとに読まれ、Vendor や Custom の HID で 1 秒あたりの report を 8 倍にできますが、microframe ごとに packet 長の分を予約します。Host の root port が周期転送に回せるのは microframe の約 8 割なので、大きな packet（たとえば 512 byte の Vendor HID、IN と OUT）でそうした Device を数台つなぐと足りなくなり、Host が構成を断ります（Linux では `Not enough bandwidth`、error -28）。
 - HS で 512 byte を超える interrupt packet を使うと、Host 側の周期転送用 FIFO が足りないことがあります。ESP32-P4 の EspUsbHost を Host にする場合は、Host 側で `ESP_USB_HOST_FIFO_LARGE_PERIODIC_OUT` を指定してください。
 
 ## API

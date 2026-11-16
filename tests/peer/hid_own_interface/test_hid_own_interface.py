@@ -2,14 +2,17 @@
 
 # layout: (LAYOUT reply, keyboard interface, report IDs per interface,
 #          STARTED IDs, mouse interface, mouse report, consumer report)
-# HS bInterval asked of the Keyboard and the Mouse (0 keeps the default), and
-# the interrupt IN bInterval each interface then carries at HS. FS is always 1.
+# HS bInterval asked of the Keyboard and the Mouse (0 keeps the default of 4,
+# 1 ms), and the interrupt IN bInterval each interface then carries at HS.
+# FS is always 1 (1 ms).
 INTERVALS = {
-    # The merged interface takes the Mouse's 3; the Keyboard's own takes 4.
-    "merged": ((4, 3), "0:3 1:4"),
-    # The Mouse alone takes 4; the Keyboard keeps the default of 1 (125 us).
-    "single": ((0, 4), "0:4 1:1"),
-    "shared": ((0, 0), "0:1"),
+    # The merged interface takes the Mouse's 2 over the Consumer's default 4;
+    # the Keyboard's own interface takes 6.
+    "merged": ((6, 2), "0:2 1:6"),
+    # The Mouse alone keeps the default; the Keyboard asks for 125 us.
+    "single": ((1, 0), "0:4 1:1"),
+    # A Function asking for less (8) does not slow the others' default.
+    "shared": ((0, 8), "0:4"),
 }
 
 LAYOUTS = {

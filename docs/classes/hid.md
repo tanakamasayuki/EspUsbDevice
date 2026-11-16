@@ -80,24 +80,24 @@ from setters called while stopped.
 | `keyboard.enableNkro(true)` | off | NKRO (bitmap of usages 0x00-0xDF, 29 bytes). Only while stopped | none |
 | `keyboard.setLayout(layout)` | `ESP_USB_DEVICE_KEYBOARD_LAYOUT_EN_US` | Character-to-key table used by `write()`/`tapKey()`. Can be changed while running | none |
 | `timeoutMs` of send functions | 100 | How long to wait (ms) while the IN endpoint is busy. 0 does not wait | none |
-| `setHighSpeedInterval(bInterval)` (any HID Function) | 1 | HS polling interval of the Function's interrupt endpoints: every 2^(bInterval-1) × 125 µs, so 1 is 125 µs, 4 is 1 ms, 16 is 4.096 s. 0 restores the default; over 16 is `ESP_ERR_INVALID_ARG`. Only while stopped | HS only. FS stays 1 (1 ms) |
+| `setHighSpeedInterval(bInterval)` (any HID Function) | 4 (1 ms) | HS polling interval of the Function's interrupt endpoints: every 2^(bInterval-1) × 125 µs, so 1 is 125 µs, 4 is 1 ms, 16 is 4.096 s. 0 restores the default; over 16 is `ESP_ERR_INVALID_ARG`. Only while stopped | HS only. FS stays 1 (1 ms) |
 
 ### Endpoints and packet sizes
 
 | Configuration | Interrupt IN | Interrupt OUT | Packet size (FS) | Packet size (HS) | bInterval |
 | --- | --- | --- | --- | --- | --- |
-| Keyboard alone | yes | yes (LEDs) | 8 (32 with NKRO) | same | FS 1 (1 ms). HS 1 (125 µs) or the `setHighSpeedInterval()` value |
+| Keyboard alone | yes | yes (LEDs) | 8 (32 with NKRO) | same | FS 1 (1 ms). HS 4 (1 ms) or the `setHighSpeedInterval()` value |
 | Mouse, Gamepad, Consumer, System alone | yes | no | 8 | 8 | same |
 | Custom alone | yes | no | `inputReportSize` (8-64) | `inputReportSize` if over 64 (up to 1024); otherwise same as FS | same |
 | Vendor alone | yes | yes | `reportSize + 1` (8-64) | `reportSize + 1` (up to 1024) | same |
 | Function with `enableOwnInterface()` | as when alone | as when alone | as when alone | as when alone | same |
-| Composite HID (two or more HID Functions) | one, shared | one, shared | largest of 16, 32 (NKRO Keyboard), Vendor's `reportSize + 1` and Custom's `inputReportSize` (each capped at 64) | largest of the FS value and the HS value of each Vendor/Custom (up to 1024) | same; at HS the smallest `setHighSpeedInterval()` value among the merged Functions, 1 if none set one |
+| Composite HID (two or more HID Functions) | one, shared | one, shared | largest of 16, 32 (NKRO Keyboard), Vendor's `reportSize + 1` and Custom's `inputReportSize` (each capped at 64) | largest of the FS value and the HS value of each Vendor/Custom (up to 1024) | same; at HS the smallest `highSpeedInterval()` of the merged Functions |
 
 - A report longer than the packet size is sent as several packets in one transfer (USB 2.0 §5.7.3). For example, a Gamepad alone (12 bytes including the ID) goes out as an 8-byte and a 4-byte packet.
 - A Keyboard or Mouse registered alone, or with `enableOwnInterface()`, is declared as a boot interface (subclass 1). A composite HID uses report IDs and is therefore not a boot interface ([Standards and design rationale](#standards-and-design-rationale)).
 - Non-control IN endpoints are limited, across all Functions, to 4 on ESP32-S3 and 7 on the P4 high-speed controller. The merged HID interface uses one IN endpoint however many Functions share it; each Function with its own interface uses one more.
 - `inputPacketSize()` on any HID Function returns the `wMaxPacketSize` of the interrupt IN endpoint at the speed the Host negotiated (0 before the bus reset and after end).
-- At HS the default bInterval of 1 reserves the packet size in every 125 µs microframe. A Host root port gives periodic transfers about 80% of a microframe, so a few Devices with large HID packets (for example a 512-byte Vendor HID, IN and OUT) can exhaust it, and the Host then refuses the configuration (Linux: `Not enough bandwidth`, error -28). Where 1 ms is fast enough, `setHighSpeedInterval(4)` reserves an eighth of that.
+- At HS the default bInterval is 4 (1 ms), the same rate as FS. `setHighSpeedInterval(1)` polls every 125 µs microframe for eight times the reports per second of a Vendor or Custom HID, but reserves the packet size in every microframe. A Host root port gives periodic transfers about 80% of a microframe, so a few such Devices with large packets (for example a 512-byte Vendor HID, IN and OUT) exhaust it, and the Host then refuses the configuration (Linux: `Not enough bandwidth`, error -28).
 - At HS, interrupt packets over 512 bytes may not fit the Host's periodic FIFO. With EspUsbHost on ESP32-P4 as the Host, set `ESP_USB_HOST_FIFO_LARGE_PERIODIC_OUT` on the Host side.
 
 ## API

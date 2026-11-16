@@ -1,17 +1,20 @@
 # Changelog / 変更履歴
 
 ## Unreleased
-- (EN) HID: `EspUsbHidFunction::setHighSpeedInterval(bInterval)` sets the
-  high-speed polling interval of a HID Function's interrupt endpoints (1 =
-  125 us, the default; 4 = 1 ms). Several Devices with large HID packets on one
-  Host port no longer have to reserve bandwidth in every microframe. The
-  merged interface uses the smallest value its Functions set. Full speed is
-  unchanged.
-- (JA) HID：`EspUsbHidFunction::setHighSpeedInterval(bInterval)` で、HID
-  Function の interrupt endpoint の HS での間隔を選べるようにしました（1 は既定の
-  125 µs、4 は 1 ms）。大きな HID packet の Device を同じ Host の port に何台も
-  つないでも、microframe ごとに帯域を予約しなくて済みます。まとめた interface は、
-  Function が指定した値のうち最小を使います。FS は変わりません。
+- (EN) HID: at high speed the interrupt endpoints of every HID Function now
+  have bInterval 4 (1 ms, the same rate as full speed) instead of 1 (125 us).
+  Several Devices with large HID packets on one Host port no longer exhaust its
+  periodic bandwidth. `EspUsbHidFunction::setHighSpeedInterval(bInterval)`
+  chooses another value; `setHighSpeedInterval(1)` restores the previous
+  125 us for a Vendor or Custom HID that needs the rate. The merged interface
+  uses the smallest value of its Functions. Full speed is unchanged.
+- (JA) HID：HS での HID Function の interrupt endpoint の bInterval を、1
+  （125 µs）から 4（1 ms、FS と同じ間隔）に変えました。大きな HID packet の Device
+  を同じ Host の port に何台つないでも、周期転送の帯域を使い切りにくくなります。
+  `EspUsbHidFunction::setHighSpeedInterval(bInterval)` で別の値を選べます。速さの
+  要る Vendor や Custom の HID は、`setHighSpeedInterval(1)` で従来の 125 µs に
+  戻せます。まとめた interface は、Function の値のうち最小を使います。FS は変わり
+  ません。
 
 ## 3.2.0
 - (EN) HID: `EspUsbHidFunction::enableOwnInterface()` gives a HID Function an

@@ -1585,10 +1585,10 @@ bool EspUsbDevice::buildConfigurationDescriptor(bool highSpeed)
       if (hsHint > compositePacket) compositePacket = hsHint;
     }
     if (compositePacket > (highSpeed ? 1024 : 64)) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
-    // The merged interface polls as often as its most demanding Function asked.
+    // The merged interface polls as often as its most demanding Function.
     for (size_t i = 0; i < classCount_; ++i) if (hidMerged(uint8_t(i))) {
       const uint8_t interval = classAt(i)->hidHighSpeedInterval();
-      if (interval && (!compositeInterval || interval < compositeInterval)) compositeInterval = interval;
+      if (!compositeInterval || interval < compositeInterval) compositeInterval = interval;
     }
   }
   auto encode = [&](uint8_t *dst, size_t capacity, size_t &total, unsigned &interfaces) -> bool {
