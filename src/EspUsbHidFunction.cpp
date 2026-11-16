@@ -576,6 +576,12 @@ esp_err_t EspUsbHidFunction::enableOwnInterface(bool enable) {
   ownInterface_ = enable;
   return ESP_OK;
 }
+esp_err_t EspUsbHidFunction::setHighSpeedInterval(uint8_t bInterval) {
+  if (hidStarted()) return ESP_ERR_INVALID_STATE;
+  if (bInterval > 16) return ESP_ERR_INVALID_ARG;
+  highSpeedInterval_ = bInterval;
+  return ESP_OK;
+}
 size_t EspUsbHidFunction::inputReportCapacity() const {
   portENTER_CRITICAL(&hidLock); const size_t n = hidState_ ? hidState_->capacity[0] : 0; portEXIT_CRITICAL(&hidLock); return n;
 }

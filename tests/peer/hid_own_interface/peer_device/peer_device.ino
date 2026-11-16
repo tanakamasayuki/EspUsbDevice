@@ -17,7 +17,11 @@ void loop() {
     // merged: Keyboard (own) first, then Mouse and Consumer sharing interface 0.
     // single: Mouse alone on the shared side, then Keyboard (own).
     // shared: all three share one interface, as before this option existed.
-    const String layout = command.substring(6);
+    // Optional HS bInterval for the Keyboard and the Mouse: start <layout> <k> <m>.
+    char name[16] = {};
+    unsigned keyboardInterval = 0, mouseInterval = 0;
+    sscanf(command.c_str(), "start %15s %u %u", name, &keyboardInterval, &mouseInterval);
+    const String layout = name;
     release();
     if (layout == "merged") keyboard = new EspUsbDeviceHidKeyboard(device);
     mouse = new EspUsbDeviceHidMouse(device);
@@ -25,10 +29,16 @@ void loop() {
     if (layout != "merged") keyboard = new EspUsbDeviceHidKeyboard(device);
     const bool own = layout != "shared";
     bool ok = keyboard->enableOwnInterface(own) == ESP_OK && keyboard->ownInterfaceEnabled() == own;
+    // 16 is the largest HS bInterval; 17 is refused and keeps the last value.
+    ok &= keyboard->setHighSpeedInterval(17) == ESP_ERR_INVALID_ARG && keyboard->highSpeedInterval() == 1;
+    ok &= keyboard->setHighSpeedInterval(uint8_t(keyboardInterval)) == ESP_OK &&
+          mouse->setHighSpeedInterval(uint8_t(mouseInterval)) == ESP_OK;
     EspUsbDeviceConfig config; config.product = "v3 HID own interface";
     ok &= device.begin(config);
     // Changing the layout while started is refused and changes nothing.
     ok &= keyboard->enableOwnInterface(!own) == ESP_ERR_INVALID_STATE && keyboard->ownInterfaceEnabled() == own;
+    ok &= keyboard->setHighSpeedInterval(2) == ESP_ERR_INVALID_STATE &&
+          keyboard->highSpeedInterval() == (keyboardInterval ? keyboardInterval : 1);
     Serial.printf("STARTED %u keyboard_id=%u mouse_id=%u consumer_id=%u\r\n", unsigned(ok),
                   unsigned(keyboard->compositeReportId()), unsigned(mouse->compositeReportId()),
                   unsigned(consumer ? consumer->compositeReportId() : 0));

@@ -228,6 +228,24 @@ static size_t hidItemLength(const uint8_t *item, size_t available)
 static constexpr uint8_t HID_ITEM_COLLECTION = 0xa0;
 static constexpr uint8_t HID_ITEM_REPORT_ID = 0x84;
 
+// Rewrite the interrupt endpoints of a HID interface for the high-speed
+// configuration: wMaxPacketSize when packet is not 0, bInterval when interval
+// is not 0. The full-speed writer produced the descriptors.
+static bool setHidHighSpeedEndpoints(uint8_t *dst, size_t length, uint16_t packet, uint8_t interval)
+{
+  if (!packet && !interval) return true;
+  for (size_t offset = 0; offset < length;) {
+    const uint8_t size = dst[offset];
+    if (size < 2 || offset + size > length) return false;
+    if (dst[offset + 1] == USB_DESC_ENDPOINT && size >= 7 && (dst[offset + 3] & 3) == 3) {
+      if (packet) put16(dst + offset + 4, packet);
+      if (interval) dst[offset + 6] = interval;
+    }
+    offset += size;
+  }
+  return true;
+}
+
 static uint16_t writeHidConfigurationDescriptor(uint8_t *dst,
                                                 uint8_t interfaceNumber,
                                                 uint8_t endpointNumber,
@@ -1558,6 +1576,7 @@ bool EspUsbDevice::buildConfigurationDescriptor(bool highSpeed)
 {
   const bool composite = compositeHid();
   uint16_t compositePacket = 16;
+  uint8_t compositeInterval = 0;
   if (composite) {
     for (size_t i = 0; i < classCount_; ++i) if (hidMerged(uint8_t(i))) {
       const uint16_t hint = classAt(i)->hidInEndpointSize();
@@ -1566,6 +1585,11 @@ bool EspUsbDevice::buildConfigurationDescriptor(bool highSpeed)
       if (hsHint > compositePacket) compositePacket = hsHint;
     }
     if (compositePacket > (highSpeed ? 1024 : 64)) { setLastError(ESP_ERR_INVALID_SIZE); return false; }
+    // The merged interface polls as often as its most demanding Function asked.
+    for (size_t i = 0; i < classCount_; ++i) if (hidMerged(uint8_t(i))) {
+      const uint8_t interval = classAt(i)->hidHighSpeedInterval();
+      if (interval && (!compositeInterval || interval < compositeInterval)) compositeInterval = interval;
+    }
   }
   auto encode = [&](uint8_t *dst, size_t capacity, size_t &total, unsigned &interfaces) -> bool {
     if (dst && capacity < 9) return false;
@@ -1574,6 +1598,7 @@ bool EspUsbDevice::buildConfigurationDescriptor(bool highSpeed)
     if (composite) {
       const uint16_t bytes = writeHidConfigurationDescriptor(nullptr, 0, 1, compositePacket, 0, 0, hidReportDescriptorLength_, true);
       if (!bytes || (dst && bytes > capacity - offset) || (dst && writeHidConfigurationDescriptor(dst + offset, 0, 1, compositePacket, 0, 0, hidReportDescriptorLength_, true) != bytes)) return false;
+      if (dst && highSpeed && !setHidHighSpeedEndpoints(dst + offset, bytes, 0, compositeInterval)) return false;
       offset += bytes; itf = 1; ep = 2;
       for (size_t i = 0; i < classCount_; ++i) if (hidMerged(uint8_t(i)) && !highSpeed) classAt(i)->descriptorInterfaceNumber_ = 0;
     }
@@ -2485,16 +2510,8 @@ uint16_t EspUsbDeviceClass::configurationDescriptorForSpeed(uint8_t *dst, size_t
   if (!dst) return required;
   if (!required || capacity < required) return 0;
   if (configurationDescriptor(dst, interfaceNumber, endpointNumber, packet) != required) return 0;
-  const uint16_t hidPacket = highSpeed && isHid() ? hidHighSpeedEndpointSize() : 0;
-  if (hidPacket) {
-    for (size_t offset = 0; offset < required;) {
-      const uint8_t length = dst[offset];
-      if (length < 2 || offset + length > required) return 0;
-      if (dst[offset + 1] == USB_DESC_ENDPOINT && length >= 7 && (dst[offset + 3] & 3) == 3)
-        put16(dst + offset + 4, hidPacket);
-      offset += length;
-    }
-  }
+  if (highSpeed && isHid() &&
+      !setHidHighSpeedEndpoints(dst, required, hidHighSpeedEndpointSize(), hidHighSpeedInterval())) return 0;
   return required;
 }
 

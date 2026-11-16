@@ -951,6 +951,10 @@ public:
   // report's worth per interval - which, of the classes here, are
   // EspUsbDeviceHidVendor and EspUsbDeviceHidCustom. The others return 0.
   virtual uint16_t hidHighSpeedEndpointSize() const { return 0; }
+  // bInterval this HID function asked for on its interrupt endpoints in the
+  // high-speed configuration (EspUsbHidFunction::setHighSpeedInterval), or 0
+  // for the default of 1 (125 us).
+  virtual uint8_t hidHighSpeedInterval() const { return 0; }
   virtual void onHidSetReport(uint8_t reportId, uint8_t reportType, const uint8_t *data, uint16_t length) {}
   virtual void onHidSetProtocol(uint8_t protocol) { (void)protocol; }
   // Bus state changed, so anything the class believes the host currently knows is
@@ -1011,6 +1015,17 @@ public:
   esp_err_t enableOwnInterface(bool enable = true);
   bool ownInterfaceEnabled() const { return ownInterface_; }
   bool hidOwnInterface() const override { return ownInterface_; }
+  // bInterval of this Function's interrupt endpoints when the Host runs the
+  // bus at high speed: the endpoint is polled every 2^(bInterval-1) x 125 us,
+  // so 1 is 125 us (the default), 4 is 1 ms and 16 is 4.096 s. A larger
+  // value reserves less of the Host's periodic bandwidth, at the cost of
+  // fewer reports per second. Full speed keeps 1 ms whatever is set. On the
+  // merged interface the smallest value set by any merged Function is used;
+  // 0 drops this Function's request. Call before EspUsbDevice::begin();
+  // ESP_ERR_INVALID_STATE while started, ESP_ERR_INVALID_ARG above 16.
+  esp_err_t setHighSpeedInterval(uint8_t bInterval);
+  uint8_t highSpeedInterval() const { return highSpeedInterval_ ? highSpeedInterval_ : 1; }
+  uint8_t hidHighSpeedInterval() const override { return highSpeedInterval_; }
   bool sendHidInput(uint8_t reportId, const void *, size_t, uint32_t timeoutMs) override;
   // Set current Feature state without sending an interrupt report. Payload
   // excludes the report ID; 0 selects this Function's unambiguous default ID.
@@ -1031,6 +1046,7 @@ private:
   EspUsbHidState *hidState_ = nullptr;
   esp_err_t hidStartError_ = ESP_OK;
   bool ownInterface_ = false;
+  uint8_t highSpeedInterval_ = 0;
 
 protected:
   // Lifecycle hooks run by EspUsbDevice::begin()/end(). Start and stop the

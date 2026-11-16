@@ -9,7 +9,7 @@ bool flush(usb_transfer_t *t) { return esp_cache_msync(t->data_buffer, t->data_b
 #else
 bool flush(usb_transfer_t *) { return true; }
 #endif
-struct Hid { uint8_t number = 0, subclass = 0, protocol = 0, in = 0; uint16_t packet = 0, reportLength = 0; bool claimed = false; };
+struct Hid { uint8_t number = 0, subclass = 0, protocol = 0, in = 0, interval = 0; uint16_t packet = 0, reportLength = 0; bool claimed = false; };
 usb_host_client_handle_t client = nullptr;
 usb_device_handle_t handle = nullptr;
 usb_transfer_t *control = nullptr, *input = nullptr;
@@ -38,7 +38,7 @@ void clientEvent(const usb_host_client_event_msg_t *event, void *) {
       current = p[5] == 3 && hidCount < 4 ? &hids[hidCount++] : nullptr;
       if (current) { *current = {}; current->number = p[2]; current->subclass = p[6]; current->protocol = p[7]; }
     } else if (current && p[1] == 0x21 && p[0] >= 9) current->reportLength = p[7] | uint16_t(p[8]) << 8;
-    else if (current && p[1] == 5 && p[0] >= 7 && (p[2] & 0x80)) { current->in = p[2]; current->packet = (p[4] | uint16_t(p[5]) << 8) & 0x7ff; }
+    else if (current && p[1] == 5 && p[0] >= 7 && (p[2] & 0x80)) { current->in = p[2]; current->packet = (p[4] | uint16_t(p[5]) << 8) & 0x7ff; current->interval = p[6]; }
   }
   for (unsigned n = 0; n < hidCount; ++n) hids[n].claimed = usb_host_interface_claim(client, handle, hids[n].number, 0) == ESP_OK;
   enumerated.store(true);
@@ -112,6 +112,13 @@ void loop() {
     for (unsigned n = 0; n < hidCount; ++n)
       line += " " + String(hids[n].number) + ":" + String(hids[n].subclass) + "/" + String(hids[n].protocol);
     Serial.printf("%s\r\n", line.c_str());
+  } else if (command == "intervals") {
+    // Bus speed (F or H), then the interrupt IN bInterval of each HID interface.
+    usb_device_info_t info = {};
+    const bool ok = handle && usb_host_device_info(handle, &info) == ESP_OK;
+    String line = "INTERVALS " + String(ok && info.speed == USB_SPEED_HIGH ? "H" : "F");
+    for (unsigned n = 0; n < hidCount; ++n) line += " " + String(hids[n].number) + ":" + String(hids[n].interval);
+    Serial.printf("%s\r\n", ok ? line.c_str() : "INTERVALS 0");
   } else if (command.startsWith("report ")) {
     // The interface's own report descriptor, and the report IDs it declares.
     const int index = find(command.substring(7).toInt());

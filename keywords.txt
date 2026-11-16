@@ -85,6 +85,8 @@ setLayout	KEYWORD2
 layout	KEYWORD2
 enableNkro	KEYWORD2
 enableOwnInterface	KEYWORD2
+setHighSpeedInterval	KEYWORD2
+highSpeedInterval	KEYWORD2
 heldState	KEYWORD2
 ledState	KEYWORD2
 setLeds	KEYWORD2

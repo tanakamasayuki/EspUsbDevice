@@ -2,6 +2,16 @@
 
 # layout: (LAYOUT reply, keyboard interface, report IDs per interface,
 #          STARTED IDs, mouse interface, mouse report, consumer report)
+# HS bInterval asked of the Keyboard and the Mouse (0 keeps the default), and
+# the interrupt IN bInterval each interface then carries at HS. FS is always 1.
+INTERVALS = {
+    # The merged interface takes the Mouse's 3; the Keyboard's own takes 4.
+    "merged": ((4, 3), "0:3 1:4"),
+    # The Mouse alone takes 4; the Keyboard keeps the default of 1 (125 us).
+    "single": ((0, 4), "0:4 1:1"),
+    "shared": ((0, 0), "0:1"),
+}
+
 LAYOUTS = {
     # Keyboard registered first but on its own interface, after the merged one.
     "merged": ("2 0:0/0 1:1/1", 1, {0: "2,4", 1: "none"},
@@ -25,9 +35,14 @@ def test_hid_own_interface(dut, peers):
     try:
         for name, (layout, kbd, ids, started, mif, mouse, consumer) in LAYOUTS.items():
             own = name != "shared"
-            command(device, f"start {name}", f"STARTED 1 {started}", 30)
+            (keyboard_interval, mouse_interval), hs_intervals = INTERVALS[name]
+            command(device, f"start {name} {keyboard_interval} {mouse_interval}", f"STARTED 1 {started}", 30)
             command(dut, "start", "HOST_READY 1", 30)
             command(dut, "layout", f"LAYOUT {layout}")
+            dut.write("intervals")
+            speed = dut.expect(r"INTERVALS ([FH])", timeout=10).group(1).decode()
+            fs_intervals = " ".join(f"{n}:1" for n in ids)
+            dut.expect_exact(f" {hs_intervals if speed == 'H' else fs_intervals}\r\n", timeout=10)
             for number, expected in ids.items():
                 command(dut, f"report {number}", f"REPORT 1 ids={expected}")
             # Each interface carries only its own Functions' input reports.
