@@ -35,7 +35,7 @@ uv run --locked --env-file .env pytest loopback/audio --combo p4 -q -rs    # 一
 
 | probe | 目的 |
 | --- | --- |
-| `basic` | Vendor の copy 往復、借用送信の反復、借用受信 → 借用送信（1〜65537 byte）。Vendor + CDC + Keyboard の複合 |
+| `basic` | Vendor の copy 往復、借用送信の反復、借用受信 → 借用送信（1〜65537 byte）。Host の同期読み出し（`vendorReadSync()`）での往復。Vendor + CDC + Keyboard の複合 |
 | `classes` | RAM の MSC（sector 511 / 512）の書込みと読出し、HS controller での staging 64 の拒否と 512 での回復。2 cable の MIDI echo |
 | `audio` | UAC1 / UAC2 の ISO で、再生と録音を同時に流して照合する。UAC2 は feedback の更新も確かめる |
 | `video` | Bulk と ISO で frame を送り、内容、完了の status と実長、同じ buffer の返却を確かめる |
@@ -57,7 +57,6 @@ uv run --locked --env-file .env pytest loopback/audio --combo p4 -q -rs    # 一
 - 借用受信は、実際に受信した長さではなく、投稿した容量全体を DMA に貸します。guard は投稿容量の外側に置きます。
 - 借用 buffer は 64 byte 境界の内部 RAM にします。
 - Host 側の Vendor IN は、公開 EspUsbHost の cache 準備済みの read queue と `onVendorData` callback で受けます。
-  同期の `vendorReadSync()` は P4 で受信の最後の byte が化けることがあり、Host 側の未解決事項です（[TODO](../../TODO.ja.md)）。
-  `basic` の `start ... sync` 命令は、この同期経路を比べるための診断用で、通常の pytest では使いません。
+  同期の `vendorReadSync()` は、`basic` の `start ... sync` 命令で読み、`test_p4_sync_read` で往復を確かめます。
 - DFU の raw SDK Host 転送では、呼出し側で cache の準備をします。
 - NCM は、`networkClose()` → Device の終了 → Host の終了の順にすると次の Host 開始が失敗します（Host 側の未解決事項）。試験は通常の Device 切断 → Host 終了の順にしています。

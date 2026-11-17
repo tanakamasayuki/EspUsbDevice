@@ -19,6 +19,24 @@ def test_p4_loopback(dut, controller):
 
 
 @pytest.mark.parametrize("controller", ["hs", "fs"])
+def test_p4_sync_read(dut, controller):
+    # The Host reads Vendor IN with vendorReadSync(), on demand, instead of
+    # the read queue: lengths around the packet size, 129 bytes among them.
+    try:
+        for _ in range(3):
+            dut.write(f"start {controller} sync")
+            dut.expect_exact(f"START ok=1 device={controller} speed=1 in=64 out=64 error=0\r\n", timeout=40)
+            dut.write("exercise")
+            result = dut.expect(r"EXERCISE ok=(\d) copies=(\d+) bytes=(\d+) direct=(\d+) echoed=(\d+) bad=(\d+) guards=(\d)\r\n", timeout=60)
+            assert result.groups() == (b"1", b"11", b"6210", b"128", b"6210", b"0", b"1")
+            dut.write("stop")
+            dut.expect_exact("STOPPED\r\n", timeout=40)
+    finally:
+        dut.write("stop")
+        dut.expect_exact("STOPPED\r\n", timeout=40)
+
+
+@pytest.mark.parametrize("controller", ["hs", "fs"])
 def test_p4_borrowed(dut, controller):
     try:
         for _ in range(3):

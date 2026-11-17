@@ -69,7 +69,7 @@ Host 側（ESP-IDF の USB Host）の制約も試験の組み方に影響しま�
 - bulk IN の `num_bytes` は MPS の倍数が必要です。
 - `usb_host_endpoint_clear` は Host 側の data toggle を戻しません。HALT の試験は、clear 前の packet 数が偶数になるように組みます。
 - HS の HID では、Host の周期 OUT FIFO の既定（512 byte）が足りない場合があります。
-- Vendor IN は、公開 EspUsbHost の cache 準備済み read queue と callback で受けます。同期の `vendorReadSync()` は P4 で cache の問題があるため使いません。
+- Vendor IN は、公開 EspUsbHost の cache 準備済み read queue と callback で受けます。同期の `vendorReadSync()` は、P4 の loopback（`test_p4_sync_read`）で往復を確かめます。この試験の受信 buffer は静的なので、確保した直後の buffer で起きていた EspUsbHost 2.10.1 の cache の不具合は再現しません。
 
 ## P4 と P4X の build 設定
 

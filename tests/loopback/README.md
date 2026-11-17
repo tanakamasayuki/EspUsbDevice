@@ -35,7 +35,7 @@ Each test starts and stops the Device several times on both controllers and conf
 
 | Probe | Purpose |
 | --- | --- |
-| `basic` | Vendor copy round trips, repeated borrowed sends, borrowed receive → borrowed send (1 to 65537 bytes); a Vendor + CDC + Keyboard composite |
+| `basic` | Vendor copy round trips, repeated borrowed sends, borrowed receive → borrowed send (1 to 65537 bytes); round trips read by the Host's synchronous `vendorReadSync()`; a Vendor + CDC + Keyboard composite |
 | `classes` | RAM MSC writes and reads (sectors of 511 / 512), the HS controller refusing a staging of 64 and recovering at 512; MIDI echo on two cables |
 | `audio` | UAC1 / UAC2 isochronous playback and capture running together and compared; UAC2 also checks feedback updates |
 | `video` | Frames sent over Bulk and ISO; content, completion status and actual length, the same buffer returned |
@@ -57,7 +57,6 @@ Each test starts and stops the Device several times on both controllers and conf
 - A borrowed receive lends DMA the whole posted capacity, not just the length received. Put guards outside the posted capacity.
 - Borrowed buffers are in internal RAM on 64-byte boundaries.
 - Vendor IN on the Host side is received through the released EspUsbHost's cache-prepared read queue and the `onVendorData` callback.
-  The synchronous `vendorReadSync()` can corrupt the last received byte on the P4, an open Host-side issue ([TODO](../../TODO.ja.md)).
-  The `start ... sync` command of `basic` exists to compare that synchronous path and is not used by the normal pytest run.
+  The synchronous `vendorReadSync()` is read by the `start ... sync` command of `basic`, and `test_p4_sync_read` checks its round trip.
 - Raw SDK Host transfers for DFU prepare the cache on the caller's side.
 - For NCM, `networkClose()` → Device end → Host end makes the next Host start fail (an open Host-side issue). The test uses the normal order: Device disconnect, then Host end.

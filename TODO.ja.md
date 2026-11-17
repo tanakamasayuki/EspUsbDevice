@@ -56,9 +56,6 @@ Device 側に回避の動作は加えません。Host 側で直し、Device の�
 - [ ] **MSC の data STALL の後の CSW の回収**
   - EspUsbHost が data STALL の後に CSW を読まずに終わり、後の command が一件ずれる。reset recovery もしない。
   - 完了の条件：Host の現行版で再現し、HALT 解除 → CSW 回収 → 後の command が正しく進むことを、Device の MSC 抜去（02/3A/00）の試験で確かめる。
-- [ ] **P4 の同期 Vendor IN（`vendorReadSync()`）の cache 処理**
-  - P4 で、受信の最後の byte が化ける。Host の同期経路に DMA 前の cache 処理がない。
-  - 完了の条件：EspUsbHost で修正が公開され、P4 の loopback で同期経路の往復が通る。
 - [ ] **NCM の `networkClose()` の後の Host 再開始**
   - `networkClose()` → Device の終了 → Host の終了の順にすると、次の Host の開始が失敗する。
   - 完了の条件：Host 側で原因を切り分けて直し、その順序を含む回帰試験を `tests/` に足して通す。

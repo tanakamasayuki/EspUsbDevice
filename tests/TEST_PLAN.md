@@ -69,7 +69,7 @@ Limits on the Host side (the ESP-IDF USB Host) also shape the tests.
 - A bulk IN `num_bytes` must be a multiple of the MPS.
 - `usb_host_endpoint_clear` does not reset the Host's data toggle, so a HALT test sends an even number of packets before the clear.
 - At HS the Host's default periodic OUT FIFO (512 bytes) can be too small for HID.
-- Vendor IN is received through the released EspUsbHost's cache-prepared read queue and callback. The synchronous `vendorReadSync()` is not used because of a cache problem on the P4.
+- Vendor IN is received through the released EspUsbHost's cache-prepared read queue and callback. The synchronous `vendorReadSync()` is checked by a round trip in the P4 loopback (`test_p4_sync_read`). Its receive buffer is static, so it does not reproduce the EspUsbHost 2.10.1 cache fault, which needed a freshly allocated buffer.
 
 ## P4 and P4X build settings
 
