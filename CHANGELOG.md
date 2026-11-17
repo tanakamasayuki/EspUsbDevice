@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 3.3.0
 - (EN) HID: at high speed the interrupt endpoints of every HID Function now
   have bInterval 4 (1 ms, the same rate as full speed) instead of 1 (125 us).
   Several Devices with large HID packets on one Host port no longer exhaust its
