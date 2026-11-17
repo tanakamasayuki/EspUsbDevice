@@ -81,6 +81,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `dfu` | RAM backend download, manifest, abort, runtime detach |
 | `psram_link` | MSC storage and Vendor rings in the Device's PSRAM, round trips at HS |
 | `fifo_budget` | Five default Vendors enumerate; a sixth makes `begin()` return `ESP_ERR_INVALID_SIZE`. Per-Function `bulkInBuffering`: a Vendor beside three CDC ports is doubled alone with `Double`, and a `Double` that cannot fit is refused |
+| `host_config_fail` | Beside a Device that answers SET_CONFIGURATION with STALL, the Host treats it as a failed enumeration without a panic and starts and stops again (EspUsbHost 2.10.1 panicked on a P4X Host) |
 
 ## Link check
 

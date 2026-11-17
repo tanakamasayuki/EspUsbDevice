@@ -60,10 +60,6 @@ Device 側に回避の動作は加えません。Host 側で直し、Device の�
   - `networkClose()` → Device の終了 → Host の終了の順にすると、次の Host の開始が失敗する。
   - 完了の条件：Host 側で原因を切り分けて直し、その順序を含む回帰試験を `tests/` に足して通す。
 
-- [ ] **SET_CONFIGURATION で endpoint を開けない Device を列挙すると Host が panic する**
-  - P4X の EspUsbHost 2.10.1 で、送信 FIFO に収まらない構成の Device（P4 HS で Vendor 6 個）を列挙すると、ROM 内で Load access fault になった。Device 側はこの構成を `begin()` で拒否するようにしたので、この Device からは再現しない。
-  - 完了の条件：構成の失敗を返す Device（試験用に意図的に作る）で Host 側を再現し、Host が panic せずに列挙の失敗として扱うように直す。
-
 ## 実装の確認事項
 
 - [ ] **Audio の format の上限が HS でも FS の値**

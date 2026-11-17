@@ -81,6 +81,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `dfu` | RAM backend の download、manifest、abort、runtime detach |
 | `psram_link` | Device の PSRAM に置いた MSC 保存先と Vendor ring を HS で往復する |
 | `fifo_budget` | 既定の Vendor 5 個は列挙でき、6 個目は `begin()` が `ESP_ERR_INVALID_SIZE`。Function ごとの `bulkInBuffering`：CDC 3 つと並べた Vendor だけを `Double` で 2 倍にでき、入らない `Double` は断る |
+| `host_config_fail` | SET_CONFIGURATION に STALL で答える Device の横で、Host が panic せずに列挙の失敗として扱い、開始と終了を繰り返せる（EspUsbHost 2.10.1 では P4X の Host が panic した） |
 
 ## 結線の確認
 
