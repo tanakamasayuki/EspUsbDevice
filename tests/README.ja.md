@@ -98,7 +98,7 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 
 ### profile
 
-- `sketch.yaml` に profile を書きます。Device 側は library を `dir:` で参照し、Host 側は公開版の EspUsbHost（`EspUsbHost (2.10.1)`）を版指定で使います。
+- `sketch.yaml` に profile を書きます。Device 側は library を `dir:` で参照し、Host 側は公開版の EspUsbHost（`EspUsbHost (2.10.2)`）を版指定で使います。
 - profile 名は「SoC + 役割」です（例：`p4x_hs_device`）。同じ SoC の別の board は `s3b_` のように区別します。MAC や tty 番号は名前に入れません。
 - 一部の probe は `p4_device`、`p4x_*_compile` のような compile 確認用の profile を持ちます。combo には入っていないので、pytest では実行されません。
 

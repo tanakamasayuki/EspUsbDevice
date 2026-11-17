@@ -124,7 +124,7 @@ Release workflow（`workflow_dispatch`）は次のことをします。
 - **default branch**：workflow は default branch へ push します。v3 を `main` へ取り込んでから実行します。
 - **release に含める file**：共通の workflow が `tests/` を除きます。
 - **examples の library 参照**：`release` branch では examples の `dir:` 参照が版指定に変わります。default branch では `dir:` のままです。
-- **EspUsbHost の版**：examples と tests が指定する EspUsbHost の版（例：2.10.1）が公開済みであること。
+- **EspUsbHost の版**：examples と tests が指定する EspUsbHost の版（例：2.10.2）が公開済みであること。
 
 ### 実行
 

@@ -98,7 +98,7 @@ CI (`.github/workflows/tests.yml`) runs it together with `pytest --combo all --c
 
 ### Profiles
 
-- Profiles live in `sketch.yaml`. The Device side refers to the library with `dir:`; the Host side uses the released EspUsbHost at a pinned version (`EspUsbHost (2.10.1)`).
+- Profiles live in `sketch.yaml`. The Device side refers to the library with `dir:`; the Host side uses the released EspUsbHost at a pinned version (`EspUsbHost (2.10.2)`).
 - A profile name is "SoC + role" (for example `p4x_hs_device`). Another board of the same SoC is told apart as in `s3b_`. MAC addresses and tty numbers are never part of a name.
 - Some probes carry compile-only profiles such as `p4_device` or `p4x_*_compile`. They are in no combo, so pytest never runs them.
 
