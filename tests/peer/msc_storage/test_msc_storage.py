@@ -22,6 +22,10 @@ def test_msc_storage(dut, peers, request):
             device.expect_exact("MEDIA_CHANGED\r\n", timeout=5)
             dut.write("error 1")
             dut.expect_exact("ERROR_SENSE 1 key=2 asc=58\r\n", timeout=15)
+            # A READ without media STALLs its data stage; the Host clears the
+            # halt, reads that command's CSW, and later commands stay in step.
+            dut.write("error 3")
+            dut.expect_exact("ERROR_SENSE 1 key=2 asc=58\r\n", timeout=15)
             device.write("present")
             device.expect_exact("MEDIA_CHANGED\r\n", timeout=5)
             dut.write("changed")
@@ -30,16 +34,21 @@ def test_msc_storage(dut, peers, request):
             dut.expect_exact("READY 1\r\n", timeout=5)
             device.write("stats")
             device.expect(r"STATS reads=\d+ writes=\d+ offsets=1 guards=1\r\n", timeout=5)
-            # Host 2.10.1 resets immediately on a data-stage stall; its public
-            # recovery leaves a toggle mismatch. Test rejection last here.
-            # The manual BOT probe verifies CSW/sense and recovery independently.
             if mode == 2:
                 dut.write("error 0")
+                dut.expect_exact("ERROR_SENSE 1 key=7 asc=39\r\n", timeout=15)
+                dut.write("read")
+                dut.expect_exact("READ 1\r\n", timeout=15)
             else:
                 device.write("fail")
                 device.expect_exact("IO_CHANGED\r\n", timeout=5)
                 dut.write("error 2")
-            dut.expect_exact("ERROR_REJECTED 1\r\n", timeout=15)
+                dut.expect_exact("ERROR_SENSE 1 key=3 asc=17\r\n", timeout=15)
+                device.write("recover")
+                device.expect_exact("IO_CHANGED\r\n", timeout=5)
+            # The exchange after each STALL still completes.
+            dut.write("roundtrip" if mode != 2 else "read")
+            dut.expect_exact("ROUNDTRIP 1\r\n" if mode != 2 else "READ 1\r\n", timeout=30)
             for board in (dut, device):
                 board.write("stop")
                 board.expect_exact("STOPPED\r\n", timeout=30)

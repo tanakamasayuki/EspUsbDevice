@@ -53,9 +53,6 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
 
 Device 側に回避の動作は加えません。Host 側で直し、Device の試験で確かめます。
 
-- [ ] **MSC の data STALL の後の CSW の回収**
-  - EspUsbHost が data STALL の後に CSW を読まずに終わり、後の command が一件ずれる。reset recovery もしない。
-  - 完了の条件：Host の現行版で再現し、HALT 解除 → CSW 回収 → 後の command が正しく進むことを、Device の MSC 抜去（02/3A/00）の試験で確かめる。
 - [ ] **NCM の `networkClose()` の後の Host 再開始**
   - `networkClose()` → Device の終了 → Host の終了の順にすると、次の Host の開始が失敗する。
   - 完了の条件：Host 側で原因を切り分けて直し、その順序を含む回帰試験を `tests/` に足して通す。

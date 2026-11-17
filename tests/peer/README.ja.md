@@ -54,7 +54,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `hid_protocol` | 旧形式の IN を DMA に残したまま protocol を切り替え、新しい report を読む（[README](hid_protocol/README.ja.md)） |
 | `hid_typed` | Gamepad、Consumer、System Control の送信と GET_REPORT（[README](hid_typed/README.ja.md)） |
 | `msc_bot` | BOT の 13 case、不正な CBW、reset の手順、SCSI sense |
-| `msc_storage` | MSC の staging 容量、書込みの有無、媒体の状態と error、回復。MSC と CDC の同時通信 |
+| `msc_storage` | MSC の staging 容量、書込みの有無、媒体の状態と error、回復。data stage の STALL（媒体のない READ、失敗する READ、断られる WRITE）の後も sense と後の command がずれない。MSC と CDC の同時通信 |
 | `msc_helpers` | RAM disk と FAT12 RAM disk の helper を実際の BOT で通す（[README](msc_helpers/README.ja.md)） |
 | `audio_stream` | Audio の PCM buffer と ISO 転送。13 の sample rate、`end()` 後の rate 変更 |
 | `audio_alternates` | PCM の形ごとの alternate を Host が選び、ISO の payload を確かめる。間を空けた ISO OUT |

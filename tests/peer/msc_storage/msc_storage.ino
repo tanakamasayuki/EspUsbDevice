@@ -68,14 +68,16 @@ void loop() {
     ok &= host.mscSynchronizeCache(address.load());
     Serial.printf("ROUNDTRIP %u\r\n", unsigned(ok));
   } else if (command.startsWith("error ")) {
+    // 0: WRITE refused (07/27), 1: TEST UNIT READY without media (02/3A),
+    // 2: READ failing (03/11), 3: READ without media (02/3A). 0, 2 and 3 end
+    // the data stage with a STALL; the Host clears it and reads the CSW.
     unsigned mode = command.substring(6).toInt(); bool ok = false;
     if (mode == 0) ok = !host.mscWriteBlocks(3, expected, 1, address.load());
     if (mode == 1) ok = !host.mscTestUnitReady(address.load());
-    if (mode == 2) ok = !host.mscReadBlocks(3, buffer, 1, address.load());
-    if (mode != 1) { Serial.printf("ERROR_REJECTED %u\r\n", unsigned(ok)); return; }
+    if (mode == 2 || mode == 3) ok = !host.mscReadBlocks(3, buffer, 1, address.load());
     EspUsbHostMscSense sense;
-    const uint8_t key = mode == 0 ? 7 : mode == 1 ? 2 : 3;
-    const uint8_t asc = mode == 0 ? 0x27 : mode == 1 ? 0x3a : 0x11;
+    const uint8_t key = mode == 0 ? 7 : mode == 2 ? 3 : 2;
+    const uint8_t asc = mode == 0 ? 0x27 : mode == 2 ? 0x11 : 0x3a;
     ok &= host.mscLastSense(sense, address.load()) && sense.senseKey == key && sense.additionalSenseCode == asc;
     Serial.printf("ERROR_SENSE %u key=%u asc=%u\r\n", unsigned(ok), unsigned(sense.senseKey), unsigned(sense.additionalSenseCode));
   } else if (command == "read") {

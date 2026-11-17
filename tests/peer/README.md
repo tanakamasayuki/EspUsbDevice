@@ -54,7 +54,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `hid_protocol` | Switching protocol while an old-format IN is still in DMA; the Host reads the new report ([README](hid_protocol/README.md)) |
 | `hid_typed` | Gamepad, Consumer and System Control sends and GET_REPORT ([README](hid_typed/README.md)) |
 | `msc_bot` | The 13 BOT cases, invalid CBWs, the reset sequence, SCSI sense |
-| `msc_storage` | MSC staging capacity, write protection, media state and errors, recovery; MSC and CDC traffic together |
+| `msc_storage` | MSC staging capacity, write protection, media state and errors, recovery; after a data-stage STALL (READ without media, failing READ, refused WRITE) the sense and later commands stay in step; MSC and CDC traffic together |
 | `msc_helpers` | The RAM disk and FAT12 RAM disk helpers through real BOT ([README](msc_helpers/README.md)) |
 | `audio_stream` | Audio PCM buffers and isochronous transfers; 13 sample rates; changing the rate after `end()` |
 | `audio_alternates` | The Host selects the alternate for each PCM shape and checks the isochronous payload; ISO OUT with gaps |
