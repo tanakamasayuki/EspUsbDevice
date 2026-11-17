@@ -64,7 +64,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `audio_overflow` | The Playback overflow policy (`DropOldest` / `DropNewest`) matched frame by frame against a model. `test_iso_out_rate` measures the count of continuous ISO OUT received (no pass/fail) |
 | `video_control` | UVC controls, frame ownership, MJPEG / YUY2 wire data; bulk HALT |
 | `video_lifecycle` | Video format checks; DMA stops before a borrowed frame is returned |
-| `ncm_stream` | NCM resources, packing into NTBs, interoperation with the Host |
+| `ncm_stream` | NCM resources, packing into NTBs, interoperation with the Host; the Host stops and starts again after `networkClose()`, with the Device ended first or staying |
 | `ncm_ntb` | Raw NTB checks, independent NCM interfaces, alternate-setting recovery, per-direction HALT |
 | `ccid_stream` | CCID capacity, two readers, no notification when the card is fixed; the default `messageBytes` |
 | `dfu_transport` | An independent DFU interface, resources at start, the synchronous RAM backend |

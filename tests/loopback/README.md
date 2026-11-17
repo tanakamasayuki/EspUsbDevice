@@ -59,4 +59,3 @@ Each test starts and stops the Device several times on both controllers and conf
 - Vendor IN on the Host side is received through the released EspUsbHost's cache-prepared read queue and the `onVendorData` callback.
   The synchronous `vendorReadSync()` is read by the `start ... sync` command of `basic`, and `test_p4_sync_read` checks its round trip.
 - Raw SDK Host transfers for DFU prepare the cache on the caller's side.
-- For NCM, `networkClose()` → Device end → Host end makes the next Host start fail (an open Host-side issue). The test uses the normal order: Device disconnect, then Host end.

@@ -49,14 +49,6 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
   - いまは DFU を RAM backend でしか確かめていません。
   - 完了の条件：DFU、MSC の firmware disk（`EspUsbDeviceMscFirmwareDisk`）、CDC / Vendor / HTTP の各経路で、実際の OTA partition へ書き込み、検証し、再起動後に新しい firmware が動く。途中の中断と検証失敗で、元の firmware が残ることも確かめる。
 
-## Host ライブラリ（EspUsbHost）側の未解決事項
-
-Device 側に回避の動作は加えません。Host 側で直し、Device の試験で確かめます。
-
-- [ ] **NCM の `networkClose()` の後の Host 再開始**
-  - `networkClose()` → Device の終了 → Host の終了の順にすると、次の Host の開始が失敗する。
-  - 完了の条件：Host 側で原因を切り分けて直し、その順序を含む回帰試験を `tests/` に足して通す。
-
 ## 実装の確認事項
 
 - [ ] **Audio の format の上限が HS でも FS の値**

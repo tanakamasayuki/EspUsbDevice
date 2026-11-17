@@ -68,5 +68,7 @@ void loop() {
     }
     client.stop(); ok &= received==total && host.networkDetachNetif(address.load());
     Serial.printf("TCP %u bytes=%u ip=%u.%u.%u.%u\r\n",unsigned(ok),unsigned(received),ip[0],ip[1],ip[2],ip[3]);
+  } else if (command == "close") {
+    host.networkClose(address.load()); Serial.println("CLOSED");
   } else if (command == "stop") { host.end(); Serial.println(!host.ready() ? "STOPPED" : "STOP_FAILED"); }
 }

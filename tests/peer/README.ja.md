@@ -64,7 +64,7 @@ uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 | `audio_overflow` | Playback のあふれの方針（`DropOldest` / `DropNewest`）を frame ごとに model と照合する。`test_iso_out_rate` は連続した ISO OUT の受信数を測る（合否はつけない） |
 | `video_control` | UVC の control、frame の所有権、MJPEG / YUY2 の wire data。bulk の HALT |
 | `video_lifecycle` | Video の format の検査と、借用 frame を返す前に DMA を止めること |
-| `ncm_stream` | NCM の資源、NTB へのまとめ、Host との相互運用 |
+| `ncm_stream` | NCM の資源、NTB へのまとめ、Host との相互運用。`networkClose()` の後に、Device を先に終えても残しても、Host を止めて開始し直せる |
 | `ncm_ntb` | 生の NTB の検査、独立した NCM interface、alternate の回復、方向ごとの HALT |
 | `ccid_stream` | CCID の容量、二つの reader、カード固定時の通知の省略。既定 `messageBytes` の値 |
 | `dfu_transport` | 独立した DFU interface、開始時の資源、同期の RAM backend |

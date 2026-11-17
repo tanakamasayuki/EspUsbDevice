@@ -49,3 +49,39 @@ def test_ncm_stream(dut, peers):
             except Exception as exc:
                 errors.append(f"{name}: {exc}")
         assert not errors, "USB stop failed: " + "; ".join(errors)
+
+
+def test_ncm_close_restart(dut, peers):
+    """networkClose() releases the interfaces, so the Host stops and starts
+    again: with the Device ended before the Host, and with it staying."""
+    device = peers["device"]
+
+    def command(board, text, reply, timeout=30):
+        board.write(text)
+        board.expect_exact(reply + "\r\n", timeout=timeout)
+
+    try:
+        for device_leaves in (True, False, True, False):
+            command(device, "start 2048 1 0", "STARTED 1")
+            command(dut, "start", "HOST_READY 1")
+            command(dut, "exchange 129", "EXCHANGE 129 1", 10)
+            command(dut, "close", "CLOSED")
+            if device_leaves:
+                command(device, "stop", "STOPPED")
+            command(dut, "stop", "STOPPED")
+            if not device_leaves:
+                command(device, "stop", "STOPPED")
+        # The Host still opens the network after the sequences above.
+        command(device, "start 2048 1 0", "STARTED 1")
+        command(dut, "start", "HOST_READY 1")
+        command(dut, "exchange 1514", "EXCHANGE 1514 1", 10)
+        for board in (dut, device):
+            command(board, "stop", "STOPPED")
+    finally:
+        errors = []
+        for name, board in (("host", dut), ("device", device)):
+            try:
+                command(board, "stop", "STOPPED")
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+        assert not errors, "USB stop failed: " + "; ".join(errors)

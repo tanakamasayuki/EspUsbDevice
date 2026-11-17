@@ -59,4 +59,3 @@ uv run --locked --env-file .env pytest loopback/audio --combo p4 -q -rs    # 一
 - Host 側の Vendor IN は、公開 EspUsbHost の cache 準備済みの read queue と `onVendorData` callback で受けます。
   同期の `vendorReadSync()` は、`basic` の `start ... sync` 命令で読み、`test_p4_sync_read` で往復を確かめます。
 - DFU の raw SDK Host 転送では、呼出し側で cache の準備をします。
-- NCM は、`networkClose()` → Device の終了 → Host の終了の順にすると次の Host 開始が失敗します（Host 側の未解決事項）。試験は通常の Device 切断 → Host 終了の順にしています。
