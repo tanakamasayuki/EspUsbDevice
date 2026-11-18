@@ -60,6 +60,8 @@ python3 tools/build_check.py esp32p4x
 python3 tools/build_check.py --list   # どの example がどの profile を持つか
 ```
 
+Core（Arduino-ESP32）の新しい版で example が build できるかは、repository を変えずに CI で確かめられます。GitHub の Actions で Build Check を手動で実行し（Run workflow）、`core_version` に版（例：`3.3.13`）を入れます。runner の中で全 example の sketch.yaml の Core の版を書き換えてから build し、Summary に使った版を書きます。空のままなら、sketch.yaml が指定する版で build します。
+
 - 4 つの profile すべてで `failed=0` を確かめます。
 - その profile を宣言していない example は skip され、失敗にはなりません。宣言の漏れがないかを `--list` で確かめます。
 - `KILLED by signal` は環境の問題です。build の失敗と区別し、やり直します。
