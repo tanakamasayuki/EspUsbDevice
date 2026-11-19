@@ -1,4 +1,11 @@
 name: Build Check
+# A manual run's title says which Arduino-ESP32 core it built with, so the list
+# of runs tells them apart; a push or a pull request keeps its usual title.
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && format('Build Check - Arduino-ESP32 {0}', inputs.core_version || 'pinned')
+      || github.event_name == 'pull_request' && github.event.pull_request.title
+      || github.event.head_commit.message }}
 
 # Compile current examples for their declared profiles, without boards.
 # This checks API/build compatibility; physical USB coverage lives in tests/.
@@ -33,6 +40,7 @@ concurrency:
 
 jobs:
   build:
+    name: ${{ matrix.profile }} (${{ inputs.core_version || 'pinned core' }})
     runs-on: ubuntu-latest
     strategy:
       # A build matrix is a coverage report: one red cell must not cancel the
