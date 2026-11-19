@@ -39,7 +39,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 | To | Command |
 | --- | --- |
-| Run one combo | `pytest --combo s3 -q -rs` |
+| Run one combo | `pytest --combo s3_s3 -q -rs` |
 | Run one probe | `pytest peer/vendor_link --combo p4_p4x_hs -q -rs` |
 | Stop at the first failure | `pytest --combo all --maxfail=1 -q -rs` |
 | Build only | `pytest --combo all --run-mode=build -q` |
@@ -81,11 +81,11 @@ CI (`.github/workflows/tests.yml`) runs it together with `pytest --combo all --c
 
 | Combo | Primary (Host side) | Peer device | Link |
 | --- | --- | --- | --- |
-| `s3` | `s3_host` | `s3_device` | FS |
+| `s3_s3` | `s3_host` | `s3_device` | FS |
 | `s3_s2` | `s3b_host` (S3) | `s2_device` (S2) | FS |
 | `s2_s3` | `s2_host` (S2) | `s3b_device` (S3) | FS |
-| `p4` | `p4_loopback` | none | FS (one P4's HS and FS ports) |
-| `p4_psram` | `p4_psram` | none | FS (the `p4` board with PSRAM-enabled firmware) |
+| `p4_p4` | `p4_loopback` | none | FS (one P4's HS and FS ports) |
+| `p4_p4_psram` | `p4_psram` | none | FS (the `p4_p4` board with PSRAM-enabled firmware) |
 | `p4_p4x_hs` | `p4_hs_host` (P4 v1.x) | `p4x_hs_device` (P4X) | HS |
 | `p4x_p4_hs` | `p4x_hs_host` (P4X) | `p4_hs_device` (P4 v1.x) | HS |
 | `p4x_pc` | `p4x_hs_pc` (P4X) | none (the Linux PC is Host) | HS |
@@ -125,9 +125,9 @@ Each board has a serial port for flashing and logs, separate from the USB link u
 
 | Position | Chip | PSRAM | Control / log | Wiring | Combo |
 | --- | --- | --- | --- | --- | --- |
-| Two S3 | ESP32-S3 | — | Each board's flashing port | Native OTG ports linked directly at FS | `s3` |
+| Two S3 | ESP32-S3 | — | Each board's flashing port | Native OTG ports linked directly at FS | `s3_s3` |
 | S2–S3 | ESP32-S2 and ESP32-S3 | — | Each board's CH340 UART | Native USB ports linked directly at FS | `s3_s2`, `s2_s3` |
-| 2-1 | ESP32-P4 v1.3 | 32 MiB | CH343 UART | The board's HS and FS ports wired together (loopback) | `p4`, `p4_psram` |
+| 2-1 | ESP32-P4 v1.3 | 32 MiB | CH343 UART | The board's HS and FS ports wired together (loopback) | `p4_p4`, `p4_p4_psram` |
 | 2-3 | ESP32-P4 v1.3 | 32 MiB | CH340 UART | HS port linked directly to 2-4 | `p4_p4x_hs`, `p4x_p4_hs` |
 | 2-4 | ESP32-P4 v3.2 (P4X) | 32 MiB | USB Serial/JTAG | HS link with 2-3 | `p4_p4x_hs`, `p4x_p4_hs` |
 | 3-3 / 3-4 | ESP32-P4 v3.2 (P4X) | 32 MiB | USB Serial/JTAG on 3-3 | HS port on 3-4 linked directly to the Linux PC | `p4x_pc` |
@@ -135,7 +135,7 @@ Each board has a serial port for flashing and logs, separate from the USB link u
 Position `N-M` is port M of hub N. The bench ledger (`oep-bench/hosts/native-linux/` README and `inventory.json`) is the authoritative record.
 
 - Flashing and log ports are separate from the USB data link under test; test data never travels over the log path.
-- Combos that share a board (`p4` and `p4_psram`, the two HS directions) never run at the same time.
+- Combos that share a board (`p4_p4` and `p4_p4_psram`, the two HS directions) never run at the same time.
 - Power from 2-3's HS port reaches 2-4. Switch both ports off together.
 - The plugin takes the device locks. The bench is shared with other projects, so boards are never used from outside the plugin.
 - When adding a new pair, run `peer/pad_link` before building every probe to confirm that the two native ports are electrically joined. Seeing the flashing ports does not mean the USB link under test is connected.

@@ -13,12 +13,22 @@ dependencies = [
 testpaths = ["peer", "loopback", "single", "pc"]
 addopts = "--noconftest"
 arduino_combos = [
-    "s3: primary=s3_host,device=s3_device",
-    "p4: primary=p4_loopback",
-    "p4_psram: primary=p4_psram",
+    # <primary>_<device>[_variant]. primary is the board pytest drives as `dut`;
+    # device is the board on the other end of the USB link (`peers["device"]`).
+    # S3 Host -> S3 Device, native OTG linked at FS.
+    "s3_s3: primary=s3_host,device=s3_device",
+    # One P4 v1.x: Host on one controller, Device on the other (FS loopback).
+    "p4_p4: primary=p4_loopback",
+    # The same P4 loopback with PSRAM-enabled firmware.
+    "p4_p4_psram: primary=p4_psram",
+    # P4 v1.x Host -> P4X Device, HS direct link.
     "p4_p4x_hs: primary=p4_hs_host,device=p4x_hs_device",
+    # P4X Host -> P4 v1.x Device, HS direct link.
     "p4x_p4_hs: primary=p4x_hs_host,device=p4_hs_device",
+    # P4X Device -> the Linux PC as Host, HS.
     "p4x_pc: primary=p4x_hs_pc",
+    # S3 Host -> S2 Device, FS.
     "s3_s2: primary=s3b_host,device=s2_device",
+    # S2 Host -> S3 Device, FS.
     "s2_s3: primary=s2_host,device=s3b_device",
 ]

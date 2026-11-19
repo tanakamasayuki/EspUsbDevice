@@ -20,12 +20,12 @@ The Host side uses the released EspUsbHost.
 Set `TEST_SERIAL_PORT_P4_LOOPBACK` and `TEST_SERIAL_PORT_P4_PSRAM` in `.env`; both name the same board's port.
 
 ```sh
-uv run --locked --env-file .env pytest loopback --combo p4 -q -rs          # every probe without PSRAM
-uv run --locked --env-file .env pytest loopback/psram --combo p4_psram -q -rs
-uv run --locked --env-file .env pytest loopback/audio --combo p4 -q -rs    # one probe
+uv run --locked --env-file .env pytest loopback --combo p4_p4 -q -rs          # every probe without PSRAM
+uv run --locked --env-file .env pytest loopback/psram --combo p4_p4_psram -q -rs
+uv run --locked --env-file .env pytest loopback/audio --combo p4_p4 -q -rs    # one probe
 ```
 
-- `p4` and `p4_psram` use the same board, so run them one after the other.
+- `p4_p4` and `p4_p4_psram` use the same board, so run them one after the other.
 - The `p4_psram` profile adds `PSRAM=enabled` to the FQBN.
 - Some probes carry P4X compile-only profiles (`p4x_compile`, `p4x_audio_compile`, `p4x_psram_compile`). They are in no combo, so pytest never runs them.
 

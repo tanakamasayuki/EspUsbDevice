@@ -9,9 +9,9 @@
 
 | 範囲 | combo | 確認したこと |
 | --- | --- | --- |
-| S3 ↔ S3（FS） | `s3` | `peer/` の全 probe。10 class、lifecycle、確保失敗からの回復、取消し・reset・end の競合、標準要求、suspend / resume、remote wakeup |
+| S3 ↔ S3（FS） | `s3_s3` | `peer/` の全 probe。10 class、lifecycle、確保失敗からの回復、取消し・reset・end の競合、標準要求、suspend / resume、remote wakeup |
 | S2 ↔ S3（FS、両方向） | `s3_s2`、`s2_s3` | `peer/` の全 probe。S2 が Device のときと Host のときの両方 |
-| 旧 P4 loopback（FS、両 controller） | `p4`、`p4_psram` | 10 class の基本通信、65537 byte までの借用 DMA、再開始。PSRAM 上の MSC 保存先と Vendor ring |
+| 旧 P4 loopback（FS、両 controller） | `p4_p4`、`p4_p4_psram` | 10 class の基本通信、65537 byte までの借用 DMA、再開始。PSRAM 上の MSC 保存先と Vendor ring |
 | 旧 P4 ↔ P4X の HS 直結（両方向） | `p4_p4x_hs`、`p4x_p4_hs` | `peer/` の全 probe と HS 専用 probe。HS の列挙、MPS 512、借用転送、Audio / Video の ISO、PSRAM 上の保存先 |
 | Linux PC → P4X（HS） | `p4x_pc` | MSC の媒体交換（06/28/00、02/3A/00、residue）、FAT RAM disk の `fsck.fat`、DFU DETACH |
 | Linux PC → S2（FS） | `primary=s2_pc` | MSC の媒体交換、DFU DETACH。常設の組ではない |

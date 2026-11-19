@@ -3,7 +3,7 @@
 > English: [README.md](README.md)
 
 Gamepad、Consumer Control、System Control の送信 API が、descriptor どおりの意味の report を出すことを確かめます。
-S3 / S2 の FS（combo `s3`、`s3_s2`、`s2_s3`）と、P4 / P4X の HS 直結（`p4_p4x_hs`、`p4x_p4_hs`）で動きます。
+S3 / S2 の FS（combo `s3_s3`、`s3_s2`、`s2_s3`）と、P4 / P4X の HS 直結（`p4_p4x_hs`、`p4x_p4_hs`）で動きます。
 
 ## 目的
 

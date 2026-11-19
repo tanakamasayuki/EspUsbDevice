@@ -3,7 +3,7 @@
 > 日本語: [README.ja.md](README.ja.md)
 
 Checks that the Gamepad, Consumer Control and System Control send APIs produce reports whose meaning matches the descriptor.
-Runs at FS on S3 / S2 (combos `s3`, `s3_s2`, `s2_s3`) and on the P4 / P4X HS link (`p4_p4x_hs`, `p4x_p4_hs`).
+Runs at FS on S3 / S2 (combos `s3_s3`, `s3_s2`, `s2_s3`) and on the P4 / P4X HS link (`p4_p4x_hs`, `p4x_p4_hs`).
 
 ## Purpose
 

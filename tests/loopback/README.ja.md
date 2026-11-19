@@ -20,12 +20,12 @@ Host 側は公開版の EspUsbHost を使います。
 `.env` に `TEST_SERIAL_PORT_P4_LOOPBACK` と `TEST_SERIAL_PORT_P4_PSRAM` を設定します。どちらも同じ board の port です。
 
 ```sh
-uv run --locked --env-file .env pytest loopback --combo p4 -q -rs          # PSRAM なしの全 probe
-uv run --locked --env-file .env pytest loopback/psram --combo p4_psram -q -rs
-uv run --locked --env-file .env pytest loopback/audio --combo p4 -q -rs    # 一つの probe
+uv run --locked --env-file .env pytest loopback --combo p4_p4 -q -rs          # PSRAM なしの全 probe
+uv run --locked --env-file .env pytest loopback/psram --combo p4_p4_psram -q -rs
+uv run --locked --env-file .env pytest loopback/audio --combo p4_p4 -q -rs    # 一つの probe
 ```
 
-- `p4` と `p4_psram` は同じ board を使うので、続けて一つずつ実行します。
+- `p4_p4` と `p4_p4_psram` は同じ board を使うので、続けて一つずつ実行します。
 - `p4_psram` の profile は FQBN に `PSRAM=enabled` を足しています。
 - 一部の probe は P4X 用の compile 確認 profile（`p4x_compile`、`p4x_audio_compile`、`p4x_psram_compile`）を持ちます。combo には入っていないので、pytest では実行されません。
 

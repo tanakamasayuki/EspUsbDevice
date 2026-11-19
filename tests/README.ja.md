@@ -39,7 +39,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs --junitxml=.pytest-res
 
 | したいこと | コマンド |
 | --- | --- |
-| 一つの combo だけ | `pytest --combo s3 -q -rs` |
+| 一つの combo だけ | `pytest --combo s3_s3 -q -rs` |
 | 一つの probe だけ | `pytest peer/vendor_link --combo p4_p4x_hs -q -rs` |
 | 最初の失敗で止める | `pytest --combo all --maxfail=1 -q -rs` |
 | build だけ | `pytest --combo all --run-mode=build -q` |
@@ -81,11 +81,11 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 
 | combo | primary（Host 側） | peer device | link |
 | --- | --- | --- | --- |
-| `s3` | `s3_host` | `s3_device` | FS |
+| `s3_s3` | `s3_host` | `s3_device` | FS |
 | `s3_s2` | `s3b_host`（S3） | `s2_device`（S2） | FS |
 | `s2_s3` | `s2_host`（S2） | `s3b_device`（S3） | FS |
-| `p4` | `p4_loopback` | なし | FS（同じ P4 の HS 口と FS 口） |
-| `p4_psram` | `p4_psram` | なし | FS（`p4` と同じ board、PSRAM 有効の firmware） |
+| `p4_p4` | `p4_loopback` | なし | FS（同じ P4 の HS 口と FS 口） |
+| `p4_p4_psram` | `p4_psram` | なし | FS（`p4_p4` と同じ board、PSRAM 有効の firmware） |
 | `p4_p4x_hs` | `p4_hs_host`（旧 P4） | `p4x_hs_device`（P4X） | HS |
 | `p4x_p4_hs` | `p4x_hs_host`（P4X） | `p4_hs_device`（旧 P4） | HS |
 | `p4x_pc` | `p4x_hs_pc`（P4X） | なし（Linux PC が Host） | HS |
@@ -125,9 +125,9 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 
 | 位置 | chip | PSRAM | 制御 / log | 結線 | combo |
 | --- | --- | --- | --- | --- | --- |
-| S3 二台 | ESP32-S3 | — | 各 board の書込み口 | native OTG どうしを FS で直結 | `s3` |
+| S3 二台 | ESP32-S3 | — | 各 board の書込み口 | native OTG どうしを FS で直結 | `s3_s3` |
 | S2–S3 | ESP32-S2 と ESP32-S3 | — | 各 board の CH340 UART | native USB どうしを FS で直結 | `s3_s2`、`s2_s3` |
-| 2-1 | ESP32-P4 v1.3（旧 P4） | 32 MiB | CH343 UART | 同じ board の HS 口と FS 口を結線（loopback） | `p4`、`p4_psram` |
+| 2-1 | ESP32-P4 v1.3（旧 P4） | 32 MiB | CH343 UART | 同じ board の HS 口と FS 口を結線（loopback） | `p4_p4`、`p4_p4_psram` |
 | 2-3 | ESP32-P4 v1.3（旧 P4） | 32 MiB | CH340 UART | 2-4 と HS 口どうしを直結 | `p4_p4x_hs`、`p4x_p4_hs` |
 | 2-4 | ESP32-P4 v3.2（P4X） | 32 MiB | USB Serial/JTAG | 2-3 と HS 直結 | `p4_p4x_hs`、`p4x_p4_hs` |
 | 3-3 / 3-4 | ESP32-P4 v3.2（P4X） | 32 MiB | 3-3 の USB Serial/JTAG | 3-4 の HS 口を Linux PC へ直結 | `p4x_pc` |
@@ -135,7 +135,7 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 位置 `N-M` はハブ N の port M です。設備の正本は bench の台帳（`oep-bench/hosts/native-linux/` の README と `inventory.json`）です。
 
 - 書込み・log の port は、試験用の USB data 結線とは別です。試験 data を log の経路に流しません。
-- 同じ board を使う組（`p4` と `p4_psram`、HS 直結の二方向）は同時に動かしません。
+- 同じ board を使う組（`p4_p4` と `p4_p4_psram`、HS 直結の二方向）は同時に動かしません。
 - 2-3 の HS 口から 2-4 へ電源が回り込みます。片方の電源を切るときは、両方の port をまとめて切ります。
 - 機器の lock は plugin が取ります。bench は他のプロジェクトと共有しているので、plugin の外から board を使いません。
 - 新しい組を足すときは、全 probe を build する前に `peer/pad_link` で二台の native 口の導通を確かめます。書込み口が見えていても、試験用の USB 結線がつながっているとは限りません。

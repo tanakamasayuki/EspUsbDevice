@@ -84,7 +84,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs \
 確かめること：
 
 - 収集エラーが 0。
-- 6 つの combo（`s3`、`p4`、`p4_psram`、`p4_p4x_hs`、`p4x_p4_hs`、`p4x_pc`）がすべて実行された。
+- 8 つの combo（`s3_s3`、`p4_p4`、`p4_p4_psram`、`p4_p4x_hs`、`p4x_p4_hs`、`p4x_pc`、`s3_s2`、`s2_s3`）がすべて実行された。
 - JUnit で failed / error が 0。skipped があれば、理由が port 未設定などの環境で、試験の不備でないこと。
 - 各 serial log が正常に停止し、panic がない。
 - 実行しなかった combo、skip した test は、リリースノートか README の未確認範囲に書く。合格扱いにしない。
@@ -92,7 +92,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs \
 一度に流せない場合は combo ごとに実行してよいですが、すべて同じ commit で行います。
 
 ```sh
-uv run --locked --env-file .env pytest --combo s3 -q -rs
+uv run --locked --env-file .env pytest --combo s3_s3 -q -rs
 ```
 
 ### 実機で確かめられない範囲

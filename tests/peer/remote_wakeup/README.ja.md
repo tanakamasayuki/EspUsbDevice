@@ -3,7 +3,7 @@
 > English: [README.md](README.md)
 
 Device の remote wakeup の要求を、Host が実際の wake として観測できることと、許可・解除・reset の境界を確かめます。
-S3 / S2 の FS（combo `s3`、`s3_s2`、`s2_s3`）と、P4 / P4X の HS 直結（`p4_p4x_hs`、`p4x_p4_hs`）で動きます。
+S3 / S2 の FS（combo `s3_s3`、`s3_s2`、`s2_s3`）と、P4 / P4X の HS 直結（`p4_p4x_hs`、`p4x_p4_hs`）で動きます。
 
 ## 目的
 

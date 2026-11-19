@@ -9,15 +9,15 @@ Each probe holds the Host sketch, its `test_*.py` and the Device sketch in `peer
 
 | Probe | Combo | Link |
 | --- | --- | --- |
-| Shared probes (the "Shared" table below) | `s3`, `s3_s2`, `s2_s3`, `p4_p4x_hs`, `p4x_p4_hs` | FS (S3 / S2) and HS (P4 / P4X) |
+| Shared probes (the "Shared" table below) | `s3_s3`, `s3_s2`, `s2_s3`, `p4_p4x_hs`, `p4x_p4_hs` | FS (S3 / S2) and HS (P4 / P4X) |
 | HS-only probes (the "HS only" table below) | `p4_p4x_hs`, `p4x_p4_hs` | HS |
-| `pad_link` | `s3`, `s3_s2`, `s2_s3` | FS pairs only |
+| `pad_link` | `s3_s3`, `s3_s2`, `s2_s3` | FS pairs only |
 
 - On the P4, `EspUsbController::Auto` and the Host's default port select the HS controller, so the shared probes use the same sketches.
 - Values that depend on the link's MPS come from `PROBE_BULK_MPS` in `../../sketch_support/probe_link.h` in a sketch and from `"_hs_" in request.node.name` in a test.
 
 ```sh
-uv run --locked --env-file .env pytest peer --combo s3 -q -rs
+uv run --locked --env-file .env pytest peer --combo s3_s3 -q -rs
 uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 ```
 

@@ -9,9 +9,9 @@ How to run them is in [README.md](README.md); remaining work is in the [TODO](..
 
 | Scope | Combo | Verified |
 | --- | --- | --- |
-| S3 ↔ S3 (FS) | `s3` | Every `peer/` probe: ten classes, lifecycle, recovery from allocation failure, cancel / reset / end races, standard requests, suspend / resume, remote wakeup |
+| S3 ↔ S3 (FS) | `s3_s3` | Every `peer/` probe: ten classes, lifecycle, recovery from allocation failure, cancel / reset / end races, standard requests, suspend / resume, remote wakeup |
 | S2 ↔ S3 (FS, both directions) | `s3_s2`, `s2_s3` | Every `peer/` probe, with the S2 as Device and as Host |
-| P4 v1.x loopback (FS, both controllers) | `p4`, `p4_psram` | Basic traffic of the ten classes, borrowed DMA up to 65537 bytes, restart; MSC storage and Vendor rings in PSRAM |
+| P4 v1.x loopback (FS, both controllers) | `p4_p4`, `p4_p4_psram` | Basic traffic of the ten classes, borrowed DMA up to 65537 bytes, restart; MSC storage and Vendor rings in PSRAM |
 | P4 v1.x ↔ P4X HS link (both directions) | `p4_p4x_hs`, `p4x_p4_hs` | Every `peer/` probe plus the HS-only probes: HS enumeration, MPS 512, borrowed transfers, Audio / Video isochronous, storage in PSRAM |
 | Linux PC → P4X (HS) | `p4x_pc` | MSC media change (06/28/00, 02/3A/00, residue), a FAT RAM disk passing `fsck.fat`, DFU DETACH |
 | Linux PC → S2 (FS) | `primary=s2_pc` | MSC media change, DFU DETACH. Not a permanent pair |

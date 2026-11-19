@@ -9,15 +9,15 @@ Host（公開版の EspUsbHost）と Device（EspUsbDevice）を別の board で
 
 | probe | combo | link |
 | --- | --- | --- |
-| 共通の probe（下の「共通」の表） | `s3`、`s3_s2`、`s2_s3`、`p4_p4x_hs`、`p4x_p4_hs` | FS（S3 / S2）と HS（P4 / P4X） |
+| 共通の probe（下の「共通」の表） | `s3_s3`、`s3_s2`、`s2_s3`、`p4_p4x_hs`、`p4x_p4_hs` | FS（S3 / S2）と HS（P4 / P4X） |
 | HS 専用の probe（下の「HS 専用」の表） | `p4_p4x_hs`、`p4x_p4_hs` | HS |
-| `pad_link` | `s3`、`s3_s2`、`s2_s3` | FS の組だけ |
+| `pad_link` | `s3_s3`、`s3_s2`、`s2_s3` | FS の組だけ |
 
 - P4 では `EspUsbController::Auto` と Host の既定 port が HS controller を選ぶので、共通の probe の sketch は同じです。
 - link の MPS に依存する値は、sketch では `../../sketch_support/probe_link.h` の `PROBE_BULK_MPS`、test では `"_hs_" in request.node.name` から決めます。
 
 ```sh
-uv run --locked --env-file .env pytest peer --combo s3 -q -rs
+uv run --locked --env-file .env pytest peer --combo s3_s3 -q -rs
 uv run --locked --env-file .env pytest peer/vendor_link --combo p4_p4x_hs -q -rs
 ```
 
