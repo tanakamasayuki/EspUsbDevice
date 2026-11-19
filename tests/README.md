@@ -69,7 +69,7 @@ CI (`.github/workflows/tests.yml`) runs it together with `pytest --combo all --c
 
 ## Principles
 
-- No conftest and no pytest plugin of our own. `--noconftest` keeps any conftest from loading; only the combos, `dut` and `peers` of the standard plugin [pytest-embedded-arduino-cli](https://github.com/tanakamasayuki/pytest-embedded-arduino-cli) (1.10.0 or later) are used.
+- No conftest and no pytest plugin of our own. `--noconftest` keeps any conftest from loading; only the combos, `dut` and `peers` of the standard plugin [pytest-embedded-arduino-cli](https://github.com/tanakamasayuki/pytest-embedded-arduino-cli) (1.12.0 or later) are used.
 - Each test states its start, traffic and stop in its own body.
 - Wiring is expressed as plugin combos, not as a product of profiles or a custom skip hook.
 - Communication failures are not hidden by retries or skips.

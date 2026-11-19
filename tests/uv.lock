@@ -29,7 +29,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pytest", specifier = ">=8" },
-    { name = "pytest-embedded-arduino-cli", specifier = ">=1.10.0" },
+    { name = "pytest-embedded-arduino-cli", specifier = ">=1.12.0" },
     { name = "pytest-embedded-serial", specifier = ">=2.0" },
     { name = "pyusb", specifier = ">=1.2" },
 ]

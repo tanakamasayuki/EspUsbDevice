@@ -69,7 +69,7 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 
 ## 方針
 
-- conftest も独自の pytest plugin も置きません。`--noconftest` で conftest を読まず、標準 plugin [pytest-embedded-arduino-cli](https://github.com/tanakamasayuki/pytest-embedded-arduino-cli)（1.10.0 以降）の combo、`dut`、`peers` だけを使います。
+- conftest も独自の pytest plugin も置きません。`--noconftest` で conftest を読まず、標準 plugin [pytest-embedded-arduino-cli](https://github.com/tanakamasayuki/pytest-embedded-arduino-cli)（1.12.0 以降）の combo、`dut`、`peers` だけを使います。
 - test 本文の中で、開始・通信・停止を明示的に書きます。
 - 結線は plugin の combo で表します。profile の直積や、独自の skip hook で表しません。
 - 通信の失敗を retry や skip で隠しません。
