@@ -14,7 +14,7 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
 - [ ] **ESP32-S31 への対応（新しい組 P4X–S31）**
   - いまは未対応です。build には Arduino-ESP32 4.0.0-RC1 以降が要ります。
   - S31 の USB（データシート v0.5 §4.2.2.6）：OTG は HS の 1 本だけ（HS／FS で Host と Device。endpoint 1〜15、IN は EP0 を含め 8 本、FIFO 4 KB）。FS の OTG はなく、USB-Serial/JTAG（FS、GPIO33/34）が別にある。
-  - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と、新しい P4X の HS の口を、普通の A–C ケーブルで直結する。Type-A の VBUS は TPS2051C の EN が 5 V 固定で常時出るので、P4X の HS の口が VBUS を出さないこと（2-4 と同じ WT9932P4X-TINY なら出さない見込み）を到着時に確かめる。S31 の VBUS が P4X へ回り込むので、電源は両方の port をまとめて切る。制御は両方とも USB-Serial/JTAG。
+  - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と、新しい P4X の HS の口を、普通の A–C ケーブルで直結する。Type-A の VBUS は TPS2051C の EN が 5 V 固定で常時出るので、P4X の HS の口が VBUS を出さないこと（2-4 と同じ WT9932P4X-TINY なら出さない見込み）を最初の実機試験の前に確かめる。S31 の VBUS が P4X へ回り込むので、電源は両方の port をまとめて切る。制御と log は、S31 が UART（CP2102N、ベンチ 7-1）、P4X が内蔵の USB-Serial/JTAG（ベンチ 7-2）。
   - 完了の条件：
     - 使う Core の版を固定し、S31 の target / FQBN / SDK / toolchain で library が compile できる。
     - S31 の HS port の能力を `src/internal/EspUsbDwc2Platform.cpp` の port 表に、資料と register の値で確かめて登録する。PHY と cache の処理も確かめる。`tests/sketch_support/probe_link.h` の HS の判定に S31 を加える。
