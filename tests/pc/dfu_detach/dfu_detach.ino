@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "hal/usb_serial_jtag_ll.h"
 #include <EspUsbDevice.h>
 #include <atomic>
 #include "../../../src/internal/EspUsbDeviceRestart.h"
@@ -18,6 +19,15 @@ void setup() {
   if (bootMagic != 0x5a17c0de) { bootMagic = 0x5a17c0de; bootCount = 0; }
   ++bootCount;
   Serial.begin(115200); Serial.setTimeout(100);
+  // Arduino-ESP32 3.3.13's HWCDC::begin() clears pending Serial/JTAG
+  // interrupts. A "boot" the PC wrote while this chip restarted is then left
+  // in the RX FIFO with its OUT_RECV_PKT already cleared, the FIFO never
+  // drains, and every later write from the PC blocks. Drop that stale packet
+  // so the next one raises the interrupt again.
+  if (usb_serial_jtag_ll_rxfifo_data_available()) {
+    uint8_t stale[64];
+    usb_serial_jtag_ll_read_rxfifo(stale, sizeof stale);
+  }
 }
 void loop() {
   const unsigned n = detaches.load();
