@@ -124,7 +124,7 @@ CCIDの転送の成功と、アプリケーションのstatus wordは別の問�
   リーダーを構成した時点で通知します）。
 - APDUと電源のcallbackはUSB workerの上で表示しなくなりました。記録した内容を`loop()`が表示します。
 
-Arduino-ESP32 3.3.12で`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
+`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
 実機試験はしていません。
 
 - [スケッチ](SmartCardReader.ino)

@@ -93,7 +93,7 @@ format・rateは`addFormat()`を重ねて増やせます（[AudioPlayback](../Au
   捨てたい場合は`config.playbackOverflowPolicy = EspUsbAudioOverflowPolicy::DropNewest`を指定します。
 - `SampleRateChanged` eventと`overrunBytes`も表示します。
 
-Arduino-ESP32 3.3.12で`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
+`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
 実機試験はしていません。
 
 - [スケッチ](AudioSpeaker.ino)

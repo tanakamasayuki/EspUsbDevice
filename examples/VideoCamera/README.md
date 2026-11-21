@@ -150,7 +150,7 @@ is not a retry or recovery policy.
 - The speed table uses v3's per-packet figures (one ISO packet per
   (micro)frame) and states the full-speed frame rate this example reaches.
 
-Compile-checked with Arduino-ESP32 3.3.12 for every profile in
+Compile-checked for every profile in
 `sketch.yaml`; this sketch itself has not been run on hardware.
 
 - [Sketch](VideoCamera.ino)

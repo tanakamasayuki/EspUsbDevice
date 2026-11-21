@@ -427,7 +427,7 @@ Host側の開発では「VBUSを出せるか」が最初の関門でした。Dev
 | ESP32-S31 | — | — | 未対応 |
 | ESP32（無印）、C3、C6など | USB OTGがない | — | 動かない |
 
-基準のArduino-ESP32は**3.3.12**です。
+基準のArduino-ESP32は、例の`sketch.yaml`で固定している版です。
 
 ### 4.2 ESP32-P4のHSとFSの選び方
 

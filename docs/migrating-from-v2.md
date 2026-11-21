@@ -292,7 +292,7 @@ See [Troubleshooting](troubleshooting.md) for symptoms and causes.
 
 ### Build settings
 
-- Arduino-ESP32 3.3.12 is the reference core.
+- The reference core is the Arduino-ESP32 version pinned in the examples' `sketch.yaml`.
 - ESP32-S3: *USB Mode* = "USB-OTG (TinyUSB)" (`USBMode=default`).
 - Leave *USB CDC On Boot*, *USB MSC On Boot* and *USB DFU On Boot* disabled.
 - Remove `build_opt.h`. If the sketch folder had one only for this library,

@@ -257,7 +257,7 @@ void loop() {
 
 ### ビルドの設定
 
-- 基準のコアは Arduino-ESP32 3.3.12 です。
+- 基準のコアは、例の `sketch.yaml` で固定している Arduino-ESP32 の版です。
 - ESP32-S3 は *USB Mode* を "USB-OTG (TinyUSB)"（`USBMode=default`）にします。
 - *USB CDC On Boot*、*USB MSC On Boot*、*USB DFU On Boot* は無効のままにします。
 - `build_opt.h` を削除します。このライブラリのためだけに置いたファイルなら、ファイルごと消します。

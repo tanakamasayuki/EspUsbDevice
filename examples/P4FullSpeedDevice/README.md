@@ -95,7 +95,7 @@ printing is not a retry or recovery policy.
 - The pin-swap comment in the sketch is complete again (the v2 sketch had a
   truncated line there).
 
-Compile-checked with Arduino-ESP32 3.3.12 for both profiles, with the swap
+Compile-checked for both profiles, with the swap
 call commented out and, separately, enabled. Neither this sketch nor the pin
 swap under v3 has been run on hardware.
 

@@ -2,7 +2,7 @@
 
 > English: [README.md](README.md)
 
-どの例も、それだけで完結したスケッチです。それぞれに README と、Arduino-ESP32 3.3.12 を固定した
+どの例も、それだけで完結したスケッチです。それぞれに README と、試した Arduino-ESP32 の版を固定した
 `sketch.yaml` があります。作りたいものに近い例の README から読んでください。何を示す例か、
 何が必要か、Host 側でどう確かめるかが書いてあります。
 

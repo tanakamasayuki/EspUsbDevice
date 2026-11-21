@@ -90,7 +90,7 @@ The error printing is not a retry or recovery policy.
 - Echoed bytes, playback overruns and capture underruns are printed once a
   second.
 
-Compile-checked with Arduino-ESP32 3.3.12 for every profile in
+Compile-checked for every profile in
 `sketch.yaml`; this sketch itself has not been run on hardware.
 
 - [Sketch](AudioHeadset.ino)

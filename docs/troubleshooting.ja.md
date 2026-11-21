@@ -206,7 +206,7 @@ Windowsが機能ごとにdriverを付けるのは、usbccgp.sysが親になっ�
 
 ## 4. buildと書込み
 
-1. **Arduino-ESP32 3.3.12**を基準にしています。examplesの`sketch.yaml`はこの版に固定しています。
+1. **Arduino-ESP32の版。** examplesの`sketch.yaml`で固定している版を基準にしています。
 2. **USB Mode。** ESP32-S2/S3は*USB-OTG (TinyUSB)*（`USBMode=default`）でbuildします。
    ESP32-P4のHS controllerは専用のPHYを持ちます。P4Xでは、EspUsbDeviceをHS口で動かしたまま、
    *Hardware CDC and JTAG*（`USBMode=hwcdc`、`CDCOnBoot=cdc`）でlogをUSB Serial/JTAGへ出して使っています。

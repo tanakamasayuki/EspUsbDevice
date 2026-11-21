@@ -3,7 +3,7 @@
 保守者向けの文書です。EspUsbDevice v3 の内部構造と、その形にした理由を書きます。
 使い方は [利用ガイド](../usb-device-guide.ja.md) と各 class の文書（`docs/classes/*.ja.md`）を見てください。
 
-- 基準：Arduino-ESP32 3.3.12。
+- 基準：各 `sketch.yaml` で固定している Arduino-ESP32 の版。
 - 根拠は実装（`src/EspUsbDevice.h`、`src/*.cpp`、`src/internal/`）です。この文書と実装が食い違うときは実装が正です。
 - USB の挙動は USB 2.0 と各 class 仕様に合わせます。規格の該当箇所を本文に書きます。
 

@@ -65,8 +65,8 @@ connector is wired to which PHY is board-specific - check the schematic.
 ```text
 === EspUsbDevice bring-up check ===
 TARGET ESP32-S3
-CORE arduino-esp32 3.3.12
-LIBRARY EspUsbDevice 3.0.0
+CORE arduino-esp32 3.x.y
+LIBRARY EspUsbDevice 3.x.y
 CONTROLLER requested=Auto resolved=FullSpeed (Auto)
 BEGIN ok
 DESCRIPTOR config_bytes=34

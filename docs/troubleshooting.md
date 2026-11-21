@@ -235,8 +235,8 @@ single-interface device as composite.
 
 ## 4. Build and upload
 
-1. **Arduino-ESP32 3.3.12** is the reference core. The examples' `sketch.yaml`
-   files pin it.
+1. **Arduino-ESP32 version.** The reference core is the version the examples'
+   `sketch.yaml` files pin.
 2. **USB Mode.** On ESP32-S2/S3 build with *USB-OTG (TinyUSB)*
    (`USBMode=default`). On ESP32-P4 the HS controller has its own PHY, and
    *Hardware CDC and JTAG* (`USBMode=hwcdc`, `CDCOnBoot=cdc`) has been used on

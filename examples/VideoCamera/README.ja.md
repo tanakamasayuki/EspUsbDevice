@@ -131,7 +131,7 @@ USB workerで動くので、commitは`onCommit`で印だけ付け、`loop()`で�
 - 速度の表は、v3の数え方（(micro)frameごとにISO packet 1つ）に直し、この例がfull speedで出せる
   frame rateも書きました。
 
-Arduino-ESP32 3.3.12で`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
+`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
 実機試験はしていません。
 
 - [スケッチ](VideoCamera.ino)

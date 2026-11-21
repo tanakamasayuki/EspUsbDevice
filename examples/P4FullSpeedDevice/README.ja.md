@@ -85,7 +85,7 @@ pinや設定は一つずつ変えます。例のエラー表示は、再試行�
   です。
 - sketch内のpin切替えのコメントを直しました（v2のsketchではその行が途中で切れていました）。
 
-Arduino-ESP32 3.3.12で両profileのcompileを、切替えのcallをコメントアウトした状態と有効にした状態の
+両profileのcompileを、切替えのcallをコメントアウトした状態と有効にした状態の
 両方で確認しています。このスケッチも、v3でのpin切替えも、実機試験はしていません。
 
 - [スケッチ](P4FullSpeedDevice.ino)

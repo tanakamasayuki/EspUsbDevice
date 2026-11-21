@@ -120,7 +120,7 @@ USBのcallbackに入れないでください。network開始の戻り値を確�
 - `ipConfig()`、`dhcpServer()`などのsetterは`esp_err_t`を返し、スケッチで確認します。
 - ページに`net.stats()`のUSB frame数を加え、USB linkの状態も表示します。
 
-Arduino-ESP32 3.3.12で`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
+`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
 実機試験はしていません。
 
 - [スケッチ](UsbNetwork.ino)

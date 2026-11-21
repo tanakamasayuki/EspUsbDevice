@@ -106,7 +106,7 @@ retry or recovery policy.
   keep the unread PCM and drop the new arrivals instead.
 - `SampleRateChanged` events and `overrunBytes` are printed as well.
 
-Compile-checked with Arduino-ESP32 3.3.12 for every profile in
+Compile-checked for every profile in
 `sketch.yaml`; this sketch itself has not been run on hardware.
 
 - [Sketch](AudioSpeaker.ino)

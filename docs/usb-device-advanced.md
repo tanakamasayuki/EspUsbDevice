@@ -1228,7 +1228,7 @@ Migration steps are in [Migrating from v2](migrating-from-v2.md).
 | ESP32-S31 | Not supported |
 | Windows / macOS | Not checked with v3 |
 
-The standard tests are `pytest --combo all` in `tests/` (every registered wiring combination), against Arduino-ESP32 3.3.12.
+The standard tests are `pytest --combo all` in `tests/` (every registered wiring combination), against the Arduino-ESP32 version pinned in each `sketch.yaml`.
 
 Not verified for this document:
 

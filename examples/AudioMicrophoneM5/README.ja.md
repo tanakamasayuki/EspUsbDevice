@@ -63,7 +63,7 @@ Hostの読出しがマイクより遅く、`underruns`が増えるならHostの�
   無視せず`rejected`として数えるようにしました。
 - `capture.stats()`のunderrunをログに加えました。
 
-Arduino-ESP32 3.3.12で`esp32s3` profileのcompileを確認しています。このスケッチ自体の実機試験は
+`esp32s3` profileのcompileを確認しています。このスケッチ自体の実機試験は
 していません。
 
 - [スケッチ](AudioMicrophoneM5.ino)

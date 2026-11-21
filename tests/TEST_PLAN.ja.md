@@ -29,7 +29,7 @@
 | 長時間の連続運転 | 回数を決めた反復（再接続を含む）まで |
 | 実ケーブルの抜去による VBUS 検出（`vbusSensing=true`） | 未確認 |
 | USB DMA が PSRAM を直接読み書きする構成 | 製品が拒否するので対象外 |
-| Arduino-ESP32 4 系 | 未確認。基準は 3.3.12 |
+| Arduino-ESP32 4 系 | 未確認。基準は `sketch.yaml` で固定している 3 系の版 |
 | 任意の競合順序（SETUP / reset / end / SET_CONFIGURATION の全組合せ） | 代表的な順序だけ |
 
 ## 公開 API の契約を確かめる probe

@@ -78,7 +78,7 @@ controller's endpoints and FIFO, and a configuration that does not fit fails
 
 ## Requirements
 
-- Arduino-ESP32 **3.3.12** (the examples pin it in `sketch.yaml`).
+- Arduino-ESP32 3.x. The examples pin the tested version in `sketch.yaml`.
 - ESP32-S3 and ESP32-S2: set **Tools > USB Mode** to **USB-OTG (TinyUSB)**
   (`USBMode=default`); the ESP32-S3 default is Hardware CDC and JTAG.
 - ESP32-P4: choose the chip revision in **Tools > Chip Variant**: v1.x is

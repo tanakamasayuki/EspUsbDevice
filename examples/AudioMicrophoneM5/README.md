@@ -74,7 +74,7 @@ The error printing is not a retry or recovery policy.
   bytes not taken are now counted (`rejected`) instead of being ignored.
 - Capture underruns from `capture.stats()` are added to the log.
 
-Compile-checked with Arduino-ESP32 3.3.12 for the `esp32s3` profile; this
+Compile-checked for the `esp32s3` profile; this
 sketch itself has not been run on hardware.
 
 - [Sketch](AudioMicrophoneM5.ino)

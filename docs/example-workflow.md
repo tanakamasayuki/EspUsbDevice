@@ -34,7 +34,7 @@ The full list is in [examples](../examples/README.md). Each example's README cov
 
 ## Installing and building
 
-1. Set up Arduino-ESP32 and the library as described in the [README](../README.md). The reference is Arduino-ESP32 **3.3.12**.
+1. Set up Arduino-ESP32 and the library as described in the [README](../README.md). The reference Arduino-ESP32 version is the one pinned in each example's `sketch.yaml`.
 2. In the Arduino IDE, open an example from "File → Examples → EspUsbDevice" and select the exact board. With the CLI, build from the repository root:
 
 ```sh

@@ -77,7 +77,7 @@ The error printing is not a retry or recovery policy.
   (`DropOldest`); USB overruns are added to the per-second log.
 - `device.lastErrorName()` is printed on any USB start failure, as before.
 
-Compile-checked with Arduino-ESP32 3.3.12 for the `esp32s3` profile; this
+Compile-checked for the `esp32s3` profile; this
 sketch itself has not been run on hardware.
 
 - [Sketch](AudioSpeakerM5.ino)

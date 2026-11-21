@@ -82,7 +82,7 @@ OTG controllerを使う`USBMode=default`）。診断Serialの接続先を確認�
 - v3が`begin()`で確かめるHigh Speedでの大きさの条件をREADMEに載せました。
 - 新しい`device.speed()`で、決まった速度を表示します。
 
-Arduino-ESP32 3.3.12で両profileのcompileを確認しています。このスケッチ自体の実機試験はしていません。
+両profileのcompileを確認しています。このスケッチ自体の実機試験はしていません。
 
 - [スケッチ](P4HighSpeedDevice.ino)
 - [P4FullSpeedDevice](../P4FullSpeedDevice/)

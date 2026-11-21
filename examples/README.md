@@ -3,7 +3,7 @@
 > 日本語: [README.ja.md](README.ja.md)
 
 Every example is a complete sketch with its own README and a `sketch.yaml` that
-pins Arduino-ESP32 3.3.12. Start with the README of the example closest to what
+pins the tested Arduino-ESP32 version. Start with the README of the example closest to what
 you want to build; each one says what it shows, what you need and how to check
 it from the host.
 

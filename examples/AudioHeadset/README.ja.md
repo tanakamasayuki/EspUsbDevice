@@ -79,7 +79,7 @@ stream状態とoverrun／underrunの統計を、列挙の成功と分けて見�
   部分書込みなので、この例はcaptureが受け取れる分だけを読み、読んだ分を失いません。
 - 折り返したbyte数、playbackのoverrun、captureのunderrunを1秒ごとに表示します。
 
-Arduino-ESP32 3.3.12で`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
+`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
 実機試験はしていません。
 
 - [スケッチ](AudioHeadset.ino)

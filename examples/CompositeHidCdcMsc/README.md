@@ -134,7 +134,7 @@ The error printing is not a retry or recovery policy.
   default) for room and completion; `console.setTxTimeoutMs(0)` makes them
   return at once with what fitted.
 
-Compile-checked with Arduino-ESP32 3.3.12 for every profile in
+Compile-checked for every profile in
 `sketch.yaml`; this sketch itself has not been run on hardware.
 
 - [Sketch](CompositeHidCdcMsc.ino)

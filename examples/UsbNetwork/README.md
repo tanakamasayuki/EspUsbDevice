@@ -138,7 +138,7 @@ retry or recovery policy.
 - The page also shows USB frame counts from `net.stats()`, and the sketch
   prints the USB link state.
 
-Compile-checked with Arduino-ESP32 3.3.12 for every profile in
+Compile-checked for every profile in
 `sketch.yaml`; this sketch itself has not been run on hardware.
 
 - [Sketch](UsbNetwork.ino)

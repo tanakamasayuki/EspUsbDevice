@@ -66,7 +66,7 @@ Hostが各方向を使っているかがわかります。USBのvolume／muteの
   `rejected`として数えます。
 - スピーカーへ渡した量、送った量、`rejected`を1秒ごとに表示します。
 
-Arduino-ESP32 3.3.12で`esp32s3` profileのcompileを確認しています。このスケッチ自体の実機試験は
+`esp32s3` profileのcompileを確認しています。このスケッチ自体の実機試験は
 していません。
 
 - [スケッチ](AudioHeadsetM5.ino)

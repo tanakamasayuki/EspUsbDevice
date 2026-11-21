@@ -1228,7 +1228,7 @@ v3での帯域の基準値は、まだ測っていません。
 | ESP32-S31 | 未対応 |
 | Windows / macOS | v3では未確認 |
 
-標準の試験は、`tests/`の`pytest --combo all`です（登録した全ての結線の組）。基準はArduino-ESP32 3.3.12です。
+標準の試験は、`tests/`の`pytest --combo all`です（登録した全ての結線の組）。基準は、各`sketch.yaml`で固定しているArduino-ESP32の版です。
 
 この文書の内容のうち、次は確かめていません。
 

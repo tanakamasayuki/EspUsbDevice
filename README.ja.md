@@ -72,7 +72,7 @@ class の一覧：
 
 ## 必要なもの
 
-- Arduino-ESP32 **3.3.12**（例の `sketch.yaml` で固定しています）。
+- Arduino-ESP32 3 系。試した版は、例の `sketch.yaml` で固定しています。
 - ESP32-S3 と ESP32-S2：**ツール > USB Mode** を **USB-OTG (TinyUSB)**（`USBMode=default`）にします。
   ESP32-S3 の既定は Hardware CDC and JTAG です。
 - ESP32-P4：**ツール > Chip Variant** で revision を選びます。v1.x は `prev3`、v3.1 以降（P4X）は `postv3` です。

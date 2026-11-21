@@ -140,7 +140,7 @@ The error printing is not a retry or recovery policy.
 - The APDU and power callbacks no longer print on the USB worker; `loop()`
   prints what they recorded.
 
-Compile-checked with Arduino-ESP32 3.3.12 for every profile in
+Compile-checked for every profile in
 `sketch.yaml`; this sketch itself has not been run on hardware.
 
 - [Sketch](SmartCardReader.ino)

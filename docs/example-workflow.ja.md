@@ -34,7 +34,7 @@ USBの原理と切り分けの方法は[USB Device開発ガイド](usb-device-gu
 
 ## 導入とbuild
 
-1. [README](../README.ja.md)の手順で、Arduino-ESP32とライブラリを用意します。基準はArduino-ESP32 **3.3.12**です。
+1. [README](../README.ja.md)の手順で、Arduino-ESP32とライブラリを用意します。基準のArduino-ESP32は、各例の`sketch.yaml`で固定している版です。
 2. Arduino IDEなら「ファイル → スケッチ例 → EspUsbDevice」から例を開き、正確なboardを選びます。CLIなら、リポジトリのルートで次のようにbuildします。
 
 ```sh

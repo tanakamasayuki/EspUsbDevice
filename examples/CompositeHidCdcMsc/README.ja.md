@@ -117,7 +117,7 @@ blockはLBAで指定し、大きさは媒体で決まります。fileを扱う�
 - CDCの`print()`／`printf()`と`flush()`は、空きと送信完了をTX timeout（既定1000 ms）まで待ちます。
   `console.setTxTimeoutMs(0)`にすると、入った分だけで直ちに戻ります。
 
-Arduino-ESP32 3.3.12で`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
+`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
 実機試験はしていません。
 
 - [スケッチ](CompositeHidCdcMsc.ino)

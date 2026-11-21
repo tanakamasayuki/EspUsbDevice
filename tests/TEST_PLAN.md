@@ -29,7 +29,7 @@ How to run them is in [README.md](README.md); remaining work is in the [TODO](..
 | Long continuous runs | Up to a fixed number of repetitions, reconnections included |
 | VBUS detection on a real unplug (`vbusSensing=true`) | Not checked |
 | USB DMA reading or writing PSRAM directly | Out of scope: the product refuses it |
-| Arduino-ESP32 4.x | Not checked; the baseline is 3.3.12 |
+| Arduino-ESP32 4.x | Not checked; the baseline is the 3.x version pinned in `sketch.yaml` |
 | Every race order (all combinations of SETUP / reset / end / SET_CONFIGURATION) | Representative orders only |
 
 ## Probes for the public API contract

@@ -92,7 +92,7 @@ policy.
   `begin()`.
 - The sketch prints the negotiated speed with the new `device.speed()`.
 
-Compile-checked with Arduino-ESP32 3.3.12 for both profiles; this sketch itself
+Compile-checked for both profiles; this sketch itself
 has not been run on hardware.
 
 - [Sketch](P4HighSpeedDevice.ino)

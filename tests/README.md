@@ -9,7 +9,7 @@ What has and has not been verified is in [TEST_PLAN.md](TEST_PLAN.md).
 
 - `uv`
 - Arduino CLI
-- The ESP32 board package (Arduino-ESP32 3.3.12, pinned in each `sketch.yaml`)
+- The ESP32 board package (the Arduino-ESP32 version pinned in each `sketch.yaml`)
 - A wired bench ([bench](#bench))
 
 ## Layout

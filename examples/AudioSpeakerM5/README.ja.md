@@ -69,7 +69,7 @@ playerが捨てたり待ったりした場合は、その数と`usb overruns`を
   USBのoverrunを加えました。
 - USBの開始に失敗したときは、従来どおり`device.lastErrorName()`を表示します。
 
-Arduino-ESP32 3.3.12で`esp32s3` profileのcompileを確認しています。このスケッチ自体の実機試験は
+`esp32s3` profileのcompileを確認しています。このスケッチ自体の実機試験は
 していません。
 
 - [スケッチ](AudioSpeakerM5.ino)

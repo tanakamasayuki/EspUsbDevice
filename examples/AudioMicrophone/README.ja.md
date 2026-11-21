@@ -83,7 +83,7 @@ frameは全channel分のsample一組で、`write()`はframe単位でだけ受け
   無視していましたが、この例は入る分だけを生成します。
 - 書いたbyte数、USBで送ったbyte数、underrunを1秒ごとに表示します。
 
-Arduino-ESP32 3.3.12で`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
+`sketch.yaml`の全profileのcompileを確認しています。このスケッチ自体の
 実機試験はしていません。
 
 - [スケッチ](AudioMicrophone.ino)

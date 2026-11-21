@@ -9,7 +9,7 @@
 
 - `uv`
 - Arduino CLI
-- ESP32 の board package（Arduino-ESP32 3.3.12。各 `sketch.yaml` で固定しています）
+- ESP32 の board package（各 `sketch.yaml` で固定している Arduino-ESP32 の版）
 - 結線した bench（[bench](#bench)）
 
 ## 構成

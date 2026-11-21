@@ -427,7 +427,7 @@ A one-connector ESP32-S3 can still be flashed over the same cable: after a reset
 | ESP32-S31 | — | — | Not supported |
 | ESP32 (original), C3, C6, ... | No USB OTG | — | Does not work |
 
-The reference Arduino-ESP32 version is **3.3.12**.
+The reference Arduino-ESP32 version is the one pinned in the examples' `sketch.yaml`.
 
 ### 4.2 Choosing HS or FS on ESP32-P4
 

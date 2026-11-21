@@ -24,7 +24,7 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
   - 2-3（P4 v1.3）⇄ 2-4（P4X）の HS 直結は、当面残す。
   - 完了の条件：`s31_p4x_hs` で P4X の HS の Device 試験が全件、安定して通るようになったら、2-3 ⇄ 2-4 を撤去するか決める。撤去したら、P4 v1.3 の Device 試験は 2-1 の FS loopback だけになることを tests/TEST_PLAN に書く。
 - [ ] **Arduino-ESP32 4 系の互換性**
-  - 基準は 3.3.12 のままにします。4 系は別の profile と combo にします。
+  - 基準は `sketch.yaml` で固定している 3 系の版のままにします。4 系は別の profile と combo にします。
   - 完了の条件：
     - 4 系の版（最初は 4.0.0-RC1）を固定した profile で、全 example と代表の probe が compile できる。
     - S3 と P4 / P4X で、列挙、CDC / Vendor の往復、開始と終了の短い実機試験が通る。
