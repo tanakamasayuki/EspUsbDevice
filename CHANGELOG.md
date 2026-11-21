@@ -1,6 +1,18 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) Restart: on ESP32-P4 a restart from the library (DFU DETACH,
+  `rebootToBootloader()`, `rebootToRomDfu()`) could panic with a Store access
+  fault in `esp_restart()` about once in 300 restarts. USB transfers and the
+  USB interrupt were still running, and the other core could be stopped inside
+  a cache sync for a DMA buffer. The library now stops starting transfers and
+  masks the USB interrupt before it restarts.
+- (JA) 再起動：ESP32-P4 で、ライブラリからの再起動（DFU の DETACH、
+  `rebootToBootloader()`、`rebootToRomDfu()`）が、約 300 回に 1 回、
+  `esp_restart()` の中の Store access fault で panic することがありました。USB の
+  転送と割り込みが動いたままで、もう一方の CPU が DMA の buffer の cache の同期の
+  途中で止められることがあったためです。再起動の前に、新しい転送を始めないように
+  し、USB の割り込みを止めるようにしました。
 
 ## 3.3.0
 - (EN) HID: at high speed the interrupt endpoints of every HID Function now

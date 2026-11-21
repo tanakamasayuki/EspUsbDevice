@@ -3584,7 +3584,7 @@ static void espUsbDeviceDeferredRestartTask(void *argument)
   {
     device->rebootToBootloader();
   }
-  espusb_device_disconnect();
+  espusb_device_quiesce_for_restart();
   vTaskDelay(pdMS_TO_TICKS(20));
   esp_restart();
   vTaskDelete(nullptr);
@@ -3618,7 +3618,7 @@ bool EspUsbDevice::rebootToBootloader()
   // usbd task and would therefore never return when called from it.
   if (usbStarted_)
   {
-    espusb_device_disconnect();
+    espusb_device_quiesce_for_restart();
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 #endif
@@ -3688,7 +3688,7 @@ bool EspUsbDevice::rebootToRomDfu()
 #if ESP_USB_DEVICE_HAS_OTG
   if (usbStarted_)
   {
-    espusb_device_disconnect();
+    espusb_device_quiesce_for_restart();
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 #endif

@@ -497,7 +497,16 @@ bool espusb_controller_io_ready(uint8_t port) {
 EspUsbSpeed espusb_device_speed() {return core ? core->speed.load() : ESPUSB_SPEED_INVALID;}
 bool espusb_device_mounted() {return core && espusb_controller_io_ready(core->port) && core->configuration.load();}
 bool espusb_device_suspended() {return core && core->suspended.load();}
-bool espusb_device_disconnect() {if(!core)return false;espusb_controller_disconnect(core->port);return true;}
+// Before esp_restart(): no transfer may start and no interrupt may run, so the
+// other core is never stopped inside esp_cache_msync() for a DMA buffer. The
+// restart's own cache write-back faults if the sync engine is still busy.
+// The caller then waits long enough for an interrupt already running to end.
+bool espusb_device_quiesce_for_restart() {
+  auto *s=core; if(!s)return false;
+  portENTER_CRITICAL(&hardwareLock); s->stopping=true; portEXIT_CRITICAL(&hardwareLock);
+  espusb_controller_int_disable(s->port); espusb_controller_disconnect(s->port);
+  return true;
+}
 bool espusb_device_events_pending() {return core && (core->overflow.load() || uxQueueMessagesWaiting(core->queue));}
 uint16_t espusb_device_control_received_bytes() {return espusb::internal::usbControlTransferredBytes();}
 bool espusb_device_control_transfer(uint8_t port,const EspUsbControlRequest *request,void *buffer,uint16_t bytes) {

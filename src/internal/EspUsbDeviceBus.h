@@ -7,7 +7,7 @@ extern "C" {
 EspUsbSpeed espusb_device_speed();
 bool espusb_device_mounted();
 bool espusb_device_suspended();
-bool espusb_device_disconnect();
+bool espusb_device_quiesce_for_restart();
 // Private metadata/hook for adversarial core probes; not a user callback API.
 bool espusb_device_events_pending();
 void espusb_device_event_hook(uint8_t port, uint32_t kind, bool inIsr);
