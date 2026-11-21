@@ -42,9 +42,11 @@ busy_retries = 0
 
 def detach(dev, w_value):
     """EBUSY is the PC failing to claim the interface (another process probing
-    the new device); the request never reached the bus, so send it again."""
+    the new device, such as fwupd, which can hold a DFU interface for over a
+    second); the request never reached the bus, so send it again."""
     global busy_retries
-    for _ in range(100):
+    end = time.monotonic() + 5
+    while time.monotonic() < end:
         t0 = time.monotonic()
         try:
             dev.ctrl_transfer(0x21, 0, w_value, 0, None, timeout=1000)
