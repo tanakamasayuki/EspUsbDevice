@@ -1,6 +1,6 @@
 profiles:
   p4_loopback:
-    fqbn: esp32:esp32:esp32p4:USBMode=default
+    fqbn: esp32:esp32:esp32p4:ChipVariant=prev3,USBMode=default,CDCOnBoot=default
     platforms:
       - platform: esp32:esp32 (3.3.13)
         platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
