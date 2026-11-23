@@ -6,7 +6,11 @@
 EspUsbDevice device;
 EspUsbDeviceVendor vendor(device);
 // DWC2 GOTGCTL of the HS controller: bit 19 BSesVld, bit 18 ASesVld.
+#if CONFIG_IDF_TARGET_ESP32S31
+volatile uint32_t &gotgctl = *reinterpret_cast<volatile uint32_t *>(0x20300000);
+#else
 volatile uint32_t &gotgctl = *reinterpret_cast<volatile uint32_t *>(0x50000000);
+#endif
 Preferences settings;
 bool start(bool vbusSensing) {
   EspUsbDeviceConfig config; config.vid = 0x1209; config.pid = 0x0002;
