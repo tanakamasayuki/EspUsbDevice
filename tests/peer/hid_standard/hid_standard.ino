@@ -1,3 +1,4 @@
+#include "soc/soc_caps.h"
 #include <Arduino.h>
 #include <usb/usb_host.h>
 #include <atomic>
@@ -84,7 +85,7 @@ void loop() {
   if(!Serial.available()){delay(1);return;}String s=Serial.readStringUntil('\n');s.trim();
   if(s=="start") {
     in=out=0;usb_host_config_t cfg={};cfg.intr_flags=ESP_INTR_FLAG_LEVEL1;
-#if CONFIG_IDF_TARGET_ESP32P4
+#if defined(SOC_USB_UTMI_PHY_NUM) && SOC_USB_UTMI_PHY_NUM > 0
     // The HS default periodic TX FIFO (512 bytes) cannot hold a 1024-byte interrupt OUT packet.
     cfg.fifo_settings_custom.rx_fifo_lines=260;cfg.fifo_settings_custom.nptx_fifo_lines=128;cfg.fifo_settings_custom.ptx_fifo_lines=280;
 #endif
