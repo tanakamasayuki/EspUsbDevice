@@ -95,6 +95,20 @@ uv run --locked --env-file .env pytest --combo all -q -rs \
 uv run --locked --env-file .env pytest --combo s3_s3 -q -rs
 ```
 
+Host 役の EspUsbHost を、まだ公開していない版（隣の作業ツリー `../EspUsbHost`）にして流すときは、Host 側の profile を `_local` の写しに替えた、名前のない combo で指定します。8 つの combo との対応は次のとおりです。
+
+| combo | 名前のない combo |
+|---|---|
+| `s3_s3` | `primary=s3_host_local,device=s3_device` |
+| `s3_s2` | `primary=s3b_host_local,device=s2_device` |
+| `s2_s3` | `primary=s2_host_local,device=s3b_device` |
+| `p4_p4` | `primary=p4_loopback_local` |
+| `p4_p4_psram` | `primary=p4_psram_local` |
+| `p4_p4x_hs` | `primary=p4_hs_host_local,device=p4x_hs_device` |
+| `p4x_p4_hs` | `primary=p4x_hs_host_local,device=p4_hs_device` |
+
+`p4x_pc` は Host が PC なので、写しはありません。
+
 ### 実機で確かめられない範囲
 
 次の範囲は bench にないので、リリースの時点の状態を README に書きます。

@@ -98,7 +98,8 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 
 ### profile
 
-- `sketch.yaml` に profile を書きます。Device 側は library を `dir:` で参照し、Host 側は公開版の EspUsbHost（`EspUsbHost (2.10.2)`）を版指定で使います。
+- `sketch.yaml` に profile を書きます。Device 側は library を `dir:` で参照し、Host 側は公開版の EspUsbHost を版指定で使います。
+- Host 側の profile（`s3_host`、`s3b_host`、`s2_host`、`p4_hs_host`、`p4x_hs_host`、`p4_loopback`、`p4_psram`）には、それぞれ `<名前>_local` の写しがあります。写しは、EspUsbHost を版指定でなく、この repository の隣の作業ツリー（`../EspUsbHost`）から取ります。combo には入れていないので、`--combo all` では実行されません。まだ公開していない EspUsbHost と組み合わせて試すときに、名前のない combo で指定します（例：`--combo primary=s3_host_local,device=s3_device`、`--combo primary=p4_loopback_local`）。
 - profile 名は「SoC + 役割」です（例：`p4x_hs_device`）。同じ SoC の別の board は `s3b_` のように区別します。MAC や tty 番号は名前に入れません。
 - 一部の probe は `p4_device`、`p4x_*_compile` のような compile 確認用の profile を持ちます。combo には入っていないので、pytest では実行されません。
 
@@ -118,6 +119,7 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 | `TEST_SERIAL_PORT_S2_PC` | Linux PC につないだ S2（常設しない。必要なときだけ） |
 
 - primary は `TEST_SERIAL_PORT_<PROFILE>`、peer device は `TEST_SERIAL_PORT_PEER_DEVICE_<PROFILE>` です。
+- `*_local` の Host 側の profile には、写した元と同じ port を、別の key（`TEST_SERIAL_PORT_S3_HOST_LOCAL` など）で書きます。
 - port は `/run/board-identify/by-id/...` のような安定した path を使います。
 - 同じ物理 board を複数の profile に割り当ててよいのは、別の combo どうしの間だけです。
 
