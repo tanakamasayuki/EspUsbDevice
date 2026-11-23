@@ -84,7 +84,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs \
 確かめること：
 
 - 収集エラーが 0。
-- 8 つの combo（`s3_s3`、`p4_p4`、`p4_p4_psram`、`p4_p4x_hs`、`p4x_p4_hs`、`p4x_pc`、`s3_s2`、`s2_s3`）がすべて実行された。
+- 9 つの combo（`s3_s3`、`p4_p4`、`p4_p4_psram`、`p4_p4x_hs`、`p4x_p4_hs`、`p4x_pc`、`s3_s2`、`s2_s3`、`p4x_s31_hs`）がすべて実行された。
 - JUnit で failed / error が 0。skipped があれば、理由が port 未設定などの環境で、試験の不備でないこと。
 - 各 serial log が正常に停止し、panic がない。
 - 実行しなかった combo、skip した test は、リリースノートか README の未確認範囲に書く。合格扱いにしない。
@@ -95,7 +95,7 @@ uv run --locked --env-file .env pytest --combo all -q -rs \
 uv run --locked --env-file .env pytest --combo s3_s3 -q -rs
 ```
 
-Host 役の EspUsbHost を、まだ公開していない版（隣の作業ツリー `../EspUsbHost`）にして流すときは、Host 側の profile を `_local` の写しに替えた、名前のない combo で指定します。8 つの combo との対応は次のとおりです。
+Host 役の EspUsbHost を、まだ公開していない版（隣の作業ツリー `../EspUsbHost`）にして流すときは、Host 側の profile を `_local` の写しに替えた、名前のない combo で指定します。combo との対応は次のとおりです。
 
 | combo | 名前のない combo |
 |---|---|
@@ -106,6 +106,7 @@ Host 役の EspUsbHost を、まだ公開していない版（隣の作業ツリ
 | `p4_p4_psram` | `primary=p4_psram_local` |
 | `p4_p4x_hs` | `primary=p4_hs_host_local,device=p4x_hs_device` |
 | `p4x_p4_hs` | `primary=p4x_hs_host_local,device=p4_hs_device` |
+| `p4x_s31_hs` | `primary=p4xb_hs_host_local,device=s31_hs_device` |
 
 `p4x_pc` は Host が PC なので、写しはありません。
 

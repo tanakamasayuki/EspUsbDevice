@@ -13,6 +13,7 @@ How to run them is in [README.md](README.md); remaining work is in the [TODO](..
 | S2 ↔ S3 (FS, both directions) | `s3_s2`, `s2_s3` | Every `peer/` probe, with the S2 as Device and as Host |
 | P4 v1.x loopback (FS, both controllers) | `p4_p4`, `p4_p4_psram` | Basic traffic of the ten classes, borrowed DMA up to 65537 bytes, restart; MSC storage and Vendor rings in PSRAM |
 | P4 v1.x ↔ P4X HS link (both directions) | `p4_p4x_hs`, `p4x_p4_hs` | Every `peer/` probe plus the HS-only probes: HS enumeration, MPS 512, borrowed transfers, Audio / Video isochronous, storage in PSRAM |
+| P4X → S31, HS direct link | `p4x_s31_hs` | Every `peer/` probe and the HS-only probes, with the S31 as the Device |
 | Linux PC → P4X (HS) | `p4x_pc` | MSC media change (06/28/00, 02/3A/00, residue), a FAT RAM disk passing `fsck.fat`, DFU DETACH |
 | Linux PC → S2 (FS) | `primary=s2_pc` | MSC media change, DFU DETACH. Not a permanent pair |
 | Build | — | Compiles for S2 / S3 / P4 / P4X; unused classes are not linked |
@@ -22,14 +23,14 @@ How to run them is in [README.md](README.md); remaining work is in the [TODO](..
 | Scope | State |
 | --- | --- |
 | ESP32-S2 entering the ROM DFU | `rebootToRomDfu()` not checked |
-| ESP32-S31 | Not supported |
+| ESP32-S31 | Device at HS only. The Host role (S31 -> P4X), choosing the FS controller, `rebootToBootloader()` and UF2 are not checked |
 | Windows / macOS | Neither class binding nor class behaviour checked |
 | Linux PC class drivers | Only the MSC / DFU wire checks above; CDC / HID / Audio / Video / NCM with the OS drivers not checked |
 | Real SD cards and OTA | RAM backends only |
 | Long continuous runs | Up to a fixed number of repetitions, reconnections included |
 | VBUS detection on a real unplug (`vbusSensing=true`) | Not checked |
 | USB DMA reading or writing PSRAM directly | Out of scope: the product refuses it |
-| Arduino-ESP32 4.x | Not checked; the baseline is the 3.x version pinned in `sketch.yaml` |
+| Arduino-ESP32 4.x for the S2 Host role | 4.x has no USB Host Library for the S2, so only the S2 Host profiles (`s2_host`) build with the 3.x version |
 | Every race order (all combinations of SETUP / reset / end / SET_CONFIGURATION) | Representative orders only |
 
 ## Probes for the public API contract

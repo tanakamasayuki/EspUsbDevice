@@ -89,6 +89,7 @@ CI (`.github/workflows/tests.yml`) runs it together with `pytest --combo all --c
 | `p4_p4x_hs` | `p4_hs_host` (P4 v1.x) | `p4x_hs_device` (P4X) | HS |
 | `p4x_p4_hs` | `p4x_hs_host` (P4X) | `p4_hs_device` (P4 v1.x) | HS |
 | `p4x_pc` | `p4x_hs_pc` (P4X) | none (the Linux PC is Host) | HS |
+| `p4x_s31_hs` | `p4xb_hs_host` (a second P4X) | `s31_hs_device` (S31) | HS |
 
 - A combo without matching profiles is not expanded. A test that fits no combo is skipped as `combo=none`.
 - A missing port, or one board given two roles, is skipped before the build.
@@ -99,7 +100,7 @@ CI (`.github/workflows/tests.yml`) runs it together with `pytest --combo all --c
 ### Profiles
 
 - Profiles live in `sketch.yaml`. The Device side refers to the library with `dir:`; the Host side uses the released EspUsbHost at a pinned version.
-- Every Host-side profile (`s3_host`, `s3b_host`, `s2_host`, `p4_hs_host`, `p4x_hs_host`, `p4_loopback`, `p4_psram`) has a `<name>_local` copy that takes EspUsbHost from a checkout next to this repository (`../EspUsbHost`) instead. These copies are in no combo, so `--combo all` never runs them. Name them in an unnamed combo to test against an EspUsbHost that is not released yet, for example `--combo primary=s3_host_local,device=s3_device` or `--combo primary=p4_loopback_local`.
+- Every Host-side profile (`s3_host`, `s3b_host`, `s2_host`, `p4_hs_host`, `p4x_hs_host`, `p4xb_hs_host`, `p4_loopback`, `p4_psram`) has a `<name>_local` copy that takes EspUsbHost from a checkout next to this repository (`../EspUsbHost`) instead. These copies are in no combo, so `--combo all` never runs them. Name them in an unnamed combo to test against an EspUsbHost that is not released yet, for example `--combo primary=s3_host_local,device=s3_device` or `--combo primary=p4_loopback_local`.
 - A profile name is "SoC + role" (for example `p4x_hs_device`). Another board of the same SoC is told apart as in `s3b_`. MAC addresses and tty numbers are never part of a name.
 - Some probes carry compile-only profiles such as `p4_device` or `p4x_*_compile`. They are in no combo, so pytest never runs them.
 
@@ -116,6 +117,7 @@ Each board has a serial port for flashing and logs, separate from the USB link u
 | `TEST_SERIAL_PORT_P4_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_P4_HS_DEVICE` | The P4 v1.x of the HS link |
 | `TEST_SERIAL_PORT_P4X_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_P4X_HS_DEVICE` | The P4X of the HS link |
 | `TEST_SERIAL_PORT_P4X_HS_PC` | The P4X on the Linux PC |
+| `TEST_SERIAL_PORT_P4XB_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_S31_HS_DEVICE` | The P4X and the S31 of the S31 HS link |
 | `TEST_SERIAL_PORT_S2_PC` | An S2 on the Linux PC (not permanent; only when wired) |
 
 - A primary uses `TEST_SERIAL_PORT_<PROFILE>`, a peer device `TEST_SERIAL_PORT_PEER_DEVICE_<PROFILE>`.
@@ -133,6 +135,8 @@ Each board has a serial port for flashing and logs, separate from the USB link u
 | 2-3 | ESP32-P4 v1.3 | 32 MiB | CH340 UART | HS port linked directly to 2-4 | `p4_p4x_hs`, `p4x_p4_hs` |
 | 2-4 | ESP32-P4 v3.2 (P4X) | 32 MiB | USB Serial/JTAG | HS link with 2-3 | `p4_p4x_hs`, `p4x_p4_hs` |
 | 3-3 / 3-4 | ESP32-P4 v3.2 (P4X) | 32 MiB | USB Serial/JTAG on 3-3 | HS port on 3-4 linked directly to the Linux PC | `p4x_pc` |
+| 7-1 | ESP32-S31 (S31-Function-CoreBoard-1) | — | CP2102N UART | USB 2.0 Type-A (HS OTG) linked directly to the HS port of 7-2 | `p4x_s31_hs` |
+| 7-2 | ESP32-P4 v3.2 (P4X) | — | USB Serial/JTAG | HS link with 7-1 | `p4x_s31_hs` |
 
 Position `N-M` is port M of hub N. The bench ledger (`oep-bench/hosts/native-linux/` README and `inventory.json`) is the authoritative record.
 
@@ -140,7 +144,8 @@ Position `N-M` is port M of hub N. The bench ledger (`oep-bench/hosts/native-lin
 - Combos that share a board (`p4_p4` and `p4_p4_psram`, the two HS directions) never run at the same time.
 - Power from 2-3's HS port reaches 2-4. Switch both ports off together.
 - The plugin takes the device locks. The bench is shared with other projects, so boards are never used from outside the plugin.
-- When adding a new pair, run `peer/pad_link` before building every probe to confirm that the two native ports are electrically joined. Seeing the flashing ports does not mean the USB link under test is connected.
+- 7-1's Type-A always supplies VBUS, and so does 7-2's HS port; both come from the same hub at the same voltage.
+- When adding a new pair, run `peer/pad_link` (FS) or `peer/hs_link` (HS) before building every probe to confirm that the two native ports are electrically joined. Seeing the flashing ports does not mean the USB link under test is connected.
 
 ## Adding a probe
 
