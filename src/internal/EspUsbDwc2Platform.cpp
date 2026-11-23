@@ -7,7 +7,10 @@
 #include "freertos/task.h"
 #include "esp_rom_sys.h"
 #include "soc/periph_defs.h"
+#if !defined(CONFIG_IDF_TARGET_ESP32S31)
+// The S31 has no USB_WRAP: its only controller uses the UTMI PHY.
 #include "soc/usb_wrap_struct.h"
+#endif
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
 #include "esp_cache.h"
 static_assert(CONFIG_CACHE_L1_CACHE_LINE_SIZE == 64, "USB DMA storage isolates 64-byte cache lines");
@@ -18,6 +21,12 @@ extern "C" {
 const EspUsbDwc2Port espusb_dwc2_ports[] = {
   {0x50040000, ETS_USB_OTG11_CH0_INTR_SOURCE, 7, 5, 256, false, true},
   {0x50000000, ETS_USB_OTG_INTR_SOURCE, 16, 8, 1024, true, false},
+};
+#elif defined(CONFIG_IDF_TARGET_ESP32S31)
+// One HS OTG controller (datasheet v0.5 4.2.2.6): endpoints 1-15 and EP0, 8 IN
+// endpoints including EP0, 4 KB FIFO.
+const EspUsbDwc2Port espusb_dwc2_ports[] = {
+  {0x20300000, ETS_USB_OTGHS_INTR_SOURCE, 16, 8, 1024, true, false},
 };
 #else
 const EspUsbDwc2Port espusb_dwc2_ports[] = {
@@ -69,12 +78,14 @@ void espusb_dwc2_release_irq(uint8_t port) {
 void espusb_dwc2_set_pulls(uint8_t port, bool connected) {
   const auto *info = espusb_dwc2_port(port);
   if (!info || !info->usesUsbWrap) return;
+#if !defined(CONFIG_IDF_TARGET_ESP32S31)
   usb_wrap_otg_conf_reg_t config = {};
   config.val = USB_WRAP.otg_conf.val;
   config.pad_pull_override = !connected;
   config.dp_pullup = config.dm_pullup = 0;
   config.dp_pulldown = config.dm_pulldown = !connected;
   USB_WRAP.otg_conf.val = config.val;
+#endif
 }
 void espusb_dwc2_wakeup_delay(void) { esp_rom_delay_us(2000); }
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE

@@ -122,9 +122,9 @@
 
 // Full speed caps an interrupt endpoint at 64 bytes (USB 2.0 table 9-13).
 static constexpr uint16_t ESP_USB_DEVICE_FS_INTERRUPT_MAX_PACKET = 64;
-// What EspUsbController::Auto resolves to. Only the P4 has a high-speed
-// controller to resolve to.
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
+// What EspUsbController::Auto resolves to: the high-speed controller of the P4
+// and the S31.
+#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
 static constexpr bool ESP_USB_DEVICE_HIGH_SPEED_DEFAULT = true;
 #else
 static constexpr bool ESP_USB_DEVICE_HIGH_SPEED_DEFAULT = false;
@@ -1145,7 +1145,7 @@ const uint8_t *EspUsbDevice::configurationDescriptorForSpeed(uint8_t index, bool
 
 const uint8_t *EspUsbDevice::deviceQualifierDescriptor()
 {
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
   if (config_.controller == EspUsbController::FullSpeed)
   {
     return nullptr;
@@ -1158,7 +1158,7 @@ const uint8_t *EspUsbDevice::deviceQualifierDescriptor()
 
 const uint8_t *EspUsbDevice::otherSpeedConfigurationDescriptor(uint8_t index, bool currentHighSpeed)
 {
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
   if (index != 0 || config_.controller == EspUsbController::FullSpeed ||
       !buildDescriptors())
   {

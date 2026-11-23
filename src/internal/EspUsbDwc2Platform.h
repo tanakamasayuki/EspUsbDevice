@@ -9,17 +9,17 @@
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
 enum { ESPUSB_DWC2_PORT_COUNT = 2 };
-#elif defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+#elif defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S31)
 enum { ESPUSB_DWC2_PORT_COUNT = 1 };
 #else
-#error "EspUsbDevice DWC2 platform currently supports ESP32-S2/S3/P4"
+#error "EspUsbDevice DWC2 platform currently supports ESP32-S2/S3/S31/P4"
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 // Physical controller limits, independent of Function counts and buffers.
-// New SoCs add port records here; HS need not be port 1 (e.g. future S31).
+// New SoCs add port records here; HS need not be port 1 (the S31 has only HS).
 typedef struct {
   uintptr_t reg_base;
   uint32_t irqnum;
