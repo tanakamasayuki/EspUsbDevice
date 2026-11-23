@@ -90,6 +90,7 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 | `p4x_p4_hs` | `p4x_hs_host`（P4X） | `p4_hs_device`（旧 P4） | HS |
 | `p4x_pc` | `p4x_hs_pc`（P4X） | なし（Linux PC が Host） | HS |
 | `p4x_s31_hs` | `p4xb_hs_host`（二台目の P4X） | `s31_hs_device`（S31） | HS |
+| `s31_p4x_hs` | `s31_hs_host`（S31） | `p4xb_hs_device`（二台目の P4X） | HS |
 
 - 対応する profile のない組は展開されません。どの組にも合わない test は `combo=none` で skip されます。
 - port が未設定の場合や、同じ実機に二役を割り当てた場合も、build の前に skip されます。
@@ -100,7 +101,7 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 ### profile
 
 - `sketch.yaml` に profile を書きます。Device 側は library を `dir:` で参照し、Host 側は公開版の EspUsbHost を版指定で使います。
-- Host 側の profile（`s3_host`、`s3b_host`、`s2_host`、`p4_hs_host`、`p4x_hs_host`、`p4xb_hs_host`、`p4_loopback`、`p4_psram`）には、それぞれ `<名前>_local` の写しがあります。写しは、EspUsbHost を版指定でなく、この repository の隣の作業ツリー（`../EspUsbHost`）から取ります。combo には入れていないので、`--combo all` では実行されません。まだ公開していない EspUsbHost と組み合わせて試すときに、名前のない combo で指定します（例：`--combo primary=s3_host_local,device=s3_device`、`--combo primary=p4_loopback_local`）。
+- Host 側の profile（`s3_host`、`s3b_host`、`s2_host`、`p4_hs_host`、`p4x_hs_host`、`p4xb_hs_host`、`s31_hs_host`、`p4_loopback`、`p4_psram`）には、それぞれ `<名前>_local` の写しがあります。写しは、EspUsbHost を版指定でなく、この repository の隣の作業ツリー（`../EspUsbHost`）から取ります。combo には入れていないので、`--combo all` では実行されません。まだ公開していない EspUsbHost と組み合わせて試すときに、名前のない combo で指定します（例：`--combo primary=s3_host_local,device=s3_device`、`--combo primary=p4_loopback_local`）。
 - profile 名は「SoC + 役割」です（例：`p4x_hs_device`）。同じ SoC の別の board は `s3b_` のように区別します。MAC や tty 番号は名前に入れません。
 - 一部の probe は `p4_device`、`p4x_*_compile` のような compile 確認用の profile を持ちます。combo には入っていないので、pytest では実行されません。
 
@@ -118,6 +119,7 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 | `TEST_SERIAL_PORT_P4X_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_P4X_HS_DEVICE` | HS 直結の P4X |
 | `TEST_SERIAL_PORT_P4X_HS_PC` | Linux PC につないだ P4X |
 | `TEST_SERIAL_PORT_P4XB_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_S31_HS_DEVICE` | S31 の HS 直結の P4X と S31 |
+| `TEST_SERIAL_PORT_S31_HS_HOST` / `TEST_SERIAL_PORT_PEER_DEVICE_P4XB_HS_DEVICE` | 同じ二台で役割を入れ替えたもの |
 | `TEST_SERIAL_PORT_S2_PC` | Linux PC につないだ S2（常設しない。必要なときだけ） |
 
 - primary は `TEST_SERIAL_PORT_<PROFILE>`、peer device は `TEST_SERIAL_PORT_PEER_DEVICE_<PROFILE>` です。
@@ -135,8 +137,8 @@ CI（`.github/workflows/tests.yml`）は、これと `pytest --combo all --colle
 | 2-3 | ESP32-P4 v1.3（旧 P4） | 32 MiB | CH340 UART | 2-4 と HS 口どうしを直結 | `p4_p4x_hs`、`p4x_p4_hs` |
 | 2-4 | ESP32-P4 v3.2（P4X） | 32 MiB | USB Serial/JTAG | 2-3 と HS 直結 | `p4_p4x_hs`、`p4x_p4_hs` |
 | 3-3 / 3-4 | ESP32-P4 v3.2（P4X） | 32 MiB | 3-3 の USB Serial/JTAG | 3-4 の HS 口を Linux PC へ直結 | `p4x_pc` |
-| 7-1 | ESP32-S31（S31-Function-CoreBoard-1） | — | CP2102N UART | USB 2.0 の Type-A（HS OTG）を 7-2 の HS 口と直結 | `p4x_s31_hs` |
-| 7-2 | ESP32-P4 v3.2（P4X） | — | USB Serial/JTAG | 7-1 と HS 直結 | `p4x_s31_hs` |
+| 7-1 | ESP32-S31（S31-Function-CoreBoard-1） | — | CP2102N UART | USB 2.0 の Type-A（HS OTG）を 7-2 の HS 口と直結 | `p4x_s31_hs`, `s31_p4x_hs` |
+| 7-2 | ESP32-P4 v3.2（P4X） | — | USB Serial/JTAG | 7-1 と HS 直結 | `p4x_s31_hs`、`s31_p4x_hs` |
 
 位置 `N-M` はハブ N の port M です。設備の正本は bench の台帳（`oep-bench/hosts/native-linux/` の README と `inventory.json`）です。
 

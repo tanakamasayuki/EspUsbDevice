@@ -4,6 +4,11 @@ profiles:
     platforms:
       - platform: esp32:esp32 (4.0.0)
         platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  p4xb_hs_device:
+    fqbn: esp32:esp32:esp32p4:ChipVariant=postv3,PSRAM=enabled,USBMode=hwcdc,CDCOnBoot=cdc
+    platforms:
+      - platform: esp32:esp32 (4.0.0)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
   s31_hs_device:
     fqbn: esp32:esp32:esp32s31:USBMode=default,CDCOnBoot=default,FlashSize=16M
     platforms:

@@ -1,5 +1,7 @@
 """Runtime PCM buffers and real isochronous transfers on the S3 pair."""
 
+import pytest
+
 
 def test_audio_stream(dut, peers):
     device = peers["device"]
@@ -112,8 +114,12 @@ def test_audio_reconfigure(dut, peers):
         assert not errors, "USB stop failed: " + "; ".join(errors)
 
 
-def test_audio_sample_rates(dut, peers):
+def test_audio_sample_rates(dut, peers, request):
     """Thirteen runtime rates, long UAC2 RANGE, rate changes without rebuilding."""
+    if "s31_hs_host" in request.node.name:
+        # The S31 libs of Arduino-ESP32 cap a Host control transfer at 256 bytes
+        # (CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE); this configuration is longer.
+        pytest.skip("S31 Host: control transfers are capped at 256 bytes")
     device = peers["device"]
     try:
         for protocol in (2, 1):

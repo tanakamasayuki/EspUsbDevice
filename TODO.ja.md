@@ -13,10 +13,10 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
   - 完了の条件：S2 の native USB を PC につないだ状態で `rebootToRomDfu()` を呼び、ROM の DFU（303a:0002）として列挙し、`dfu-util` で書き込める。
 - [ ] **ESP32-S31 への対応（組 P4X–S31）**
   - S31 の USB（データシート v0.5 §4.2.2.6）：OTG は HS の 1 本だけ（HS／FS で Host と Device。endpoint 1〜15、IN は EP0 を含め 8 本、FIFO 4 KB）。FS の OTG はなく、USB-Serial/JTAG（FS、GPIO33/34）が別にある。
-  - Device は HS で動きます。combo `p4x_s31_hs`（7-2 の P4X Host → 7-1 の S31 Device）で、`tests/peer/` の共通の probe と HS 専用の probe が通ります。
+  - Device は HS で動きます。combo `p4x_s31_hs`（7-2 の P4X Host → 7-1 の S31 Device）と `s31_p4x_hs`（S31 Host → P4X Device）で、`tests/peer/` の共通の probe と HS 専用の probe が通ります。S31 が Host 役のときは、Arduino-ESP32 の S31 の libs が Host の control 転送を 256 byte に制限しているので、それを超える probe を外しています（上流に報告済み）。
   - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と P4X の HS の口を直結。VBUS は両方から出るが、同じハブの同じ電圧。制御と log は、S31 が UART（CP2102N）、P4X が内蔵の USB-Serial/JTAG。
   - 完了の条件：
-    - EspUsbHost を S31 で Host として動かし、combo `s31_p4x_hs`（S31 Host → P4X Device）でも全件が通る。Device の成功だけで逆向きも対応済みにしない。
+    - Arduino-ESP32 の S31 の libs で Host の control 転送の上限が広がったら、`s31_p4x_hs` で外している probe を戻す。
     - HS の controller を FS で動かす指定（`EspUsbController::FullSpeed`）、`rebootToBootloader()`、UF2 の family ID を、資料で確かめて対応するか、非対応として文書に書く。
 - [ ] **HS 直結の組の整理**
   - 2-3（P4 v1.3）⇄ 2-4（P4X）の HS 直結は、当面残す。

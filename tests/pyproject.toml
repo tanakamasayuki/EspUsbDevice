@@ -33,4 +33,6 @@ arduino_combos = [
     "s2_s3: primary=s2_host,device=s3b_device",
     # The second P4X Host -> S31 Device, HS direct link.
     "p4x_s31_hs: primary=p4xb_hs_host,device=s31_hs_device",
+    # S31 Host -> the second P4X Device, HS direct link.
+    "s31_p4x_hs: primary=s31_hs_host,device=p4xb_hs_device",
 ]

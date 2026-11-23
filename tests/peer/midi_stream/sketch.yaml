@@ -1,3 +1,5 @@
+# No s31_hs_host: the S31 libs of Arduino-ESP32 cap a Host control transfer at
+# 256 bytes (CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE), below what this probe needs.
 profiles:
   s3_host:
     fqbn: esp32:esp32:esp32s3:USBMode=default

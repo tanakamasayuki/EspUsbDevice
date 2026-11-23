@@ -13,7 +13,7 @@
 | S2 ↔ S3（FS、両方向） | `s3_s2`、`s2_s3` | `peer/` の全 probe。S2 が Device のときと Host のときの両方 |
 | 旧 P4 loopback（FS、両 controller） | `p4_p4`、`p4_p4_psram` | 10 class の基本通信、65537 byte までの借用 DMA、再開始。PSRAM 上の MSC 保存先と Vendor ring |
 | 旧 P4 ↔ P4X の HS 直結（両方向） | `p4_p4x_hs`、`p4x_p4_hs` | `peer/` の全 probe と HS 専用 probe。HS の列挙、MPS 512、借用転送、Audio / Video の ISO、PSRAM 上の保存先 |
-| P4X → S31 の HS 直結 | `p4x_s31_hs` | `peer/` の全 probe と HS 専用 probe。S31 は Device 役 |
+| P4X ⇄ S31 の HS 直結（両方向） | `p4x_s31_hs`、`s31_p4x_hs` | `peer/` の全 probe と HS 専用 probe。S31 が Host 役のときは、Host の control 転送が 256 byte に制限される（Arduino-ESP32 の S31 の libs の設定）ので、それを超える Audio、Video、MIDI、DFU、descriptor_storage の probe は外す |
 | Linux PC → P4X（HS） | `p4x_pc` | MSC の媒体交換（06/28/00、02/3A/00、residue）、FAT RAM disk の `fsck.fat`、DFU DETACH |
 | Linux PC → S2（FS） | `primary=s2_pc` | MSC の媒体交換、DFU DETACH。常設の組ではない |
 | build | — | S2 / S3 / P4 / P4X の compile。未使用 class がリンクされないこと |
@@ -23,7 +23,7 @@
 | 範囲 | 状態 |
 | --- | --- |
 | ESP32-S2 の ROM DFU への移行 | `rebootToRomDfu()` は未確認 |
-| ESP32-S31 | Device は HS だけ。Host 役（S31 → P4X）、FS の controller の指定、`rebootToBootloader()`、UF2 は未確認 |
+| ESP32-S31 | Device は HS だけ。FS の controller の指定、`rebootToBootloader()`、UF2 は未確認 |
 | Windows / macOS | class の bind、各 class の動作とも未確認 |
 | Linux PC の class driver | MSC / DFU の wire 検査だけ。CDC / HID / Audio / Video / NCM の OS driver との組合せは未確認 |
 | SD card と OTA の実媒体 | RAM backend の試験だけ |
