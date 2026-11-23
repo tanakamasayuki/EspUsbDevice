@@ -11,24 +11,21 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
 - [ ] **ESP32-S2 の ROM DFU への移行**
   - S2 の USB の動作は、S3 との FS 直結の両方向（`s3_s2`、`s2_s3`）と Linux PC（`s2_pc`）で確かめています。
   - 完了の条件：S2 の native USB を PC につないだ状態で `rebootToRomDfu()` を呼び、ROM の DFU（303a:0002）として列挙し、`dfu-util` で書き込める。
-- [ ] **ESP32-S31 への対応（新しい組 P4X–S31）**
-  - いまは未対応です。build には Arduino-ESP32 4.0.0-RC1 以降が要ります。
+- [ ] **ESP32-S31 への対応（組 P4X–S31）**
   - S31 の USB（データシート v0.5 §4.2.2.6）：OTG は HS の 1 本だけ（HS／FS で Host と Device。endpoint 1〜15、IN は EP0 を含め 8 本、FIFO 4 KB）。FS の OTG はなく、USB-Serial/JTAG（FS、GPIO33/34）が別にある。
-  - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と、新しい P4X の HS の口を、普通の A–C ケーブルで直結する。Type-A の VBUS は TPS2051C の EN が 5 V 固定で常時出るので、P4X の HS の口が VBUS を出さないこと（2-4 と同じ WT9932P4X-TINY なら出さない見込み）を最初の実機試験の前に確かめる。S31 の VBUS が P4X へ回り込むので、電源は両方の port をまとめて切る。制御と log は、S31 が UART（CP2102N、ベンチ 7-1）、P4X が内蔵の USB-Serial/JTAG（ベンチ 7-2）。
+  - Device は HS で動きます。combo `p4x_s31_hs`（7-2 の P4X Host → 7-1 の S31 Device）で、`tests/peer/` の共通の probe と HS 専用の probe が通ります。
+  - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と P4X の HS の口を直結。VBUS は両方から出るが、同じハブの同じ電圧。制御と log は、S31 が UART（CP2102N）、P4X が内蔵の USB-Serial/JTAG。
   - 完了の条件：
-    - 使う Core の版を固定し、S31 の target / FQBN / SDK / toolchain で library が compile できる。
-    - S31 の HS port の能力を `src/internal/EspUsbDwc2Platform.cpp` の port 表に、資料と register の値で確かめて登録する。PHY と cache の処理も確かめる。`tests/sketch_support/probe_link.h` の HS の判定に S31 を加える。
-    - combo `p4x_s31_hs`（P4X Host → S31 Device）で、`tests/peer/` の共通の probe と HS 専用の probe が通る。
     - EspUsbHost を S31 で Host として動かし、combo `s31_p4x_hs`（S31 Host → P4X Device）でも全件が通る。Device の成功だけで逆向きも対応済みにしない。
+    - HS の controller を FS で動かす指定（`EspUsbController::FullSpeed`）、`rebootToBootloader()`、UF2 の family ID を、資料で確かめて対応するか、非対応として文書に書く。
 - [ ] **HS 直結の組の整理**
   - 2-3（P4 v1.3）⇄ 2-4（P4X）の HS 直結は、当面残す。
   - 完了の条件：`s31_p4x_hs` で P4X の HS の Device 試験が全件、安定して通るようになったら、2-3 ⇄ 2-4 を撤去するか決める。撤去したら、P4 v1.3 の Device 試験は 2-1 の FS loopback だけになることを tests/TEST_PLAN に書く。
-- [ ] **Arduino-ESP32 4 系の互換性**
-  - 基準は `sketch.yaml` で固定している 3 系の版のままにします。4 系は別の profile と combo にします。
+- [ ] **Arduino-ESP32 4 系への移行**
+  - `sketch.yaml` は 4 系の版で固定しています。4 系に S2 用の USB Host Library がないので、S2 の Host 役（`s2_host`）だけ 3 系の版のままです。
   - 完了の条件：
-    - 4 系の版（最初は 4.0.0-RC1）を固定した profile で、全 example と代表の probe が compile できる。
-    - S3 と P4 / P4X で、列挙、CDC / Vendor の往復、開始と終了の短い実機試験が通る。
-    - Core の差で直した点と、確かめた版を README に書く。RC での結果を 4 系全体の対応にはしない。正式版が出たら同じ手順でやり直す。
+    - 公開版の EspUsbHost を Host 役にして、全 combo が通る。
+    - README の対応範囲（chip と Core の版の書き方）を 4 系に合わせる。
 
 ## PC OS との互換性
 
