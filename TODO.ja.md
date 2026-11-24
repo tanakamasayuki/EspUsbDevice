@@ -25,7 +25,6 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
   - `sketch.yaml` は 4 系の版で固定しています。4 系に S2 用の USB Host Library がないので、S2 の Host 役（`s2_host`）だけ 3 系の版のままです。
   - 完了の条件：
     - 公開版の EspUsbHost を Host 役にして、全 combo が通る。
-    - README の対応範囲（chip と Core の版の書き方）を 4 系に合わせる。
 
 ## PC OS との互換性
 
