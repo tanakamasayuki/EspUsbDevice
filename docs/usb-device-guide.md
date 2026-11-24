@@ -424,7 +424,7 @@ A one-connector ESP32-S3 can still be flashed over the same cable: after a reset
 | ESP32-S2 | One FS controller | FullSpeed | Checked on hardware linked to an S3 at FS (both directions) and against a Linux PC |
 | ESP32-P4 (older revision v1.x) | One HS and one FS controller | **HighSpeed** | Verified on hardware |
 | ESP32-P4X (revision v3.x) | Same | **HighSpeed** | Verified on hardware |
-| ESP32-S31 | — | — | Not supported |
+| ESP32-S31 | One HS controller, no FS controller | **HighSpeed** | Checked on hardware linked to a P4X at HS (both directions) |
 | ESP32 (original), C3, C6, ... | No USB OTG | — | Does not work |
 
 The reference Arduino-ESP32 version is the one pinned in the examples' `sketch.yaml`.
@@ -435,9 +435,9 @@ Choose with `config.controller`.
 
 | Value | Controller |
 | --- | --- |
-| `Auto` (default) | HS if the SoC has one (P4), otherwise FS (S2/S3) |
+| `Auto` (default) | HS if the SoC has one (P4, S31), otherwise FS (S2/S3) |
 | `HighSpeed` | The HS controller. If there is none, `begin()` fails with `ESP_ERR_NOT_SUPPORTED` |
-| `FullSpeed` | The FS controller |
+| `FullSpeed` | The FS controller. If there is none (S31), `begin()` fails with `ESP_ERR_NOT_SUPPORTED` |
 
 | | FS controller | HS controller |
 | --- | --- | --- |
@@ -872,10 +872,10 @@ The tests live in [tests](../tests/README.md). They are test sketches separate f
 | Older P4 and P4X connected at HS (480 Mbps, both directions) | The S3 tests extended to HS, plus HS-specific tests |
 | P4X and a Linux PC (HS) | MSC, DFU and other traffic, checked with pyusb |
 | An S2 and a Linux PC (FS) | MSC media change, DFU DETACH |
+| P4X and S31 connected at HS (both directions) | The S3 tests extended to HS, plus HS-specific tests. With the S31 as Host, tests needing a control transfer over 256 bytes are left out |
 
 Not verified:
 
-- ESP32-S31 (not supported)
 - v3 class behavior and driver binding on Windows and macOS
 - VBUS detection with a real cable pull (`vbusSensing = true`)
 

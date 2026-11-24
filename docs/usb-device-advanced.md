@@ -751,7 +751,7 @@ The DWC2 shares one small FIFO SPRAM among these uses:
 
 | Use | Size (words) |
 | --- | --- |
-| DMA endpoint information | endpoints × 2 (14 on S2/S3/P4 FS, 32 on P4 HS) |
+| DMA endpoint information | endpoints × 2 (14 on S2/S3/P4 FS, 32 on P4 HS and S31) |
 | Receive FIFO | 14 + 2 × (largest OUT MPS / 4 + 1) + endpoints × 2 |
 | EP0 transmit FIFO | 16 (64 bytes) |
 | Transmit FIFO per IN endpoint | ceil(MPS / 4); doubled for double-buffered bulk IN |
@@ -844,13 +844,13 @@ Settings that worked at FS can make `begin()` fail at HS. Check the return value
 
 | `config.controller` | Behaviour |
 | --- | --- |
-| `Auto` (default) | HS when there is an HS controller (P4), otherwise FS (S2/S3) |
-| `FullSpeed` | Uses the FS controller; on P4 that is the FS port |
+| `Auto` (default) | HS when there is an HS controller (P4, S31), otherwise FS (S2/S3) |
+| `FullSpeed` | Uses the FS controller; on P4 that is the FS port. On chips without one (S31), `begin()` gives `ESP_ERR_NOT_SUPPORTED` |
 | `HighSpeed` | Uses the HS controller; on chips without one, `begin()` gives `ESP_ERR_NOT_SUPPORTED` |
 
 - An HS controller connected to an FS host or hub runs at FS. That is why `begin()` builds both FS and HS descriptors for an HS controller.
 - FS values (bulk MPS 64 and so on) are decided only once connected. Checks that depend on the MPS, such as the borrowed RX capacity, use the actual speed.
-- Unknown SoCs are never mapped onto an existing port. ESP32-S31 is not supported by the current SDK.
+- Unknown SoCs are never mapped onto an existing port.
 
 ---
 
@@ -1225,7 +1225,7 @@ Migration steps are in [Migrating from v2](migrating-from-v2.md).
 | One ESP32-P4 as an HS↔FS loopback | Basic transfers of each class on both controllers |
 | Old P4 (v1.x) and P4X (v3.x) connected directly at HS | Both directions |
 | P4X connected directly to a Linux PC at HS | DFU/MSC on the wire |
-| ESP32-S31 | Not supported |
+| P4X and S31 connected directly at HS | Both directions |
 | Windows / macOS | Not checked with v3 |
 
 The standard tests are `pytest --combo all` in `tests/` (every registered wiring combination), against the Arduino-ESP32 version pinned in each `sketch.yaml`.

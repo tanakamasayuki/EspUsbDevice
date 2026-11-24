@@ -424,7 +424,7 @@ Host側の開発では「VBUSを出せるか」が最初の関門でした。Dev
 | ESP32-S2 | FSのcontroller 1つ | FullSpeed | S3とのFS直結（両方向）とLinux PCで実機確認 |
 | ESP32-P4（旧revision v1.x） | HSとFSのcontroller 1つずつ | **HighSpeed** | 実機で確認 |
 | ESP32-P4X（revision v3.x） | 同上 | **HighSpeed** | 実機で確認 |
-| ESP32-S31 | — | — | 未対応 |
+| ESP32-S31 | HSのcontroller 1つ。FSのcontrollerはない | **HighSpeed** | P4XとのHS直結（両方向）で実機確認 |
 | ESP32（無印）、C3、C6など | USB OTGがない | — | 動かない |
 
 基準のArduino-ESP32は、例の`sketch.yaml`で固定している版です。
@@ -435,9 +435,9 @@ Host側の開発では「VBUSを出せるか」が最初の関門でした。Dev
 
 | 値 | 選ぶcontroller |
 | --- | --- |
-| `Auto`（既定） | HS controllerがあればHS（P4）、なければFS（S2/S3） |
+| `Auto`（既定） | HS controllerがあればHS（P4、S31）、なければFS（S2/S3） |
 | `HighSpeed` | HS controller。なければ `begin()` が `ESP_ERR_NOT_SUPPORTED` |
-| `FullSpeed` | FS controller |
+| `FullSpeed` | FS controller。なければ（S31） `begin()` が `ESP_ERR_NOT_SUPPORTED` |
 
 | | FS controller | HS controller |
 | --- | --- | --- |
@@ -872,10 +872,10 @@ interfaceの並び、IADの有無、`bInterfaceProtocol`、endpointのinterval�
 | 旧P4とP4XのHS直結（480 Mbps、両方向） | S3の試験をHSへ広げたものと、HS用の試験 |
 | P4XとLinux PC（HS） | MSC、DFUなどの通信をpyusbで確認 |
 | S2とLinux PC（FS） | MSCの媒体交換、DFU DETACH |
+| P4XとS31のHS直結（両方向） | S3の試験をHSへ広げたものと、HS用の試験。S31がHostのときは、256 byteを超えるcontrol転送の要る試験を外している |
 
 未確認のもの：
 
-- ESP32-S31（未対応）
 - Windows、macOSでのv3のclass動作とdriverの割当て
 - 実際にケーブルを抜いたときのVBUS検出（`vbusSensing = true`）
 

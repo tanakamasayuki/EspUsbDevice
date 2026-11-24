@@ -18,7 +18,6 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
   - 結線：S31-Function-CoreBoard-1 の Type-A（HS OTG）と P4X の HS の口を直結。VBUS は両方から出るが、同じハブの同じ電圧。制御と log は、S31 が UART（CP2102N）、P4X が内蔵の USB-Serial/JTAG。
   - 完了の条件：
     - Arduino-ESP32 の S31 の libs で Host の control 転送の上限が広がったら、`s31_p4x_hs` で外している probe を戻す。
-    - README・docs の対応表と chip の説明に S31 を入れる（いまは「未対応」と書いてある）。
 - [ ] **HS 直結の組の整理**
   - 2-3（P4 v1.3）⇄ 2-4（P4X）の HS 直結は、当面残す。
   - 完了の条件：`s31_p4x_hs` で P4X の HS の Device 試験が全件、安定して通るようになったら、2-3 ⇄ 2-4 を撤去するか決める。撤去したら、P4 v1.3 の Device 試験は 2-1 の FS loopback だけになることを tests/TEST_PLAN に書く。

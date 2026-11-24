@@ -71,7 +71,7 @@ sees nothing.
 | --- | --- |
 | More non-control IN endpoints than the controller has: 4 on ESP32-S2/S3 and on the ESP32-P4 FS controller, 7 on the P4 HS controller. Endpoint numbers are limited too (1-6 on S2/S3) | Count with DescriptorDump (no host needed). See the [budget table](#endpoint-budget) below. Drop a Function, or use the P4 HS controller |
 | `bulkInBuffering = EspUsbBulkInBuffering::Double` (on the device or on a CDC or Vendor Function), and the TX FIFO cannot hold two packets for the bulk IN endpoints it names | Double fewer Functions; on the device use `Auto` (doubles only when all fit) or `Single` |
-| The IN endpoints of the whole configuration do not fit the controller's TX FIFO (256 words on S2/S3/P4 FS, 1024 words on P4 HS, shared with EP0 and the RX FIFO). On the P4 HS controller five default Vendor Functions (512-byte bulk IN each) fit and a sixth does not | Remove an IN endpoint or lower packet sizes (Audio/Video isochronous packets, `EspUsbDeviceHidCustom` `inputReportSize`) |
+| The IN endpoints of the whole configuration do not fit the controller's TX FIFO (256 words on S2/S3/P4 FS, 1024 words on P4 HS and S31, shared with EP0 and the RX FIFO). On the P4 HS controller five default Vendor Functions (512-byte bulk IN each) fit and a sixth does not | Remove an IN endpoint or lower packet sizes (Audio/Video isochronous packets, `EspUsbDeviceHidCustom` `inputReportSize`) |
 | MSC `transferBytes` is not a multiple of the bulk MPS (64 at FS, 512 at HS) | Use a multiple of 512, which is valid at both speeds |
 | CCID `messageBytes` set explicitly below the Bulk-OUT MPS (512 at HS) | Leave it at 0 (automatic: `max(271, MPS)`) or use 512 or more |
 | Vendor full-speed endpoint size is not 8, 16, 32 or 64 (values above 64 select 64; this is the Function's `startError()`) | Use one of those (USB 2.0 §5.8.3) |
@@ -126,10 +126,11 @@ public.
 
 #### `ESP_ERR_NOT_SUPPORTED` (0x106)
 
-- The target has no USB OTG controller. Only ESP32-S2, ESP32-S3 and ESP32-P4
-  are supported; ESP32, C3, C6, H2 and S31 are not.
+- The target has no USB OTG controller. Only ESP32-S2, ESP32-S3, ESP32-P4 and
+  ESP32-S31 are supported; ESP32, C3, C6 and H2 are not.
 - `config.controller = EspUsbController::HighSpeed` on a chip without an HS
-  controller (S2/S3).
+  controller (S2/S3), or `EspUsbController::FullSpeed` on a chip without an FS
+  controller (S31).
 
 #### `ESP_FAIL` and other codes
 
@@ -491,7 +492,7 @@ lsusb -v -d 303a:      # descriptors as the host parsed them (use your VID)
 | ESP32-S3 | FS | Main hardware-tested target. One PHY on GPIO19/20, shared with USB Serial/JTAG |
 | ESP32-P4 (v1.x) | HS (480 Mbps, own UTMI PHY) and FS | `Auto` picks HS. Build with `ChipVariant=prev3` |
 | ESP32-P4X (v3.x) | HS and FS | Same USB budget as v1.x. Build with `ChipVariant=postv3`; the SDK supports v3.1 and later |
-| ESP32-S31 | - | Not supported yet |
+| ESP32-S31 | HS only (480 Mbps, own UTMI PHY) | `Auto` picks HS; `FullSpeed` gives `ESP_ERR_NOT_SUPPORTED`. Checked linked to a P4X at HS in both directions. USB Serial/JTAG is a separate FS port on GPIO33/34 |
 | ESP32, C3, C6, H2, ... | none | No USB OTG controller |
 
 ### Endpoint budget
@@ -499,7 +500,7 @@ lsusb -v -d 303a:      # descriptors as the host parsed them (use your VID)
 | Controller | Endpoint numbers | Non-control IN endpoints | TX/RX FIFO |
 | --- | --- | --- | --- |
 | S2 / S3 / P4 FS | 1-6 | 4 | 256 words |
-| P4 HS | 1-15 | 7 | 1024 words |
+| P4 HS / S31 | 1-15 | 7 | 1024 words |
 
 Non-control IN endpoints used per Function:
 

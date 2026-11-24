@@ -65,7 +65,7 @@ PHYより前の段階ではbusに触れないので、Hostには何も見えま�
 | --- | --- |
 | 非controlのIN endpointがcontrollerの数を超えた。ESP32-S2/S3とESP32-P4のFS controllerは4本、P4のHS controllerは7本。endpoint番号にも上限がある（S2/S3は1〜6） | DescriptorDumpで数える（Host不要）。下の[予算の表](#endpointの予算)を参照。Functionを減らすか、P4のHS controllerを使う |
 | `bulkInBuffering = EspUsbBulkInBuffering::Double`（DeviceかCDC・VendorのFunction）で、指定したbulk INに2 packet分のTX FIFOを取れない | 2倍にするFunctionを減らす。Deviceは`Auto`（全部入るときだけ倍にする）か`Single`にする |
-| 構成全体のIN endpointが、controllerのTX FIFOに入らない（S2/S3/P4 FSは256 word、P4 HSは1024 word。EP0とRX FIFOと共有）。P4のHS controllerでは、既定のVendor（bulk IN 512 byte）は5個まで入り、6個目は入らない | IN endpointを減らすか、packetを小さくする（Audio/Videoのisochronous packet、`EspUsbDeviceHidCustom`の`inputReportSize`） |
+| 構成全体のIN endpointが、controllerのTX FIFOに入らない（S2/S3/P4 FSは256 word、P4 HSとS31は1024 word。EP0とRX FIFOと共有）。P4のHS controllerでは、既定のVendor（bulk IN 512 byte）は5個まで入り、6個目は入らない | IN endpointを減らすか、packetを小さくする（Audio/Videoのisochronous packet、`EspUsbDeviceHidCustom`の`inputReportSize`） |
 | MSCの`transferBytes`がbulkのMPS（FSは64、HSは512）の倍数でない | 512の倍数にする。FSでもHSでも使える |
 | CCIDの`messageBytes`を、Bulk-OUTのMPS（HSでは512）未満の値で明示した | 0（自動：`max(271, MPS)`）のままにするか、512以上にする |
 | Vendorのfull speed endpoint長が8、16、32、64のどれでもない（64を超える値は64として扱う。Functionの`startError()`に出る） | このどれかにする（USB 2.0 §5.8.3） |
@@ -116,8 +116,8 @@ sketchで`console.begin()`や`keyboard.begin()`を書くとcompile errorにな�
 
 #### `ESP_ERR_NOT_SUPPORTED`（0x106）
 
-- USB OTG controllerのないchip。対応はESP32-S2、ESP32-S3、ESP32-P4だけで、ESP32、C3、C6、H2、S31は対象外です。
-- HS controllerのないchip（S2/S3）で`config.controller = EspUsbController::HighSpeed`を指定した。
+- USB OTG controllerのないchip。対応はESP32-S2、ESP32-S3、ESP32-P4、ESP32-S31だけで、ESP32、C3、C6、H2は対象外です。
+- HS controllerのないchip（S2/S3）で`config.controller = EspUsbController::HighSpeed`を指定した。またはFS controllerのないchip（S31）で`EspUsbController::FullSpeed`を指定した。
 
 #### `ESP_FAIL`とその他
 
@@ -386,7 +386,7 @@ lsusb -v -d 303a:      # Hostが解釈したdescriptor（自分のVIDを指定�
 | ESP32-S3 | FS | 実機確認の中心。PHYは1つでGPIO19/20、USB Serial/JTAGと共有 |
 | ESP32-P4（v1.x） | HS（480 Mbps、専用のUTMI PHY）とFS | `Auto`はHS。`ChipVariant=prev3`でbuild |
 | ESP32-P4X（v3.x） | HSとFS | USBの予算はv1.xと同じ。`ChipVariant=postv3`でbuild。SDKの対応はv3.1以上 |
-| ESP32-S31 | - | まだ対応していない |
+| ESP32-S31 | HSだけ（480 Mbps、専用のUTMI PHY） | `Auto`はHS。`FullSpeed`は`ESP_ERR_NOT_SUPPORTED`。P4XとのHS直結で両方向を確認している。USB Serial/JTAGは別のFSの口で、GPIO33/34 |
 | ESP32、C3、C6、H2など | なし | USB OTG controllerがない |
 
 ### endpointの予算
@@ -394,7 +394,7 @@ lsusb -v -d 303a:      # Hostが解釈したdescriptor（自分のVIDを指定�
 | controller | endpoint番号 | 非controlのIN endpoint | TX/RX FIFO |
 | --- | --- | --- | --- |
 | S2 / S3 / P4 FS | 1〜6 | 4 | 256 word |
-| P4 HS | 1〜15 | 7 | 1024 word |
+| P4 HS / S31 | 1〜15 | 7 | 1024 word |
 
 Functionごとの非control IN endpointの数：
 

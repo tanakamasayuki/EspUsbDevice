@@ -108,7 +108,7 @@ Consequences:
 ### 2.4 Entering boot mode from the sketch
 
 ```cpp
-device.rebootToBootloader();   // does not return on S2/S3/P4
+device.rebootToBootloader();   // does not return on S2/S3/P4/S31
 ```
 
 It detaches from USB so the host records a disconnect, sets the chip's
@@ -121,7 +121,10 @@ It is a library call because the register differs per chip. On S2/S3 the flag
 is the only bit in `RTC_CNTL_OPTION1_REG`, so a whole-register write is safe.
 On P4 it is bit 2 of `LP_SYSTEM_REG_SYS_CTRL_REG`, which also holds the
 software-reset bit, `DIG_FIB` and `IO_MUX_RESET_DISABLE`; it must be set, never
-written. Copying the S3 recipe onto a P4 clobbers those fields.
+written. Copying the S3 recipe onto a P4 clobbers those fields. The S31 has the
+same register and bit. On the S31 the restart is a system reset rather than
+`esp_restart()`: after a CPU reset its ROM loader printed "waiting for download"
+and never answered on UART0.
 
 Three rules around it:
 
@@ -497,7 +500,7 @@ let libusb claim the interface, so they do not need the set.
 
 | Route | Chips | Boot mode | Host tool | Can brick | API |
 | --- | --- | --- | --- | --- | --- |
-| ROM serial loader over USB | S2 (OTG), S3/P4 (USB Serial/JTAG) | yes | `esptool` | no | `rebootToBootloader()` ([2.4](#24-entering-boot-mode-from-the-sketch)) |
+| ROM serial loader over USB | S2 (OTG), S3/P4/S31 (USB Serial/JTAG) | yes | `esptool` | no | `rebootToBootloader()` ([2.4](#24-entering-boot-mode-from-the-sketch)) |
 | ROM DFU over USB OTG | S2; S3 only with `USB_PHY_SEL` burned; not P4 | yes | `dfu-util` | no | `rebootToRomDfu()` ([2.6](#26-rom-dfu-instead-of-the-rom-serial-loader-s2s3)) |
 | DFU in the application | all | no | `dfu-util` | yes, without rollback | `EspUsbDeviceDfu` ([3.5](#35-the-dfu-function)) |
 | Firmware drive (`.bin` / `.uf2`) | all | no | file manager | yes, without rollback | `EspUsbDeviceMscFirmwareDisk` ([3.6](#36-the-firmware-drive)) |

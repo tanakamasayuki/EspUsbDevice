@@ -48,10 +48,11 @@ Arduino-ESP32 標準の `USB`、`USBHIDKeyboard`、`USBCDC`、`USBMSC` などと
 | ESP32-S3 | FS（12 Mbps） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | ESP32-P4 v1.x と P4X（v3.1 以降） | HS（480 Mbps）と FS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | ESP32-S2 | FS（12 Mbps） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ESP32-S31 | HS（480 Mbps） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ✅ = `tests/` の試験で、実機の転送を確かめています。ESP32-S3 二台の FS、ESP32-S2 と S3 を FS で
 直結した両方向、P4 と P4X を HS で直結した両方向、P4 一台の HS と FS controller の結線、P4X と S2 の
-それぞれと Linux PC です。ESP32-S31 にはまだ対応していません。
+それぞれと Linux PC、P4X と S31 を HS で直結した両方向です。
 
 class の一覧：
 

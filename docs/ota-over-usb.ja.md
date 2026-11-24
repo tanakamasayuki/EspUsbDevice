@@ -94,7 +94,7 @@ ESP-IDFのudev規則は`303a:00??`で合わせているので、自分の規則�
 ### 2.4 sketchからboot modeに入る
 
 ```cpp
-device.rebootToBootloader();   // S2/S3/P4では戻らない
+device.rebootToBootloader();   // S2/S3/P4/S31では戻らない
 ```
 
 USBから切り離してHostに切断を記録させ、chipのdownload-boot flagを立てて再起動します。
@@ -105,6 +105,7 @@ ROMは通過時にflagを消します。`esptool`で書いてresetした後は�
 S2/S3ではflagは`RTC_CNTL_OPTION1_REG`の唯一のbitなので、register全体を書いても安全です。
 P4では`LP_SYSTEM_REG_SYS_CTRL_REG`のbit 2で、同じregisterにsoftware resetのbit、`DIG_FIB`、`IO_MUX_RESET_DISABLE`があります。
 書き込むのではなく、bitを立てる必要があります。S3の手順をP4へ写すと、これらのfieldを壊します。
+S31も同じregisterの同じbitです。S31では、`esp_restart()`ではなくsystemのresetで再起動します。CPUだけのresetでは、ROMのloaderが「waiting for download」と出したまま、UART0で応えませんでした。
 
 使うときの決まりは3つです。
 
@@ -409,7 +410,7 @@ LinuxとmacOSはclassでdriverを付けるかlibusbがinterfaceを直接取る�
 
 | 経路 | chip | boot mode | Hostの道具 | 動かないimageを入れうるか | API |
 | --- | --- | --- | --- | --- | --- |
-| USBでのROMのserial loader | S2（OTG）、S3/P4（USB Serial/JTAG） | 要る | `esptool` | いいえ | `rebootToBootloader()`（[2.4](#24-sketchからboot-modeに入る)） |
+| USBでのROMのserial loader | S2（OTG）、S3/P4/S31（USB Serial/JTAG） | 要る | `esptool` | いいえ | `rebootToBootloader()`（[2.4](#24-sketchからboot-modeに入る)） |
 | USB OTGでのROM DFU | S2。S3は`USB_PHY_SEL`を焼いたときだけ。P4は不可 | 要る | `dfu-util` | いいえ | `rebootToRomDfu()`（[2.6](#26-romのserial-loaderではなくrom-dfuを使うs2s3)） |
 | applicationのDFU | すべて | 不要 | `dfu-util` | rollbackなしなら、はい | `EspUsbDeviceDfu`（[3.5](#35-dfu-function)） |
 | firmware drive（`.bin`/`.uf2`） | すべて | 不要 | file manager | rollbackなしなら、はい | `EspUsbDeviceMscFirmwareDisk`（[3.6](#36-firmware-drive)） |

@@ -751,7 +751,7 @@ DWC2は、小さなFIFO SPRAMを次の用途で分け合います。
 
 | 用途 | 大きさ（word） |
 | --- | --- |
-| DMAのendpoint情報 | endpoint数 × 2（S2/S3/P4 FSは14、P4 HSは32） |
+| DMAのendpoint情報 | endpoint数 × 2（S2/S3/P4 FSは14、P4 HSとS31は32） |
 | 受信FIFO | 14 + 2 × (最大OUT MPS / 4 + 1) + endpoint数 × 2 |
 | EP0の送信FIFO | 16（64 byte） |
 | IN endpointごとの送信FIFO | ceil(MPS / 4)。bulk INの二重bufferなら2倍 |
@@ -844,13 +844,13 @@ FSで動いていた設定が、HSでは`begin()`で失敗することがあり�
 
 | `config.controller` | 動作 |
 | --- | --- |
-| `Auto`（既定） | HS controllerがあればHS（P4）、なければFS（S2/S3） |
-| `FullSpeed` | FS controllerを使う。P4ではFS用のportになる |
+| `Auto`（既定） | HS controllerがあればHS（P4、S31）、なければFS（S2/S3） |
+| `FullSpeed` | FS controllerを使う。P4ではFS用のportになる。ない機種（S31）では`begin()`が`ESP_ERR_NOT_SUPPORTED` |
 | `HighSpeed` | HS controllerを使う。ない機種では`begin()`が`ESP_ERR_NOT_SUPPORTED` |
 
 - HS controllerにFSのHostやhubをつなぐと、FSで動きます。そのため、HS controllerを使うときは、FS用とHS用の両方のdescriptorを`begin()`で作ります。
 - FSで動いたときの値（bulk MPS 64など）は、つながってから決まります。借用RXの容量など、MPSに依存する検査は、実際の速度で行います。
-- 未知のSoCを、既存のportに割り当てることはしません。ESP32-S31は現在のSDKでは未対応です。
+- 未知のSoCを、既存のportに割り当てることはしません。
 
 ---
 
@@ -1225,7 +1225,7 @@ v3での帯域の基準値は、まだ測っていません。
 | ESP32-P4 一台のHS↔FS loopback | 両controllerで、各classの基本通信 |
 | 旧P4（v1.x）とP4X（v3.x）のHS直結 | 両方向 |
 | P4XとLinux PCのHS直結 | DFU/MSCのwire |
-| ESP32-S31 | 未対応 |
+| P4XとS31のHS直結 | 両方向 |
 | Windows / macOS | v3では未確認 |
 
 標準の試験は、`tests/`の`pytest --combo all`です（登録した全ての結線の組）。基準は、各`sketch.yaml`で固定しているArduino-ESP32の版です。
