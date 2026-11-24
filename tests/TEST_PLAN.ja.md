@@ -23,7 +23,7 @@
 | 範囲 | 状態 |
 | --- | --- |
 | ESP32-S2 の ROM DFU への移行 | `rebootToRomDfu()` は未確認 |
-| ESP32-S31 | Device は HS だけ。FS の controller の指定、`rebootToBootloader()`、UF2 は未確認 |
+| ESP32-S31 | `rebootToBootloader()` は、ROM の loader が UART0 で応えることだけを確認。USB Serial/JTAG では未確認。firmware drive（`.bin`／`.uf2`）は未確認 |
 | Windows / macOS | class の bind、各 class の動作とも未確認 |
 | Linux PC の class driver | MSC / DFU の wire 検査だけ。CDC / HID / Audio / Video / NCM の OS driver との組合せは未確認 |
 | SD card と OTA の実媒体 | RAM backend の試験だけ |

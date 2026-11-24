@@ -23,7 +23,7 @@ How to run them is in [README.md](README.md); remaining work is in the [TODO](..
 | Scope | State |
 | --- | --- |
 | ESP32-S2 entering the ROM DFU | `rebootToRomDfu()` not checked |
-| ESP32-S31 | Device at HS only. Choosing the FS controller, `rebootToBootloader()` and UF2 are not checked |
+| ESP32-S31 | `rebootToBootloader()` checked with the ROM loader answering on UART0 only, not on USB Serial/JTAG. The firmware drive (`.bin` / `.uf2`) not checked |
 | Windows / macOS | Neither class binding nor class behaviour checked |
 | Linux PC class drivers | Only the MSC / DFU wire checks above; CDC / HID / Audio / Video / NCM with the OS drivers not checked |
 | Real SD cards and OTA | RAM backends only |

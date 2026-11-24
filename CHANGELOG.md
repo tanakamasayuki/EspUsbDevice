@@ -1,6 +1,18 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+- (EN) ESP32-S31: supported as a Device on its high-speed OTG controller, the
+  chip's only one. `EspUsbController::FullSpeed` fails with
+  `ESP_ERR_NOT_SUPPORTED`, since the S31 has no full-speed OTG controller.
+  `rebootToBootloader()` restarts with a system reset rather than
+  `esp_restart()`: after a CPU reset the S31 ROM loader never answered on
+  UART0. `EspUsbDeviceMscFirmwareDisk::uf2FamilyId()` returns `0x3101f7c1`.
+- (JA) ESP32-S31：Device として対応しました。S31 の OTG は HS の controller
+  1 つだけで、それを使います。FS の OTG はないので、
+  `EspUsbController::FullSpeed` は `ESP_ERR_NOT_SUPPORTED` で失敗します。
+  `rebootToBootloader()` は、`esp_restart()` ではなく system の reset で再起動
+  します。CPU だけの reset では、S31 の ROM の loader が UART0 で応えなかったため
+  です。`EspUsbDeviceMscFirmwareDisk::uf2FamilyId()` は `0x3101f7c1` を返します。
 - (EN) Restart: on ESP32-P4 a restart from the library (DFU DETACH,
   `rebootToBootloader()`, `rebootToRomDfu()`) could panic with a Store access
   fault in `esp_restart()` about once in 300 restarts. USB transfers and the

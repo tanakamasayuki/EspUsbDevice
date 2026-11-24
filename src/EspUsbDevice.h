@@ -681,8 +681,9 @@ public:
   // Which connector the loader then answers on is a property of the chip, not
   // of this call: on a one-connector ESP32-S3 the shared PHY returns to
   // USB Serial/JTAG, so the same cable works; on ESP32-P4 it is the
-  // USB Serial/JTAG port, which is not the high-speed OTG connector. See
-  // docs/ota-over-usb.md.
+  // USB Serial/JTAG port, which is not the high-speed OTG connector; on
+  // ESP32-S31 it is UART0 or USB Serial/JTAG, neither of them the OTG
+  // connector. See docs/ota-over-usb.md.
   //
   // Sets ROM download mode directly, including the shared PHY routing needed
   // for USB Serial/JTAG on S3. It does not initialize Arduino's USB stack.

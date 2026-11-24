@@ -85,8 +85,11 @@
 #define ESP_USB_DEVICE_HAS_SHARED_PHY 0
 #endif
 #define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 1
-#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+#elif defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
 #include "soc/lp_system_reg.h"
+#if defined(CONFIG_IDF_TARGET_ESP32S31)
+#include "esp_rom_sys.h"
+#endif
 #define ESP_USB_DEVICE_HAS_DOWNLOAD_BOOT 1
 #define ESP_USB_DEVICE_HAS_SHARED_PHY 0
 #else
@@ -705,9 +708,11 @@ bool isDeviceInterfaceGuid(const char *guid);
 #if ESP_USB_DEVICE_HAS_OTG
 const EspUsbDwc2Port *descriptorController(bool highSpeed) {
   const auto *port = espusb_dwc2_port_for_speed(highSpeed);
-  // Detached HS inspection on FS-only hardware retains its physical budget.
-  // Runtime selection still refuses an unavailable physical controller.
-  return port ? port : espusb_dwc2_port_for_speed(false);
+  // A speed the chip has no controller for (HS on S2/S3, FS on S31) still
+  // validates against the one controller it does have, so detached inspection
+  // keeps a physical budget. Runtime selection still refuses an unavailable
+  // physical controller.
+  return port ? port : espusb_dwc2_port_for_speed(!highSpeed);
 }
 #endif
 } // namespace
@@ -3652,7 +3657,16 @@ bool EspUsbDevice::rebootToBootloader()
   // never write the register.
   REG_SET_BIT(LP_SYSTEM_REG_SYS_CTRL_REG, LP_SYSTEM_REG_FORCE_DOWNLOAD_BOOT);
 #endif
+#if defined(CONFIG_IDF_TARGET_ESP32S31)
+  // On ESP32-S31 the ROM loader that a CPU reset (esp_restart()) leaves behind
+  // prints "waiting for download" and then never answers on UART0. Measured:
+  // no reply to esptool's SYNC after esp_restart(), with or without the sketch
+  // ending Serial first, and a reply after a reset that also resets the
+  // digital peripherals. This skips the shutdown handlers esp_restart() runs.
+  esp_rom_software_reset_system();
+#else
   esp_restart();
+#endif
   return true;
 #else
   setLastError(ESP_ERR_NOT_SUPPORTED);
@@ -3821,6 +3835,8 @@ uint32_t EspUsbDeviceMscFirmwareDisk::uf2FamilyId()
   return 0xc47e5767u;
 #elif defined(CONFIG_IDF_TARGET_ESP32P4)
   return 0x3d308e94u;
+#elif defined(CONFIG_IDF_TARGET_ESP32S31)
+  return 0x3101f7c1u;
 #else
   return 0;
 #endif
