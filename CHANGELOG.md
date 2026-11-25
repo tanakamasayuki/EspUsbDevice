@@ -1,6 +1,8 @@
 # Changelog / 変更履歴
 
 ## Unreleased
+
+## 3.4.0
 - (EN) ESP32-S31: supported as a Device on its high-speed OTG controller, the
   chip's only one. `EspUsbController::FullSpeed` fails with
   `ESP_ERR_NOT_SUPPORTED`, since the S31 has no full-speed OTG controller.
