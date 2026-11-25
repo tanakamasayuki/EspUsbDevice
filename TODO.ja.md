@@ -21,10 +21,6 @@ v3 の残作業の一覧です。各項目に「何をすれば完了か」を�
 - [ ] **HS 直結の組の整理**
   - 2-3（P4 v1.3）⇄ 2-4（P4X）の HS 直結は、当面残す。
   - 完了の条件：`s31_p4x_hs` で P4X の HS の Device 試験が全件、安定して通るようになったら、2-3 ⇄ 2-4 を撤去するか決める。撤去したら、P4 v1.3 の Device 試験は 2-1 の FS loopback だけになることを tests/TEST_PLAN に書く。
-- [ ] **Arduino-ESP32 4 系への移行**
-  - `sketch.yaml` は 4 系の版で固定しています。4 系に S2 用の USB Host Library がないので、S2 の Host 役（`s2_host`）だけ 3 系の版のままです。
-  - 完了の条件：
-    - 公開版の EspUsbHost を Host 役にして、全 combo が通る。
 
 ## PC OS との互換性
 
